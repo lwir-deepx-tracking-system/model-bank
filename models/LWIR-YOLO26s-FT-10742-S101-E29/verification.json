@@ -57,6 +57,10 @@
   "tracking_profile": "FT + ByteTrack association + XYWH-NSA Kalman (current project-priority candidate; separate tracker, not embedded in ONNX)",
   "historical_tracking_method_for_this_checkpoint": "Ultralytics ByteTrack 8.4.157 with standard KalmanFilterXYAH",
   "xywh_nsa_metrics_transfer_to_this_checkpoint": false,
-  "historical_detector_confidence_threshold": null,
-  "historical_detector_confidence_threshold_status": "NOT_RECORDED_IN_AVAILABLE_RUN_ARTIFACTS"
+  "historical_detector_confidence_threshold": 0.001,
+  "project_reference_preset_prediction_confidence": 0.1,
+  "project_reference_preset_status": "READY_REFERENCE_PRESET_NOT_APPLIED_TO_APPLICATION",
+  "historical_tracker_config_sha256": "395701d947a749179dee3e327b1181b730c4ca98e7cac5a2ab05280aae573b8b",
+  "historical_tracker_config_verified_against": "Ultralytics 8.4.157 bytetrack.yaml",
+  "historical_detector_confidence_threshold_status": "VERIFIED_FROM_CONTROLLED_EVALUATION_PROTOCOL"
 }

@@ -8,4 +8,4 @@
 - `tracking_profile.json` — current FT + XYWH+NSA project candidate and its bounded evidence
 - `verification.json` — checkpoint and ONNX hashes, export settings, graph/runtime verification
 
-The ONNX file includes detection only. The historical scores for this exact checkpoint used standard ByteTrack with XYAH Kalman state. FT + XYWH+NSA is the current project-priority tracker candidate, based on separate seed303/404 checkpoints; its scores are not attributed to the packaged seed101 checkpoint. See `MODEL_CARD.md` for tracker provenance, detector-threshold limitations, and metric scope.
+The ONNX file includes detection only. Historical controlled-evaluation scores used standard ByteTrack with XYAH Kalman state and a fixed association config: high/low/new-track thresholds `0.25/0.10/0.25`, buffer `30`, match threshold `0.80`, score fusion enabled. The evaluation protocol records detector prediction `conf=0.001`. A separately prepared project reference preset uses detector `conf=0.1` with the same ByteTrack settings, but it has not been applied to the application default. See `MODEL_CARD.md` for scope and provenance.

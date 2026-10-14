@@ -16,7 +16,7 @@ Initialized from the original COCO-pretrained `yolo26s.pt` checkpoint and fully 
 
 The ONNX graph contains the **detector only**. It does not contain track association, a Kalman filter, or ID assignment.
 
-- **Tracker profile used for the historical scores below:** Ultralytics ByteTrack 8.4.157 with its standard `KalmanFilterXYAH`. The 8D state is `[cx, cy, aspect_ratio, height, vx, vy, v_aspect_ratio, v_height]` under a constant-velocity model. ByteTrack performs high- and low-confidence association and retains lost tracks for the configured buffer. Historical defaults: high threshold `0.25`, low threshold `0.10`, new-track threshold `0.25`, buffer `30`, match threshold `0.80`, score fusion enabled.
+- **Tracker profile used for the historical scores below:** Ultralytics ByteTrack 8.4.157 with its standard `KalmanFilterXYAH`. The 8D state is `[cx, cy, aspect_ratio, height, vx, vy, v_aspect_ratio, v_height]` under a constant-velocity model. ByteTrack performs high- and low-confidence association and retains lost tracks for the configured buffer. The historical controlled-evaluation tracker config hash (`395701d947a749179dee3e327b1181b730c4ca98e7cac5a2ab05280aae573b8b`) matches Ultralytics 8.4.157 `bytetrack.yaml`: high threshold `0.25`, low threshold `0.10`, new-track threshold `0.25`, buffer `30`, match threshold `0.80`, score fusion enabled. This config was common across the compared detector variants. The prepared project reference preset keeps the same values but is not applied to the application default.
 - **Current project tracking candidate:** Full FT detector + ByteTrack association logic using a custom `XYWH+NSA` Kalman update. The state is `[cx, cy, width, height, vx, vy, v_width, v_height]`; detection confidence scales measurement covariance by `max(1 - confidence, 0.05)`. It does not add ReID or camera-motion compensation. This is the current project-priority candidate, not a claim that its tracker is already embedded in this ONNX.
 - **Important scope:** the historical HOTA/IDF1 figures for this exact checkpoint were produced with standard XYAH ByteTrack. The newer XYWH+NSA comparison used different completed Full FT/LoRA checkpoints (10,491 images, batch 4, seeds 303/404) on the already exposed DEV5 videos. Do not attribute those XYWH+NSA scores to this seed-101 checkpoint; this exact checkpoint has not been replayed and rescored with XYWH+NSA.
 
@@ -31,7 +31,7 @@ The newer DEV5 comparison motivates the FT+XYWH+NSA candidate: FT had fewer pers
 
 ## Detector confidence threshold
 
-The detector confidence cutoff used in the historical tracking evaluation is not recorded in the available run artifacts. The ByteTrack values below (`track_high_thresh=0.25`, `track_low_thresh=0.10`, `new_track_thresh=0.25`) are tracker association and track-initiation thresholds; they do not establish the YOLO inference confidence cutoff. The ONNX graph does not store a configurable runtime confidence threshold.
+The verified controlled-evaluation protocol for this checkpoint records YOLO prediction `conf=0.001` (`controlled_evaluation_20261001/protocol.json`). The separately prepared project reference preset records `conf=0.1`, but its status is `READY_REFERENCE_PRESET_NOT_APPLIED_TO_APPLICATION`; it is not the confidence value attached to the historical scores and has not changed the application default. Neither value is embedded in the ONNX graph; apply the intended threshold in the runtime pipeline.
 
 ## ONNX interface
 
