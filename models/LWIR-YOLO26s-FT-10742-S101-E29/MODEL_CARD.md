@@ -46,3 +46,7 @@ Use the same preprocessing and class mapping as the FLIR training/evaluation pip
 
 - Existing project choice: internal LWIR research archive (not included in this package).
 - Current FT + XYWH+NSA project-candidate analysis: internal LWIR research archive (not included in this package).
+
+## DEEPX INT8 companion
+
+[best_full_ft_epoch29.dxnn](deepx/best_full_ft_epoch29.dxnn) is an additional DEEPX DX-COM 2.4.1 INT8 post-training quantization compilation of the ONNX file above, calibrated with 256 frames from the FLIR ADAS v2 thermal training split. The DXNN remains detector-only; tracking thresholds and Kalman updates stay external. Compiler warnings, preprocessing contract, and validation limits are in [DXNN_README.md](deepx/DXNN_README.md) and [conversion_verification.json](deepx/conversion_verification.json).
