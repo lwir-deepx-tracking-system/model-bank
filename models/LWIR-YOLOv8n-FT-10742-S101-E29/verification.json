@@ -1,0 +1,76 @@
+{
+  "model_id": "LWIR-YOLOv8n-FT-10742-S101-E29",
+  "architecture": "YOLOv8n",
+  "task": "thermal object detection",
+  "checkpoint": "yolov8n_full_epoch30_last.pt",
+  "checkpoint_bytes": 6253098,
+  "checkpoint_sha256": "5cd07d31ed8861c46903d504e558460192f409bb3bb44179484c06e2759fb63e",
+  "checkpoint_selection": "last; zero-based epoch29, final epoch30; not validation-best",
+  "initial_weights": "official COCO-pretrained yolov8n.pt",
+  "initial_weights_sha256": "f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36",
+  "training": {
+    "dataset": "FLIR ADAS v2 thermal",
+    "classes": 16,
+    "train_images": 10742,
+    "source_validation_images": 1144,
+    "full_finetune": true,
+    "seed": 101,
+    "epochs": 30,
+    "input_size": 640,
+    "batch": 16,
+    "optimizer": "SGD",
+    "lr0": 0.0025,
+    "lrf": 0.05,
+    "momentum": 0.9,
+    "weight_decay": 0.0005,
+    "warmup_epochs": 3,
+    "cosine": true,
+    "validation_during_training": false
+  },
+  "runtime_provenance": {
+    "ultralytics_version": "8.4.157",
+    "torch_version": "2.9.1+cu128",
+    "python": "3.12.3",
+    "gpu": "NVIDIA GeForce RTX 4090"
+  },
+  "evaluation": {
+    "sourceVAL_images": 1144,
+    "training_epochs": 30,
+    "inference_batch": 4,
+    "latency_comparable_to_batch16": false,
+    "mAP50_95_pct": 19.869605354437507,
+    "person_AP50_95_pct": 36.854237639578955,
+    "car_AP50_95_pct": 53.13869251723117,
+    "mAP50_pct": 34.37118671965892,
+    "mAP75_pct": 19.292892894689324,
+    "report_sha256": "2064533e2d4c37c0a92c46ed5869ef82608d5e671e4d3525dfbfdcf66b74adc5"
+  },
+  "evaluation_policy": {
+    "confidence_floor": 0.001,
+    "nms_iou": 0.7,
+    "prediction_max_det": 300,
+    "seed": 101,
+    "scope": "single-seed, previously exposed sourceVAL, detector only",
+    "independent_generalization_evaluated": false,
+    "yolov8n_tracking_evaluated": false,
+    "original_eval_batch16_oom": true,
+    "recovery_eval_batch": 4,
+    "training_repeated": false
+  },
+  "evidence": {
+    "experiment": "yolo_family_screen_20261019_v1",
+    "result_file": "RESULT_FULL6_v2_20261019.json",
+    "manifest_file": "MANIFEST_FULL6_v2_20261019.json",
+    "result_file_sha256": "c8ded67f01633579e3f39aeba439d7dafac8cbcab8b8daad5dca933651e01896",
+    "manifest_file_sha256": "11b1b5532581dcc3d2cdff96a11d66764171e532a2d6c27ef78834993e2111dc"
+  },
+  "artifacts_included": [
+    "PyTorch checkpoint",
+    "model card",
+    "verification manifest"
+  ],
+  "onnx_exported_for_this_upload": false,
+  "deepx_converted_for_this_upload": false,
+  "model_loaded_for_this_upload": false,
+  "licensing": "No new license granted by this metadata. Upstream Ultralytics/model and FLIR dataset terms remain applicable; no raw dataset included."
+}
