@@ -63,12 +63,16 @@ confidence0.001, NMS IoU0.70, maxDets[1,10,300]. 평가 batch는 v8n4(OOM 복구
 | yolo26s / BYTE | 63.7377 | **<ins>78.9417</ins>** | 70.5549 |
 | yolo26s / OCSORT | 62.9723 | 78.4777 | 71.3244 |
 | yolo26s / BOTSORT_GMC | **<ins>67.9369</ins>** | 78.2812 | 71.5269 |
+| yolox-nano / BYTE | 49.7061 | 59.1651 | 34.9534 |
+| yolox-nano / OCSORT | 52.0710 | 65.5621 | 42.4058 |
+| yolox-nano / BOTSORT_GMC | 54.2056 | 61.8107 | 36.2900 |
+| yolox-s / BYTE | 57.9518 | 70.5412 | 58.2017 |
+| yolox-s / OCSORT | 59.1224 | 72.8120 | 60.5913 |
+| yolox-s / BOTSORT_GMC | 62.5672 | 72.5552 | 58.5662 |
 | yolov8n /3 trackers | 미평가 | 미평가 | 미평가 |
 | yolo26n /3 trackers | 미평가 | 미평가 | 미평가 |
-| yolox-nano /3 trackers | 미평가 | 미평가 | 미평가 |
-| yolox-s /3 trackers | 미평가 | 미평가 | 미평가 |
 
-DetA/AssA/FP/FN/IDSW와 car/truck은 상세표에 있습니다. 최근 추적 미평가 모델은 YOLOv8n·YOLO26n·YOLOX-Nano·YOLOX-s입니다.
+DetA/AssA/FP/FN/IDSW와 car/truck은 상세표에 있습니다. YOLOX-Nano·YOLOX-s는 동일 frozen DEV·3 tracker로 추가 평가했습니다. YOLOv8n·YOLO26n은 미평가입니다. 추가 실행 시간은 RF-DETR와 compiler가 동작한 경합 관측이므로 통제 latency 비교에 사용하지 않습니다.
 
 ### PC latency · 기존 관측값
 
@@ -128,9 +132,9 @@ TRAIN10742장, sourceVAL1144장,16클래스, seed101, Full FT30 epoch의 최종 
 
 원문: `yolo_family_screen_20261019_v1/common_score_comparison_full6_v2_20261019.csv`, evaluator v3. sourceVAL은 이미 노출된 평가셋이며 독립 TEST 결과가 아닙니다.
 
-### 최근 추적 · 2검출기 × 3 tracker
+### 최근 추적 · 4검출기 × 3 tracker
 
-노출된 DEV5영상·1924프레임, 입력640×640, batch1, FP32, detector confidence0.10, NMS IoU0.70, max_det300. 검출 sourceVAL과 다른 데이터입니다. 최근 추적이 평가된 모델은 YOLOv8s와 YOLO26s뿐이며 나머지4종은 미평가입니다.
+노출된 DEV5영상·1924프레임, 입력640×640, batch1, FP32, detector confidence0.10, NMS IoU0.70, max_det300. 검출 sourceVAL과 다른 데이터입니다. YOLOv8s·YOLO26s 기존 평가에 YOLOX-Nano·YOLOX-S의 동일 DEV 평가를 추가했습니다. YOLOv8n·YOLO26n은 미평가입니다.
 
 **person · GT boxes 2469**
 
@@ -138,14 +142,18 @@ TRAIN10742장, sourceVAL1144장,16클래스, seed101, Full FT30 epoch의 최종 
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | yolov8s | BYTE | 62.1219 | 57.9567 | 66.6548 | 76.8591 | 69.9068 | 177 | 543 | 23 |
 | yolov8s | OCSORT | 59.6343 | 57.8827 | 61.5119 | 74.0936 | 70.8789 | **<ins>155</ins>** | 542 | 22 |
-| yolov8s | BOTSORT_GMC | 67.4590 | 63.6129 | **<ins>71.7691</ins>** | 77.9966 | **<ins>72.2155</ins>** | 201 | 467 | **<ins>18</ins>** |
-| yolo26s | BYTE | 63.7377 | 59.8190 | 67.9860 | **<ins>78.9417</ins>** | 70.5549 | 191 | 518 | **<ins>18</ins>** |
+| yolov8s | BOTSORT_GMC | 67.4590 | 63.6129 | **<ins>71.7691</ins>** | 77.9966 | **<ins>72.2155</ins>** | 201 | 467 | 18 |
+| yolo26s | BYTE | 63.7377 | 59.8190 | 67.9860 | **<ins>78.9417</ins>** | 70.5549 | 191 | 518 | 18 |
 | yolo26s | OCSORT | 62.9723 | 59.9617 | 66.2101 | 78.4777 | 71.3244 | 161 | 527 | 20 |
-| yolo26s | BOTSORT_GMC | **<ins>67.9369</ins>** | **<ins>64.5543</ins>** | 71.7458 | 78.2812 | 71.5269 | 224 | **<ins>461</ins>** | **<ins>18</ins>** |
+| yolo26s | BOTSORT_GMC | **<ins>67.9369</ins>** | **<ins>64.5543</ins>** | 71.7458 | 78.2812 | 71.5269 | 224 | 461 | 18 |
+| yolox-nano | BYTE | 49.7061 | 42.8354 | 57.7493 | 59.1651 | 34.9534 | 947 | 615 | 44 |
+| yolox-nano | OCSORT | 52.0710 | 44.8164 | 60.5459 | 65.5621 | 42.4058 | 758 | 626 | 38 |
+| yolox-nano | BOTSORT_GMC | 54.2056 | 45.3043 | 65.0205 | 61.8107 | 36.2900 | 958 | 583 | 32 |
+| yolox-s | BYTE | 57.9518 | 53.6890 | 62.7458 | 70.5412 | 58.2017 | 538 | 469 | 25 |
+| yolox-s | OCSORT | 59.1224 | 54.3652 | 64.4497 | 72.8120 | 60.5913 | 474 | 476 | 23 |
+| yolox-s | BOTSORT_GMC | 62.5672 | 57.0430 | 68.9806 | 72.5552 | 58.5662 | 570 | **<ins>436</ins>** | **<ins>17</ins>** |
 | yolov8n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
 | yolo26n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
-| yolox-nano | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
-| yolox-s | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
 
 
 **car · GT boxes 6668**
@@ -158,10 +166,14 @@ TRAIN10742장, sourceVAL1144장,16클래스, seed101, Full FT30 epoch의 최종 
 | yolo26s | BYTE | 47.9415 | 44.9303 | 51.9791 | 57.0719 | 48.3653 | 834 | 2497 | 112 |
 | yolo26s | OCSORT | 47.6287 | 44.6058 | 51.6394 | 55.1503 | 48.2154 | 784 | 2577 | 92 |
 | yolo26s | BOTSORT_GMC | **<ins>53.7894</ins>** | **<ins>47.9854</ins>** | 61.2350 | **<ins>62.3271</ins>** | **<ins>51.7846</ins>** | 808 | **<ins>2361</ins>** | **<ins>46</ins>** |
+| yolox-nano | BYTE | 36.0034 | 28.8718 | 45.4500 | 42.5055 | 17.7115 | 1727 | 3648 | 112 |
+| yolox-nano | OCSORT | 34.5187 | 28.4942 | 42.3818 | 39.9389 | 18.2663 | 1555 | 3769 | 126 |
+| yolox-nano | BOTSORT_GMC | 38.4045 | 30.4109 | 49.5141 | 43.0836 | 19.5411 | 1750 | 3541 | 74 |
+| yolox-s | BYTE | 45.1315 | 39.8609 | 51.9689 | 52.9756 | 38.4223 | 1215 | 2772 | 119 |
+| yolox-s | OCSORT | 47.1963 | 39.6055 | 57.0445 | 57.0129 | 37.9274 | 1158 | 2844 | 137 |
+| yolox-s | BOTSORT_GMC | 50.0540 | 41.7791 | 60.8175 | 58.3726 | 40.1770 | 1217 | 2681 | 91 |
 | yolov8n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
 | yolo26n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
-| yolox-nano | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
-| yolox-s | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
 
 
 **truck · GT boxes 1180**
@@ -173,17 +185,21 @@ TRAIN10742장, sourceVAL1144장,16클래스, seed101, Full FT30 epoch의 최종 
 | yolov8s | BOTSORT_GMC | 10.3740 | 10.6709 | 10.3950 | 17.4198 | -2.7966 | 186 | 1019 | **<ins>8</ins>** |
 | yolo26s | BYTE | **<ins>25.3696</ins>** | 24.1133 | **<ins>28.1567</ins>** | **<ins>32.0671</ins>** | -5.5932 | 445 | 778 | 23 |
 | yolo26s | OCSORT | 19.2914 | 22.6585 | 17.0108 | 22.9188 | -4.0678 | 397 | 811 | 20 |
-| yolo26s | BOTSORT_GMC | 22.9611 | **<ins>25.7977</ins>** | 21.3028 | 24.4676 | **<ins>-1.2712</ins>** | 418 | **<ins>759</ins>** | 18 |
+| yolo26s | BOTSORT_GMC | 22.9611 | **<ins>25.7977</ins>** | 21.3028 | 24.4676 | -1.2712 | 418 | **<ins>759</ins>** | 18 |
+| yolox-nano | BYTE | 13.8147 | 15.1813 | 12.7798 | 16.6250 | -0.1695 | 194 | 954 | 34 |
+| yolox-nano | OCSORT | 13.3004 | 14.2011 | 12.6561 | 14.0396 | 1.0169 | 173 | 966 | 29 |
+| yolox-nano | BOTSORT_GMC | 17.3259 | 16.4612 | 18.6357 | 22.2769 | **<ins>1.5254</ins>** | 197 | 932 | 33 |
+| yolox-s | BYTE | 11.5744 | 12.8464 | 10.6141 | 15.9613 | -10.6780 | 278 | 984 | 44 |
+| yolox-s | OCSORT | 10.0681 | 12.3869 | 8.4384 | 12.3153 | -9.4915 | 262 | 998 | 32 |
+| yolox-s | BOTSORT_GMC | 13.2726 | 14.4290 | 12.5515 | 16.3658 | -8.3898 | 276 | 974 | 29 |
 | yolov8n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
 | yolo26n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
-| yolox-nano | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
-| yolox-s | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
 
 원문: `yolo_family_tracking_report_only_20261019_v1/COMPARISON.json`. TrackEval commit `12c8791b303e0a0b50f753af204249e622d0281a`. HOTA/DetA/AssA/IDF1/MOTA는 높을수록, FP/FN/IDSW는 낮을수록 좋습니다.
 
 ### 검출·tracker 설정
 
-| 항목 | 최근 검출6종 | 최근 추적2×3 | 역사 추적19조건 |
+| 항목 | 최근 검출6종 | 최근 추적4×3 | 역사 추적19조건 |
 | --- | --- | --- | --- |
 | 입력 H×W | 640×640 | 640×640 | 480×640 |
 | detector confidence | 0.001 (AP) | 0.10 | 0.10 |
@@ -464,6 +480,9 @@ YOLO26s full-dose, TRAIN10491장, sourceVAL1144장, batch4, AdamW,30 epoch, 최�
 </details>
 
 표의 검증용 정밀 CSV/JSON과 PNG는 원본 Library ZIP에 보존했습니다. 저장소 현재 루트는 README.md와 모델 계열 폴더만 유지합니다. 학습 완료·검출 평가·추적 평가·DXNN 컴파일·실기 검증은 각각 다른 상태입니다.
+
+
+추가 YOLOX 원문: `yolox_dev_tracking_20261020_v1/COMPARISON.json` 및 hash manifest. 같은 frozen DEV·checkpoint·tracker 설정을 사용했으며 탐지1회 결과를3 tracker에 재사용했습니다. 추가 실행은 CPU threads1·batch1 FP32, RF-DETR·CPU compiler와 동시 실행한 GPU 관측이므로 해당 실행 시간을 기존 통제 latency로 비교하지 않습니다. 원본2종의 기존 성능값은 수정하지 않았습니다.
 
 </details>
 
