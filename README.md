@@ -127,7 +127,7 @@ CPU 전송·ByteTrack 포함, JSON 쓰기 제외. 총 초÷프레임 수의 평�
 
 대표 모델의 배포 입력은 compiler 안내상 **uint8 NHWC [1,640,640,3]**입니다. grayscale을3채널로 구성하고 패딩114로 중앙 letterbox합니다. 특히 이 공통6종 실험은640×512 영상을(0,64)에 붙인640×640 캔버스를 사용하므로 **YOLOX도 이 중앙 캔버스를 먼저 구성**해야 합니다. 원본 평가의 YOLOX ValTransform은 이미640×640인 캔버스에 적용되어 추가 패딩을 하지 않습니다. UL의 /255 정규화와 HWC→CHW는 컴파일에 포함되고, YOLOX에는 /255 정규화가 없습니다. **resize·패딩·색/의미 채널 변환·tracker는 외부 처리**입니다.
 
-YOLOX의 현재 게시본은 calibration을 표준 좌상단 패딩으로 준비했으므로 원본 실험과 일치하는 중앙 캔버스 calibration으로 교정 대기 중입니다. 가중치·출력 형상 검증과 calibration geometry의 일치는 별도 확인 항목입니다.
+YOLOX-Nano/S는 원본 실험과 같은 중앙640×640 캔버스로 calibration을 교정한 게시본입니다. Source checkpoint는 그대로이며 이전 calibration 버전은 Git 이력에 보존했습니다.
 
 | 모델 / export | 공개 output0 | 필요한 후처리 |
 | --- | --- | --- |
@@ -685,14 +685,14 @@ M teacher 원본 학습4196장·seed202·AdamW·480×640·batch4·30epoch·2367u
 | TRAIN support | 10742 |
 | 입력 representation | original; deployment export640×640 |
 | 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\yolo_family_screen_20261019_v1\full_n\yolox-nano_audit_20261019_v1\latest_ckpt.pth |
-| DXNN bytes | 1536206 |
-| DXNN SHA-256 | `60333bccb6ec0b41dad61f10998fe5084b2aeb143596eebb16cc25f705ecd169` |
+| DXNN bytes | 1536223 |
+| DXNN SHA-256 | `9ab36237847c1e4a704af6677adf038d9f16fa03cb7b8cd3304c95b47c62fe46` |
 | source PT SHA-256 | `64119cfcc291fcb436839cf29c11f3e089d7a3eee0580f5edce2049ebc35877f` |
 | source ONNX SHA-256 | `3c181badb88bff9a8d9c7f2788a3648eced42f24407a97ff2e27bd0ea045d271` |
-| calibration manifest SHA-256 | `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192` |
-| compile elapsed seconds | 144.065 |
+| calibration manifest SHA-256 | `381f90326244ee6007cd1b10aa9193c9a9545debf78101725fd8e2678f7facd9` |
+| compile elapsed seconds | 125.533 |
 | 병합 adapter 수 | 0 |
-| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.0077362060546875 / score 2.199411392211914e-05 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.0050048828125 / score 2.047419548034668e-05 |
 | 공개 source output | [1, 8400, 21]; raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS |
 
 ### yolox_s.dxnn
@@ -704,14 +704,14 @@ M teacher 원본 학습4196장·seed202·AdamW·480×640·batch4·30epoch·2367u
 | TRAIN support | 10742 |
 | 입력 representation | original; deployment export640×640 |
 | 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\yolo_family_screen_20261019_v1\full_s\yolox-s\latest_ckpt.pth |
-| DXNN bytes | 9541952 |
-| DXNN SHA-256 | `bd33a2b5cf0c38a537bed76dc09485bdcb94c517296c56c8c842cf677464efb6` |
+| DXNN bytes | 9543889 |
+| DXNN SHA-256 | `e1349efb61ed4f229807a31517688c35c9d45a7b2ee474ccebe8aaf8871168f7` |
 | source PT SHA-256 | `2c0ba3087733411e7d89443d27d621f0a482dacd56531f7bcbe213921a644070` |
 | source ONNX SHA-256 | `236d790348ad4b94a573326aa0ff8c3ff7739245f77293850d2633f08e0249c6` |
-| calibration manifest SHA-256 | `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192` |
-| compile elapsed seconds | 203.103 |
+| calibration manifest SHA-256 | `381f90326244ee6007cd1b10aa9193c9a9545debf78101725fd8e2678f7facd9` |
+| compile elapsed seconds | 161.499 |
 | 병합 adapter 수 | 0 |
-| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.00958251953125 / score 1.6033649444580078e-05 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.0062255859375 / score 1.0013580322265625e-05 |
 | 공개 source output | [1, 8400, 21]; raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS |
 
 ### yolo26s_clahe_full_ft_s202_e30.dxnn
