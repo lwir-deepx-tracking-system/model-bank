@@ -1,23 +1,130 @@
-# LWIR DXNN model bank
+# LWIR DXNN Model Bank
+
+학습을 마친 LWIR 탐지기의 **INT8 PTQ 컴파일 파일**을 계열별로 제공합니다. 성능표는 **원본 FP32 모델 평가**이며, DX-M1에서 양자화 후 정확도·속도·추적 성능은 아직 측정하지 않았습니다.
+
+## 1. 모델 다운로드
+
+현재 게시된 DXNN은 **10개**입니다. 아래 대표 모델과 추가 변형을 구분합니다.
+
+| 계열 | 모델 | 학습 구분 | 파일 |
+| --- | --- | --- | --- |
+| yolo26 | YOLO26n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolo26/yolo26n.dxnn) |
+| yolo26 | YOLO26s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolo26/yolo26s.dxnn) |
+| yolo26 | YOLO26m teacher | teacher ·4196장 ·seed202 ·30ep | [DXNN](yolo26/yolo26m.dxnn) |
+| yolov8 | YOLOv8n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8n.dxnn) |
+| yolov8 | YOLOv8s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8s.dxnn) |
+| yolox | YOLOX-Nano | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_nano.dxnn) |
+| yolox | YOLOX-s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_s.dxnn) |
 
 
-<!-- PERFORMANCE_TABLES_BEGIN -->
-## 모델별 성능 · 실제 Markdown 표
+<details>
+<summary>추가 FT·LoRA·KD·입력 변형 다운로드 (3개)</summary>
 
-아래 값은 기존 FP32 원본 모델의 검출·추적 평가입니다. INT8 DXNN의 정확도·속도를 측정한 값이 아닙니다. AP는 별도 AP50 열을 제외하면 AP50:95이며, 전체 mAP와 person AP는 다른 지표입니다. 지표 단위는 %, FP/FN/IDSW는 건수입니다. 표시값은 소수 넷째 자리로 반올림했습니다. 서로 다른 평가군을 합쳐 순위를 만들지 않습니다.
+| 모델 | 방법 / 입력 | seed | 기록 stage epoch | 파일 |
+| --- | --- | --- | --- | --- |
+| YOLO26s | full_ft / clahe | 202 | 30 | [yolo26s_clahe_full_ft_s202_e30.dxnn](yolo26/yolo26s_clahe_full_ft_s202_e30.dxnn) |
+| YOLO26s | lora_r8_head / clahe | 202 | 30 | [yolo26s_clahe_lora_r8_head_s202_e30.dxnn](yolo26/yolo26s_clahe_lora_r8_head_s202_e30.dxnn) |
+| YOLO26s | Full FT / historical10742 | 101 | 30 | [yolo26s_ft_s101_e30_legacy_20261001.dxnn](yolo26/yolo26s_ft_s101_e30_legacy_20261001.dxnn) |
+
+기록 stage epoch는 추가 학습 단계 길이일 수 있습니다. 학습 블록·체크포인트 해시는 아래 컴파일 상세에 보존합니다. 역사 모델의 학습/평가480×640과 이 배포 export의640×640은 구분해야 합니다. CLAHE·gradient 변형은 외부 채널 변환이 필요합니다.
+
+</details>
+
+YOLO26x teacher는 학습 완료 근거가 있으나 로컬 최종 가중치가 없어 미게시입니다. **YOLO26x와 YOLOX는 다른 모델**입니다.
+
+## 2. 같은 평가군의 핵심 성능
+
+**↑ 높을수록 좋음 · ↓ 낮을수록 좋음 · <ins>굵은 밑줄</ins>은 같은 평가군/seed 내 지표별 최적값**입니다. 동률은 모두 강조합니다. 통제되지 않은 runtime과 서로 다른 평가군 사이에는 우열 표시를 하지 않습니다.
+
+### 검출 · 최근6종
+
+sourceVAL1144장,16클래스, TRAIN10742장, seed101, Full FT30epoch,640×640. AP/mAP 단위는 %이며 아래 값은 AP50:95입니다.
+
+| 모델 | 전체 mAP ↑ | person AP ↑ | car AP ↑ |
+| --- | --- | --- | --- |
+| yolov8n | 19.8696 | 36.8542 | 53.1387 |
+| yolox-nano | 16.8664 | 31.6139 | 48.2667 |
+| yolo26n | 20.7318 | 38.0337 | 53.9829 |
+| yolov8s | 24.3720 | 42.2804 | 57.4554 |
+| yolox-s | 22.8154 | 39.9558 | 55.8228 |
+| yolo26s | **<ins>25.4758</ins>** | **<ins>44.9255</ins>** | **<ins>59.0974</ins>** |
+
+confidence0.001, NMS IoU0.70, maxDets[1,10,300]. 평가 batch는 v8n4(OOM 복구), 나머지16입니다. AP50/AP75/AR300 및 출처는 아래 상세표에 있습니다.
+
+### 추적 · 최근 person
+
+동일 exposed DEV5영상·1924프레임, GT person2469,640×640, batch1, FP32. **검출 sourceVAL과 다른 데이터**입니다.
+
+| 모델 / tracker | HOTA ↑ | IDF1 ↑ | MOTA ↑ |
+| --- | --- | --- | --- |
+| yolov8s / BYTE | 62.1219 | 76.8591 | 69.9068 |
+| yolov8s / OCSORT | 59.6343 | 74.0936 | 70.8789 |
+| yolov8s / BOTSORT_GMC | 67.4590 | 77.9966 | **<ins>72.2155</ins>** |
+| yolo26s / BYTE | 63.7377 | **<ins>78.9417</ins>** | 70.5549 |
+| yolo26s / OCSORT | 62.9723 | 78.4777 | 71.3244 |
+| yolo26s / BOTSORT_GMC | **<ins>67.9369</ins>** | 78.2812 | 71.5269 |
+| yolov8n /3 trackers | 미평가 | 미평가 | 미평가 |
+| yolo26n /3 trackers | 미평가 | 미평가 | 미평가 |
+| yolox-nano /3 trackers | 미평가 | 미평가 | 미평가 |
+| yolox-s /3 trackers | 미평가 | 미평가 | 미평가 |
+
+DetA/AssA/FP/FN/IDSW와 car/truck은 상세표에 있습니다. 최근 추적 미평가 모델은 YOLOv8n·YOLO26n·YOLOX-Nano·YOLOX-s입니다.
+
+### PC latency · 기존 관측값
+
+GTX1080Ti, FP32, batch1,640×640,1924프레임, warmup5, CPU threads4. **순수 추론 또는 동일 조건 통제 benchmark가 아닙니다.**
+
+| 모델 | predict+track ms ↓ | 읽기 포함 ms ↓ | 통제 benchmark |
+| --- | --- | --- | --- |
+| yolov8s | 12.7453 | 39.4114 | 미측정 |
+| yolo26s | 14.8630 | 17.3547 | 미측정 |
+| 다른4종 | 미측정 | 미측정 | 미측정 |
+
+CPU 전송·ByteTrack 포함, JSON 쓰기 제외. 총 초÷프레임 수의 평균이며 median/p95·동시 부하·캐시 상태는 미기록입니다. 측정 범위가 다른 mixed-batch evaluator·역사 runtime과 비교하지 않습니다.
+
+### 핵심 설정
+
+| 항목 | 값 |
+| --- | --- |
+| AP / 추적 입력 confidence | 0.001 /0.10 |
+| NMS IoU / max_det | 0.70 /300 |
+| ByteTrack high / low / new | 0.25 /0.10 /0.25 |
+| ByteTrack match / buffer / fuse_score | 0.80 /30 /true |
+| 최근 추적 입력 | 640×640 / batch1 / FP32 |
+| 역사 추적 입력 | 480×640 / 별도 BOTrack XYWH·NSA wrapper |
+
+
+## 3. 입력과 출력 해석
+
+대표 모델의 배포 입력은 compiler 안내상 **uint8 NHWC [1,640,640,3]**입니다. grayscale을3채널로 구성하고 패딩114로 중앙 letterbox합니다. 특히 이 공통6종 실험은640×512 영상을(0,64)에 붙인640×640 캔버스를 사용하므로 **YOLOX도 이 중앙 캔버스를 먼저 구성**해야 합니다. 원본 평가의 YOLOX ValTransform은 이미640×640인 캔버스에 적용되어 추가 패딩을 하지 않습니다. UL의 /255 정규화와 HWC→CHW는 컴파일에 포함되고, YOLOX에는 /255 정규화가 없습니다. **resize·패딩·색/의미 채널 변환·tracker는 외부 처리**입니다.
+
+YOLOX의 현재 게시본은 calibration을 표준 좌상단 패딩으로 준비했으므로 원본 실험과 일치하는 중앙 캔버스 calibration으로 교정 대기 중입니다. 가중치·출력 형상 검증과 calibration geometry의 일치는 별도 확인 항목입니다.
+
+| 모델 / export | 공개 output0 | 필요한 후처리 |
+| --- | --- | --- |
+| 새 YOLO26n/s/m ·YOLOv8n/s | [1,20,8400] | decoded xywh4 + class16; xyxy 변환·confidence·NMS |
+| YOLOX-Nano/s | [1,8400,21] | decoded xywh4 + objectness1 + class16; obj×class·NMS |
+| historical YOLO26s | [1,300,6] | selected xyxy4 + confidence + class index; confidence·좌표 복원 |
+
+16은 클래스 수이며 공개 출력 텐서는 모델당1개입니다. 출력은 DXNN 내부 CPU ONNX 메타데이터상 float32이며, NPU/CPU 혼합 그래프일 수 있습니다. **확장자 DXNN이 모든 내부 연산·입출력이 INT8이라는 뜻은 아닙니다.** 실제 DXRT 버퍼는 장치에서 재확인해야 합니다.
+
+## 상세 근거
+
+<details>
+<summary>전체 성능표 · 추적 세부 · 설정 · 역사19 · seed 반복 · runtime</summary>
 
 ### 최근 검출 6종 · 동일 sourceVAL
 
 TRAIN10742장, sourceVAL1144장,16클래스, seed101, Full FT30 epoch의 최종 체크포인트입니다. 입력640×640, AP confidence0.001, NMS IoU0.70, COCO maxDets[1,10,300]. YOLOv8n은 OOM 후 평가 batch4, 나머지는16이므로 아래 평가 batch를 지연시간 순위로 해석하지 않습니다.
 
-| 모델 | 전체 mAP50:95 | 전체 AP50 | 전체 AP75 | person AP50:95 | car AP50:95 | AR300 | 평가 batch |
+| 모델 | 전체 mAP50:95 ↑ | 전체 AP50 ↑ | 전체 AP75 ↑ | person AP50:95 ↑ | car AP50:95 ↑ | AR300 ↑ | 평가 batch |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | yolov8n | 19.8696 | 34.3712 | 19.2929 | 36.8542 | 53.1387 | 32.6315 | 4 |
 | yolox-nano | 16.8664 | 31.2794 | 14.8047 | 31.6139 | 48.2667 | 27.6596 | 16 |
 | yolo26n | 20.7318 | 35.6591 | 20.7991 | 38.0337 | 53.9829 | 34.3948 | 16 |
 | yolov8s | 24.3720 | 40.6337 | 25.3877 | 42.2804 | 57.4554 | 34.7286 | 16 |
 | yolox-s | 22.8154 | 38.6608 | 22.5710 | 39.9558 | 55.8228 | 30.8326 | 16 |
-| yolo26s | 25.4758 | 41.9578 | 25.6621 | 44.9255 | 59.0974 | 36.6120 | 16 |
+| yolo26s | **<ins>25.4758</ins>** | **<ins>41.9578</ins>** | **<ins>25.6621</ins>** | **<ins>44.9255</ins>** | **<ins>59.0974</ins>** | **<ins>36.6120</ins>** | 16 |
 
 원문: `yolo_family_screen_20261019_v1/common_score_comparison_full6_v2_20261019.csv`, evaluator v3. sourceVAL은 이미 노출된 평가셋이며 독립 TEST 결과가 아닙니다.
 
@@ -27,38 +134,50 @@ TRAIN10742장, sourceVAL1144장,16클래스, seed101, Full FT30 epoch의 최종 
 
 **person · GT boxes 2469**
 
-| 모델 | tracker | HOTA | DetA | AssA | IDF1 | MOTA | FP | FN | IDSW |
+| 모델 | tracker | HOTA ↑ | DetA ↑ | AssA ↑ | IDF1 ↑ | MOTA ↑ | FP ↓ | FN ↓ | IDSW ↓ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | yolov8s | BYTE | 62.1219 | 57.9567 | 66.6548 | 76.8591 | 69.9068 | 177 | 543 | 23 |
-| yolov8s | OCSORT | 59.6343 | 57.8827 | 61.5119 | 74.0936 | 70.8789 | 155 | 542 | 22 |
-| yolov8s | BOTSORT_GMC | 67.4590 | 63.6129 | 71.7691 | 77.9966 | 72.2155 | 201 | 467 | 18 |
-| yolo26s | BYTE | 63.7377 | 59.8190 | 67.9860 | 78.9417 | 70.5549 | 191 | 518 | 18 |
+| yolov8s | OCSORT | 59.6343 | 57.8827 | 61.5119 | 74.0936 | 70.8789 | **<ins>155</ins>** | 542 | 22 |
+| yolov8s | BOTSORT_GMC | 67.4590 | 63.6129 | **<ins>71.7691</ins>** | 77.9966 | **<ins>72.2155</ins>** | 201 | 467 | **<ins>18</ins>** |
+| yolo26s | BYTE | 63.7377 | 59.8190 | 67.9860 | **<ins>78.9417</ins>** | 70.5549 | 191 | 518 | **<ins>18</ins>** |
 | yolo26s | OCSORT | 62.9723 | 59.9617 | 66.2101 | 78.4777 | 71.3244 | 161 | 527 | 20 |
-| yolo26s | BOTSORT_GMC | 67.9369 | 64.5543 | 71.7458 | 78.2812 | 71.5269 | 224 | 461 | 18 |
+| yolo26s | BOTSORT_GMC | **<ins>67.9369</ins>** | **<ins>64.5543</ins>** | 71.7458 | 78.2812 | 71.5269 | 224 | **<ins>461</ins>** | **<ins>18</ins>** |
+| yolov8n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
+| yolo26n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
+| yolox-nano | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
+| yolox-s | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
 
 
 **car · GT boxes 6668**
 
-| 모델 | tracker | HOTA | DetA | AssA | IDF1 | MOTA | FP | FN | IDSW |
+| 모델 | tracker | HOTA ↑ | DetA ↑ | AssA ↑ | IDF1 ↑ | MOTA ↑ | FP ↓ | FN ↓ | IDSW ↓ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | yolov8s | BYTE | 43.5842 | 37.7524 | 50.8984 | 53.8226 | 39.6521 | 693 | 3238 | 93 |
-| yolov8s | OCSORT | 41.6231 | 37.1677 | 47.1162 | 50.9204 | 39.0222 | 634 | 3322 | 110 |
-| yolov8s | BOTSORT_GMC | 50.1605 | 40.3313 | 63.0404 | 60.8233 | 41.9316 | 693 | 3122 | 57 |
+| yolov8s | OCSORT | 41.6231 | 37.1677 | 47.1162 | 50.9204 | 39.0222 | **<ins>634</ins>** | 3322 | 110 |
+| yolov8s | BOTSORT_GMC | 50.1605 | 40.3313 | **<ins>63.0404</ins>** | 60.8233 | 41.9316 | 693 | 3122 | 57 |
 | yolo26s | BYTE | 47.9415 | 44.9303 | 51.9791 | 57.0719 | 48.3653 | 834 | 2497 | 112 |
 | yolo26s | OCSORT | 47.6287 | 44.6058 | 51.6394 | 55.1503 | 48.2154 | 784 | 2577 | 92 |
-| yolo26s | BOTSORT_GMC | 53.7894 | 47.9854 | 61.2350 | 62.3271 | 51.7846 | 808 | 2361 | 46 |
+| yolo26s | BOTSORT_GMC | **<ins>53.7894</ins>** | **<ins>47.9854</ins>** | 61.2350 | **<ins>62.3271</ins>** | **<ins>51.7846</ins>** | 808 | **<ins>2361</ins>** | **<ins>46</ins>** |
+| yolov8n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
+| yolo26n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
+| yolox-nano | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
+| yolox-s | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
 
 
 **truck · GT boxes 1180**
 
-| 모델 | tracker | HOTA | DetA | AssA | IDF1 | MOTA | FP | FN | IDSW |
+| 모델 | tracker | HOTA ↑ | DetA ↑ | AssA ↑ | IDF1 ↑ | MOTA ↑ | FP ↓ | FN ↓ | IDSW ↓ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | yolov8s | BYTE | 7.2595 | 9.7895 | 5.5417 | 11.4024 | -4.4915 | 189 | 1023 | 21 |
-| yolov8s | OCSORT | 7.5302 | 9.1623 | 6.2953 | 12.4665 | -3.2203 | 165 | 1033 | 20 |
-| yolov8s | BOTSORT_GMC | 10.3740 | 10.6709 | 10.3950 | 17.4198 | -2.7966 | 186 | 1019 | 8 |
-| yolo26s | BYTE | 25.3696 | 24.1133 | 28.1567 | 32.0671 | -5.5932 | 445 | 778 | 23 |
+| yolov8s | OCSORT | 7.5302 | 9.1623 | 6.2953 | 12.4665 | -3.2203 | **<ins>165</ins>** | 1033 | 20 |
+| yolov8s | BOTSORT_GMC | 10.3740 | 10.6709 | 10.3950 | 17.4198 | -2.7966 | 186 | 1019 | **<ins>8</ins>** |
+| yolo26s | BYTE | **<ins>25.3696</ins>** | 24.1133 | **<ins>28.1567</ins>** | **<ins>32.0671</ins>** | -5.5932 | 445 | 778 | 23 |
 | yolo26s | OCSORT | 19.2914 | 22.6585 | 17.0108 | 22.9188 | -4.0678 | 397 | 811 | 20 |
-| yolo26s | BOTSORT_GMC | 22.9611 | 25.7977 | 21.3028 | 24.4676 | -1.2712 | 418 | 759 | 18 |
+| yolo26s | BOTSORT_GMC | 22.9611 | **<ins>25.7977</ins>** | 21.3028 | 24.4676 | **<ins>-1.2712</ins>** | 418 | **<ins>759</ins>** | 18 |
+| yolov8n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
+| yolo26n | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
+| yolox-nano | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
+| yolox-s | BYTE / OCSORT / BOTSORT_GMC | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 | 미평가 |
 
 원문: `yolo_family_tracking_report_only_20261019_v1/COMPARISON.json`. TrackEval commit `12c8791b303e0a0b50f753af204249e622d0281a`. HOTA/DetA/AssA/IDF1/MOTA는 높을수록, FP/FN/IDSW는 낮을수록 좋습니다.
 
@@ -103,7 +222,7 @@ AP용0.001과 추적 입력용0.10을 혼동하지 마세요. Detector confidenc
 
 DESKTOP-AAO2NEF, i7-7700K, GTX1080Ti, torch2.7.0+cu118, Ultralytics8.4.157, CPU threads4, FP32, batch1,640×640,1924프레임, warmup5회. 총 기록 초÷프레임 수로 계산한 평균입니다.
 
-| 모델 | 탐지+CPU 전송+ByteTrack 평균 ms/frame | 읽기·decode 포함 평균 ms/frame | 통제된 순수 추론 benchmark |
+| 모델 | 탐지+CPU 전송+ByteTrack 평균 ms/frame ↓ | 읽기·decode 포함 평균 ms/frame ↓ | 통제된 순수 추론 benchmark |
 | --- | --- | --- | --- |
 | yolov8n | 미측정 | 미측정 | 미측정 |
 | yolox-nano | 미측정 | 미측정 | 미측정 |
@@ -118,7 +237,7 @@ DESKTOP-AAO2NEF, i7-7700K, GTX1080Ti, torch2.7.0+cu118, Ultralytics8.4.157, CPU 
 <summary>별도 참고: 최근 evaluator의 혼합 batch 시간 · PC latency와 비교하지 않음</summary>
 
 
-| 모델 | 평가 batch | 기록 ms/image | 동일 조건 PC benchmark |
+| 모델 | 평가 batch | 기록 ms/image ↓ | 동일 조건 PC benchmark |
 | --- | --- | --- | --- |
 | yolov8n | 4 | 12.2254 | 미측정 |
 | yolox-nano | 16 | 20.3782 | 미측정 |
@@ -137,35 +256,35 @@ DESKTOP-AAO2NEF, i7-7700K, GTX1080Ti, torch2.7.0+cu118, Ultralytics8.4.157, CPU 
 
 TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상1924프레임입니다. 아래 두 종류의 지표는 같은 데이터셋에서 계산되지 않았습니다. 입력·학습 stage·seed·장비가 다른 블록과 합쳐 순위를 만들지 않습니다.
 
-| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 | person AP50 | car AP50:95 | 전체 mAP50:95 |
+| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 ↑ | person AP50 ↑ | car AP50:95 ↑ | 전체 mAP50:95 ↑ |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | YOLO26s / clahe_full_ft | CLAHE · Full FT | 202 | 30 | 43.6077 | 75.4628 | 58.4576 | 미확인 |
 | YOLO26s / clahe_lora_r8_head | CLAHE · LoRA r8+head | 202 | 30 | 40.9653 | 71.7479 | 55.0928 | 미확인 |
 | YOLO26s / combined_full_ft | combined · Full FT | 202 | 30 | 43.9659 | 75.4729 | 58.5177 | 미확인 |
 | YOLO26s / combined_lora_r8_head | combined · LoRA r8+head | 202 | 30 | 40.2628 | 70.7924 | 55.0202 | 미확인 |
-| YOLO26s / gradient_full_ft | gradient · Full FT | 202 | 30 | 43.9518 | 75.4946 | 58.6052 | 미확인 |
+| YOLO26s / gradient_full_ft | gradient · Full FT | 202 | 30 | 43.9518 | **<ins>75.4946</ins>** | 58.6052 | 미확인 |
 | YOLO26s / gradient_lora_r8_head | gradient · LoRA r8+head | 202 | 30 | 41.3742 | 71.8697 | 55.0837 | 미확인 |
-| YOLO26s / original_full_ft | original · Full FT | 202 | 30 | 44.1316 | 75.4051 | 58.8730 | 미확인 |
+| YOLO26s / original_full_ft | original · Full FT | 202 | 30 | **<ins>44.1316</ins>** | 75.4051 | **<ins>58.8730</ins>** | 미확인 |
 | YOLO26s / original_lora_r8_head | original · LoRA r8+head | 202 | 30 | 42.1545 | 73.3405 | 55.7646 | 미확인 |
 
 추적:480×640, batch1, FP32, ByteTrack + BOTrack XYWH/NSA wrapper. 역사 집계에는 DetA/AssA/MOTA가 없어 미확인으로 유지합니다.
 
-| 조건 | class | HOTA | IDF1 | FP | FN | IDSW |
+| 조건 | class | HOTA ↑ | IDF1 ↑ | FP ↓ | FN ↓ | IDSW ↓ |
 | --- | --- | --- | --- | --- | --- | --- |
-| clahe_full_ft | person | 66.4821 | 75.5098 | 336 | 517 | 16 |
+| clahe_full_ft | person | 66.4821 | 75.5098 | 336 | 517 | **<ins>16</ins>** |
 | clahe_full_ft | car | 48.6943 | 52.4884 | 1262 | 2763 | 65 |
 | clahe_lora_r8_head | person | 66.4160 | 75.6505 | 339 | 550 | 20 |
-| clahe_lora_r8_head | car | 47.9142 | 50.2463 | 1332 | 3097 | 61 |
-| combined_full_ft | person | 63.3713 | 71.4743 | 251 | 502 | 30 |
-| combined_full_ft | car | 51.1282 | 57.6633 | 1000 | 2918 | 63 |
+| clahe_lora_r8_head | car | 47.9142 | 50.2463 | 1332 | 3097 | **<ins>61</ins>** |
+| combined_full_ft | person | 63.3713 | 71.4743 | 251 | **<ins>502</ins>** | 30 |
+| combined_full_ft | car | 51.1282 | 57.6633 | **<ins>1000</ins>** | 2918 | 63 |
 | combined_lora_r8_head | person | 63.1893 | 71.6297 | 295 | 545 | 17 |
 | combined_lora_r8_head | car | 47.8434 | 49.7910 | 1441 | 3056 | 85 |
-| gradient_full_ft | person | 66.3299 | 74.4327 | 233 | 544 | 16 |
-| gradient_full_ft | car | 51.9152 | 57.6897 | 1081 | 2661 | 74 |
-| gradient_lora_r8_head | person | 67.9222 | 77.0734 | 210 | 542 | 18 |
+| gradient_full_ft | person | 66.3299 | 74.4327 | 233 | 544 | **<ins>16</ins>** |
+| gradient_full_ft | car | 51.9152 | 57.6897 | 1081 | **<ins>2661</ins>** | 74 |
+| gradient_lora_r8_head | person | **<ins>67.9222</ins>** | **<ins>77.0734</ins>** | **<ins>210</ins>** | 542 | 18 |
 | gradient_lora_r8_head | car | 48.7691 | 51.9627 | 1636 | 2948 | 73 |
 | original_full_ft | person | 67.5832 | 76.6905 | 337 | 513 | 17 |
-| original_full_ft | car | 52.0257 | 58.6102 | 1256 | 2734 | 82 |
+| original_full_ft | car | **<ins>52.0257</ins>** | **<ins>58.6102</ins>** | 1256 | 2734 | 82 |
 | original_lora_r8_head | person | 66.5468 | 75.4382 | 228 | 545 | 26 |
 | original_lora_r8_head | car | 48.8736 | 51.4959 | 1461 | 2998 | 62 |
 
@@ -178,19 +297,19 @@ TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상192
 
 TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상1924프레임입니다. 아래 두 종류의 지표는 같은 데이터셋에서 계산되지 않았습니다. 입력·학습 stage·seed·장비가 다른 블록과 합쳐 순위를 만들지 않습니다.
 
-| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 | person AP50 | car AP50:95 | 전체 mAP50:95 |
+| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 ↑ | person AP50 ↑ | car AP50:95 ↑ | 전체 mAP50:95 ↑ |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| YOLO26s / extension_continued_lora | gradient · continued LoRA | 506 | 3+27 | 41.7243 | 72.6721 | 55.4455 | 미확인 |
-| YOLO26s / extension_supcon | gradient · LoRA+class SupCon | 506 | 3+27 | 41.6896 | 72.7156 | 55.2859 | 미확인 |
+| YOLO26s / extension_continued_lora | gradient · continued LoRA | 506 | 3+27 | **<ins>41.7243</ins>** | 72.6721 | **<ins>55.4455</ins>** | 미확인 |
+| YOLO26s / extension_supcon | gradient · LoRA+class SupCon | 506 | 3+27 | 41.6896 | **<ins>72.7156</ins>** | 55.2859 | 미확인 |
 
 추적:480×640, batch1, FP32, ByteTrack + BOTrack XYWH/NSA wrapper. 역사 집계에는 DetA/AssA/MOTA가 없어 미확인으로 유지합니다.
 
-| 조건 | class | HOTA | IDF1 | FP | FN | IDSW |
+| 조건 | class | HOTA ↑ | IDF1 ↑ | FP ↓ | FN ↓ | IDSW ↓ |
 | --- | --- | --- | --- | --- | --- | --- |
-| extension_continued_lora | person | 70.6905 | 80.9895 | 107 | 558 | 12 |
-| extension_continued_lora | car | 48.2851 | 50.8063 | 1867 | 2925 | 81 |
-| extension_supcon | person | 69.6664 | 79.4563 | 99 | 549 | 18 |
-| extension_supcon | car | 47.7719 | 50.0162 | 1898 | 2906 | 81 |
+| extension_continued_lora | person | **<ins>70.6905</ins>** | **<ins>80.9895</ins>** | 107 | 558 | **<ins>12</ins>** |
+| extension_continued_lora | car | **<ins>48.2851</ins>** | **<ins>50.8063</ins>** | **<ins>1867</ins>** | 2925 | **<ins>81</ins>** |
+| extension_supcon | person | 69.6664 | 79.4563 | **<ins>99</ins>** | **<ins>549</ins>** | 18 |
+| extension_supcon | car | 47.7719 | 50.0162 | 1898 | **<ins>2906</ins>** | **<ins>81</ins>** |
 
 원문: `lwir_kd_schedule_horizon_20261015_v1/evidence_snapshots/completed19_after_local_kd_linear60_20261016_v1/selection_evidence_v3.json`.
 
@@ -201,19 +320,19 @@ TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상192
 
 TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상1924프레임입니다. 아래 두 종류의 지표는 같은 데이터셋에서 계산되지 않았습니다. 입력·학습 stage·seed·장비가 다른 블록과 합쳐 순위를 만들지 않습니다.
 
-| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 | person AP50 | car AP50:95 | 전체 mAP50:95 |
+| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 ↑ | person AP50 ↑ | car AP50:95 ↑ | 전체 mAP50:95 ↑ |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| YOLO26s / id_id_supcon | ID-SupCon bundle 추가 학습 | 707 | 追加30 | 44.8057 | 76.5531 | 58.8270 | 미확인 |
+| YOLO26s / id_id_supcon | ID-SupCon bundle 추가 학습 | 707 | 追加30 | **<ins>44.8057</ins>** | **<ins>76.5531</ins>** | **<ins>58.8270</ins>** | 미확인 |
 | YOLO26s / id_continued_ft | continued Full FT 대조 | 707 | 追加30 | 44.6888 | 76.2608 | 58.8092 | 미확인 |
 
 추적:480×640, batch1, FP32, ByteTrack + BOTrack XYWH/NSA wrapper. 역사 집계에는 DetA/AssA/MOTA가 없어 미확인으로 유지합니다.
 
-| 조건 | class | HOTA | IDF1 | FP | FN | IDSW |
+| 조건 | class | HOTA ↑ | IDF1 ↑ | FP ↓ | FN ↓ | IDSW ↓ |
 | --- | --- | --- | --- | --- | --- | --- |
-| id_id_supcon | person | 63.6071 | 71.1822 | 329 | 513 | 16 |
-| id_id_supcon | car | 51.0136 | 57.3864 | 1096 | 2701 | 103 |
-| id_continued_ft | person | 66.6170 | 75.4133 | 301 | 521 | 19 |
-| id_continued_ft | car | 50.7996 | 58.0115 | 1085 | 2744 | 84 |
+| id_id_supcon | person | 63.6071 | 71.1822 | 329 | **<ins>513</ins>** | **<ins>16</ins>** |
+| id_id_supcon | car | **<ins>51.0136</ins>** | 57.3864 | 1096 | **<ins>2701</ins>** | 103 |
+| id_continued_ft | person | **<ins>66.6170</ins>** | **<ins>75.4133</ins>** | **<ins>301</ins>** | 521 | 19 |
+| id_continued_ft | car | 50.7996 | **<ins>58.0115</ins>** | **<ins>1085</ins>** | 2744 | **<ins>84</ins>** |
 
 원문: `lwir_kd_schedule_horizon_20261015_v1/evidence_snapshots/completed19_after_local_kd_linear60_20261016_v1/selection_evidence_v3.json`.
 
@@ -224,22 +343,22 @@ TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상192
 
 TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상1924프레임입니다. 아래 두 종류의 지표는 같은 데이터셋에서 계산되지 않았습니다. 입력·학습 stage·seed·장비가 다른 블록과 합쳐 순위를 만들지 않습니다.
 
-| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 | person AP50 | car AP50:95 | 전체 mAP50:95 |
+| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 ↑ | person AP50 ↑ | car AP50:95 ↑ | 전체 mAP50:95 ↑ |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | YOLO26s / kd30_student_ft | Full FT matched student 대조 | 202 | 30 | 44.4447 | 76.1630 | 58.8505 | 미확인 |
 | YOLO26s / kd30_student_kd | feature KD student | 202 | 30 | 43.1643 | 76.0179 | 57.8921 | 미확인 |
-| YOLO26m / kd30_teacher_m | Full FT teacher M | 202 | 30 | 49.0326 | 80.7519 | 62.5398 | 미확인 |
+| YOLO26m / kd30_teacher_m | Full FT teacher M | 202 | 30 | **<ins>49.0326</ins>** | **<ins>80.7519</ins>** | **<ins>62.5398</ins>** | 미확인 |
 
 추적:480×640, batch1, FP32, ByteTrack + BOTrack XYWH/NSA wrapper. 역사 집계에는 DetA/AssA/MOTA가 없어 미확인으로 유지합니다.
 
-| 조건 | class | HOTA | IDF1 | FP | FN | IDSW |
+| 조건 | class | HOTA ↑ | IDF1 ↑ | FP ↓ | FN ↓ | IDSW ↓ |
 | --- | --- | --- | --- | --- | --- | --- |
-| kd30_student_ft | person | 70.7070 | 81.0319 | 201 | 526 | 15 |
+| kd30_student_ft | person | 70.7070 | **<ins>81.0319</ins>** | **<ins>201</ins>** | 526 | **<ins>15</ins>** |
 | kd30_student_ft | car | 52.4678 | 57.8733 | 1100 | 2662 | 63 |
 | kd30_student_kd | person | 65.7655 | 74.9420 | 332 | 525 | 20 |
-| kd30_student_kd | car | 51.8699 | 56.8670 | 1069 | 2806 | 53 |
-| kd30_teacher_m | person | 70.7814 | 79.6269 | 230 | 451 | 25 |
-| kd30_teacher_m | car | 53.5707 | 59.2283 | 1135 | 2497 | 70 |
+| kd30_student_kd | car | 51.8699 | 56.8670 | **<ins>1069</ins>** | 2806 | **<ins>53</ins>** |
+| kd30_teacher_m | person | **<ins>70.7814</ins>** | 79.6269 | 230 | **<ins>451</ins>** | 25 |
+| kd30_teacher_m | car | **<ins>53.5707</ins>** | **<ins>59.2283</ins>** | 1135 | **<ins>2497</ins>** | 70 |
 
 원문: `lwir_kd_schedule_horizon_20261015_v1/evidence_snapshots/completed19_after_local_kd_linear60_20261016_v1/selection_evidence_v3.json`.
 
@@ -250,13 +369,13 @@ TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상192
 
 TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상1924프레임입니다. 아래 두 종류의 지표는 같은 데이터셋에서 계산되지 않았습니다. 입력·학습 stage·seed·장비가 다른 블록과 합쳐 순위를 만들지 않습니다.
 
-| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 | person AP50 | car AP50:95 | 전체 mAP50:95 |
+| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 ↑ | person AP50 ↑ | car AP50:95 ↑ | 전체 mAP50:95 ↑ |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | YOLO26s / schedule60_student_ft_linear60 | Full FT linear60 · 4090 | 202 | 60 | 44.9319 | 76.9563 | 59.6659 | 미확인 |
 
 추적:480×640, batch1, FP32, ByteTrack + BOTrack XYWH/NSA wrapper. 역사 집계에는 DetA/AssA/MOTA가 없어 미확인으로 유지합니다.
 
-| 조건 | class | HOTA | IDF1 | FP | FN | IDSW |
+| 조건 | class | HOTA ↑ | IDF1 ↑ | FP ↓ | FN ↓ | IDSW ↓ |
 | --- | --- | --- | --- | --- | --- | --- |
 | schedule60_student_ft_linear60 | person | 63.6633 | 71.8369 | 337 | 517 | 20 |
 | schedule60_student_ft_linear60 | car | 51.4825 | 57.9357 | 825 | 2845 | 62 |
@@ -270,19 +389,19 @@ TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상192
 
 TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상1924프레임입니다. 아래 두 종류의 지표는 같은 데이터셋에서 계산되지 않았습니다. 입력·학습 stage·seed·장비가 다른 블록과 합쳐 순위를 만들지 않습니다.
 
-| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 | person AP50 | car AP50:95 | 전체 mAP50:95 |
+| 모델 / 조건 | 방법 | seed | 기록 stage epoch | person AP50:95 ↑ | person AP50 ↑ | car AP50:95 ↑ | 전체 mAP50:95 ↑ |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| YOLO26s / local60_v12_student_ft_linear60 | Full FT linear60 · 1080Ti | 202 | 60 | 44.8575 | 76.7890 | 59.5214 | 미확인 |
-| YOLO26s / local60_v12_student_ft_cosine60 | Full FT cosine60 · 1080Ti | 202 | 60 | 44.7178 | 76.9162 | 59.5365 | 미확인 |
+| YOLO26s / local60_v12_student_ft_linear60 | Full FT linear60 · 1080Ti | 202 | 60 | **<ins>44.8575</ins>** | 76.7890 | 59.5214 | 미확인 |
+| YOLO26s / local60_v12_student_ft_cosine60 | Full FT cosine60 · 1080Ti | 202 | 60 | 44.7178 | **<ins>76.9162</ins>** | **<ins>59.5365</ins>** | 미확인 |
 | YOLO26s / local60_v12_student_kd_linear60 | feature KD linear60 · 1080Ti | 202 | 60 | 44.2334 | 76.5013 | 59.3550 | 미확인 |
 
 추적:480×640, batch1, FP32, ByteTrack + BOTrack XYWH/NSA wrapper. 역사 집계에는 DetA/AssA/MOTA가 없어 미확인으로 유지합니다.
 
-| 조건 | class | HOTA | IDF1 | FP | FN | IDSW |
+| 조건 | class | HOTA ↑ | IDF1 ↑ | FP ↓ | FN ↓ | IDSW ↓ |
 | --- | --- | --- | --- | --- | --- | --- |
-| local60_v12_student_ft_linear60 | person | 67.6725 | 77.5407 | 321 | 526 | 12 |
-| local60_v12_student_ft_linear60 | car | 53.5025 | 60.9618 | 720 | 2744 | 59 |
-| local60_v12_student_ft_cosine60 | person | 65.5681 | 74.8777 | 278 | 515 | 21 |
+| local60_v12_student_ft_linear60 | person | **<ins>67.6725</ins>** | **<ins>77.5407</ins>** | 321 | 526 | **<ins>12</ins>** |
+| local60_v12_student_ft_linear60 | car | **<ins>53.5025</ins>** | **<ins>60.9618</ins>** | **<ins>720</ins>** | **<ins>2744</ins>** | **<ins>59</ins>** |
+| local60_v12_student_ft_cosine60 | person | 65.5681 | 74.8777 | **<ins>278</ins>** | **<ins>515</ins>** | 21 |
 | local60_v12_student_ft_cosine60 | car | 49.8029 | 58.2127 | 794 | 3074 | 62 |
 | local60_v12_student_kd_linear60 | person | 66.9051 | 76.2452 | 295 | 535 | 17 |
 | local60_v12_student_kd_linear60 | car | 50.4331 | 55.0022 | 903 | 2774 | 70 |
@@ -296,15 +415,15 @@ TRAIN4196장; 검출은 sourceVAL1144장, 추적은 별도 exposed DEV5영상192
 
 YOLO26s full-dose, TRAIN10491장, sourceVAL1144장, batch4, AdamW,30 epoch, 최종 epoch29. 아래 person AP50:95는 원문에 확인된 소수 둘째 자리 정밀도만 보존합니다.
 
-| 모델 | 방법 | seed | TRAIN | epoch | person AP50:95 | 기타 지표 |
+| 모델 | 방법 | seed | TRAIN | epoch | person AP50:95 ↑ | 기타 지표 |
 | --- | --- | --- | --- | --- | --- | --- |
-| YOLO26s | Full FT | 303 | 10491 | 30 | 48.01 | AP50 / 전체 mAP / car / tracking 미확인 |
+| YOLO26s | Full FT | 303 | 10491 | 30 | **<ins>48.01</ins>** | AP50 / 전체 mAP / car / tracking 미확인 |
 | YOLO26s | LoRA r8+head | 303 | 10491 | 30 | 45.10 | 동일 |
-| YOLO26s | Full FT | 404 | 10491 | 30 | 47.68 | 동일 |
+| YOLO26s | Full FT | 404 | 10491 | 30 | **<ins>47.68</ins>** | 동일 |
 | YOLO26s | LoRA r8+head | 404 | 10491 | 30 | 45.35 | 동일 |
 
 
-| 모델 | 확인된 상태 | person AP50:95 | person AP50 | 주의 |
+| 모델 | 확인된 상태 | person AP50:95 ↑ | person AP50 ↑ | 주의 |
 | --- | --- | --- | --- | --- |
 | YOLO26m | TRAIN4196 / seed202 / teacher Full FT30 완료 | 49.0326 | 80.7520 | 역사 Teacher/KD 블록; 최근6종과 별도 |
 | YOLO26x | Full FT30 및 source 평가 완료 receipt | 미확인 | 미확인 | 로컬 최종 가중치 없음 / 추적 미평가 / YOLOX와 다름 |
@@ -318,7 +437,7 @@ YOLO26s full-dose, TRAIN10491장, sourceVAL1144장, batch4, AdamW,30 epoch, 최�
 
 480×640, batch1, FP32,1924프레임, warmup5. source read/decode + predict + CPU transfer/tracking의 기존 합산 기록이며 JSON 쓰기는 제외합니다. 각 timing record의 추론 GPU명·개별 측정시각·median/p95는 미기록입니다. 학습에 사용한 GPU명을 추론 GPU명으로 대체하지 않습니다.
 
-| 학습 블록 | 조건 | 읽기 포함 FPS | predict+track FPS | 읽기 포함 평균 ms/frame | predict+track 평균 ms/frame |
+| 학습 블록 | 조건 | 읽기 포함 FPS ↑ | predict+track FPS ↑ | 읽기 포함 평균 ms/frame ↓ | predict+track 평균 ms/frame ↓ |
 | --- | --- | --- | --- | --- | --- |
 | native_input_seed202 | clahe_full_ft | 29.8011 | 41.9094 | 33.5559 | 23.8610 |
 | native_input_seed202 | clahe_lora_r8_head | 36.8206 | 41.2531 | 27.1587 | 24.2406 |
@@ -345,54 +464,19 @@ YOLO26s full-dose, TRAIN10491장, sourceVAL1144장, batch4, AdamW,30 epoch, 최�
 </details>
 
 표의 검증용 정밀 CSV/JSON과 PNG는 원본 Library ZIP에 보존했습니다. 저장소 현재 루트는 README.md와 모델 계열 폴더만 유지합니다. 학습 완료·검출 평가·추적 평가·DXNN 컴파일·실기 검증은 각각 다른 상태입니다.
-<!-- PERFORMANCE_TABLES_END -->
+
+</details>
+
+<details>
+<summary>클래스16 · 실제 tensor metadata · 변형별 외부 전처리</summary>
+
+### 클래스와 디코더
+
+ONNX source input: images, float32 NCHW[1,3,640,640]. 새26 export는 end2end=False, xyxy=False, reg_max1이며 공개 출력은 이미 decoded xywh입니다. YOLOv8은 reg_max16의 DFL decoding을 graph 내부에서 마쳐 공개 출력에 DFL bin이 남지 않습니다. YOLOX는 decode_in_inference=True로 grid/stride/exp 복원이 graph에 포함돼 있어 다시 decode하지 않습니다. 역사26s는 별도 end-to-end selected head입니다.
 
 
-Deployment binaries are grouped by detector family. Family folders contain DXNN files only; all instructions and compilation provenance are collected here. Only existing, verified compiled artifacts are published.
-
-## Downloads and completion status
-
-| Family/model | Status | Artifact |
-|---|---|---|
-| YOLO26n | Compiled; NPU validation pending | [yolo26/yolo26n.dxnn](yolo26/yolo26n.dxnn) |
-| YOLO26s | Compiled; NPU validation pending | [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) |
-| YOLOX-Nano | Compiled; NPU validation pending | [yolox/yolox_nano.dxnn](yolox/yolox_nano.dxnn) |
-| YOLOX-s | Compiled; NPU validation pending | [yolox/yolox_s.dxnn](yolox/yolox_s.dxnn) |
-| YOLOv8n | Converted and compiled in this update; NPU validation pending | [yolov8/yolov8n.dxnn](yolov8/yolov8n.dxnn) |
-| YOLOv8s | Compiled; NPU validation pending | [yolov8/yolov8s.dxnn](yolov8/yolov8s.dxnn) |
-
-No yolox/ folder is committed until an actual verified YOLOX DXNN exists. Git does not retain empty folders; no placeholder model files are used.
-
-## Artifact identity and integrity
-
-| Artifact | Bytes | SHA-256 |
-|---|---:|---|
-| yolo26s_ft_s101_e30_legacy_20261001.dxnn | 10897723 | 1e82b415d86e9f26a549f5ee92af183f733879c77dafc40f7ff97adbf826b9f3 |
-| yolov8n.dxnn | 3696192 | f11c80721fb88d7c4cb153b165d381e778e5bf8de1bc5302d32496baf70831d7 |
-
-- YOLO26s: historical LWIR-YOLO26s-FT-10742-S101-E29 checkpoint, source PT SHA-256385621f65165f181421e1b4e4a209e32b7cb08d5f8258e95c54866439e1e2329. This is the earlier historical model, not the different YOLO26s checkpoint from the2026-10-19 six-model screen. The existing DXNN binary is unchanged.
-- YOLOv8n: LWIR-YOLOv8n-FT-10742-S101-E29, source PT SHA-2565cd07d31ed8861c46903d504e558460192f409bb3bb44179484c06e2759fb63e; FLIR ADAS v2 thermal16 classes, 10,742 TRAIN images, full fine-tuning, seed101, input640, batch16, SGD initial LR0.0025 and30 fixed epochs. The source is final epoch30/zero-based29, not validation-selected best.
-- YOLOv8n source ONNX: e6d02de05cc5b461ee0159fda746bc64226ff881283bbe05828c078d12bda36f (12250742 bytes). PT and ONNX intermediates remain local and are not included in the current repository tree.
-
-## DX-M1 compilation
-
-Both files use the existing DEEPX DX-COM2.4.1 environment (Python package reports2.4.1-rc.1), INT8 post-training quantization, EMA100 calibration steps and optimization level0. The intended target is DX-M1 using the existing SDK default hardware configuration. No new account, licence acceptance, paid resource, driver installation or security-setting change was performed.
-
-YOLOv8n compilation ran on x86-64 Ubuntu WSL with torch 2.14.1+cpu, ONNX 1.23.2 and ONNX Runtime 1.31.0. Quantization was explicitly CPU-only; the active research-training GPU was not used.
-
-Calibration used256 fixed, evenly spaced images from the10,742-image FLIR TRAIN list only: round(i*(N-1)/255), i=0..255. The source TRAIN-list SHA-256 is d40cb99963d55de372d0b46cfcc11652078b51d5d1c17321c3040621ed63f1d1. Images were verified replicated grayscale and letterboxed to640x640 using centered114 padding before calibration. The calibration-manifest SHA-256 is 78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34. Validation/TEST images and raw calibration data are not shipped.
-
-## Runtime input and output
-
-- Input contract: uint8 NHWC [1,640,640,3]. Replicate a grayscale LWIR frame to3 channels and letterbox to640x640 with centered114 padding before NPU submission. The compiler config fuses division by255 and HWC-to-CHW transpose. Do not apply those operations again. Resize/padding, color conversion and batch expansion remain external.
-- YOLOv8n source ONNX input is float32 NCHW [1,3,640,640]. Its source output is [1,20,8400]: decoded center-x/center-y/width/height plus16 class scores, with no separate objectness channel. External class-aware NMS and inverse-letterbox coordinate restoration are required. Consult DXRT's actual tensor metadata on the board before wiring buffers; the compiled device layout has not been run here.
-- The existing YOLO26s source ONNX output was [1,300,6] (xyxy, confidence, class index), an end-to-end detection head. Its output parser must not be reused for YOLOv8n without adapting the raw one-to-many/NMS path.
-- Tracking, Kalman filtering, ID assignment and detector thresholds are external to both artifacts. No tracker implementation or default-application configuration is changed by this upload.
-
-Class mapping for both16-class FLIR detectors:
-
-| ID | Class |
-|---:|---|
+| class index | 이름 |
+| --- | --- |
 | 0 | person |
 | 1 | bicycle |
 | 2 | car |
@@ -410,142 +494,229 @@ Class mapping for both16-class FLIR detectors:
 | 14 | scooter |
 | 15 | other vehicle |
 
-## What was verified
+YOLOX COCO category ID는 index+1이며 detector output index는0부터 시작합니다.
 
-YOLOv8n: source checkpoint identity/hash, unchanged source copy, ONNX checker, CPU zero-input execution with finite [1,20,8400] output, and raw PyTorch/ONNX output agreement on3 fixed TRAIN calibration samples (rtol1e-4, atol5e-3). DX-COM returned successfully and produced the hashed DXNN. Compilation elapsed 154.2 seconds.
+### 외부 의미 채널 변환
 
-The YOLOv8n compiler reported one NPU group and one CPU group, marked8 memory operations from NPU to CPU, and generated an empty error.log. It explicitly reported uint8 NHWC [1,640,640,3] input and fused Div(x=255.0) plus HWC-to-CHW transpose. This is a mixed NPU/CPU graph, not a claim that every operation executes on the NPU. The existing YOLO26s compiler previously warned about a0.8506 pre-quantization graph-rewrite cosine similarity around TopK/NMS and reported one NPU group plus one CPU group.
+원본 uint8 grayscale을 letterbox한 다음 BGR→RGB 변환 후 의미 채널을 배정합니다. R=원본, G=CLAHE(clipLimit2.0,tileGrid8×8)는 clahe/combined일 때만, B=Sobel magnitude의 고정 sqrt 압축은 gradient/combined일 때만 사용하며 나머지 채널은 원본입니다. Sobel CV_32F, ksize3; gradient=round(sqrt(clip(magnitude/1443,0,1))*255). 최종 semantic RGB 순서를 그대로 공급해야 합니다.
 
-No physical DX-M1/DXRT device was detected. Neither new YOLOv8n nor the retained YOLO26s DXNN has been executed or accuracy/FPS/tracking-tested on NPU in this work. Compilation success is not a claim of board correctness, INT8 accuracy, speed or independent generalization. No training was started.
-
-## Repository scope and history
-
-The current root contains README.md and the yolo26/, yolox/, yolov8/ model-family folders. Family folders contain DXNN files only. Comparison PNGs remain in the original local/Library package and Git history; they were removed from the current tree at the user's request. PT/ONNX binaries, model-specific JSON/YAML/Markdown and older layout records were removed from the current tree. Earlier Git commits still contain those historical files; no history rewrite or force push was performed. Update branch-relative download URLs to the links above. Local research originals and conversion intermediates are preserved.
-
-Upstream Ultralytics/model, DEEPX SDK and FLIR data-use terms remain applicable; this README grants no additional licence. Official references: [DEEPX model compilation](https://developer.deepx.ai/tech-docs/DXNN-SDK/DX-COM/DX-COMPILER_Agent_Driven_Development/) and [Ultralytics DEEPX export](https://docs.ultralytics.com/integrations/deepx/).
+이 전처리는 **DXNN에 포함되지 않습니다**. calibration PNG는 semantic RGB를 BGR로 뒤집어 저장하고 loader의 BGR2RGB로 복원했습니다. LoRA는 원본 forward와 병합/fusion/ONNX 결과의3개 TRAIN sample parity를 검증합니다. 단순히 가중치 파일만 교체하고 grayscale3채널을 넣으면 의미 채널 변형의 올바른 입력이 아닙니다.
 
 
-## Published yolo26m_teacher_s202_e30
+| artifact | 공개 출력 수 | 공개 출력 메타데이터 | 내부 NPU 경계 tensor수 |
+| --- | --- | --- | --- |
+| yolo26m.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolo26n.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolov8s.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 4 |
+| yolo26s.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolox_nano.dxnn | 1 | output0 [1, 8400, 21] FLOAT | 9 |
+| yolox_s.dxnn | 1 | output0 [1, 8400, 21] FLOAT | 9 |
+| yolo26s_clahe_full_ft_s202_e30.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolo26s_clahe_lora_r8_head_s202_e30.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolov8n.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 4 |
+| yolo26s_ft_s101_e30_legacy_20261001.dxnn | 1 | output0 [1, 300, 6] FLOAT | 6 |
 
-Artifact: [yolo26/yolo26m.dxnn](yolo26/yolo26m.dxnn) — 21991058 bytes; SHA-256 `fbda1f1ba2182090e1f2f4dc3a6306347cbeec9701633c7e21c47c4a34c2c03e`.
+DXNN header graph_info와 embedded CPU ONNX ValueInfo를 읽은 정적 확인입니다. 내부 NPU 경계 tensor 여러 개를 공개 출력 tensor 수와 혼동하지 않습니다.
 
-FLIR TRAIN4196, seed202, fixed30 epochs, AdamW, training480x640; separate teacher recipe. Source checkpoint SHA-256 `dca0f23d1a945b6a73b17ef050452b87e3e7d99265eb413519b5395db67c7736`; source ONNX SHA-256 `a36ce1ecfa49f798cc6ff977eea65501206681e068836317fe38caf67689713b`. Final checkpoint, not validation-selected best.
+</details>
 
-CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 439.7s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+<details>
+<summary>체크포인트·해시·calibration·모델별 컴파일 상세</summary>
 
-Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34`. This deployment calibration pool is broader than this teacher's4196-image training subset. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; centered LetterBox640x640 padding114 before submission. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
-Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
+### 공통 컴파일 조건
 
+기존 x86-64 Ubuntu WSL, DEEPX DX-COM2.4.1(package2.4.1-rc.1), DX-M1 SDK default(M1A), optimization0, CPU INT8 PTQ, EMA calibration100steps. torch2.14.1+cpu, ONNX1.23.2, ORT1.31.0. Source export: Windows torch2.7.0+cu118, Ultralytics8.4.157, ONNX1.18.0, ORT1.19.2; static batch1,640×640, opset17. YOLOX source commit6ddff4824372906469a7fae2dc3206c7aa4bbaee.
 
-## Published yolo26n
+Calibration은 전체 FLIR TRAIN10742 목록에서 round(i*(N-1)/255), i=0..255로 뽑은256장입니다. TRAIN-list SHA-256 `d40cb99963d55de372d0b46cfcc11652078b51d5d1c17321c3040621ed63f1d1`; VAL/TEST는 사용하지 않았습니다.4196장 등 부분집합 학습 모델에는 calibration pool과 학습 subset이 다릅니다. Source hash, ONNX checker·finite CPU execution·3개 TRAIN raw parity, DX-COM 종료·DXNN hash를 확인했습니다. NPU 보드 정확도·FPS 검증과는 다릅니다.
 
-Artifact: [yolo26/yolo26n.dxnn](yolo26/yolo26n.dxnn) — 3467688 bytes; SHA-256 `0b865a0d05fa2b53b2a52d54914f37c5abcaa54f41a1059c69ca747e03460bee`.
+### yolo26m.dxnn
 
-Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `dc6f25aea34bb67989fdff31ad2ce3ea993d4ae690ab22861f4b2240dc872fc9`; source ONNX SHA-256 `2ddda14087ac21a5365b7d94a40e60f95e6b83c1a74e271646eac540262e0400`. Final checkpoint, not validation-selected best.
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | LWIR-YOLO26m-TEACHER-4196-S202-E29 |
+| 학습 방법 / seed / stage epochs | full_ft /202 /30 |
+| TRAIN support | 4196 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\lwir_kd_tracking_recovery_20261015_v1\recovered\m\runs\teacher_m\train\weights\epoch29.pt |
+| DXNN bytes | 21991058 |
+| DXNN SHA-256 | `fbda1f1ba2182090e1f2f4dc3a6306347cbeec9701633c7e21c47c4a34c2c03e` |
+| source PT SHA-256 | `dca0f23d1a945b6a73b17ef050452b87e3e7d99265eb413519b5395db67c7736` |
+| source ONNX SHA-256 | `a36ce1ecfa49f798cc6ff977eea65501206681e068836317fe38caf67689713b` |
+| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
+| compile elapsed seconds | 439.723 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.002960205078125 / score 5.945563316345215e-06 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
-CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 157.8s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+M teacher 원본 학습4196장·seed202·AdamW·480×640·batch4·30epoch·2367updates와 배포640×640을 구분합니다.
 
-Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; centered LetterBox640x640 padding114 before submission. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
-Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
+### yolo26n.dxnn
 
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | LWIR-yolo26n-FT-10742-S101-E29 |
+| 학습 방법 / seed / stage epochs | full_ft /101 /30 |
+| TRAIN support | 10742 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\yolo_family_screen_20261019_v1\full_n\yolo26n\yolo26n_full_epoch30_last.pt |
+| DXNN bytes | 3467688 |
+| DXNN SHA-256 | `0b865a0d05fa2b53b2a52d54914f37c5abcaa54f41a1059c69ca747e03460bee` |
+| source PT SHA-256 | `dc6f25aea34bb67989fdff31ad2ce3ea993d4ae690ab22861f4b2240dc872fc9` |
+| source ONNX SHA-256 | `2ddda14087ac21a5365b7d94a40e60f95e6b83c1a74e271646eac540262e0400` |
+| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
+| compile elapsed seconds | 157.786 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.00510406494140625 / score 1.0251998901367188e-05 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
-## Published yolov8s
+### yolov8s.dxnn
 
-Artifact: [yolov8/yolov8s.dxnn](yolov8/yolov8s.dxnn) — 11857151 bytes; SHA-256 `c9783a3ce9765b35163bc876fab6a4b6332314dcab71c3fca282161a3ceaa79f`.
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | LWIR-yolov8s-FT-10742-S101-E29 |
+| 학습 방법 / seed / stage epochs | full_ft /101 /30 |
+| TRAIN support | 10742 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\yolo_family_screen_20261019_v1\full_s\yolov8s\last.pt |
+| DXNN bytes | 11857151 |
+| DXNN SHA-256 | `c9783a3ce9765b35163bc876fab6a4b6332314dcab71c3fca282161a3ceaa79f` |
+| source PT SHA-256 | `53b640f03323a43b4751128108a762b8b4795b2f82834b391a2a19df4dbfb0eb` |
+| source ONNX SHA-256 | `146d4f64773af2d3aba40acd7b7433d9729d8819e556da8d6e8e963d4e3dddcf` |
+| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
+| compile elapsed seconds | 250.115 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.00274658203125 / score 6.407499313354492e-06 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
-Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `53b640f03323a43b4751128108a762b8b4795b2f82834b391a2a19df4dbfb0eb`; source ONNX SHA-256 `146d4f64773af2d3aba40acd7b7433d9729d8819e556da8d6e8e963d4e3dddcf`. Final checkpoint, not validation-selected best.
+### yolo26s.dxnn
 
-CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 250.1s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | LWIR-yolo26s-FT-10742-S101-E29 |
+| 학습 방법 / seed / stage epochs | full_ft /101 /30 |
+| TRAIN support | 10742 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\yolo_family_screen_20261019_v1\full_s\yolo26s\last.pt |
+| DXNN bytes | 10895020 |
+| DXNN SHA-256 | `7ac754185cc99e807bd824dfa617e8cc696f02a29c402076820967c906e7098b` |
+| source PT SHA-256 | `13346581137ebd1bea8e1e820c0b969b439d4859b3638685ad394fe6c116d4cc` |
+| source ONNX SHA-256 | `d021ac4097e31b3943d8029eb30be8cee500fe41ee11c308e36a8582181f3b90` |
+| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
+| compile elapsed seconds | 247.393 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.01220703125 / score 9.775161743164062e-06 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
-Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; centered LetterBox640x640 padding114 before submission. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
-Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
+### yolox_nano.dxnn
 
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | LWIR-yolox-nano-FT-10742-S101-E29 |
+| 학습 방법 / seed / stage epochs | full_ft /101 /30 |
+| TRAIN support | 10742 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\yolo_family_screen_20261019_v1\full_n\yolox-nano_audit_20261019_v1\latest_ckpt.pth |
+| DXNN bytes | 1536206 |
+| DXNN SHA-256 | `60333bccb6ec0b41dad61f10998fe5084b2aeb143596eebb16cc25f705ecd169` |
+| source PT SHA-256 | `64119cfcc291fcb436839cf29c11f3e089d7a3eee0580f5edce2049ebc35877f` |
+| source ONNX SHA-256 | `3c181badb88bff9a8d9c7f2788a3648eced42f24407a97ff2e27bd0ea045d271` |
+| calibration manifest SHA-256 | `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192` |
+| compile elapsed seconds | 144.065 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.0077362060546875 / score 2.199411392211914e-05 |
+| 공개 source output | [1, 8400, 21]; raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS |
 
-## Published yolo26s
+### yolox_s.dxnn
 
-Artifact: [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) — 10895020 bytes; SHA-256 `7ac754185cc99e807bd824dfa617e8cc696f02a29c402076820967c906e7098b`.
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | LWIR-yolox-s-FT-10742-S101-E29 |
+| 학습 방법 / seed / stage epochs | full_ft /101 /30 |
+| TRAIN support | 10742 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\yolo_family_screen_20261019_v1\full_s\yolox-s\latest_ckpt.pth |
+| DXNN bytes | 9541952 |
+| DXNN SHA-256 | `bd33a2b5cf0c38a537bed76dc09485bdcb94c517296c56c8c842cf677464efb6` |
+| source PT SHA-256 | `2c0ba3087733411e7d89443d27d621f0a482dacd56531f7bcbe213921a644070` |
+| source ONNX SHA-256 | `236d790348ad4b94a573326aa0ff8c3ff7739245f77293850d2633f08e0249c6` |
+| calibration manifest SHA-256 | `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192` |
+| compile elapsed seconds | 203.103 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.00958251953125 / score 1.6033649444580078e-05 |
+| 공개 source output | [1, 8400, 21]; raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS |
 
-Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `13346581137ebd1bea8e1e820c0b969b439d4859b3638685ad394fe6c116d4cc`; source ONNX SHA-256 `d021ac4097e31b3943d8029eb30be8cee500fe41ee11c308e36a8582181f3b90`. Final checkpoint, not validation-selected best.
+### yolo26s_clahe_full_ft_s202_e30.dxnn
 
-CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 247.4s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | native_input_seed202 |
+| 학습 방법 / seed / stage epochs | full_ft /202 /30 |
+| TRAIN support | 4196 |
+| 입력 representation | clahe; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\lwir_kd_schedule_horizon_20261015_v1\evidence_snapshots\completed19_after_local_kd_linear60_20261016_v1\selection_evidence_v3.json |
+| DXNN bytes | 10895043 |
+| DXNN SHA-256 | `2ecdbb2f2106a52977d1f630376abca5076fc39b415a5e85982a64185440830e` |
+| source PT SHA-256 | `aa4fba2b9dfc40aa9067d83f4c9f5f0e0057bc10f91da3ae8def30c12f349a48` |
+| source ONNX SHA-256 | `6fd687080cecd05a07b021fd4e0e63a38df04090c1f86ad3a1a4d28884a9b38d` |
+| calibration manifest SHA-256 | `5591747ff78e77e24aa2d4e373cafd660605088c35c20f53b628c0a3018658d1` |
+| compile elapsed seconds | 228.113 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.0021820068359375 / score 7.867813110351562e-06 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
-Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; centered LetterBox640x640 padding114 before submission. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
-Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
+### yolo26s_clahe_lora_r8_head_s202_e30.dxnn
 
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | native_input_seed202 |
+| 학습 방법 / seed / stage epochs | lora_r8_head /202 /30 |
+| TRAIN support | 4196 |
+| 입력 representation | clahe; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\lwir_kd_schedule_horizon_20261015_v1\evidence_snapshots\completed19_after_local_kd_linear60_20261016_v1\selection_evidence_v3.json |
+| DXNN bytes | 10895048 |
+| DXNN SHA-256 | `f62c0177880c0a0196bc03e4955b3b6108ab6086570ee79498bba717369f4d7d` |
+| source PT SHA-256 | `ff6d05c60c877b1a92b046c7433d19ff614d9e09a34a4e89fe2bef9ca42b6486` |
+| source ONNX SHA-256 | `3bd1d2b30598cfcd171dad155e00cb1ccc162297b80c80664bbae845907d0144` |
+| calibration manifest SHA-256 | `5591747ff78e77e24aa2d4e373cafd660605088c35c20f53b628c0a3018658d1` |
+| compile elapsed seconds | 231.225 |
+| 병합 adapter 수 | 74 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.00250244140625 / score 7.957220077514648e-06 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
-## Published yolox_nano
+### yolov8n.dxnn
 
-Artifact: [yolox/yolox_nano.dxnn](yolox/yolox_nano.dxnn) — 1536206 bytes; SHA-256 `60333bccb6ec0b41dad61f10998fe5084b2aeb143596eebb16cc25f705ecd169`.
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | yolov8n |
+| 학습 방법 / seed / stage epochs | full_ft /101 /30 |
+| TRAIN support | 10742 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\yolo_family_screen_20261019_v1\full_n\yolov8n\yolov8n_full_epoch30_last.pt |
+| DXNN bytes | 3696192 |
+| DXNN SHA-256 | `f11c80721fb88d7c4cb153b165d381e778e5bf8de1bc5302d32496baf70831d7` |
+| source PT SHA-256 | `5cd07d31ed8861c46903d504e558460192f409bb3bb44179484c06e2759fb63e` |
+| source ONNX SHA-256 | `e6d02de05cc5b461ee0159fda746bc64226ff881283bbe05828c078d12bda36f` |
+| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
+| compile elapsed seconds | 154.234 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.001678466796875 / score 4.351139068603516e-06 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
-Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `64119cfcc291fcb436839cf29c11f3e089d7a3eee0580f5edce2049ebc35877f`; source ONNX SHA-256 `3c181badb88bff9a8d9c7f2788a3648eced42f24407a97ff2e27bd0ea045d271`. Final checkpoint, not validation-selected best.
+### yolo26s_ft_s101_e30_legacy_20261001.dxnn
 
-CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 144.1s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+| 항목 | 값 |
+| --- | --- |
+| 학습 | historical YOLO26s FT /10742장 /seed101 /30epoch /AdamW lr3e-4 /BN stats frozen |
+| DXNN bytes | 10897723 |
+| DXNN SHA-256 | `1e82b415d86e9f26a549f5ee92af183f733879c77dafc40f7ff97adbf826b9f3` |
+| source PT SHA-256 | `385621f65165f181421e1b4e4a209e32b7cb08d5f8258e95c54866439e1e2329` |
+| source ONNX SHA-256 | `c91342f76eca4c7178720405b71764d151ec91356a22e003d46fe951092170d0` |
+| compiler note | one NPU + one CPU group; graph-rewrite cosine0.8506 warning near TopK/NMS; board validation pending |
 
-Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; YOLOX top-left pad114640x640 BGR0..255, no normalization before submission. Source output [1, 8400, 21]: raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
-YOLOX uses BGR0..255 with top-left114 padding, no division by255; output includes separate objectness and16 class scores. External objectness-times-class scoring and NMS are required.
-## Published yolox_s
+### 보존 범위
 
-Artifact: [yolox/yolox_s.dxnn](yolox/yolox_s.dxnn) — 9541952 bytes; SHA-256 `bd33a2b5cf0c38a537bed76dc09485bdcb94c517296c56c8c842cf677464efb6`.
+로컬 원본과 중간 ONNX/캘리브레이션 자료는 보존하며, 저장소 계열 폴더에는 DXNN만 둡니다. PNG/정밀 CSV/JSON은 원본 Library ZIP `libfile_473f586f45ac8191bef1087765316cc2`(SHA-256 `be592eed621b340e112782f81e340eed5c49f5a6f9690dce36c44ba3c47bbe74`)과 로컬에 보존했습니다. 이전 Git 이력의 파일은 삭제하지 않았으며 force push도 하지 않았습니다.
 
-Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `2c0ba3087733411e7d89443d27d621f0a482dacd56531f7bcbe213921a644070`; source ONNX SHA-256 `236d790348ad4b94a573326aa0ff8c3ff7739245f77293850d2633f08e0249c6`. Final checkpoint, not validation-selected best.
+Ultralytics/model, DEEPX SDK 및 FLIR 이용 조건은 별도로 적용됩니다. [DEEPX compiler](https://developer.deepx.ai/tech-docs/DXNN-SDK/DX-COM/DX-COMPILER_Agent_Driven_Development/) · [Ultralytics DEEPX](https://docs.ultralytics.com/integrations/deepx/).
 
-CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 203.1s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
-
-Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; YOLOX top-left pad114640x640 BGR0..255, no normalization before submission. Source output [1, 8400, 21]: raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
-YOLOX uses BGR0..255 with top-left114 padding, no division by255; output includes separate objectness and16 class scores. External objectness-times-class scoring and NMS are required.
-## Published yolo26s_clahe_full_ft_s202_e30
-
-Artifact: [yolo26/yolo26s_clahe_full_ft_s202_e30.dxnn](yolo26/yolo26s_clahe_full_ft_s202_e30.dxnn) — 10895043 bytes; SHA-256 `2ecdbb2f2106a52977d1f630376abca5076fc39b415a5e85982a64185440830e`.
-
-Previously completed variant: native_input_seed202; method full_ft, seed202, recorded stage epochs30, training support4196, input representation clahe. This is a separate recipe and is not a row in the common six-model screen. Deployment export uses square640x640; no new accuracy evaluation of this deployment geometry was run. Original completion evidence: `D:\LIG-Runs\flir_yolo26\lwir_kd_schedule_horizon_20261015_v1\evidence_snapshots\completed19_after_local_kd_linear60_20261016_v1\selection_evidence_v3.json`.. Source checkpoint SHA-256 `aa4fba2b9dfc40aa9067d83f4c9f5f0e0057bc10f91da3ae8def30c12f349a48`; source ONNX SHA-256 `6fd687080cecd05a07b021fd4e0e63a38df04090c1f86ad3a1a4d28884a9b38d`. Final checkpoint, not validation-selected best.
-
-CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 228.1s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
-
-Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `5591747ff78e77e24aa2d4e373cafd660605088c35c20f53b628c0a3018658d1`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; centered LetterBox640x640 padding114; external clahe semantic channel transform after padding and RGB conversion; see original representation implementation, do not replicate gray only. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
-Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
-Adapter convolutions merged: 0. Parity compares the original unfused model against the merged/fused ONNX on three TRAIN images. Semantic channel assignment is external and occurs after padding and BGR-to-RGB conversion: R=original grayscale; G=CLAHE(clipLimit2.0,tileGrid8x8) for clahe/combined, otherwise grayscale; B=round(sqrt(clip(Sobel-magnitude/1443,0,1))*255) for gradient/combined, otherwise grayscale. Sobel uses CV_32F, ksize3. Compiler calibration PNGs reverse semantic RGB into BGR, and the configured BGR2RGB restores the correct semantic channel order. Do not submit three identical grayscale channels to these variants.
-
-
-## Published yolo26s_clahe_lora_r8_head_s202_e30
-
-Artifact: [yolo26/yolo26s_clahe_lora_r8_head_s202_e30.dxnn](yolo26/yolo26s_clahe_lora_r8_head_s202_e30.dxnn) — 10895048 bytes; SHA-256 `f62c0177880c0a0196bc03e4955b3b6108ab6086570ee79498bba717369f4d7d`.
-
-Previously completed variant: native_input_seed202; method lora_r8_head, seed202, recorded stage epochs30, training support4196, input representation clahe. This is a separate recipe and is not a row in the common six-model screen. Deployment export uses square640x640; no new accuracy evaluation of this deployment geometry was run. Original completion evidence: `D:\LIG-Runs\flir_yolo26\lwir_kd_schedule_horizon_20261015_v1\evidence_snapshots\completed19_after_local_kd_linear60_20261016_v1\selection_evidence_v3.json`.. Source checkpoint SHA-256 `ff6d05c60c877b1a92b046c7433d19ff614d9e09a34a4e89fe2bef9ca42b6486`; source ONNX SHA-256 `3bd1d2b30598cfcd171dad155e00cb1ccc162297b80c80664bbae845907d0144`. Final checkpoint, not validation-selected best.
-
-CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 231.2s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
-
-Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `5591747ff78e77e24aa2d4e373cafd660605088c35c20f53b628c0a3018658d1`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; centered LetterBox640x640 padding114; external clahe semantic channel transform after padding and RGB conversion; see original representation implementation, do not replicate gray only. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
-Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
-Adapter convolutions merged: 74. Parity compares the original unfused model against the merged/fused ONNX on three TRAIN images. Semantic channel assignment is external and occurs after padding and BGR-to-RGB conversion: R=original grayscale; G=CLAHE(clipLimit2.0,tileGrid8x8) for clahe/combined, otherwise grayscale; B=round(sqrt(clip(Sobel-magnitude/1443,0,1))*255) for gradient/combined, otherwise grayscale. Sobel uses CV_32F, ksize3. Compiler calibration PNGs reverse semantic RGB into BGR, and the configured BGR2RGB restores the correct semantic channel order. Do not submit three identical grayscale channels to these variants.
-
-
-<!-- VERIFIED_IO_BEGIN -->
-## Verified class count and tensor interfaces
-
-Class count, output channel count, candidate count and number of output tensors are different quantities. The checked deployment exports use16 object classes. Each has one public output tensor; internal NPU-to-CPU graph boundaries may contain several tensors. The DXNN values below are read from the binary header graph_info and embedded CPU ONNX output ValueInfo, without executing an NPU.
-
-| Model/artifact | nc | ONNX input | ONNX output | DXNN public outputs | Meaning / postprocessing |
-|---|---:|---|---|---|---|
-| [yolov8/yolov8n.dxnn](yolov8/yolov8n.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[4] |
-| [yolo26/yolo26m.dxnn](yolo26/yolo26m.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[6] |
-| [yolo26/yolo26n.dxnn](yolo26/yolo26n.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[6] |
-| [yolov8/yolov8s.dxnn](yolov8/yolov8s.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[4] |
-| [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[6] |
-| [yolox/yolox_nano.dxnn](yolox/yolox_nano.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 8400, 21] | 1: output0 FLOAT [1, 8400, 21] | xywh4 + objectness1 + class16; grid/stride/exp decoded; objectness*class, NMS external; internal NPU boundary tensors[9] |
-| [yolox/yolox_s.dxnn](yolox/yolox_s.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 8400, 21] | 1: output0 FLOAT [1, 8400, 21] | xywh4 + objectness1 + class16; grid/stride/exp decoded; objectness*class, NMS external; internal NPU boundary tensors[9] |
-| [yolo26/yolo26s_clahe_full_ft_s202_e30.dxnn](yolo26/yolo26s_clahe_full_ft_s202_e30.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[6] |
-| [yolo26/yolo26s_clahe_lora_r8_head_s202_e30.dxnn](yolo26/yolo26s_clahe_lora_r8_head_s202_e30.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[6] |
-| [yolo26/yolo26s_ft_s101_e30_legacy_20261001.dxnn](yolo26/yolo26s_ft_s101_e30_legacy_20261001.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 300, 6] | 1: output0 FLOAT [1, 300, 6] | xyxy4 + confidence + class index,300 selected detection slots; end-to-end decoder included; internal NPU boundary tensors[6] |
-
-- New YOLO26n/s/m exports explicitly disable end-to-end selection to expose the one-to-many head. Their20 output fields are4 decoded box coordinates plus16 probabilities; no objectness and no DFL-bin channels in the public output. These actual YOLO26 ONNX graphs contain no DFL-named nodes.
-- YOLOv8n/s include DFL decoding inside ONNX. The16-bin box distributions are reduced before the public output, so the public shape is [1,20,8400], not [1,80,8400].
-- YOLOX exports explicitly enable decode_in_inference: grid offsets, stride scaling and exp width/height decoding are already in ONNX. [1,8400,21] contains4 decoded box coordinates,1 objectness and16 class probabilities. Do not decode grid/stride a second time. Multiply objectness by class probability before filtering/NMS.
-- Historical YOLO26s [1,300,6] is a different end-to-end export:300 detection slots, six fields per slot. Six is not the class count. Apply confidence filtering and inverse letterbox; do not attach the new20-channel raw-head decoder.
-- ONNX input is float32 NCHW [1,3,640,640], named images. Compiled NPU input is uint8 NHWC [1,640,640,3] per compiler guidance. UL input normalization by255 and layout transpose are fused. YOLOX has no division by255; its layout transpose is fused. External geometry and semantic channel transforms remain required per model.
-- The public output0 is float32 according to embedded CPU ONNX metadata; verify actual DXRT buffer metadata on hardware. No claim of board execution, accuracy or FPS follows from these static checks.
-
-Verified output class index mapping: 0=person, 1=bicycle, 2=car, 3=motorcycle, 4=bus, 5=train, 6=truck, 7=traffic light, 8=fire hydrant, 9=stop sign, 10=dog, 11=deer, 12=skateboard, 13=stroller, 14=scooter, 15=other vehicle. YOLOX COCO category IDs are one-based (index+1); detector output class indices are zero-based.
-
-Read-only checkpoint audit:89 locally available checkpoints were loaded on CPU and all had nc16. The87 Ultralytics checkpoints carry the same explicit16-class names mapping and consistent detection-head nc; the two YOLOX state dictionaries have16 output channels in every classification head, with class order confirmed against the original training pack. The completed YOLO26x teacher checkpoint is unavailable locally, so its actual model object could not be inspected. The89 count includes54 additional candidates with smoke/stability/wrapper records and is not a count of89 formal experiments.
-
-<!-- VERIFIED_IO_END -->
+</details>
