@@ -72,7 +72,7 @@ No physical DX-M1/DXRT device was detected. Neither new YOLOv8n nor the retained
 
 ## Repository scope and history
 
-Only README.md and the actual family DXNN artifacts are retained in the current tree. PT/ONNX binaries, model-specific JSON/YAML/Markdown and older layout records were removed from the current tree. Earlier Git commits still contain those historical files; no history rewrite or force push was performed. Update branch-relative download URLs to the links above. Local research originals and conversion intermediates are preserved.
+The current tree retains README.md, the requested root comparison PNGs, and actual family DXNN artifacts. PT/ONNX binaries, model-specific JSON/YAML/Markdown and older layout records were removed from the current tree. Earlier Git commits still contain those historical files; no history rewrite or force push was performed. Update branch-relative download URLs to the links above. Local research originals and conversion intermediates are preserved.
 
 Upstream Ultralytics/model, DEEPX SDK and FLIR data-use terms remain applicable; this README grants no additional licence. Official references: [DEEPX model compilation](https://developer.deepx.ai/tech-docs/DXNN-SDK/DX-COM/DX-COMPILER_Agent_Driven_Development/) and [Ultralytics DEEPX export](https://docs.ultralytics.com/integrations/deepx/).
 
@@ -145,6 +145,38 @@ CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 203.1s. O
 
 Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; YOLOX top-left pad114640x640 BGR0..255, no normalization before submission. Source output [1, 8400, 21]: raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
 YOLOX uses BGR0..255 with top-left114 padding, no division by255; output includes separate objectness and16 class scores. External objectness-times-class scoring and NMS are required.
+<!-- COMPARISON_PNG_BEGIN -->
+# 모델 성능표
+
+최근 6개 검출 모델, 최근 2×3 추적 비교, 역사 19조건, 별도 seed 반복을 평가 조건별로 나누었습니다. AP는 AP50:95이며 전체 mAP와 person AP는 다른 지표입니다.
+
+시간 수치는 모두 기존 로그입니다. 새 GPU benchmark는 실행하지 않았습니다. GTX 1080 Ti의 12.7453 / 14.8630 ms는 기존 탐지+ByteTrack 관측 평균이며 순수 추론 지연 또는 동일조건 통제 측정이 아닙니다. 역사 FPS와 혼합 batch evaluator 기록은 별도 참고치입니다. DXNN 실기기 속도는 이 표로 확인되지 않습니다.
+
+![detection overview](detection_overview.png)
+
+![tracking comparison](tracking_comparison.png)
+
+![tracking other classes](tracking_other_classes.png)
+
+![historical comparison 1](historical_comparison_1.png)
+
+![historical comparison 2](historical_comparison_2.png)
+
+![historical comparison 3](historical_comparison_3.png)
+
+![additional experiments](additional_experiments.png)
+
+![evaluation settings](evaluation_settings.png)
+
+![historical runtime reference](historical_runtime_reference.png)
+
+![pc latency reference](pc_latency_reference.png)
+
+
+The PNGs report source FP32 detector/tracker evaluations under separate recorded conditions; they are not evaluations of the INT8 DXNN binaries. PNG sidecar CSV/JSON and rendering scripts are retained in the source Library package, not added to detector-family folders.
+
+Local source-manifest follow-up: the two recent BYTE runs explicitly record reset_count=7 each. This is an additional verified manifest fact; other tracker reset counts should not be inferred from it.
+<!-- COMPARISON_PNG_END -->
 
 
 <!-- VERIFIED_IO_BEGIN -->
