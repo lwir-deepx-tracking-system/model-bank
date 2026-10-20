@@ -9,7 +9,7 @@ Deployment binaries are grouped by detector family. Family folders contain DXNN 
 | YOLO26n | Compiled; NPU validation pending | [yolo26/yolo26n.dxnn](yolo26/yolo26n.dxnn) |
 | YOLO26s | Compiled; NPU validation pending | [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) |
 | YOLOX-Nano | Compiled; NPU validation pending | [yolox/yolox_nano.dxnn](yolox/yolox_nano.dxnn) |
-| YOLOX-s | No verified DXNN located; no new conversion started | Not published |
+| YOLOX-s | Compiled; NPU validation pending | [yolox/yolox_s.dxnn](yolox/yolox_s.dxnn) |
 | YOLOv8n | Converted and compiled in this update; NPU validation pending | [yolov8/yolov8n.dxnn](yolov8/yolov8n.dxnn) |
 | YOLOv8s | Compiled; NPU validation pending | [yolov8/yolov8s.dxnn](yolov8/yolov8s.dxnn) |
 
@@ -135,6 +135,16 @@ CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 144.1s. O
 
 Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; YOLOX top-left pad114640x640 BGR0..255, no normalization before submission. Source output [1, 8400, 21]: raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
 YOLOX uses BGR0..255 with top-left114 padding, no division by255; output includes separate objectness and16 class scores. External objectness-times-class scoring and NMS are required.
+## Published yolox_s
+
+Artifact: [yolox/yolox_s.dxnn](yolox/yolox_s.dxnn) — 9541952 bytes; SHA-256 `bd33a2b5cf0c38a537bed76dc09485bdcb94c517296c56c8c842cf677464efb6`.
+
+Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `2c0ba3087733411e7d89443d27d621f0a482dacd56531f7bcbe213921a644070`; source ONNX SHA-256 `236d790348ad4b94a573326aa0ff8c3ff7739245f77293850d2633f08e0249c6`. Final checkpoint, not validation-selected best.
+
+CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 203.1s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+
+Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; YOLOX top-left pad114640x640 BGR0..255, no normalization before submission. Source output [1, 8400, 21]: raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
+YOLOX uses BGR0..255 with top-left114 padding, no division by255; output includes separate objectness and16 class scores. External objectness-times-class scoring and NMS are required.
 
 
 <!-- VERIFIED_IO_BEGIN -->
@@ -150,6 +160,7 @@ Class count, output channel count, candidate count and number of output tensors 
 | [yolov8/yolov8s.dxnn](yolov8/yolov8s.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[4] |
 | [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[6] |
 | [yolox/yolox_nano.dxnn](yolox/yolox_nano.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 8400, 21] | 1: output0 FLOAT [1, 8400, 21] | xywh4 + objectness1 + class16; grid/stride/exp decoded; objectness*class, NMS external; internal NPU boundary tensors[9] |
+| [yolox/yolox_s.dxnn](yolox/yolox_s.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 8400, 21] | 1: output0 FLOAT [1, 8400, 21] | xywh4 + objectness1 + class16; grid/stride/exp decoded; objectness*class, NMS external; internal NPU boundary tensors[9] |
 | [yolo26/yolo26s_ft_s101_e30_legacy_20261001.dxnn](yolo26/yolo26s_ft_s101_e30_legacy_20261001.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 300, 6] | 1: output0 FLOAT [1, 300, 6] | xyxy4 + confidence + class index,300 selected detection slots; end-to-end decoder included; internal NPU boundary tensors[6] |
 
 - New YOLO26n/s/m exports explicitly disable end-to-end selection to expose the one-to-many head. Their20 output fields are4 decoded box coordinates plus16 probabilities; no objectness and no DFL-bin channels in the public output. These actual YOLO26 ONNX graphs contain no DFL-named nodes.
@@ -160,6 +171,8 @@ Class count, output channel count, candidate count and number of output tensors 
 - The public output0 is float32 according to embedded CPU ONNX metadata; verify actual DXRT buffer metadata on hardware. No claim of board execution, accuracy or FPS follows from these static checks.
 
 Verified output class index mapping: 0=person, 1=bicycle, 2=car, 3=motorcycle, 4=bus, 5=train, 6=truck, 7=traffic light, 8=fire hydrant, 9=stop sign, 10=dog, 11=deer, 12=skateboard, 13=stroller, 14=scooter, 15=other vehicle. YOLOX COCO category IDs are one-based (index+1); detector output class indices are zero-based.
+
+Read-only checkpoint audit:89 locally available checkpoints were loaded on CPU and all had nc16. The87 Ultralytics checkpoints carry the same explicit16-class names mapping and consistent detection-head nc; the two YOLOX state dictionaries have16 output channels in every classification head, with class order confirmed against the original training pack. The completed YOLO26x teacher checkpoint is unavailable locally, so its actual model object could not be inspected. The89 count includes54 additional candidates with smoke/stability/wrapper records and is not a count of89 formal experiments.
 
 ## Existing PC timing observations
 
