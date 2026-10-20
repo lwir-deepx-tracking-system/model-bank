@@ -2,7 +2,7 @@
   "status": "DXNN_COMPILATION_SUCCEEDED_NPU_RUNTIME_VALIDATION_NOT_RUN",
   "model_name": "LWIR-YOLO26s-FT-10742-S101-E29",
   "source_checkpoint_sha256": "385621f65165f181421e1b4e4a209e32b7cb08d5f8258e95c54866439e1e2329",
-  "source_onnx": "../best_full_ft_epoch29.onnx",
+  "source_onnx": "best_full_ft_epoch29.onnx",
   "source_onnx_sha256": "c91342f76eca4c7178720405b71764d151ec91356a22e003d46fe951092170d0",
   "dxnn_file": "best_full_ft_epoch29.dxnn",
   "dxnn_bytes": 10897723,

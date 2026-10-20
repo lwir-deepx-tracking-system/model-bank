@@ -1,13 +1,26 @@
 # LWIR model bank
 
-This repository stores detector checkpoints and their inference and tracking provenance.
+Detector checkpoints, deployment files and their provenance are available directly at the repository root. File prefixes distinguish the YOLO26s and YOLOv8n metadata.
 
-## Available model
+## Download models
 
-**[LWIR-YOLO26s-FT-10742-S101-E29](models/LWIR-YOLO26s-FT-10742-S101-E29/)** is a completed historical YOLO26s Full Fine-Tuning checkpoint (10,742 FLIR ADAS v2 training images, seed 101, 30 epochs; released checkpoint at epoch index 29). The folder contains the `.pt` checkpoint, ONNX export, INT8 DEEPX companion, model card, tracking profile, and verification manifests.
+| Model | Files | Documentation |
+|---|---|---|
+| YOLOv8n Full FT, FLIR thermal, 16 classes, input640, seed101, final epoch30 | [PyTorch checkpoint](yolov8n_full_epoch30_last.pt) | [Model card](YOLOv8n_MODEL_CARD.md), [verification](YOLOv8n_verification.json) |
+| Historical YOLO26s Full FT, 10,742 FLIR images, seed101, epoch index29 | [PyTorch checkpoint](best_full_ft_epoch29.pt), [ONNX](best_full_ft_epoch29.onnx), [INT8 DEEPX DXNN](best_full_ft_epoch29.dxnn) | [Model card](YOLO26s_MODEL_CARD.md), [handoff](YOLO26s_README.md), [verification](YOLO26s_verification.json) |
 
-The ONNX contains the detector only. For the historical scores on this exact checkpoint, the tracker was Ultralytics ByteTrack with its standard XYAH Kalman filter. **The current project-priority tracking candidate is ByteTrack association with a custom XYWH + confidence-NSA Kalman update**, described in the model card. That tracker is separate from the ONNX, and the candidate's results came from different checkpoints; do not attribute them to this seed-101 model. The historical controlled-evaluation protocol records YOLO prediction `conf=0.001`. A separately prepared project reference preset uses `conf=0.1`, but has not been applied to the application default. The historical comparison held ByteTrack association settings common across model variants: high/low/new-track thresholds `0.25/0.10/0.25`, buffer `30`, and match threshold `0.80`. The same settings appear in the prepared preset, but are not a global application default.
+## YOLO26s deployment and tracking
 
-## DEEPX format
+- [DEEPX instructions](YOLO26s_DXNN_README.md), [conversion verification](YOLO26s_conversion_verification.json), [compiler configuration](YOLO26s_deepx_config.json), [metadata](YOLO26s_deepx_metadata.yaml).
+- [Tracking profile](YOLO26s_tracking_profile.json). The ONNX/DXNN contain the detector only, with association, Kalman filtering and ID assignment external.
+- Historical metrics for this exact YOLO26s checkpoint used standard XYAH ByteTrack. The project-priority XYWH+NSA candidate was evaluated on different checkpoints; do not transfer its results to this file.
+- The historical detector-evaluation confidence was0.001. A separately prepared project reference preset uses0.1 and has not changed the application's default. ByteTrack high/low/new thresholds are0.25/0.10/0.25, buffer30 and match threshold0.80.
+- The INT8 DXNN was compiled with256 LWIR calibration frames; raw calibration data are not shipped. Target-device validation remains outstanding.
 
-The model folder also includes an INT8 DXNN companion under [deepx/](models/LWIR-YOLO26s-FT-10742-S101-E29/deepx/), compiled from the verified ONNX with LWIR calibration. Its preprocessing and validation limits are documented alongside the artifact.
+## Layout change
+
+Model assets and their associated documents were moved from nested models/ folders to the root without changing the binary contents. [ARTIFACT_RELOCATION.json](ARTIFACT_RELOCATION.json) records old/new paths and before/after SHA-256 for every prior tracked file. Text hashes can differ because links and file references were updated.
+
+Old branch-relative URLs containing models/ or deepx/ must be updated to the root-level filenames above. Commit-pinned historical URLs remain available through Git history. The previous nested binary copies are not retained in the current tree.
+
+These artifacts are bounded research/deployment records, not proof of independent generalization or a universal method winner. No model training, loading, inference, export or NPU execution was performed during this layout change. Upstream model/data-use terms continue to apply.

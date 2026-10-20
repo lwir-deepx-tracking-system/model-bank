@@ -30,7 +30,7 @@
     "fuse_score": true
   },
   "evidence_scope": {
-    "artifact": "Internal LWIR research archive; evidence scope is summarized in MODEL_CARD.md.",
+    "artifact": "Internal LWIR research archive; evidence scope is summarized in YOLO26s_MODEL_CARD.md.",
     "training_images": 10491,
     "batch": 4,
     "epochs": 30,

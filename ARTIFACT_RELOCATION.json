@@ -1,0 +1,161 @@
+{
+  "parent_commit": "a2399a27fff9a02f518c1fe3c666f869f8aaa427",
+  "moved_files": 14,
+  "binary_files": 4,
+  "all_binary_sha256_preserved": true,
+  "records": [
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/MODEL_CARD.md",
+      "new_path": "YOLO26s_MODEL_CARD.md",
+      "before_sha256": "ca71a864fa7a37ef276e9f7222452a38f4fd3ea2a23078fb18c0591b98e77173",
+      "before_bytes": 5551,
+      "after_sha256": "9738b1c6bd1c223344aa4a14adba0d1880b25a77ad3a9131a78a6ccd04df109f",
+      "after_bytes": 5581,
+      "binary": false,
+      "content_unchanged": false
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/README.md",
+      "new_path": "YOLO26s_README.md",
+      "before_sha256": "21e828d56ff340f4eefe1ad74a41e0818287ac38403c499697ca9f9dd345915c",
+      "before_bytes": 1532,
+      "after_sha256": "1f0e7cc992220a0970d4264d37417949f4d6c29c967b9091de41fc388c7e07fe",
+      "after_bytes": 1619,
+      "binary": false,
+      "content_unchanged": false
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/best_full_ft_epoch29.onnx",
+      "new_path": "best_full_ft_epoch29.onnx",
+      "before_sha256": "c91342f76eca4c7178720405b71764d151ec91356a22e003d46fe951092170d0",
+      "before_bytes": 38142836,
+      "after_sha256": "c91342f76eca4c7178720405b71764d151ec91356a22e003d46fe951092170d0",
+      "after_bytes": 38142836,
+      "binary": true,
+      "content_unchanged": true
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/best_full_ft_epoch29.pt",
+      "new_path": "best_full_ft_epoch29.pt",
+      "before_sha256": "385621f65165f181421e1b4e4a209e32b7cb08d5f8258e95c54866439e1e2329",
+      "before_bytes": 80448709,
+      "after_sha256": "385621f65165f181421e1b4e4a209e32b7cb08d5f8258e95c54866439e1e2329",
+      "after_bytes": 80448709,
+      "binary": true,
+      "content_unchanged": true
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/deepx/DXNN_README.md",
+      "new_path": "YOLO26s_DXNN_README.md",
+      "before_sha256": "b577d3c3c06be249ccf7c317da7397cc2f26d1e4b6da7974e816773bcaf7120b",
+      "before_bytes": 2564,
+      "after_sha256": "2364b7eaad4f84f5e3a53b0186df52da1bb87f7bf40158497ef44d2a86c7f02d",
+      "after_bytes": 2599,
+      "binary": false,
+      "content_unchanged": false
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/deepx/best_full_ft_epoch29.dxnn",
+      "new_path": "best_full_ft_epoch29.dxnn",
+      "before_sha256": "1e82b415d86e9f26a549f5ee92af183f733879c77dafc40f7ff97adbf826b9f3",
+      "before_bytes": 10897723,
+      "after_sha256": "1e82b415d86e9f26a549f5ee92af183f733879c77dafc40f7ff97adbf826b9f3",
+      "after_bytes": 10897723,
+      "binary": true,
+      "content_unchanged": true
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/deepx/config.json",
+      "new_path": "YOLO26s_deepx_config.json",
+      "before_sha256": "f4541a7488f9633590c314ae0eed6b48ca70321eea341da8912772fd8ba70c2d",
+      "before_bytes": 557,
+      "after_sha256": "f4541a7488f9633590c314ae0eed6b48ca70321eea341da8912772fd8ba70c2d",
+      "after_bytes": 557,
+      "binary": false,
+      "content_unchanged": true
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/deepx/conversion_verification.json",
+      "new_path": "YOLO26s_conversion_verification.json",
+      "before_sha256": "479ef225850d11e8706812e31b1eb1fd1a7c738da70c4684933c21a34a14997a",
+      "before_bytes": 2556,
+      "after_sha256": "26c66b7eb8bd72d090ed3b8ebd5359b8c7e7ec43ac28a70761f63b5be679062c",
+      "after_bytes": 2553,
+      "binary": false,
+      "content_unchanged": false
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/deepx/metadata.yaml",
+      "new_path": "YOLO26s_deepx_metadata.yaml",
+      "before_sha256": "9a3e7b8f5ee39831f5c9955813f8b7265317f57de9d186a8af7956185383ef8e",
+      "before_bytes": 544,
+      "after_sha256": "9a3e7b8f5ee39831f5c9955813f8b7265317f57de9d186a8af7956185383ef8e",
+      "after_bytes": 544,
+      "binary": false,
+      "content_unchanged": true
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/tracking_profile.json",
+      "new_path": "YOLO26s_tracking_profile.json",
+      "before_sha256": "ec78a76fc9ea73b1dd39e873e3b505b6d5f1c39e288c10ec7f6cbeacfc8c7c2d",
+      "before_bytes": 2237,
+      "after_sha256": "c7e6f425f90b7682414d37c72940610b0b3d59861089532811e88094edf9338a",
+      "after_bytes": 2245,
+      "binary": false,
+      "content_unchanged": false
+    },
+    {
+      "old_path": "models/LWIR-YOLO26s-FT-10742-S101-E29/verification.json",
+      "new_path": "YOLO26s_verification.json",
+      "before_sha256": "f25a6bd0c32820e89a10e39d113877408c87f218bea4a4a244d4e0d9728ef6cc",
+      "before_bytes": 2689,
+      "after_sha256": "f25a6bd0c32820e89a10e39d113877408c87f218bea4a4a244d4e0d9728ef6cc",
+      "after_bytes": 2689,
+      "binary": false,
+      "content_unchanged": true
+    },
+    {
+      "old_path": "models/LWIR-YOLOv8n-FT-10742-S101-E29/MODEL_CARD.md",
+      "new_path": "YOLOv8n_MODEL_CARD.md",
+      "before_sha256": "cdf72873ff8ab340f1e79a2fc63963287a52a7481a9d532575abef6e2256e517",
+      "before_bytes": 2328,
+      "after_sha256": "451f5dcd6ac78a80c5045f102346a2ad487c2ac711b5f4f687a9a587e6a4860d",
+      "after_bytes": 2377,
+      "binary": false,
+      "content_unchanged": false
+    },
+    {
+      "old_path": "models/LWIR-YOLOv8n-FT-10742-S101-E29/verification.json",
+      "new_path": "YOLOv8n_verification.json",
+      "before_sha256": "6bbe9d14acffba99bebed0d9381815951942729c705573c8cef89eb632115115",
+      "before_bytes": 2801,
+      "after_sha256": "6bbe9d14acffba99bebed0d9381815951942729c705573c8cef89eb632115115",
+      "after_bytes": 2801,
+      "binary": false,
+      "content_unchanged": true
+    },
+    {
+      "old_path": "models/LWIR-YOLOv8n-FT-10742-S101-E29/yolov8n_full_epoch30_last.pt",
+      "new_path": "yolov8n_full_epoch30_last.pt",
+      "before_sha256": "5cd07d31ed8861c46903d504e558460192f409bb3bb44179484c06e2759fb63e",
+      "before_bytes": 6253098,
+      "after_sha256": "5cd07d31ed8861c46903d504e558460192f409bb3bb44179484c06e2759fb63e",
+      "after_bytes": 6253098,
+      "binary": true,
+      "content_unchanged": true
+    },
+    {
+      "old_path": "README.md",
+      "new_path": "README.md",
+      "before_sha256": "3a0397c3541faea12c059af74b030b44a6040d7942ff7ad133c10e0614b0213a",
+      "after_sha256": "296517ca40775f848c19dbdc2966698f0fe5a284b8b3d12851f9d27b176ed017",
+      "binary": false,
+      "content_unchanged": false
+    }
+  ],
+  "new_manifest_excluded_from_own_hash_list": true,
+  "old_branch_relative_paths_changed": true,
+  "original_research_files_moved": false,
+  "weights_loaded": false,
+  "model_inference_run": false
+}
