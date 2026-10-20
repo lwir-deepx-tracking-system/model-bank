@@ -6,8 +6,8 @@ Deployment binaries are grouped by detector family. Family folders contain DXNN 
 
 | Family/model | Status | Artifact |
 |---|---|---|
-| YOLO26n | Not converted / no verified DXNN located | Not published |
-| YOLO26s | Existing historical detector; DXNN compiled, NPU validation pending | [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) |
+| YOLO26n | Compiled; NPU validation pending | [yolo26/yolo26n.dxnn](yolo26/yolo26n.dxnn) |
+| YOLO26s | Compiled; NPU validation pending | [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) |
 | YOLOX-Nano | No verified DXNN located; no new conversion started | Not published |
 | YOLOX-s | No verified DXNN located; no new conversion started | Not published |
 | YOLOv8n | Converted and compiled in this update; NPU validation pending | [yolov8/yolov8n.dxnn](yolov8/yolov8n.dxnn) |
@@ -75,3 +75,27 @@ No physical DX-M1/DXRT device was detected. Neither new YOLOv8n nor the retained
 Only README.md and the actual family DXNN artifacts are retained in the current tree. PT/ONNX binaries, model-specific JSON/YAML/Markdown and older layout records were removed from the current tree. Earlier Git commits still contain those historical files; no history rewrite or force push was performed. Update branch-relative download URLs to the links above. Local research originals and conversion intermediates are preserved.
 
 Upstream Ultralytics/model, DEEPX SDK and FLIR data-use terms remain applicable; this README grants no additional licence. Official references: [DEEPX model compilation](https://developer.deepx.ai/tech-docs/DXNN-SDK/DX-COM/DX-COMPILER_Agent_Driven_Development/) and [Ultralytics DEEPX export](https://docs.ultralytics.com/integrations/deepx/).
+
+
+## Published yolo26m_teacher_s202_e30
+
+Artifact: [yolo26/yolo26m.dxnn](yolo26/yolo26m.dxnn) — 21991058 bytes; SHA-256 `fbda1f1ba2182090e1f2f4dc3a6306347cbeec9701633c7e21c47c4a34c2c03e`.
+
+FLIR TRAIN4196, seed202, fixed30 epochs, AdamW, training480x640; separate teacher recipe. Source checkpoint SHA-256 `dca0f23d1a945b6a73b17ef050452b87e3e7d99265eb413519b5395db67c7736`; source ONNX SHA-256 `a36ce1ecfa49f798cc6ff977eea65501206681e068836317fe38caf67689713b`. Final checkpoint, not validation-selected best.
+
+CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 439.7s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+
+Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34`. This deployment calibration pool is broader than this teacher's4196-image training subset. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; centered LetterBox640x640 padding114 before submission. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
+Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
+
+
+## Published yolo26n
+
+Artifact: [yolo26/yolo26n.dxnn](yolo26/yolo26n.dxnn) — 3467688 bytes; SHA-256 `0b865a0d05fa2b53b2a52d54914f37c5abcaa54f41a1059c69ca747e03460bee`.
+
+Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `dc6f25aea34bb67989fdff31ad2ce3ea993d4ae690ab22861f4b2240dc872fc9`; source ONNX SHA-256 `2ddda14087ac21a5365b7d94a40e60f95e6b83c1a74e271646eac540262e0400`. Final checkpoint, not validation-selected best.
+
+CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 157.8s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+
+Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; centered LetterBox640x640 padding114 before submission. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
+Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
