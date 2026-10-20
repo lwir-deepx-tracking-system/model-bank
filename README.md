@@ -8,10 +8,10 @@ Deployment binaries are grouped by detector family. Family folders contain DXNN 
 |---|---|---|
 | YOLO26n | Compiled; NPU validation pending | [yolo26/yolo26n.dxnn](yolo26/yolo26n.dxnn) |
 | YOLO26s | Compiled; NPU validation pending | [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) |
-| YOLOX-Nano | No verified DXNN located; no new conversion started | Not published |
+| YOLOX-Nano | Compiled; NPU validation pending | [yolox/yolox_nano.dxnn](yolox/yolox_nano.dxnn) |
 | YOLOX-s | No verified DXNN located; no new conversion started | Not published |
 | YOLOv8n | Converted and compiled in this update; NPU validation pending | [yolov8/yolov8n.dxnn](yolov8/yolov8n.dxnn) |
-| YOLOv8s | Not converted / no verified DXNN located | Not published |
+| YOLOv8s | Compiled; NPU validation pending | [yolov8/yolov8s.dxnn](yolov8/yolov8s.dxnn) |
 
 No yolox/ folder is committed until an actual verified YOLOX DXNN exists. Git does not retain empty folders; no placeholder model files are used.
 
@@ -19,7 +19,7 @@ No yolox/ folder is committed until an actual verified YOLOX DXNN exists. Git do
 
 | Artifact | Bytes | SHA-256 |
 |---|---:|---|
-| yolo26s.dxnn | 10897723 | 1e82b415d86e9f26a549f5ee92af183f733879c77dafc40f7ff97adbf826b9f3 |
+| yolo26s_ft_s101_e30_legacy_20261001.dxnn | 10897723 | 1e82b415d86e9f26a549f5ee92af183f733879c77dafc40f7ff97adbf826b9f3 |
 | yolov8n.dxnn | 3696192 | f11c80721fb88d7c4cb153b165d381e778e5bf8de1bc5302d32496baf70831d7 |
 
 - YOLO26s: historical LWIR-YOLO26s-FT-10742-S101-E29 checkpoint, source PT SHA-256385621f65165f181421e1b4e4a209e32b7cb08d5f8258e95c54866439e1e2329. This is the earlier historical model, not the different YOLO26s checkpoint from the2026-10-19 six-model screen. The existing DXNN binary is unchanged.
@@ -99,3 +99,77 @@ CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 157.8s. O
 
 Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; centered LetterBox640x640 padding114 before submission. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
 Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
+
+
+## Published yolov8s
+
+Artifact: [yolov8/yolov8s.dxnn](yolov8/yolov8s.dxnn) — 11857151 bytes; SHA-256 `c9783a3ce9765b35163bc876fab6a4b6332314dcab71c3fca282161a3ceaa79f`.
+
+Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `53b640f03323a43b4751128108a762b8b4795b2f82834b391a2a19df4dbfb0eb`; source ONNX SHA-256 `146d4f64773af2d3aba40acd7b7433d9729d8819e556da8d6e8e963d4e3dddcf`. Final checkpoint, not validation-selected best.
+
+CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 250.1s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+
+Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; centered LetterBox640x640 padding114 before submission. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
+Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
+
+
+## Published yolo26s
+
+Artifact: [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) — 10895020 bytes; SHA-256 `7ac754185cc99e807bd824dfa617e8cc696f02a29c402076820967c906e7098b`.
+
+Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `13346581137ebd1bea8e1e820c0b969b439d4859b3638685ad394fe6c116d4cc`; source ONNX SHA-256 `d021ac4097e31b3943d8029eb30be8cee500fe41ee11c308e36a8582181f3b90`. Final checkpoint, not validation-selected best.
+
+CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 247.4s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+
+Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; centered LetterBox640x640 padding114 before submission. Source output [1, 20, 8400]: raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
+Division by255 and HWC-to-CHW transpose are fused; resize/padding and channel preparation remain external. Do not normalize a second time.
+
+
+## Published yolox_nano
+
+Artifact: [yolox/yolox_nano.dxnn](yolox/yolox_nano.dxnn) — 1536206 bytes; SHA-256 `60333bccb6ec0b41dad61f10998fe5084b2aeb143596eebb16cc25f705ecd169`.
+
+Common six-model screen: TRAIN10742, seed101, fixed30 epochs, SGD, batch16,640. Source checkpoint SHA-256 `64119cfcc291fcb436839cf29c11f3e089d7a3eee0580f5edce2049ebc35877f`; source ONNX SHA-256 `3c181badb88bff9a8d9c7f2788a3648eced42f24407a97ff2e27bd0ea045d271`. Final checkpoint, not validation-selected best.
+
+CPU-only DX-COM 2.4.1-rc.1, opt_level0, INT8 EMA100 steps; compilation 144.1s. ONNX checker, finite CPU execution, three TRAIN image raw PyTorch/ONNX parity and artifact hash passed. The DXNN has not been run on an NPU; board accuracy/FPS are unmeasured.
+
+Calibration:256 fixed evenly spaced images from the full FLIR TRAIN10742 list only (no VAL/TEST); manifest SHA-256 `a32a796e1cb2335e8f30d75cd3a52e4211ff6aa9dc80da9e5b106072906ef192`. Input/output: uint8 NHWC [1,640,640,3]; confirm compiler artifact metadata; replicate grayscale to3 channels; YOLOX top-left pad114640x640 BGR0..255, no normalization before submission. Source output [1, 8400, 21]: raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS. Follow per-model preprocessing; the old historical YOLO26s uses a different end-to-end head.
+YOLOX uses BGR0..255 with top-left114 padding, no division by255; output includes separate objectness and16 class scores. External objectness-times-class scoring and NMS are required.
+
+
+<!-- VERIFIED_IO_BEGIN -->
+## Verified class count and tensor interfaces
+
+Class count, output channel count, candidate count and number of output tensors are different quantities. The checked deployment exports use16 object classes. Each has one public output tensor; internal NPU-to-CPU graph boundaries may contain several tensors. The DXNN values below are read from the binary header graph_info and embedded CPU ONNX output ValueInfo, without executing an NPU.
+
+| Model/artifact | nc | ONNX input | ONNX output | DXNN public outputs | Meaning / postprocessing |
+|---|---:|---|---|---|---|
+| [yolov8/yolov8n.dxnn](yolov8/yolov8n.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[4] |
+| [yolo26/yolo26m.dxnn](yolo26/yolo26m.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[6] |
+| [yolo26/yolo26n.dxnn](yolo26/yolo26n.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[6] |
+| [yolov8/yolov8s.dxnn](yolov8/yolov8s.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[4] |
+| [yolo26/yolo26s.dxnn](yolo26/yolo26s.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 20, 8400] | 1: output0 FLOAT [1, 20, 8400] | xywh4 + class16; boxes decoded; confidence filtering, xywh-to-xyxy and NMS external; internal NPU boundary tensors[6] |
+| [yolox/yolox_nano.dxnn](yolox/yolox_nano.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 8400, 21] | 1: output0 FLOAT [1, 8400, 21] | xywh4 + objectness1 + class16; grid/stride/exp decoded; objectness*class, NMS external; internal NPU boundary tensors[9] |
+| [yolo26/yolo26s_ft_s101_e30_legacy_20261001.dxnn](yolo26/yolo26s_ft_s101_e30_legacy_20261001.dxnn) | 16 | images: FLOAT [1, 3, 640, 640] | output0: FLOAT [1, 300, 6] | 1: output0 FLOAT [1, 300, 6] | xyxy4 + confidence + class index,300 selected detection slots; end-to-end decoder included; internal NPU boundary tensors[6] |
+
+- New YOLO26n/s/m exports explicitly disable end-to-end selection to expose the one-to-many head. Their20 output fields are4 decoded box coordinates plus16 probabilities; no objectness and no DFL-bin channels in the public output. These actual YOLO26 ONNX graphs contain no DFL-named nodes.
+- YOLOv8n/s include DFL decoding inside ONNX. The16-bin box distributions are reduced before the public output, so the public shape is [1,20,8400], not [1,80,8400].
+- YOLOX exports explicitly enable decode_in_inference: grid offsets, stride scaling and exp width/height decoding are already in ONNX. [1,8400,21] contains4 decoded box coordinates,1 objectness and16 class probabilities. Do not decode grid/stride a second time. Multiply objectness by class probability before filtering/NMS.
+- Historical YOLO26s [1,300,6] is a different end-to-end export:300 detection slots, six fields per slot. Six is not the class count. Apply confidence filtering and inverse letterbox; do not attach the new20-channel raw-head decoder.
+- ONNX input is float32 NCHW [1,3,640,640], named images. Compiled NPU input is uint8 NHWC [1,640,640,3] per compiler guidance. UL input normalization by255 and layout transpose are fused. YOLOX has no division by255; its layout transpose is fused. External geometry and semantic channel transforms remain required per model.
+- The public output0 is float32 according to embedded CPU ONNX metadata; verify actual DXRT buffer metadata on hardware. No claim of board execution, accuracy or FPS follows from these static checks.
+
+Verified output class index mapping: 0=person, 1=bicycle, 2=car, 3=motorcycle, 4=bus, 5=train, 6=truck, 7=traffic light, 8=fire hydrant, 9=stop sign, 10=dog, 11=deer, 12=skateboard, 13=stroller, 14=scooter, 15=other vehicle. YOLOX COCO category IDs are one-based (index+1); detector output class indices are zero-based.
+
+## Existing PC timing observations
+
+These are historical pipeline timings, not a controlled detector-only benchmark and not DXNN/NPU latency. GTX1080Ti, torch2.7.0+cu118, Ultralytics8.4.157, FP32, batch1, square640,4 CPU threads,1924 frames after5 warmup predictions; conf0.1, IoU0.7, max_det300. Simultaneous load was not recorded; median/p95 are unavailable.
+
+| Common-screen model | Mean predict + CPU transfer + ByteTrack (ms/frame) | Mean including read/decode (ms/frame) |
+|---|---:|---:|
+| YOLOv8s | 12.7453 | 39.4114 |
+| YOLO26s | 14.8630 | 17.3547 |
+| YOLOv8n / YOLO26n / YOLOX-Nano / YOLOX-s | Not measured under comparable local conditions | Not measured |
+
+Derived from recorded total seconds divided by1924; excludes JSON writing. Read/decode differences can reflect I/O and cache order, so these values do not establish a fair pure-inference ranking. Sources: `yolo_family_tracking_report_only_20261019_v1/yolov8s_BYTE/manifest.json` and `.../yolo26s_BYTE/manifest.json` under the original research root. Recorded completion times:2026-10-19 23:02:14 and23:03:31 KST. No new GPU benchmark was run while RF-DETR training and CPU compilation were active. Remote RTX4090 batch4/16 evaluation timings are not substituted as local PC latency.
+<!-- VERIFIED_IO_END -->
