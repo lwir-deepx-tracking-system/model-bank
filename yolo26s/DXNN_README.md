@@ -1,6 +1,6 @@
 # DEEPX DXNN companion
 
-The root-level YOLO26s files include the INT8 DEEPX compilation of the existing `LWIR-YOLO26s-FT-10742-S101-E29` ONNX detector. It is an additional deployment artifact; it does not replace the original `.pt` or `.onnx`, and it does not contain the ByteTrack tracker or Kalman filter.
+The YOLO26s folder includes the INT8 DEEPX compilation of the existing `LWIR-YOLO26s-FT-10742-S101-E29` ONNX detector. It is an additional deployment artifact; it does not replace the original `.pt` or `.onnx`, and it does not contain the ByteTrack tracker or Kalman filter.
 
 ## Conversion
 
@@ -8,7 +8,7 @@ The root-level YOLO26s files include the INT8 DEEPX compilation of the existing 
 - Compiler: DEEPX DX-COM 2.4.1, `dx_com` Python package 2.4.1, x86-64 Linux
 - Quantization: INT8 post-training quantization, EMA, 100 calibration steps, optimization level 0
 - Calibration: 256 evenly spaced frames selected from the 10,742-image FLIR ADAS v2 thermal training split. All selected images were checked as replicated grayscale. Image data and labels are not included in this repository.
-- `YOLO26s_deepx_config.json` records the conversion preprocessing settings. Its dataset path is a placeholder; supply a local calibration-image directory to reproduce compilation.
+- `deepx_config.json` records the conversion preprocessing settings. Its dataset path is a placeholder; supply a local calibration-image directory to reproduce compilation.
 
 ## Input and application contract
 
@@ -18,4 +18,4 @@ Detection confidence filtering, class mapping, ByteTrack association, and the Ka
 
 ## Validation scope
 
-DX-COM completed compilation and produced `best_full_ft_epoch29.dxnn`; see `YOLO26s_conversion_verification.json` for hashes and compiler diagnostics. The compiler reported one NPU group and one CPU group, and warned that a pre-quantization graph rewrite yielded output cosine similarity 0.8506 before its TopK/NMS path; it skipped that warning as an error. No DEEPX NPU device or DXRT inference validation was available here. Therefore this upload proves artifact generation and integrity only; it does not establish INT8 accuracy, runtime speed, or tracking performance. Validate the exact preprocessing and detector outputs on the target DEEPX device before deployment.
+DX-COM completed compilation and produced `best_full_ft_epoch29.dxnn`; see `conversion_verification.json` for hashes and compiler diagnostics. The compiler reported one NPU group and one CPU group, and warned that a pre-quantization graph rewrite yielded output cosine similarity 0.8506 before its TopK/NMS path; it skipped that warning as an error. No DEEPX NPU device or DXRT inference validation was available here. Therefore this upload proves artifact generation and integrity only; it does not establish INT8 accuracy, runtime speed, or tracking performance. Validate the exact preprocessing and detector outputs on the target DEEPX device before deployment.

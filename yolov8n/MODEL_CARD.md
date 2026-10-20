@@ -25,10 +25,10 @@ All six family-screen arms used the same 1,144-image exposed sourceVAL and commo
 | Car AP50:95 | 53.1387% |
 | Overall mAP50 | 34.3712% |
 
-The evaluator records confidence floor0.001, NMS IoU0.70 and max300 predictions. Source: RESULT_FULL6_v2_20261019.json and MANIFEST_FULL6_v2_20261019.json; hashes are in YOLOv8n_verification.json. This is single-seed detector evidence on reused sourceVAL, not an independent test or architecture-only/LWIR-causal result. Batch4 latency must not be directly ranked against batch16 evaluations. No YOLOv8n tracking performance is claimed.
+The evaluator records confidence floor0.001, NMS IoU0.70 and max300 predictions. Source: RESULT_FULL6_v2_20261019.json and MANIFEST_FULL6_v2_20261019.json; hashes are in verification.json. This is single-seed detector evidence on reused sourceVAL, not an independent test or architecture-only/LWIR-causal result. Batch4 latency must not be directly ranked against batch16 evaluations. No YOLOv8n tracking performance is claimed.
 
 ## Contents and limits
 
-These root-level files add the PyTorch detector checkpoint and provenance only. No ONNX export, DEEPX conversion, model loading, inference or retraining was performed for this upload. Other model contents are preserved during repository layout cleanup. Class count and preprocessing must match the training/evaluation pipeline.
+This model folder adds the PyTorch detector checkpoint and provenance only. No ONNX export, DEEPX conversion, model loading, inference or retraining was performed for this upload. Other model contents are preserved during repository layout cleanup. Class count and preprocessing must match the training/evaluation pipeline.
 
 No additional license is granted here. Upstream Ultralytics/model and FLIR data-use terms remain applicable. Raw images, training data, credentials and private filesystem paths are not included.

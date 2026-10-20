@@ -20,7 +20,7 @@ The ONNX graph contains the **detector only**. It does not contain track associa
 - **Current project tracking candidate:** Full FT detector + ByteTrack association logic using a custom `XYWH+NSA` Kalman update. The state is `[cx, cy, width, height, vx, vy, v_width, v_height]`; detection confidence scales measurement covariance by `max(1 - confidence, 0.05)`. It does not add ReID or camera-motion compensation. This is the current project-priority candidate, not a claim that its tracker is already embedded in this ONNX.
 - **Important scope:** the historical HOTA/IDF1 figures for this exact checkpoint were produced with standard XYAH ByteTrack. The newer XYWH+NSA comparison used different completed Full FT/LoRA checkpoints (10,491 images, batch 4, seeds 303/404) on the already exposed DEV5 videos. Do not attribute those XYWH+NSA scores to this seed-101 checkpoint; this exact checkpoint has not been replayed and rescored with XYWH+NSA.
 
-The newer DEV5 comparison motivates the FT+XYWH+NSA candidate: FT had fewer person false negatives and false positives than LoRA in both seeds, while HOTA still favored LoRA in both. It is a bounded engineering preference, not a universal winner or fresh independent test. See `YOLO26s_tracking_profile.json` for the exact scope and numbers.
+The newer DEV5 comparison motivates the FT+XYWH+NSA candidate: FT had fewer person false negatives and false positives than LoRA in both seeds, while HOTA still favored LoRA in both. It is a bounded engineering preference, not a universal winner or fresh independent test. See `tracking_profile.json` for the exact scope and numbers.
 
 ## Reference tracking metrics for this checkpoint
 
@@ -38,7 +38,7 @@ The verified controlled-evaluation protocol for this checkpoint records YOLO pre
 - Static input: float32 `[1, 3, 640, 640]`
 - Output: float32 `[1, 300, 6]` (`xyxy`, confidence, class index) from YOLO26's end-to-end NMS-free detection head
 - Exporter option: `nms=False`; this does not add external ByteTrack to the graph
-- Export validation: ONNX checker passed and ONNX Runtime CPU successfully executed a zero-input smoke test; see `YOLO26s_verification.json`
+- Export validation: ONNX checker passed and ONNX Runtime CPU successfully executed a zero-input smoke test; see `verification.json`
 
 Use the same preprocessing and class mapping as the FLIR training/evaluation pipeline. The ONNX model must be followed by the separate tracker implementation selected for the application. This package does not change the application's default model or tracker.
 
@@ -49,4 +49,4 @@ Use the same preprocessing and class mapping as the FLIR training/evaluation pip
 
 ## DEEPX INT8 companion
 
-[best_full_ft_epoch29.dxnn](best_full_ft_epoch29.dxnn) is an additional DEEPX DX-COM 2.4.1 INT8 post-training quantization compilation of the ONNX file above, calibrated with 256 frames from the FLIR ADAS v2 thermal training split. The DXNN remains detector-only; tracking thresholds and Kalman updates stay external. Compiler warnings, preprocessing contract, and validation limits are in [YOLO26s_DXNN_README.md](YOLO26s_DXNN_README.md) and [YOLO26s_conversion_verification.json](YOLO26s_conversion_verification.json).
+[best_full_ft_epoch29.dxnn](best_full_ft_epoch29.dxnn) is an additional DEEPX DX-COM 2.4.1 INT8 post-training quantization compilation of the ONNX file above, calibrated with 256 frames from the FLIR ADAS v2 thermal training split. The DXNN remains detector-only; tracking thresholds and Kalman updates stay external. Compiler warnings, preprocessing contract, and validation limits are in [DXNN_README.md](DXNN_README.md) and [conversion_verification.json](conversion_verification.json).
