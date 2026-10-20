@@ -4,7 +4,7 @@
 
 ## 1. 모델 다운로드
 
-현재 게시된 DXNN은 **31개**입니다. 아래 대표 모델과 추가 변형을 구분합니다.
+현재 게시된 DXNN은 **35개**입니다. 아래 대표 모델과 추가 변형을 구분합니다.
 
 | 계열 | 모델 | 학습 구분 | 파일 |
 | --- | --- | --- | --- |
@@ -18,7 +18,7 @@
 
 
 <details>
-<summary>추가 FT·LoRA·KD·입력 변형 다운로드 (24개)</summary>
+<summary>추가 FT·LoRA·KD·입력 변형 다운로드 (28개)</summary>
 
 | 모델 | 방법 / 입력 | seed | 기록 stage epoch | 파일 |
 | --- | --- | --- | --- | --- |
@@ -45,6 +45,10 @@
 | YOLO26s | LoRA + SupCon pilot / gradient | 505 | 3 | [yolo26s_contrastive_pilot_supcon_s505_e3.dxnn](yolo26/yolo26s_contrastive_pilot_supcon_s505_e3.dxnn) |
 | YOLO26s | continued LoRA pilot / gradient | 505 | 3 | [yolo26s_contrastive_pilot_continued_lora_s505_e3.dxnn](yolo26/yolo26s_contrastive_pilot_continued_lora_s505_e3.dxnn) |
 | YOLO26s | LoRA + crop CE pilot / gradient | 505 | 3 | [yolo26s_contrastive_pilot_crop_ce_s505_e3.dxnn](yolo26/yolo26s_contrastive_pilot_crop_ce_s505_e3.dxnn) |
+| YOLO26s | full_ft / original | 303 | 30 | [yolo26s_nested_full_ft_s303_e30_s303_e30.dxnn](yolo26/yolo26s_nested_full_ft_s303_e30_s303_e30.dxnn) |
+| YOLO26s | lora_r8_head / original | 303 | 30 | [yolo26s_nested_lora_r8_head_s303_e30_s303_e30.dxnn](yolo26/yolo26s_nested_lora_r8_head_s303_e30_s303_e30.dxnn) |
+| YOLO26s | full_ft / original | 404 | 30 | [yolo26s_nested_full_ft_s404_e30_s404_e30.dxnn](yolo26/yolo26s_nested_full_ft_s404_e30_s404_e30.dxnn) |
+| YOLO26s | lora_r8_head / original | 404 | 30 | [yolo26s_nested_lora_r8_head_s404_e30_s404_e30.dxnn](yolo26/yolo26s_nested_lora_r8_head_s404_e30_s404_e30.dxnn) |
 | YOLO26s | Full FT / historical10742 | 101 | 30 | [yolo26s_ft_s101_e30_legacy_20261001.dxnn](yolo26/yolo26s_ft_s101_e30_legacy_20261001.dxnn) |
 
 기록 stage epoch는 추가 학습 단계 길이일 수 있습니다. 학습 블록·체크포인트 해시는 아래 컴파일 상세에 보존합니다. 역사 모델의 학습/평가480×640과 이 배포 export의640×640은 구분해야 합니다. CLAHE·gradient 변형은 외부 채널 변환이 필요합니다.
@@ -574,6 +578,10 @@ YOLOX COCO category ID는 index+1이며 detector output index는0부터 시작�
 | yolo26s_contrastive_pilot_supcon_s505_e3.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
 | yolo26s_contrastive_pilot_continued_lora_s505_e3.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
 | yolo26s_contrastive_pilot_crop_ce_s505_e3.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolo26s_nested_full_ft_s303_e30_s303_e30.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolo26s_nested_lora_r8_head_s303_e30_s303_e30.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolo26s_nested_full_ft_s404_e30_s404_e30.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolo26s_nested_lora_r8_head_s404_e30_s404_e30.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
 | yolov8n.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 4 |
 | yolo26s_ft_s101_e30_legacy_20261001.dxnn | 1 | output0 [1, 300, 6] FLOAT | 6 |
 
@@ -1141,6 +1149,82 @@ M teacher 원본 학습4196장·seed202·AdamW·480×640·batch4·30epoch·2367u
 | compile elapsed seconds | 203.093 |
 | 병합 adapter 수 | 74 |
 | 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.004547119140625 / score 1.5914440155029297e-05 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
+
+### yolo26s_nested_full_ft_s303_e30_s303_e30.dxnn
+
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | nested_full_ft_s303_e30 |
+| 학습 방법 / seed / stage epochs | full_ft /303 /30 |
+| TRAIN support | 10491 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\lwir_nested_full_seed_repeat_20261014_v1\retrieved\runs\303\full_ft\sched_20261013_180409_9f659b75\train\args.yaml + final results.csv |
+| DXNN bytes | 10895053 |
+| DXNN SHA-256 | `491f86b4fece42454735cf99cadfac3426d5f7a36f0599f36bc7130f138e7801` |
+| source PT SHA-256 | `64798691e12628badb88857d060333e9159bfab7e287e2800f53886c96c6a74d` |
+| source ONNX SHA-256 | `33863b4a40a5e414e256bfbfc13416f4ab3e173441580fd3e433b3e3d0addc00` |
+| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
+| compile elapsed seconds | 211.999 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.0010223388671875 / score 7.644295692443848e-06 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
+
+### yolo26s_nested_lora_r8_head_s303_e30_s303_e30.dxnn
+
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | nested_lora_r8_head_s303_e30 |
+| 학습 방법 / seed / stage epochs | lora_r8_head /303 /30 |
+| TRAIN support | 10491 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\lwir_nested_full_seed_repeat_20261014_v1\retrieved\runs\303\lora_r8_head\sched_20261013_185135_1fc41d35\train\args.yaml + final results.csv |
+| DXNN bytes | 10890258 |
+| DXNN SHA-256 | `020aaf8e70a0e8c5e744cd887ff3875ab2e0e782b412fd4078866e6d7f1618bc` |
+| source PT SHA-256 | `1d0d9083b99d200e395f77d82bb29635a49f9b5d3dc8defa306344e8dfb476fc` |
+| source ONNX SHA-256 | `a8c4a3a80a0602df7de868ae6df141cf58611065a6b71555c5a0a3f2d0b0021e` |
+| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
+| compile elapsed seconds | 222.977 |
+| 병합 adapter 수 | 74 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.00531005859375 / score 8.761882781982422e-06 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
+
+### yolo26s_nested_full_ft_s404_e30_s404_e30.dxnn
+
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | nested_full_ft_s404_e30 |
+| 학습 방법 / seed / stage epochs | full_ft /404 /30 |
+| TRAIN support | 10491 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\lwir_nested_full_seed_repeat_20261014_v1\retrieved\runs\404\full_ft\sched_20261013_203835_6b2c4ab0\train\args.yaml + final results.csv |
+| DXNN bytes | 10890253 |
+| DXNN SHA-256 | `0e0dd6e9bb654be2630d941f2801c553467ccbd9cfdb6b4e3b3506f51df63646` |
+| source PT SHA-256 | `2f479db05c289a23f07854f8a051f6a6b31ca64b0427a4390ab5a3515621767e` |
+| source ONNX SHA-256 | `2c1128939c0c55bf2d40093f0f3583682787d1f2327f73cad5bec3fe163f0892` |
+| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
+| compile elapsed seconds | 209.161 |
+| 병합 adapter 수 | 0 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.00128173828125 / score 5.781650543212891e-06 |
+| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
+
+### yolo26s_nested_lora_r8_head_s404_e30_s404_e30.dxnn
+
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | nested_lora_r8_head_s404_e30 |
+| 학습 방법 / seed / stage epochs | lora_r8_head /404 /30 |
+| TRAIN support | 10491 |
+| 입력 representation | original; deployment export640×640 |
+| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\lwir_nested_full_seed_repeat_20261014_v1\retrieved\runs\404\lora_r8_head\sched_20261013_194517_d650ce30\train\args.yaml + final results.csv |
+| DXNN bytes | 10895058 |
+| DXNN SHA-256 | `6483dd7b575eb8ca18e7fd01662902ce8efe4e463fda713b8ef5ef829b832b20` |
+| source PT SHA-256 | `6db0cc85e4d3db013096e165ed869653328e4afe598d7275cf708eed7e6b0c7b` |
+| source ONNX SHA-256 | `b232701a1b47ddc1a7ccf23ac98534f158425dc86ddf7bcc899ce9edae49ccf2` |
+| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
+| compile elapsed seconds | 191.651 |
+| 병합 adapter 수 | 74 |
+| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.0037841796875 / score 7.778406143188477e-06 |
 | 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
 ### yolov8n.dxnn
