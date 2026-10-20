@@ -1264,3 +1264,7 @@ M teacher 원본 학습4196장·seed202·AdamW·480×640·batch4·30epoch·2367u
 Ultralytics/model, DEEPX SDK 및 FLIR 이용 조건은 별도로 적용됩니다. [DEEPX compiler](https://developer.deepx.ai/tech-docs/DXNN-SDK/DX-COM/DX-COMPILER_Agent_Driven_Development/) · [Ultralytics DEEPX](https://docs.ultralytics.com/integrations/deepx/).
 
 </details>
+
+## 별도 실행 실험
+
+[YOLO26m 두 NPU 코어 분할 실험](experiments/yolo26m_two_core/README.md): 공유 trunk와 여섯 헤드의 실제 분할 DXNN, 환경 점검·출력 검증·batch1 E2E p50/p95 측정 도구입니다. 실기기 미검증이며 속도 향상은 아직 입증되지 않았습니다. 기존 고유 학습 모델35개에 추가 모델로 가산하지 않습니다.
