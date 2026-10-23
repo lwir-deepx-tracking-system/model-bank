@@ -4,7 +4,7 @@
 
 ## 1. 모델 다운로드
 
-현재 게시된 DXNN은 단일 모델 **6개**와 NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**입니다. 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
+현재 게시된 DXNN은 단일 모델 **6개**, NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**입니다. 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
 
 | 계열 | 모델 | 학습 구분 | 파일 |
 | --- | --- | --- | --- |
@@ -12,6 +12,7 @@
 | yolo26 | YOLO26m teacher | teacher ·4196장 ·seed202 ·30ep | [DXNN](yolo26/yolo26m.dxnn) · [JSON](yolo26/yolo26m_compile_metadata.json) |
 | yolo26 | YOLO26m-RT (E08) | fine-tuned · 2타일 512×384 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_rt_a.dxnn) · [A JSON](yolo26/yolo26m_rt_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_rt_b.dxnn) · [B JSON](yolo26/yolo26m_rt_b_compile_metadata.json) |
 | yolo26 | YOLO26m-CS (KDF) | two-tower 0.75 · KD 최종 · 480×640 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_cs_a.dxnn) · [A JSON](yolo26/yolo26m_cs_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_cs_b.dxnn) · [B JSON](yolo26/yolo26m_cs_b_compile_metadata.json) |
+| reid | ViT-lite1 (person re-ID) | SOLIDER 선생님 → FLIR 사람 crop KD 학생 · 128×64 · NPU2 | [DXNN](reid/vit_lite1_reid.dxnn) · [JSON](reid/vit_lite1_reid_compile_metadata.json) |
 | yolov8 | YOLOv8n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8n.dxnn) · [JSON](yolov8/yolov8n_compile_metadata.json) |
 | yolov8 | YOLOv8s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8s.dxnn) · [JSON](yolov8/yolov8s_compile_metadata.json) |
 | yolox | YOLOX-Nano | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_nano.dxnn) · [JSON](yolox/yolox_nano_compile_metadata.json) |
@@ -47,7 +48,9 @@ DX-M1 (Orange Pi 5 Plus, DXRT 3.4.2, NPU 1000MHz), FLIR ADAS v2 `video_thermal_t
 | YOLO26m-CS / rebind | 53.9474 | 48.9952 | 60.0443 | 64.7884 | 50.4828 | 104 | 23.47 (42.6) | 38.77 / 44.88 |
 | YOLO26m-CS / rebind + ViT-lite1 | 53.6826 | 48.8877 | 59.5922 | 64.3460 | 50.3043 | 109 | 23.47 (42.6) | 39.15 / 45.60 |
 
-추적은 검출·추적·ViT를 파이프라인으로 돌린 실행입니다(ViT-lite1은 NPU_2). 점수는 M1이 저장한 출력(PRED/TRACKS)을 GT로 채점한 값입니다. 실행 기록·채점 스크립트·demo 영상은 M1의 runtime `test/chatgpt/yolobytetrack` 작업 폴더 `results/m1_yolo26m_rt_cs_20261023/`에 있습니다(`results/`는 git 추적 제외).
+추적은 검출·추적·ViT를 파이프라인으로 돌린 실행입니다(ViT-lite1은 NPU_2). 같은 파이프라인 조건의 ByteTrack(ViT 없음)은 RT 55.0fps · CS 44.4fps이고 실행마다 ±4fps 정도 흔들리므로, **ViT를 켜도 처리 주기는 달라지지 않습니다**(ViT는 NPU_2 코어 사용률 약 3%).
+
+**ViT-lite1 (`reid/vit_lite1_reid.dxnn`)**: 입력 uint8 NHWC [1,128,64,3](사람 crop을 128×64로 resize, gray→RGB 복제), 출력 `embedding` [1,128](호스트에서 L2 정규화), 1.46MB, NPU 101 layer, INT8 보정 128장(EMA). M1 NPU_2에서 crop당 NPU 3.0ms(준비 포함 5.9ms). 추적기는 잃어버린 track과 새 검출의 코사인 ≥ 0.6이면 예전 ID를 되살립니다. **현재 M1 INT8 실측에서는 재식별에 기여하지 못합니다**: 기준선 0.45~0.70 전부에서 ViT 없는 rebind(HOTA 53.95)보다 낮거나 같고, 그 차이는 전부 "외형 비교에 실패한 검출을 움직임 재연결에서 제외하는 hybrid veto" 때문입니다(veto 제거 시 ViT 없음과 동일하게 수렴하는 것으로 오프라인 재현됨, M1 실측 진행 중). 학습 상세(층 수·데이터 수)는 학습 PC 기록을 참조하십시오. 점수는 M1이 저장한 출력(PRED/TRACKS)을 GT로 채점한 값입니다. 실행 기록·채점 스크립트·demo 영상은 M1의 runtime `test/chatgpt/yolobytetrack` 작업 폴더 `results/m1_yolo26m_rt_cs_20261023/`에 있습니다(`results/`는 git 추적 제외).
 
 ## 2. 같은 평가군의 핵심 성능
 
