@@ -31,7 +31,7 @@ YOLO26x teacher는 학습 완료 근거가 있으나 로컬 최종 가중치가 
 | YOLO26m-RT (E08) | uint8 [1,512,384,3] × 2 | 640×512 프레임의 열 0:384 · 256:640 | 타일별 Decoder(512,384) → ownership join → NMS |
 | YOLO26m-CS (KDF) | uint8 [1,480,640,3] × 2 | 같은 프레임(행 16:496)을 두 tower에 입력 | 두 raw 출력 평균 → Decoder(480,640) 1회 → NMS |
 
-DX-M1 (Orange Pi 5 Plus, DXRT 3.4.2, NPU 1000MHz), FLIR ADAS v2 `video_thermal_test` 8영상 · 3749프레임 · GT person 12323. **위 FP32 표(sourceVAL·DEV5)와 데이터가 달라 직접 비교하지 않습니다.** 검출은 confidence 0.001 · NMS IoU 0.70 · max 300, COCO maxDets[1,10,300], 16클래스. 추적은 person만, IoU 0.5, TrackEval HOTA · motmetrics IDF1/MOTA.
+DX-M1 (Orange Pi 5 Plus, DXRT 3.4.2, NPU 1000MHz), FLIR ADAS v2 `video_thermal_test` 8영상 · 3749프레임 · GT person 12323. **위 FP32 표(sourceVAL·DEV5)와 데이터가 달라 직접 비교하지 않습니다.** 검출은 confidence 0.001 · NMS IoU 0.70 · max 300, COCO maxDets[1,10,300], 16클래스 예측 중 **GT가 있는 10클래스의 평균**(person·bike·car·motor·truck·light·hydrant·sign·dog·other vehicle; bike 113개·dog 25개는 AP≈0). 추적은 person만(프레임별 class 0 필터), IoU 0.5, TrackEval HOTA/DetA/AssA · motmetrics IDF1/MOTA/IDSW(TrackEval CLEAR 기준이면 MOTA 0.03~0.08 낮고 IDSW 3~6 많음).
 
 | 모델 | mAP50:95 ↑ | AP50 ↑ | AP75 ↑ | person AP ↑ | car AP ↑ | AR300 ↑ | 검출 ms p50 / p95 ↓ | NPU ms (A / B) ↓ |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
