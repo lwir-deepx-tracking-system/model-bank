@@ -1,15 +1,17 @@
 # LWIR DXNN Model Bank
 
-학습을 마친 LWIR 탐지기의 **INT8 PTQ 컴파일 파일**을 계열별로 제공합니다. 성능표는 **원본 FP32 모델 평가**이며, DX-M1에서 양자화 후 정확도·속도·추적 성능은 아직 측정하지 않았습니다.
+학습을 마친 LWIR 탐지기의 **INT8 PTQ 컴파일 파일**을 계열별로 제공합니다. 성능표는 **원본 FP32 모델 평가**이며, DX-M1에서 양자화 후 정확도·속도·추적 성능은 아직 측정하지 않았습니다. 예외로 **YOLO26m-RT·YOLO26m-CS는 DX-M1 INT8 실측값**을 아래 [DX-M1 INT8 실측](#dx-m1-int8-실측--yolo26m-rt--yolo26m-cs)에 따로 적었습니다.
 
 ## 1. 모델 다운로드
 
-현재 게시된 DXNN은 **6개**입니다. 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
+현재 게시된 DXNN은 단일 모델 **6개**와 NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**입니다. 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
 
 | 계열 | 모델 | 학습 구분 | 파일 |
 | --- | --- | --- | --- |
 | yolo26 | YOLO26s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolo26/yolo26s.dxnn) · [JSON](yolo26/yolo26s_compile_metadata.json) |
 | yolo26 | YOLO26m teacher | teacher ·4196장 ·seed202 ·30ep | [DXNN](yolo26/yolo26m.dxnn) · [JSON](yolo26/yolo26m_compile_metadata.json) |
+| yolo26 | YOLO26m-RT (E08) | fine-tuned · 2타일 512×384 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_rt_a.dxnn) · [A JSON](yolo26/yolo26m_rt_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_rt_b.dxnn) · [B JSON](yolo26/yolo26m_rt_b_compile_metadata.json) |
+| yolo26 | YOLO26m-CS (KDF) | two-tower 0.75 · KD 최종 · 480×640 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_cs_a.dxnn) · [A JSON](yolo26/yolo26m_cs_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_cs_b.dxnn) · [B JSON](yolo26/yolo26m_cs_b_compile_metadata.json) |
 | yolov8 | YOLOv8n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8n.dxnn) · [JSON](yolov8/yolov8n_compile_metadata.json) |
 | yolov8 | YOLOv8s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8s.dxnn) · [JSON](yolov8/yolov8s_compile_metadata.json) |
 | yolox | YOLOX-Nano | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_nano.dxnn) · [JSON](yolox/yolox_nano_compile_metadata.json) |
@@ -19,6 +21,33 @@
 > 2026-10-22 저장소 경량화: YOLO26n, YOLO26s 추가 변형 28개, `experiments/yolo26m_two_core`를 제거하고 git 기록에서도 정리했습니다 (clone 약 449MB → 약 43MB). 아래 성능·컴파일 기록에 남은 해당 이름은 기록용입니다. 정리 전 저장소 전체는 별도 백업으로 보관합니다.
 
 YOLO26x teacher는 학습 완료 근거가 있으나 로컬 최종 가중치가 없어 미게시입니다. **YOLO26x와 YOLOX는 다른 모델**입니다.
+
+### DX-M1 INT8 실측 · YOLO26m-RT / YOLO26m-CS
+
+두 모델은 각각 A·B 두 DXNN을 NPU_0·NPU_1에 동시에 올려 한 프레임을 처리합니다. 공개 출력은 `boxes`·`scores` raw 텐서이며, decode·NMS는 외부에서 합니다.
+
+| 모델 | 입력 | A · B 역할 | 합치는 방법 |
+| --- | --- | --- | --- |
+| YOLO26m-RT (E08) | uint8 [1,512,384,3] × 2 | 640×512 프레임의 열 0:384 · 256:640 | 타일별 Decoder(512,384) → ownership join → NMS |
+| YOLO26m-CS (KDF) | uint8 [1,480,640,3] × 2 | 같은 프레임(행 16:496)을 두 tower에 입력 | 두 raw 출력 평균 → Decoder(480,640) 1회 → NMS |
+
+DX-M1 (Orange Pi 5 Plus, DXRT 3.4.2, NPU 1000MHz), FLIR ADAS v2 `video_thermal_test` 8영상 · 3749프레임 · GT person 12323. **위 FP32 표(sourceVAL·DEV5)와 데이터가 달라 직접 비교하지 않습니다.** 검출은 confidence 0.001 · NMS IoU 0.70 · max 300, COCO maxDets[1,10,300], 16클래스. 추적은 person만, IoU 0.5, TrackEval HOTA · motmetrics IDF1/MOTA.
+
+| 모델 | mAP50:95 ↑ | AP50 ↑ | AP75 ↑ | person AP ↑ | car AP ↑ | AR300 ↑ | 검출 ms p50 / p95 ↓ | NPU ms (A / B) ↓ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| YOLO26m-RT | 17.2538 | 30.6676 | 17.1007 | 46.6323 | 50.4572 | 32.4809 | 25.77 / 29.53 | 11.77 / 11.78 |
+| YOLO26m-CS | 16.2227 | 28.7995 | 15.8576 | 46.9800 | 51.5364 | 31.0124 | 28.24 / 32.29 | 12.60 / 12.76 |
+
+검출 ms는 같은 프로세스에서 프레임마다 번갈아 잰 8비트 프레임 → 최종 검출까지의 시간입니다(JPEG 읽기 제외).
+
+| 모델 / tracker | HOTA ↑ | DetA ↑ | AssA ↑ | IDF1 ↑ | MOTA ↑ | IDSW ↓ | 처리 주기 ms (fps) ↓ | 지연 p50 / p95 ms ↓ |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| YOLO26m-RT / rebind + ViT-lite1 | 54.0168 | 50.4523 | 58.5011 | 65.0132 | 54.8649 | 114 | 19.64 (50.9) | 31.43 / 41.37 |
+| YOLO26m-CS / ByteTrack | 54.4108 | 49.6273 | 60.2450 | 64.1369 | 53.3880 | 117 | 23.54 (42.5) | 38.72 / 44.67 |
+| YOLO26m-CS / rebind | 53.9474 | 48.9952 | 60.0443 | 64.7884 | 50.4828 | 104 | 23.47 (42.6) | 38.77 / 44.88 |
+| YOLO26m-CS / rebind + ViT-lite1 | 53.6826 | 48.8877 | 59.5922 | 64.3460 | 50.3043 | 109 | 23.47 (42.6) | 39.15 / 45.60 |
+
+추적은 검출·추적·ViT를 파이프라인으로 돌린 실행입니다(ViT-lite1은 NPU_2). 점수는 M1이 저장한 출력(PRED/TRACKS)을 GT로 채점한 값입니다. 실행 기록·채점 스크립트·demo 영상은 M1의 runtime `test/chatgpt/yolobytetrack` 작업 폴더 `results/m1_yolo26m_rt_cs_20261023/`에 있습니다(`results/`는 git 추적 제외).
 
 ## 2. 같은 평가군의 핵심 성능
 

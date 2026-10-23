@@ -1,0 +1,537 @@
+{
+  "_source": {
+    "dxnn": "yolo26m_cs_a.dxnn",
+    "dxnn_bytes": 13389183,
+    "dxnn_sha256": "777bbd3bd04f4cb2b1a6073a418aaaa981690b707e2abff7e4137690f8e84f7e",
+    "note": "Compile metadata embedded in the DXNN by DX-COM (header, graph_info, compile_config, rmap_info), extracted verbatim; no device run."
+  },
+  "header": {
+    "version": 8,
+    "signature": "DXNN",
+    "size": 8192,
+    "encode_type": "utf-8",
+    "bytes_order": "little",
+    "hw_config": {
+      "chip_version": "M1A",
+      "mac": 4,
+      "is_unsigned": false
+    },
+    "data": {
+      "merged_model": {
+        "type": "bytes",
+        "offset": 0,
+        "size": 0
+      },
+      "npu_models": {},
+      "cpu_models": {
+        "cpu_0": {
+          "type": "bytes",
+          "offset": 62667,
+          "size": 2204
+        }
+      },
+      "graph_info": {
+        "type": "str",
+        "offset": 64871,
+        "size": 3348
+      },
+      "compile_config": {
+        "type": "str",
+        "offset": 62147,
+        "size": 520
+      },
+      "compiled_data": {
+        "M1A_4K": {
+          "npu_0": {
+            "rmap": {
+              "type": "bytes",
+              "offset": 68219,
+              "size": 1065600
+            },
+            "weight": {
+              "type": "bytes",
+              "offset": 1133819,
+              "size": 12242496
+            },
+            "rmap_info": {
+              "type": "str",
+              "offset": 13376315,
+              "size": 4676
+            }
+          }
+        }
+      },
+      "vis_npu_models": {
+        "npu_0": {
+          "type": "bytes",
+          "offset": 0,
+          "size": 62147
+        }
+      },
+      "vis_cpu_models": {}
+    },
+    "cipher_manager": {
+      "_serializer": {
+        "use_pickle": false
+      },
+      "_cipher": "DXCipherV2"
+    }
+  },
+  "graph": {
+    "offloading": false,
+    "inputs": [
+      "images"
+    ],
+    "outputs": [
+      "boxes",
+      "scores"
+    ],
+    "toposort_order": [
+      "npu_0",
+      "cpu_0"
+    ],
+    "graphs": [
+      {
+        "name": "npu_0",
+        "device": "NPU",
+        "inputs": [
+          {
+            "name": "images",
+            "owner": null,
+            "users": [
+              "npu_0"
+            ],
+            "head": true,
+            "tail": false
+          }
+        ],
+        "outputs": [
+          {
+            "name": "/branch/0/2/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/1/2/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/0/2_1/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/1/2_1/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/2/2/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/2/2_1/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          }
+        ],
+        "head": true,
+        "tail": false
+      },
+      {
+        "name": "cpu_0",
+        "device": "CPU",
+        "inputs": [
+          {
+            "name": "/branch/0/2/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/1/2/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/2/2/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/0/2_1/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/2/2_1/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          },
+          {
+            "name": "/branch/1/2_1/Conv_output_0",
+            "owner": "npu_0",
+            "users": [
+              "cpu_0"
+            ],
+            "head": false,
+            "tail": false
+          }
+        ],
+        "outputs": [
+          {
+            "name": "boxes",
+            "owner": "cpu_0",
+            "users": [],
+            "head": false,
+            "tail": true
+          },
+          {
+            "name": "scores",
+            "owner": "cpu_0",
+            "users": [],
+            "head": false,
+            "tail": true
+          }
+        ],
+        "head": false,
+        "tail": true
+      }
+    ]
+  },
+  "config": {
+    "input_shapes": {
+      "images": [
+        1,
+        3,
+        480,
+        640
+      ]
+    },
+    "is_dummy_loader": false,
+    "is_custom_loader": false,
+    "search_calibration_num": false,
+    "search_calibration_num_arguments": {},
+    "package": null,
+    "args": null,
+    "kwargs": null,
+    "dataset_path": null,
+    "file_extensions": null,
+    "calibration_num": 8,
+    "calibration_method": "ema",
+    "preprocessings": [],
+    "train_batchsize": null,
+    "num_samples": null,
+    "ppu": null,
+    "device": "cpu",
+    "enhanced_scheme": {},
+    "use_q_pro": false,
+    "outputs": null,
+    "compile_version": "2.4.1-rc.1",
+    "seed": 42
+  },
+  "rmaps": {
+    "npu_0": {
+      "version": {
+        "npu": "M1A_4K",
+        "rmap": "v0.10.6",
+        "rmapInfo": "2.4.1-rc.1",
+        "opt_level": "M-master"
+      },
+      "name": "npu_0",
+      "mode": "release",
+      "npu": {
+        "mac": 4096
+      },
+      "size": 36171456,
+      "counts": {
+        "layer": 363,
+        "cmd": 1110
+      },
+      "memory": [
+        {
+          "name": "RMAP",
+          "offset": 0,
+          "size": 1065600,
+          "type": "DRAM"
+        },
+        {
+          "name": "WEIGHT",
+          "offset": 0,
+          "size": 12242496,
+          "type": "DRAM"
+        },
+        {
+          "name": "INPUT",
+          "offset": 0,
+          "size": 921600,
+          "type": "DRAM"
+        },
+        {
+          "name": "OUTPUT",
+          "offset": 0,
+          "size": 21941760,
+          "type": "DRAM"
+        },
+        {
+          "name": "TEMP",
+          "offset": 0,
+          "size": 0,
+          "type": "DRAM"
+        }
+      ],
+      "inputs": [
+        {
+          "name": "images",
+          "dtype": "UINT8",
+          "shape": [
+            1,
+            480,
+            640,
+            3
+          ],
+          "name_encoded": "%arg0",
+          "dtype_encoded": "UINT8",
+          "shape_encoded": [
+            1,
+            480,
+            640,
+            3
+          ],
+          "layout": "PRE_IM2COL",
+          "align_unit": 64,
+          "transpose": null,
+          "scale": null,
+          "bias": null,
+          "memory": {
+            "name": "INPUT",
+            "offset": 0,
+            "size": 921600,
+            "type": "DRAM"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "/branch/0/2/Conv_output_0",
+          "dtype": "FLOAT32",
+          "shape": [
+            1,
+            4,
+            60,
+            80
+          ],
+          "name_encoded": "%681",
+          "dtype_encoded": "FLOAT32",
+          "shape_encoded": [
+            1,
+            60,
+            80,
+            4
+          ],
+          "layout": "ALIGNED",
+          "align_unit": 16,
+          "transpose": "CHANNEL_LAST_TO_FIRST",
+          "scale": null,
+          "bias": null,
+          "memory": {
+            "name": "OUTPUT",
+            "offset": 0,
+            "size": 307200,
+            "type": "DRAM"
+          }
+        },
+        {
+          "name": "/branch/1/2/Conv_output_0",
+          "dtype": "FLOAT32",
+          "shape": [
+            1,
+            4,
+            30,
+            40
+          ],
+          "name_encoded": "%710",
+          "dtype_encoded": "FLOAT32",
+          "shape_encoded": [
+            1,
+            30,
+            40,
+            4
+          ],
+          "layout": "ALIGNED",
+          "align_unit": 16,
+          "transpose": "CHANNEL_LAST_TO_FIRST",
+          "scale": null,
+          "bias": null,
+          "memory": {
+            "name": "OUTPUT",
+            "offset": 307200,
+            "size": 76800,
+            "type": "DRAM"
+          }
+        },
+        {
+          "name": "/branch/0/2_1/Conv_output_0",
+          "dtype": "FLOAT32",
+          "shape": [
+            1,
+            16,
+            60,
+            80
+          ],
+          "name_encoded": "%812",
+          "dtype_encoded": "FLOAT32",
+          "shape_encoded": [
+            1,
+            60,
+            80,
+            16
+          ],
+          "layout": "ALIGNED",
+          "align_unit": 16,
+          "transpose": "CHANNEL_LAST_TO_FIRST",
+          "scale": null,
+          "bias": null,
+          "memory": {
+            "name": "OUTPUT",
+            "offset": 384000,
+            "size": 307200,
+            "type": "DRAM"
+          }
+        },
+        {
+          "name": "/branch/1/2_1/Conv_output_0",
+          "dtype": "FLOAT32",
+          "shape": [
+            1,
+            16,
+            30,
+            40
+          ],
+          "name_encoded": "%804",
+          "dtype_encoded": "FLOAT32",
+          "shape_encoded": [
+            1,
+            30,
+            40,
+            16
+          ],
+          "layout": "ALIGNED",
+          "align_unit": 16,
+          "transpose": "CHANNEL_LAST_TO_FIRST",
+          "scale": null,
+          "bias": null,
+          "memory": {
+            "name": "OUTPUT",
+            "offset": 691200,
+            "size": 76800,
+            "type": "DRAM"
+          }
+        },
+        {
+          "name": "/branch/2/2/Conv_output_0",
+          "dtype": "FLOAT32",
+          "shape": [
+            1,
+            4,
+            15,
+            20
+          ],
+          "name_encoded": "%788",
+          "dtype_encoded": "FLOAT32",
+          "shape_encoded": [
+            1,
+            15,
+            20,
+            4
+          ],
+          "layout": "ALIGNED",
+          "align_unit": 16,
+          "transpose": "CHANNEL_LAST_TO_FIRST",
+          "scale": null,
+          "bias": null,
+          "memory": {
+            "name": "OUTPUT",
+            "offset": 768000,
+            "size": 19200,
+            "type": "DRAM"
+          }
+        },
+        {
+          "name": "/branch/2/2_1/Conv_output_0",
+          "dtype": "FLOAT32",
+          "shape": [
+            1,
+            16,
+            15,
+            20
+          ],
+          "name_encoded": "%796",
+          "dtype_encoded": "FLOAT32",
+          "shape_encoded": [
+            1,
+            15,
+            20,
+            16
+          ],
+          "layout": "ALIGNED",
+          "align_unit": 16,
+          "transpose": "CHANNEL_LAST_TO_FIRST",
+          "scale": null,
+          "bias": null,
+          "memory": {
+            "name": "OUTPUT",
+            "offset": 787200,
+            "size": 19200,
+            "type": "DRAM"
+          }
+        }
+      ]
+    }
+  }
+}
