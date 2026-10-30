@@ -1,5 +1,10 @@
 # LWIR DXNN Model Bank
 
+## YOLO26x 열영상 PT 모델
+
+사람 검출 및 검수용 슈도 라벨 후보에 사용하는 Full FT 모델입니다. [YOLO26x FLIR E69 모델·사용법](models/LWIR-YOLO26x-FT-FLIR-E69/)을 참고하세요. PT는 DXNN이 아니며 DX-M1 실행을 검증하지 않았습니다.
+
+
 학습을 마친 LWIR 탐지기의 **INT8 PTQ 컴파일 파일**을 계열별로 제공합니다. 성능표는 **원본 FP32 모델 평가**이며, DX-M1에서 양자화 후 정확도·속도·추적 성능은 아직 측정하지 않았습니다. 예외로 **YOLO26m-RT·YOLO26m-CS는 DX-M1 INT8 실측값**을 아래 [DX-M1 INT8 실측](#dx-m1-int8-실측--yolo26m-rt--yolo26m-cs)에 따로 적었습니다.
 
 ## 1. 모델 다운로드
@@ -21,7 +26,7 @@
 
 > 2026-10-22 저장소 경량화: YOLO26n, YOLO26s 추가 변형 28개, `experiments/yolo26m_two_core`를 제거하고 git 기록에서도 정리했습니다 (clone 약 449MB → 약 43MB). 아래 성능·컴파일 기록에 남은 해당 이름은 기록용입니다. 정리 전 저장소 전체는 별도 백업으로 보관합니다.
 
-YOLO26x teacher는 학습 완료 근거가 있으나 로컬 최종 가중치가 없어 미게시입니다. **YOLO26x와 YOLOX는 다른 모델**입니다.
+YOLO26x와 YOLOX는 다른 모델입니다. YOLO26x는 아래 PT 모델로 별도 제공합니다.
 
 ### DX-M1 INT8 실측 · YOLO26m-RT / YOLO26m-CS
 
