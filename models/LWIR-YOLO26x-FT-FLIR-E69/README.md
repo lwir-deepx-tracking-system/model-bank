@@ -1,5 +1,7 @@
 # LWIR YOLO26x — FLIR fine-tuned, E69
 
+> 2026-11-01: 슈도 라벨 후보 생성에는 [FULL30 모델](../LWIR-YOLO26x-FT-FLIR-FULL30/)을 쓴다(사람 AP50:95 53.28% vs 이 모델 45.36%, 같은 평가). 이 모델은 비교 기록용으로 남긴다.
+
 `yolo26x_flir_ft_e69.pt`는 FLIR 열영상으로 Full Fine-Tuning한 YOLO26x 검출기다. 사람 검출 후보와 **사람 검수가 필요한 슈도 라벨**을 만드는 용도다. 추적기, 확정 GT, ONNX 또는 DXNN은 포함하지 않는다. 이 파일을 DX-M1에서 바로 실행할 수 있는 것으로 간주하면 안 된다.
 
 ## 학습과 평가

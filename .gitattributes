@@ -1,1 +1,2 @@
 /models/LWIR-YOLO26x-FT-FLIR-E69/*.pt filter=lfs diff=lfs merge=lfs -text
+/models/LWIR-YOLO26x-FT-FLIR-FULL30/*.pt filter=lfs diff=lfs merge=lfs -text
