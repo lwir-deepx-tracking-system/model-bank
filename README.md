@@ -2,17 +2,14 @@
 
 ## YOLO26x 열영상 PT 모델
 
-사람 검출 및 검수용 슈도 라벨 후보에 사용하는 Full FT 모델입니다. PT는 DXNN이 아니며 DX-M1 실행을 검증하지 않았습니다.
-
-- **기본: [YOLO26x FLIR FULL30](models/LWIR-YOLO26x-FT-FLIR-FULL30/)** (2026-11-01) — FLIR 학습 10,491장 전체, 30 epoch. FLIR 사람 AP50:95 53.28%, TMOT R@P95 0.723 / 0.683.
-- 이전 E69 모델(4,196장, 사람 AP50:95 45.36%, TMOT R@P95 0.557 / 0.638)은 2026-11-01에 삭제했습니다. 필요하면 git 기록(커밋 `0928ac9`)에서 꺼낼 수 있습니다.
+사람 검출 및 검수용 슈도 라벨 후보에 사용하는 Full FT 모델 `yolo26/yolo26x.pt`입니다(2026-11-01, FLIR 학습 10,491장, 사람 AP50:95 53.2791%). **PT는 DXNN이 아니며 DX-M1 컴파일·실행을 검증하지 않았습니다.** 이전 E69(4,196장, 45.3642%)는 삭제했고 git 기록 `0928ac9`에 남아 있습니다. **이전 모델과 데이터 증강·학습 캔버스가 다릅니다** — [yolo26x.pt 상세](#yolo26xpt)를 보십시오.
 
 
 학습을 마친 LWIR 탐지기의 **INT8 PTQ 컴파일 파일**을 계열별로 제공합니다. 성능표는 **원본 FP32 모델 평가**이며, DX-M1에서 양자화 후 정확도·속도·추적 성능은 아직 측정하지 않았습니다. 예외로 **YOLO26m-RT·YOLO26m-CS는 DX-M1 INT8 실측값**을 아래 [DX-M1 INT8 실측](#dx-m1-int8-실측--yolo26m-rt--yolo26m-cs)에 따로 적었습니다.
 
 ## 1. 모델 다운로드
 
-현재 게시된 DXNN은 단일 모델 **6개**, NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**입니다. 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
+현재 게시된 DXNN은 단일 모델 **6개**, NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
 
 | 계열 | 모델 | 학습 구분 | 파일 |
 | --- | --- | --- | --- |
@@ -20,6 +17,7 @@
 | yolo26 | YOLO26m teacher | teacher ·4196장 ·seed202 ·30ep | [DXNN](yolo26/yolo26m.dxnn) · [JSON](yolo26/yolo26m_compile_metadata.json) |
 | yolo26 | YOLO26m-RT (E08) | fine-tuned · 2타일 512×384 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_rt_a.dxnn) · [A JSON](yolo26/yolo26m_rt_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_rt_b.dxnn) · [B JSON](yolo26/yolo26m_rt_b_compile_metadata.json) |
 | yolo26 | YOLO26m-CS (KDF) | two-tower 0.75 · KD 최종 · 480×640 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_cs_a.dxnn) · [A JSON](yolo26/yolo26m_cs_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_cs_b.dxnn) · [B JSON](yolo26/yolo26m_cs_b_compile_metadata.json) |
+| yolo26 | YOLO26x (PT · 슈도라벨) | Full FT ·10491장 ·seed202 ·30ep(best 29) · DXNN 없음 | [PT](yolo26/yolo26x.pt) · [JSON](yolo26/yolo26x_train_metadata.json) |
 | reid | ViT-lite1 (person re-ID) | SOLIDER 선생님 → FLIR 사람 crop KD 학생 · 128×64 · NPU2 | [DXNN](reid/vit_lite1_reid.dxnn) · [JSON](reid/vit_lite1_reid_compile_metadata.json) |
 | yolov8 | YOLOv8n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8n.dxnn) · [JSON](yolov8/yolov8n_compile_metadata.json) |
 | yolov8 | YOLOv8s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8s.dxnn) · [JSON](yolov8/yolov8s_compile_metadata.json) |
@@ -688,9 +686,48 @@ M teacher 원본 학습4196장·seed202·AdamW·480×640·batch4·30epoch·2367u
 | 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.001678466796875 / score 4.351139068603516e-06 |
 | 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
+### yolo26x.pt
+
+DXNN이 아닌 PyTorch 체크포인트입니다. 위 공통 컴파일 조건은 적용되지 않습니다.
+
+| 항목 | 값 |
+| --- | --- |
+| 실험 식별 | LWIR-YOLO26x-FT-10491-S202-E29 |
+| 학습 방법 / seed / stage epochs | full_ft /202 /30 (best epoch 29) |
+| TRAIN support | 10491 (`ladder_n10491_full_eligible.txt`, SHA-256 `a3fad7d3bf74…`; 검증 장면 연결 후보 영상 2개 251장 제외) |
+| 입력 representation | original; 학습 정사각 640×640, 평가·추론 480×640 |
+| 초기 가중치 | COCO 사전학습 yolo26x.pt (SHA-256 `9fdd44a31c504547ffb81d2c6d9e6dac3493c8eaa8b0398d3f43bae6c7003e92`) |
+| PT bytes | 118376293 |
+| PT SHA-256 | `e0e8a30cd6dfb7219b9501ae793389d4875fc7e4ab2904fd5e0cc1e49e4b4538` |
+| person AP50:95 / AP50 | 53.2791 / 84.5572 (sourceVAL1144장, 사람 GT4470, 480×640, conf0.001, max_det300, maxDets100) |
+| TMOT R@P95 (개발 진단) | 04-18 0.7225 · 04-20 0.6832 (사람 GT와 IoU0.5; 독립 검증 아님) |
+| 정밀도 | 1~4 epoch FP32, 5~30 epoch AMP+TF32 (RTX 4090) |
+
+**데이터 증강·학습 설정 변경 (이전 YOLO26x E69 · YOLO26m teacher 대비)**
+
+| 항목 | 이전 E69 | 이전 m teacher (`yolo26m.dxnn` 원본) | **yolo26x.pt** |
+| --- | --- | --- | --- |
+| TRAIN | 4196 | 4196 | **10491** |
+| 학습 캔버스 | 고정 480×640 | 고정 480×640 | **정사각 640×640** (mosaic 사용 위해) |
+| mosaic | 0 | 0 | **1.0, 마지막 10 epoch 끔** |
+| scale | 0.5 | 0.5 | **0.75** (0.25~1.75배, 작은 사람 보강) |
+| hsv_h / hsv_s / hsv_v | 0.015 / 0.7 / 0.4 | 0.015 / 0.7 / 0.4 | **0 / 0** / 0.4 (흑백 복제 입력이라 색조·채도는 효과 없음) |
+| translate / fliplr | 0.1 / 0.5 | 0.1 / 0.5 | 0.1 / 0.5 (같음) |
+| mixup·회전·shear·perspective | 0 | 0 | 0 (같음) |
+| LR 감소 | 선형 | 선형 | **cosine** |
+| epochs / batch | 60(+추가) / 1 | 30 / 4 | 30 / 8 |
+| warmup_bias_lr | **0.1** (AdamW에서 epoch1 mAP 0.009) | 0.0 | 0.0 |
+| lr0 / lrf / warmup / nbs | 3e-4 / 0.01 / 3 / 64 | 같음 | 같음 |
+
+E69가 m보다 낮았던 주원인은 warmup_bias_lr 0.1과 batch 1로 보입니다(기록 근거 가설). 위 변경은 데이터·증강·캔버스·LR 감소를 함께 바꿨으므로 **어느 변경이 얼마나 기여했는지는 분리되지 않았습니다.** 같은 설정의 YOLO26m 재학습은 person AP50:95 50.7486으로 이전 m teacher(48.98, 같은 평가기)보다 높았습니다.
+
+**전처리**: FLIR COCO JSON→YOLO txt 변환 시 같은 이미지의 완전 중복 상자 병합(TRAIN2·VAL8). FLIR 범주 16개를 위 클래스 표로 대응(bike→bicycle, motor→motorcycle, light→traffic light, hydrant→fire hydrant, sign→stop sign); COCO 헤드는 클래스 이름 기준으로 행을 다시 배치(COCO에 없는 deer·stroller·scooter·other vehicle 4개는 새로 학습). 입력은 8-bit grayscale을 3채널 복제, /255만 적용(평균·표준편차 정규화 없음, CLAHE·gradient 없음), 패딩114 중앙 letterbox. BatchNorm은 running mean/var를 COCO 값으로 고정하고 affine만 학습. 16-bit 원본은 카메라별 8-bit 변환이 필요하며 이 저장소는 제공하지 않습니다.
+
+**사용**: `git lfs install` 후 clone, 파일 크기 118376293 bytes 확인. Ultralytics로 `YOLO('yolo26/yolo26x.pt').predict(img, imgsz=(480,640), rect=False, conf=0.001, max_det=300)`; `img`는 위 전처리를 거친 480×640×3 uint8. 상자는 패딩·크기 조정을 되돌려 원본 좌표로 복원합니다. TMOT에서 정밀도95%가 되는 임계값은 0.46~0.48이었고, 슈도 라벨은 사람 검수가 필요합니다. 학습·검증은 프로젝트 보관 Ultralytics 8.4.157 수정본을 사용했습니다.
+
 ### 보존 범위
 
-로컬 원본과 중간 ONNX/캘리브레이션 자료는 보존하며, 저장소 계열 폴더에는 DXNN과 그 컴파일 메타데이터 JSON만 둡니다. PNG/정밀 CSV/JSON은 원본 Library ZIP `libfile_473f586f45ac8191bef1087765316cc2`(SHA-256 `be592eed621b340e112782f81e340eed5c49f5a6f9690dce36c44ba3c47bbe74`)과 로컬에 보존했습니다. 이전 Git 이력의 파일은 삭제하지 않았으며 force push도 하지 않았습니다.
+로컬 원본과 중간 ONNX/캘리브레이션 자료는 보존하며, 저장소 계열 폴더에는 DXNN과 그 컴파일 메타데이터 JSON만 둡니다(예외: 슈도 라벨용 `yolo26/yolo26x.pt`와 학습 메타데이터 JSON). PNG/정밀 CSV/JSON은 원본 Library ZIP `libfile_473f586f45ac8191bef1087765316cc2`(SHA-256 `be592eed621b340e112782f81e340eed5c49f5a6f9690dce36c44ba3c47bbe74`)과 로컬에 보존했습니다. 이전 Git 이력의 파일은 삭제하지 않았으며 force push도 하지 않았습니다.
 
 Ultralytics/model, DEEPX SDK 및 FLIR 이용 조건은 별도로 적용됩니다. [DEEPX compiler](https://developer.deepx.ai/tech-docs/DXNN-SDK/DX-COM/DX-COMPILER_Agent_Driven_Development/) · [Ultralytics DEEPX](https://docs.ultralytics.com/integrations/deepx/).
 

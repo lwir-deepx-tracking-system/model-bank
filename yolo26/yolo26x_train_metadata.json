@@ -1,0 +1,93 @@
+{
+  "experiment_id": "LWIR-YOLO26x-FT-10491-S202-E29",
+  "file": "yolo26x.pt",
+  "format": "Ultralytics PyTorch checkpoint (not DXNN; DX-M1 not compiled or verified)",
+  "pt_bytes": 118376293,
+  "pt_sha256": "e0e8a30cd6dfb7219b9501ae793389d4875fc7e4ab2904fd5e0cc1e49e4b4538",
+  "init": "COCO-pretrained yolo26x.pt",
+  "init_sha256": "9fdd44a31c504547ffb81d2c6d9e6dac3493c8eaa8b0398d3f43bae6c7003e92",
+  "train": {
+    "images": 10491,
+    "list": "ladder_n10491_full_eligible.txt",
+    "list_sha256": "a3fad7d3bf7471a7455e9f3af3c2d198e3061ba04731a39ca99a87457996549a",
+    "excluded_videos": {
+      "2SReBn5LtAkL5HMj2": 55,
+      "jNQtRj6NGycZDEXpe": 196
+    },
+    "val_images": 1144
+  },
+  "method": "full_ft; BatchNorm running statistics frozen (affine trained); COCO head rows remapped by class name",
+  "input": {
+    "train": "replicated 8-bit grayscale, letterbox 640x640 pad 114",
+    "eval": "replicated 8-bit grayscale, letterbox 480x640 pad 114 (centered)",
+    "normalize": "/255 only"
+  },
+  "args": {
+    "epochs": 30,
+    "batch": 8,
+    "nbs": 64,
+    "imgsz": 640,
+    "rect": false,
+    "optimizer": "AdamW",
+    "lr0": 0.0003,
+    "lrf": 0.01,
+    "cos_lr": true,
+    "momentum": 0.937,
+    "weight_decay": 0.0005,
+    "warmup_epochs": 3,
+    "warmup_bias_lr": 0.0,
+    "box": 7.5,
+    "cls": 0.5,
+    "dfl": 1.5,
+    "seed": 202,
+    "mosaic": 1.0,
+    "close_mosaic": 10,
+    "scale": 0.75,
+    "translate": 0.1,
+    "fliplr": 0.5,
+    "flipud": 0.0,
+    "hsv_h": 0.0,
+    "hsv_s": 0.0,
+    "hsv_v": 0.4,
+    "degrees": 0.0,
+    "shear": 0.0,
+    "perspective": 0.0,
+    "mixup": 0.0,
+    "cutmix": 0.0,
+    "copy_paste": 0.0
+  },
+  "precision": {
+    "epochs_1_4": "FP32",
+    "epochs_5_30": "AMP + TF32",
+    "resume_after_epoch": 4,
+    "gpu": "RTX 4090"
+  },
+  "best_epoch": 29,
+  "flir_val_person": {
+    "AP50_95": 0.532790736822456,
+    "AP50": 0.8455715166834321,
+    "images": 1144,
+    "gt": 4470,
+    "conf": 0.001,
+    "max_det": 300,
+    "cocoeval_maxDets": 100
+  },
+  "tmot_development_diagnostic": {
+    "0418": {
+      "R_at_P95": 0.7224964251118594,
+      "thr_at_P95": 0.46,
+      "FP_at_P95": 807,
+      "FN_at_P95": 6016,
+      "gt_boxes": 21679
+    },
+    "0420": {
+      "R_at_P95": 0.6831643543223053,
+      "thr_at_P95": 0.48,
+      "FP_at_P95": 1023,
+      "FN_at_P95": 9500,
+      "gt_boxes": 29984
+    }
+  },
+  "not_adopted": "warm-restart continuation (lr0 1e-4, 10 epochs) did not beat epoch 29",
+  "ultralytics": "8.4.157 project-modified fork"
+}
