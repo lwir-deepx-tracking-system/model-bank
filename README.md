@@ -2,19 +2,18 @@
 
 ## YOLO26x 열영상 PT 모델
 
-사람 검출 및 검수용 슈도 라벨 후보에 사용하는 Full FT 모델 `yolo26/yolo26x.pt`입니다(2026-11-01, FLIR 학습 10,491장, 사람 AP50:95 53.2791%). **PT는 DXNN이 아니며 DX-M1 컴파일·실행을 검증하지 않았습니다.** 이전 E69(4,196장, 45.3642%)는 삭제했고 git 기록 `0928ac9`에 남아 있습니다. **이전 모델과 데이터 증강·학습 캔버스가 다릅니다** — [yolo26x.pt 상세](#yolo26xpt)를 보십시오.
+사람 검출 및 검수용 슈도 라벨 후보에 사용하는 Full FT 모델 `yolo26/yolo26x.pt`입니다(2026-11-01, FLIR 학습 10,491장, 사람 AP50:95 53.2791%). **PT는 DXNN이 아니며 DX-M1 컴파일·실행을 검증하지 않았습니다.** 이전 YOLO26x(4,196장으로 학습, 69 epoch째 가중치, 45.3642%)는 삭제했고 git 기록 `0928ac9`에 남아 있습니다. **이전 모델과 데이터 증강·학습 캔버스가 다릅니다** — [yolo26x.pt 상세](#yolo26xpt)를 보십시오.
 
 
 학습을 마친 LWIR 탐지기의 **INT8 PTQ 컴파일 파일**을 계열별로 제공합니다. 성능표는 **원본 FP32 모델 평가**이며, DX-M1에서 양자화 후 정확도·속도·추적 성능은 아직 측정하지 않았습니다. 예외로 **YOLO26m-RT·YOLO26m-CS는 DX-M1 INT8 실측값**을 아래 [DX-M1 INT8 실측](#dx-m1-int8-실측--yolo26m-rt--yolo26m-cs)에 따로 적었습니다.
 
 ## 1. 모델 다운로드
 
-현재 게시된 DXNN은 단일 모델 **6개**, NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
+현재 게시된 DXNN은 단일 모델 **5개**(2026-11-01 기존 YOLO26m 교사 `yolo26m.dxnn` 삭제, git 기록 `1e957ad`에 남음), NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
 
 | 계열 | 모델 | 학습 구분 | 파일 |
 | --- | --- | --- | --- |
 | yolo26 | YOLO26s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolo26/yolo26s.dxnn) · [JSON](yolo26/yolo26s_compile_metadata.json) |
-| yolo26 | YOLO26m teacher | teacher ·4196장 ·seed202 ·30ep | [DXNN](yolo26/yolo26m.dxnn) · [JSON](yolo26/yolo26m_compile_metadata.json) |
 | yolo26 | YOLO26m-RT (E08) | fine-tuned · 2타일 512×384 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_rt_a.dxnn) · [A JSON](yolo26/yolo26m_rt_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_rt_b.dxnn) · [B JSON](yolo26/yolo26m_rt_b_compile_metadata.json) |
 | yolo26 | YOLO26m-CS (KDF) | two-tower 0.75 · KD 최종 · 480×640 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_cs_a.dxnn) · [A JSON](yolo26/yolo26m_cs_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_cs_b.dxnn) · [B JSON](yolo26/yolo26m_cs_b_compile_metadata.json) |
 | yolo26 | YOLO26x (PT · 슈도라벨) | Full FT ·10491장 ·seed202 ·30ep(best 29) · DXNN 없음 | [PT](yolo26/yolo26x.pt) · [JSON](yolo26/yolo26x_train_metadata.json) |
@@ -550,7 +549,6 @@ YOLOX COCO category ID는 index+1이며 detector output index는0부터 시작�
 
 | artifact | 공개 출력 수 | 공개 출력 메타데이터 | 내부 NPU 경계 tensor수 |
 | --- | --- | --- | --- |
-| yolo26m.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
 | yolov8s.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 4 |
 | yolo26s.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
 | yolox_nano.dxnn | 1 | output0 [1, 8400, 21] FLOAT | 9 |
@@ -570,26 +568,9 @@ DXNN header graph_info와 embedded CPU ONNX ValueInfo를 읽은 정적 확인입
 
 Calibration은 전체 FLIR TRAIN10742 목록에서 round(i*(N-1)/255), i=0..255로 뽑은256장입니다. TRAIN-list SHA-256 `d40cb99963d55de372d0b46cfcc11652078b51d5d1c17321c3040621ed63f1d1`; VAL/TEST는 사용하지 않았습니다.4196장 등 부분집합 학습 모델에는 calibration pool과 학습 subset이 다릅니다. Source hash, ONNX checker·finite CPU execution·3개 TRAIN raw parity, DX-COM 종료·DXNN hash를 확인했습니다. NPU 보드 정확도·FPS 검증과는 다릅니다.
 
-### yolo26m.dxnn
+### yolo26m.dxnn (삭제됨)
 
-| 항목 | 값 |
-| --- | --- |
-| 실험 식별 | LWIR-YOLO26m-TEACHER-4196-S202-E29 |
-| 학습 방법 / seed / stage epochs | full_ft /202 /30 |
-| TRAIN support | 4196 |
-| 입력 representation | original; deployment export640×640 |
-| 학습/완료 출처 | D:\LIG-Runs\flir_yolo26\lwir_kd_tracking_recovery_20261015_v1\recovered\m\runs\teacher_m\train\weights\epoch29.pt |
-| DXNN bytes | 21991058 |
-| DXNN SHA-256 | `fbda1f1ba2182090e1f2f4dc3a6306347cbeec9701633c7e21c47c4a34c2c03e` |
-| source PT SHA-256 | `dca0f23d1a945b6a73b17ef050452b87e3e7d99265eb413519b5395db67c7736` |
-| source ONNX SHA-256 | `a36ce1ecfa49f798cc6ff977eea65501206681e068836317fe38caf67689713b` |
-| calibration manifest SHA-256 | `78b52315e77e0156a04bfb31f82d7106f9f71f18c8d4c0aafe3b0addd2375e34` |
-| compile elapsed seconds | 439.723 |
-| 병합 adapter 수 | 0 |
-| 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.002960205078125 / score 5.945563316345215e-06 |
-| 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
-
-M teacher 원본 학습4196장·seed202·AdamW·480×640·batch4·30epoch·2367updates와 배포640×640을 구분합니다.
+2026-11-01 삭제했습니다. 4,196장으로 학습한 기존 YOLO26m 교사(source PT SHA-256 `dca0f23d…7736`, DXNN SHA-256 `fbda1f1b…c03e`)이며, 파일과 상세 표는 git 기록 `1e957ad`에 남아 있습니다.
 
 ### yolov8s.dxnn
 
@@ -703,9 +684,9 @@ DXNN이 아닌 PyTorch 체크포인트입니다. 위 공통 컴파일 조건은 
 | TMOT R@P95 (개발 진단) | 04-18 0.7225 · 04-20 0.6832 (사람 GT와 IoU0.5; 독립 검증 아님) |
 | 정밀도 | 1~4 epoch FP32, 5~30 epoch AMP+TF32 (RTX 4090) |
 
-**데이터 증강·학습 설정 변경 (이전 YOLO26x E69 · YOLO26m teacher 대비)**
+**데이터 증강·학습 설정 변경 (이전 YOLO26x · 이전 YOLO26m 교사 대비)**
 
-| 항목 | 이전 E69 | 이전 m teacher (`yolo26m.dxnn` 원본) | **yolo26x.pt** |
+| 항목 | 이전 YOLO26x (4,196장, 삭제) | 이전 YOLO26m 교사 (4,196장, 삭제된 `yolo26m.dxnn`의 원본) | **yolo26x.pt** |
 | --- | --- | --- | --- |
 | TRAIN | 4196 | 4196 | **10491** |
 | 학습 캔버스 | 고정 480×640 | 고정 480×640 | **정사각 640×640** (mosaic 사용 위해) |
@@ -719,7 +700,7 @@ DXNN이 아닌 PyTorch 체크포인트입니다. 위 공통 컴파일 조건은 
 | warmup_bias_lr | **0.1** (AdamW에서 epoch1 mAP 0.009) | 0.0 | 0.0 |
 | lr0 / lrf / warmup / nbs | 3e-4 / 0.01 / 3 / 64 | 같음 | 같음 |
 
-E69가 m보다 낮았던 주원인은 warmup_bias_lr 0.1과 batch 1로 보입니다(기록 근거 가설). 위 변경은 데이터·증강·캔버스·LR 감소를 함께 바꿨으므로 **어느 변경이 얼마나 기여했는지는 분리되지 않았습니다.** 같은 설정의 YOLO26m 재학습은 person AP50:95 50.7486으로 이전 m teacher(48.98, 같은 평가기)보다 높았습니다.
+이전 YOLO26x가 m보다 낮았던 주원인은 warmup_bias_lr 0.1과 batch 1로 보입니다(기록 근거 가설). 위 변경은 데이터·증강·캔버스·LR 감소를 함께 바꿨으므로 **어느 변경이 얼마나 기여했는지는 분리되지 않았습니다.** 같은 설정의 YOLO26m 재학습은 person AP50:95 50.7486으로 이전 m 교사(48.98, 같은 평가기)보다 높았습니다.
 
 **전처리**: FLIR COCO JSON→YOLO txt 변환 시 같은 이미지의 완전 중복 상자 병합(TRAIN2·VAL8). FLIR 범주 16개를 위 클래스 표로 대응(bike→bicycle, motor→motorcycle, light→traffic light, hydrant→fire hydrant, sign→stop sign); COCO 헤드는 클래스 이름 기준으로 행을 다시 배치(COCO에 없는 deer·stroller·scooter·other vehicle 4개는 새로 학습). 입력은 8-bit grayscale을 3채널 복제, /255만 적용(평균·표준편차 정규화 없음, CLAHE·gradient 없음), 패딩114 중앙 letterbox. BatchNorm은 running mean/var를 COCO 값으로 고정하고 affine만 학습. 16-bit 원본은 카메라별 8-bit 변환이 필요하며 이 저장소는 제공하지 않습니다.
 
