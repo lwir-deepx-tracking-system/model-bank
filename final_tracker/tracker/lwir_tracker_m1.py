@@ -1255,6 +1255,7 @@ def main():
                     '(True = keep); a classifier gate against false zoom boxes plugs in here')
     ap.add_argument('--judge', default='', help='v10: path of RELINK_JUDGE_FROZEN.json = the learned relink judge replaces the KeepID rule in the --relabel path '
                     '(relink_online_judge.OnlineJudge; same re-ID engine / crops on NPU_2); requires --relabel; default off = unchanged')
+    ap.add_argument('--split6', action=argparse.BooleanOptionalAction, default=True, help='the detector DXNNs have the six split-head outputs (box_s8/16/32, cls_s8/16/32) of tensor_requirements.md and the host merges them into boxes/scores (default on); --no-split6 = DXNNs with the two outputs boxes/scores')
     ap.add_argument('--confirm-gate', default='', help='v11: path of GATE_GRU32_FROZEN.json = the learned confirmation gate replaces 3FrameConfirm (GateTracker); requires --tracker bytetrack --class-gate --no-vit; default off = unchanged')
     ap.add_argument('--judge-crops', type=int, default=2, help='v10: with --judge, crops per frame on NPU_2 (new IDs first, then refresh); 0 = every eligible crop')
     args = ap.parse_args()
@@ -1354,14 +1355,20 @@ def main():
     pending, eng = {}, {}
     class Engine:
         def __init__(self, name, core, depth=1, model=None):
-            self.name = name; self.depth = depth; self.q = []; self.nsub = 0; model = model or name   # v9: model = the DXNN when it differs from the pending key ('ZOOM')
+            self.name = name; self.depth = depth; self.q = []; self.nsub = 0; self.split6 = False; model = model or name   # v9: model = the DXNN when it differs from the pending key ('ZOOM')
             o = dx.InferenceOption(); o.devices = [0]; o.bound_option = getattr(dx.InferenceOption.BOUND_OPTION, 'NPU_%d' % core); o.use_ort = True; o.buffer_count = depth
             self.b = dx.InferenceEngine(str(HERE / 'models' / (model + '.dxnn')) if not args.mock else model, o)
             i = self.b.get_input_tensors_info()[0]; assert np.dtype(i['dtype']) == np.dtype('uint8'), i
             self.in_shape = tuple(int(v) for v in i['shape']); outs = self.b.get_output_tensors_info(); self.names = [v['name'] for v in outs]
             if model in det_shape:
                 H, W = det_shape[model]; self.n = anchors(H, W); assert self.in_shape == (1, H, W, 3), i
-                self.slots = [np.empty((1, 4 if v['name'] == 'boxes' else 16, self.n), np.float32) for v in outs]
+                if args.split6:
+                    self.split6 = True
+                    assert self.names == ['box_s8', 'box_s16', 'box_s32', 'cls_s8', 'cls_s16', 'cls_s32'], self.names
+                    self.slots = [np.empty(tuple(int(d) for d in v['shape']), np.float32) for v in outs]
+                    assert [s_.shape for s_ in self.slots] == [(1, c_, H // st_, W // st_) for c_ in (4, 16) for st_ in (8, 16, 32)], [s_.shape for s_ in self.slots]
+                else:
+                    self.slots = [np.empty((1, 4 if v['name'] == 'boxes' else 16, self.n), np.float32) for v in outs]
             else:
                 assert self.in_shape[0] == 1 and self.in_shape[3] == 3, i; self.H, self.W = self.in_shape[1], self.in_shape[2]
                 sizes = self.b.get_output_tensor_sizes(); assert len(sizes) == 1, sizes
@@ -1381,7 +1388,9 @@ def main():
                 if v.shape != s.shape: v = v.reshape(s.shape)
                 # pipeline mode: the next frame is submitted into the same output buffer before this frame is post-processed -> copy out
                 d[n] = np.array(v, copy=True) if (args.pipeline or not (v.ctypes.data == s.ctypes.data and v.strides == s.strides)) else v
-            return [d[n] for n in self.names]
+            o_ = [d[n] for n in self.names]
+            if self.split6: return [np.concatenate([x_.reshape(1, 4, -1) for x_ in o_[:3]], axis=2), np.concatenate([x_.reshape(1, 16, -1) for x_ in o_[3:]], axis=2)]
+            return o_
     failed = False; rows = []; preds = []; util = []; tracks_out = []; rebind_log = []
     vit_queue = []           # pending crop requests: dict(kind, track_id, frame, idx, box(frame xyxy), src('cur'|'prev'))
     inflight = None          # (job meta, submit_ns)

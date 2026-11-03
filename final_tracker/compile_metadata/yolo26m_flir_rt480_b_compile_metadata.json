@@ -1,10 +1,10 @@
 {
   "_source": {
     "dxnn": "yolo26m_flir_rt480_b.dxnn",
-    "dxnn_bytes": 21514381,
-    "dxnn_sha256": "b7bd1819af0b458661de234c4139827475ee286653ba5b98c545af04996d6e9b",
+    "dxnn_bytes": 21509921,
+    "dxnn_sha256": "f781787c1a98c7b0961808e1828d6887c7661cf9260642f4ea5ca14e607a9619",
     "internal_name_in_the_tracker_code": "NEWMRT480B",
-    "note": "Compile metadata embedded in the DXNN by DX-COM (header, graph_info, compile_config, rmap_info), extracted verbatim; no device run."
+    "note": "Compile metadata embedded in the DXNN by DX-COM (header, graph_info, compile_config, rmap_info), extracted verbatim; no device run. Outputs: the six split-head tensors of tensor_requirements.md."
   },
   "header": {
     "version": 8,
@@ -24,21 +24,15 @@
         "size": 0
       },
       "npu_models": {},
-      "cpu_models": {
-        "cpu_0": {
-          "type": "bytes",
-          "offset": 56731,
-          "size": 2204
-        }
-      },
+      "cpu_models": {},
       "graph_info": {
         "type": "str",
-        "offset": 58935,
-        "size": 3348
+        "offset": 56499,
+        "size": 1440
       },
       "compile_config": {
         "type": "str",
-        "offset": 56211,
+        "offset": 55979,
         "size": 520
       },
       "compiled_data": {
@@ -46,18 +40,18 @@
           "npu_0": {
             "rmap": {
               "type": "bytes",
-              "offset": 62283,
+              "offset": 57939,
               "size": 901440
             },
             "weight": {
               "type": "bytes",
-              "offset": 963723,
+              "offset": 959379,
               "size": 20537792
             },
             "rmap_info": {
               "type": "str",
-              "offset": 21501515,
-              "size": 4674
+              "offset": 21497171,
+              "size": 4558
             }
           }
         }
@@ -66,7 +60,7 @@
         "npu_0": {
           "type": "bytes",
           "offset": 0,
-          "size": 56211
+          "size": 55979
         }
       },
       "vis_cpu_models": {}
@@ -84,12 +78,15 @@
       "images"
     ],
     "outputs": [
-      "boxes",
-      "scores"
+      "box_s8",
+      "box_s16",
+      "box_s32",
+      "cls_s8",
+      "cls_s16",
+      "cls_s32"
     ],
     "toposort_order": [
-      "npu_0",
-      "cpu_0"
+      "npu_0"
     ],
     "graphs": [
       {
@@ -108,139 +105,49 @@
         ],
         "outputs": [
           {
-            "name": "/branch/0/2/Conv_output_0",
+            "name": "box_s8",
             "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
+            "users": [],
             "head": false,
-            "tail": false
+            "tail": true
           },
           {
-            "name": "/branch/1/2/Conv_output_0",
+            "name": "box_s16",
             "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
+            "users": [],
             "head": false,
-            "tail": false
+            "tail": true
           },
           {
-            "name": "/branch/0/2_1/Conv_output_0",
+            "name": "cls_s8",
             "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
+            "users": [],
             "head": false,
-            "tail": false
+            "tail": true
           },
           {
-            "name": "/branch/1/2_1/Conv_output_0",
+            "name": "cls_s16",
             "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
+            "users": [],
             "head": false,
-            "tail": false
+            "tail": true
           },
           {
-            "name": "/branch/2/2/Conv_output_0",
+            "name": "box_s32",
             "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
+            "users": [],
             "head": false,
-            "tail": false
+            "tail": true
           },
           {
-            "name": "/branch/2/2_1/Conv_output_0",
+            "name": "cls_s32",
             "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
+            "users": [],
             "head": false,
-            "tail": false
+            "tail": true
           }
         ],
         "head": true,
-        "tail": false
-      },
-      {
-        "name": "cpu_0",
-        "device": "CPU",
-        "inputs": [
-          {
-            "name": "/branch/0/2/Conv_output_0",
-            "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
-            "head": false,
-            "tail": false
-          },
-          {
-            "name": "/branch/1/2/Conv_output_0",
-            "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
-            "head": false,
-            "tail": false
-          },
-          {
-            "name": "/branch/2/2/Conv_output_0",
-            "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
-            "head": false,
-            "tail": false
-          },
-          {
-            "name": "/branch/0/2_1/Conv_output_0",
-            "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
-            "head": false,
-            "tail": false
-          },
-          {
-            "name": "/branch/1/2_1/Conv_output_0",
-            "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
-            "head": false,
-            "tail": false
-          },
-          {
-            "name": "/branch/2/2_1/Conv_output_0",
-            "owner": "npu_0",
-            "users": [
-              "cpu_0"
-            ],
-            "head": false,
-            "tail": false
-          }
-        ],
-        "outputs": [
-          {
-            "name": "boxes",
-            "owner": "cpu_0",
-            "users": [],
-            "head": false,
-            "tail": true
-          },
-          {
-            "name": "scores",
-            "owner": "cpu_0",
-            "users": [],
-            "head": false,
-            "tail": true
-          }
-        ],
-        "head": false,
         "tail": true
       }
     ]
@@ -359,7 +266,7 @@
       ],
       "outputs": [
         {
-          "name": "/branch/0/2/Conv_output_0",
+          "name": "box_s8",
           "dtype": "FLOAT32",
           "shape": [
             1,
@@ -388,7 +295,7 @@
           }
         },
         {
-          "name": "/branch/1/2/Conv_output_0",
+          "name": "box_s16",
           "dtype": "FLOAT32",
           "shape": [
             1,
@@ -417,7 +324,7 @@
           }
         },
         {
-          "name": "/branch/0/2_1/Conv_output_0",
+          "name": "cls_s8",
           "dtype": "FLOAT32",
           "shape": [
             1,
@@ -446,7 +353,7 @@
           }
         },
         {
-          "name": "/branch/1/2_1/Conv_output_0",
+          "name": "cls_s16",
           "dtype": "FLOAT32",
           "shape": [
             1,
@@ -475,7 +382,7 @@
           }
         },
         {
-          "name": "/branch/2/2/Conv_output_0",
+          "name": "box_s32",
           "dtype": "FLOAT32",
           "shape": [
             1,
@@ -504,7 +411,7 @@
           }
         },
         {
-          "name": "/branch/2/2_1/Conv_output_0",
+          "name": "cls_s32",
           "dtype": "FLOAT32",
           "shape": [
             1,
