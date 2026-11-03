@@ -1527,14 +1527,25 @@ def main():
                 vit.submit(vit_x, now_frame); inflight = (meta, time.perf_counter_ns())
             return w
         a, b = eng[det_names[0]], eng[det_names[1]]
+        FRAME_DY = [0.0]; FRAME_ROWS = [None]   # FRAME_DY: output y shift (16.0 for 640x480 inputs, 0.0 for 640x512 frames)
+        def to_canvas(g_, name_):
+            """Standard input 640x480 8-bit gray -> rows 16:496 of a 640x512 canvas (edge rows replicated); 640x512 as is (validated FLIR form); anything else stops with a message."""
+            if g_ is None: raise SystemExit('cannot read frame %s' % name_)
+            if g_.dtype != np.uint8 or g_.ndim != 2 or g_.shape[1] != 640 or g_.shape[0] not in (480, 512):
+                raise SystemExit('frame %s: need an 8-bit gray image of 640x480 (camera) or 640x512, got %s %s' % (name_, g_.dtype, tuple(g_.shape)))
+            if FRAME_ROWS[0] is None: FRAME_ROWS[0] = g_.shape[0]; FRAME_DY[0] = 16.0 if g_.shape[0] == 480 else 0.0
+            elif FRAME_ROWS[0] != g_.shape[0]: raise SystemExit('frame %s: all frames of a run must have the same size (first frame had %d rows, this one has %d)' % (name_, FRAME_ROWS[0], g_.shape[0]))
+            if g_.shape[0] == 512: return g_
+            c_ = np.empty((512, 640), np.uint8); c_[16:496] = g_; c_[:16] = g_[0]; c_[496:] = g_[-1]
+            return c_
         mem = None
         if args.preload:         # --preload: decode once, outside every timed interval
-            t_pl = time.perf_counter(); mem = [cv2.imread(str(DATA / im_['file_name']), cv2.IMREAD_GRAYSCALE) for im_ in images]
+            t_pl = time.perf_counter(); mem = [to_canvas(cv2.imread(str(DATA / im_['file_name']), cv2.IMREAD_GRAYSCALE), im_['file_name']) for im_ in images]
             print('PRELOAD %d frames %.1f s' % (len(mem), time.perf_counter() - t_pl), flush=True)
         def read_frame(k):
             if mem is not None: return mem[k], 0.0
-            t = time.perf_counter_ns(); g_ = cv2.imread(str(DATA / images[k]['file_name']), cv2.IMREAD_GRAYSCALE)
-            assert g_ is not None and g_.shape == (512, 640); return g_, (time.perf_counter_ns() - t) / 1e6
+            t = time.perf_counter_ns(); g_ = to_canvas(cv2.imread(str(DATA / images[k]['file_name']), cv2.IMREAD_GRAYSCALE), images[k]['file_name'])
+            return g_, (time.perf_counter_ns() - t) / 1e6
         def submit_tiles(g_, k):
             t = time.perf_counter_ns()
             if args.det == 'rt480':  # = m1_flir_eval_pipe.py prep('NEWMRT480'): camera band rows 16:496, column tiles 0:384 / 256:640
@@ -1707,14 +1718,14 @@ def main():
                 row['period_ms'] = ((t5 - t_prev_emit) / 1e6 - read_ms) if t_prev_emit is not None else None
                 t_prev_emit = t5
             rows.append(row)
-            pc = p.copy(); pc[:, 1] += 64.0; pc[:, 3] += 64.0
+            pc = p.copy(); pc[:, 1] += 64.0 - FRAME_DY[0]; pc[:, 3] += 64.0 - FRAME_DY[0]
             preds.append(dict(image_id=row['image_id'], xyxy=np.round(pc[:, :4], 2).tolist(), conf=np.round(pc[:, 4], 5).tolist(), cls=pc[:, 5].astype(int).tolist()))
             if zoom_eng is not None: preds[-1]['zoom'] = zoom_flags if zoom_flags is not None else [0] * len(p)   # v9: 1 = zoom re-detection (appended rows)
             tracks_out.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
-                                   tracks_xyxy_id_conf_class_detectionindex=[[round(float(v), 2) for v in r[:4]] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in tr_rows]))
+                                   tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in tr_rows]))
             if relabeler is not None:
                 tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
-                                        tracks_xyxy_id_conf_class_detectionindex=[[round(float(v), 2) for v in r[:4]] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in base_rows]))
+                                        tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in base_rows]))
             prev_gray = g
             if budget: prev_arr = arr
             if i % 50 == 0 and not args.mock:

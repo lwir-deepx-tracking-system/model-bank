@@ -183,7 +183,7 @@ NPU 코어 2: repvgg_tmot_camel_reid.dxnn — 판정기가 요청한 사람 크�
 - DX-M1(Orange Pi 5 Plus), DXRT 3.4.2, NPU 클럭 1000 MHz. 확인한 환경은 Ubuntu 22.04, Python 3.10, g++ 11.4입니다.
 - Python 패키지: numpy, opencv(cv2), scipy, DEEPX의 `dx_engine`. 번호 되돌리기 모델 실행은 `dx_engine`의 비동기 호출을 씁니다.
 - **NPU가 비어 있어야 합니다.** 스크립트가 시작할 때 NPU 메모리 사용이 1 MiB 미만이고 세 코어 사용률이 1% 미만인지 확인하고, 아니면 멈춥니다. 같은 이름 규칙(`m1_*eval*.py`)의 다른 평가 프로세스가 돌고 있으면 최대 30분 기다립니다.
-- 입력은 **640×512 8비트 흑백 프레임**이어야 합니다(행 16~496 띠를 잘라 쓰므로 480행짜리 영상은 그대로는 쓸 수 없습니다).
+- 입력은 **640×480 8비트 흑백 프레임**(카메라 원본 크기)이 표준이고, 640×512 8비트 흑백(FLIR 시험 영상)도 받습니다. 그 밖의 크기는 이유를 알려 주고 멈춥니다. 640×480은 안에서 640×512 캔버스의 행 16~496에 넣어 쓰므로 계산은 FLIR 시험에서 검증한 것과 같습니다.
 
 ### 4-4. 설치와 실행
 
@@ -228,7 +228,7 @@ python3 -B lwir_tracker_m1.py \
 | `RESULT.json` | 프레임 간격, 지연, 추적기·게이트·판정기 시간, NPU 코어 사용률, 사용한 옵션과 모델 해시 |
 | `RELABEL_LOG.json`, `REBIND_LOG.json`, `RAW_TIMINGS.json`, `UTIL_SAMPLES.json` | 되돌린 번호 기록, 프레임별 시간, NPU 사용률 |
 
-`TRACKS.jsonl` 한 줄은 `{"image_id", "coco_image_id", "video_id", "tracker_reset", "tracks_xyxy_id_conf_class_detectionindex": [[x1, y1, x2, y2, 번호, 신뢰도, 클래스, 검출 번호], ...]}`이고, 좌표는 640×512 프레임 좌표입니다. 번호는 영상 안에서만 유일합니다.
+`TRACKS.jsonl` 한 줄은 `{"image_id", "coco_image_id", "video_id", "tracker_reset", "tracks_xyxy_id_conf_class_detectionindex": [[x1, y1, x2, y2, 번호, 신뢰도, 클래스, 검출 번호], ...]}`이고, 좌표는 입력 영상 기준(640×480 입력이면 640×480 좌표)입니다. 번호는 영상 안에서만 유일합니다.
 
 ### 4-6. 확인한 것
 
