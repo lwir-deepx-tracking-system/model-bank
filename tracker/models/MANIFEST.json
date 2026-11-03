@@ -1,0 +1,6 @@
+{
+  "NEWMRT480A": "1f8e4a32436a5cab07ed67dca3b4c03d6df57fa2235056db1966323a61b09bed",
+  "NEWMRT480B": "b7bd1819af0b458661de234c4139827475ee286653ba5b98c545af04996d6e9b",
+  "RVGGA0_REID2C256": "dc19d7862a77ffa1d7c7f71f84283e86c33267d9e741b59070b839cb1921ff53",
+  "_note": "internal model name -> sha256 of the DXNN (checked by lwir_tracker_m1.py at start). setup.sh links tracker/models/<name>.dxnn to the bank DXNN files."
+}

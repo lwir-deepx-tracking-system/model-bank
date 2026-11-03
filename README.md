@@ -5,11 +5,15 @@
 사람 검출 및 검수용 슈도 라벨 후보에 사용하는 Full FT 모델 `yolo26/yolo26x.pt`입니다(2026-11-01, FLIR 학습 10,491장, 사람 AP50:95 53.2791%). **PT는 DXNN이 아니며 DX-M1 컴파일·실행을 검증하지 않았습니다.** 이전 YOLO26x(4,196장으로 학습, 69 epoch째 가중치, 45.3642%)는 삭제했고 git 기록 `0928ac9`에 남아 있습니다. **이전 모델과 데이터 증강·학습 캔버스가 다릅니다** — [yolo26x.pt 상세](#yolo26xpt)를 보십시오.
 
 
+## 최종 추적 시스템 (2026-11-03)
+
+DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1) + 사람 외형 비교(RepVGG_(TMOT,CAMEL) INT8, NPU 코어 2) + 추적(ByteTrack + SameClass_connect + OpticalFlow-Fast) + 학습형 게이트(GRU32) + 학습형 판정기**를 파이프라인으로 돌리는 최종 후보입니다. FLIR 시험 영상 8편 3,749프레임의 DX-M1 INT8 실측에서 기준(YOLO26m_(FLIR) INT8 + ByteTrack만) 대비 **IDF1 0.6567 → 0.6932, 번호 바뀜 111 → 31, 오검출 1,466 → 650, 71.8 fps**입니다. 대신 **미검출이 4,010 → 4,514로 늘고 작은 사람(키 32px 미만) 재현율이 0.611 → 0.547로 내려갑니다.** 사람이 단 정답이 없는 새 영상에서의 성능과 신뢰구간은 측정하지 않았습니다. 사용법, 구성, 한계는 [4. 추적 시스템 (최종 버전)](#4-추적-시스템-최종-버전)에 있습니다.
+
 학습을 마친 LWIR 탐지기의 **INT8 PTQ 컴파일 파일**을 계열별로 제공합니다. 성능표는 **원본 FP32 모델 평가**이며, DX-M1에서 양자화 후 정확도·속도·추적 성능은 아직 측정하지 않았습니다. 예외로 **YOLO26m-RT·YOLO26m-CS는 DX-M1 INT8 실측값**을 아래 [DX-M1 INT8 실측](#dx-m1-int8-실측--yolo26m-rt--yolo26m-cs)에 따로 적었습니다.
 
 ## 1. 모델 다운로드
 
-현재 게시된 DXNN은 단일 모델 **5개**(2026-11-01 기존 YOLO26m 교사 `yolo26m.dxnn` 삭제, git 기록 `1e957ad`에 남음), NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
+2026-11-03에 최종 추적 시스템용 검출 타일 DXNN 2개(`yolo26m_flir_rt480_a/b`), 사람 외형 비교 DXNN 1개(`repvgg_tmot_camel_reid`), `tracker/` 폴더(게이트·판정기·실행 코드)를 추가했습니다. 현재 게시된 DXNN은 단일 모델 **5개**(2026-11-01 기존 YOLO26m 교사 `yolo26m.dxnn` 삭제, git 기록 `1e957ad`에 남음), NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
 
 | 계열 | 모델 | 학습 구분 | 파일 |
 | --- | --- | --- | --- |
@@ -17,7 +21,10 @@
 | yolo26 | YOLO26m-RT (E08) | fine-tuned · 2타일 512×384 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_rt_a.dxnn) · [A JSON](yolo26/yolo26m_rt_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_rt_b.dxnn) · [B JSON](yolo26/yolo26m_rt_b_compile_metadata.json) |
 | yolo26 | YOLO26m-CS (KDF) | two-tower 0.75 · KD 최종 · 480×640 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_cs_a.dxnn) · [A JSON](yolo26/yolo26m_cs_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_cs_b.dxnn) · [B JSON](yolo26/yolo26m_cs_b_compile_metadata.json) |
 | yolo26 | YOLO26x (PT · 슈도라벨) | Full FT ·10491장 ·seed202 ·30ep(best 29) · DXNN 없음 | [PT](yolo26/yolo26x.pt) · [JSON](yolo26/yolo26x_train_metadata.json) |
+| yolo26 | YOLO26m_(FLIR)-RT480 (최종 추적 시스템용 검출 타일) | FLIR 학습 10,491장 ·seed202 ·30ep · 2타일 480×384 · 보정 8장 EMA · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_flir_rt480_a.dxnn) · [A JSON](yolo26/yolo26m_flir_rt480_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_flir_rt480_b.dxnn) · [B JSON](yolo26/yolo26m_flir_rt480_b_compile_metadata.json) |
 | reid | ViT-lite1 (person re-ID) | SOLIDER 선생님 → FLIR 사람 crop KD 학생 · 128×64 · NPU2 | [DXNN](reid/vit_lite1_reid.dxnn) · [JSON](reid/vit_lite1_reid_compile_metadata.json) |
+| reid | RepVGG_(TMOT,CAMEL) (person re-ID, 최종 추적 시스템용) | RepVGG-A0 · SOLIDER 증류 · 128×64 · 보정 256장 EMA · NPU2 | [DXNN](reid/repvgg_tmot_camel_reid.dxnn) · [JSON](reid/repvgg_tmot_camel_reid_compile_metadata.json) |
+| tracker | 최종 추적기 (학습형 게이트 + 학습형 판정기 + 코드) | 게이트 GRU32 · 판정기 로지스틱 회귀 · M1 실행 코드 | [폴더](tracker/) · [게이트](tracker/gate_gru32_frozen.json) · [판정기](tracker/relink_judge_frozen.json) · [실행 코드](tracker/lwir_tracker_m1.py) · [설치](tracker/setup.sh) |
 | yolov8 | YOLOv8n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8n.dxnn) · [JSON](yolov8/yolov8n_compile_metadata.json) |
 | yolov8 | YOLOv8s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8s.dxnn) · [JSON](yolov8/yolov8s_compile_metadata.json) |
 | yolox | YOLOX-Nano | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_nano.dxnn) · [JSON](yolox/yolox_nano_compile_metadata.json) |
@@ -136,6 +143,117 @@ YOLOX-Nano/S는 원본 실험과 같은 중앙640×640 캔버스로 calibration�
 | historical YOLO26s | [1,300,6] | selected xyxy4 + confidence + class index; confidence·좌표 복원 |
 
 16은 클래스 수이며 공개 출력 텐서는 모델당1개입니다. 출력은 DXNN 내부 CPU ONNX 메타데이터상 float32이며, NPU/CPU 혼합 그래프일 수 있습니다. **확장자 DXNN이 모든 내부 연산·입출력이 INT8이라는 뜻은 아닙니다.** 실제 DXRT 버퍼는 장치에서 재확인해야 합니다.
+
+## 4. 추적 시스템 (최종 버전)
+
+### 4-1. 구성과 한 프레임의 흐름
+
+```
+열화상 프레임 640×512 (8비트 흑백)
+  │  행 16~496 띠를 두 타일로 자름: A = 열 0~384, B = 열 256~640 (가운데 128열 겹침)
+  ├─▶ NPU 코어 0: yolo26m_flir_rt480_a.dxnn ─┐   uint8 [1,480,384,3] → boxes [1,4,3780] + scores [1,16,3780]
+  └─▶ NPU 코어 1: yolo26m_flir_rt480_b.dxnn ─┤   (호스트가 디코드 → 두 타일 합치기 → 클래스별 NMS IoU 0.70, 최대 300)
+                                              ▼
+CPU 메인 스레드: ByteTrack(+ SameClass_connect) ─▶ 학습형 게이트(새 트랙을 출력할지) ─▶ 학습형 판정기(끊겼던 번호를 되돌릴지) ─▶ 출력
+CPU 광류 스레드: OpticalFlow-Fast(카메라 움직임 보정)가 프레임이 들어오자마자 병렬로 계산 ─▶ 추적기의 칼만 예측에 반영
+NPU 코어 2: repvgg_tmot_camel_reid.dxnn — 판정기가 요청한 사람 크롭(128×64)의 외형 특징 128차원 (프레임당 최대 2장)
+```
+
+- 추적 대상 클래스는 person(0), car(2), truck(6)입니다. 게이트와 판정기는 **사람 트랙에만** 적용합니다. 같은 종류끼리만 연결하는 SameClass_connect가 켜져 있습니다.
+- 속도 옵션(코드의 `--gmc-thread --npu-depth 2 --rl-async`)은 계산 내용을 바꾸지 않고 시작 시점만 앞당깁니다. 옵션을 껐을 때와 출력이 바이트 단위로 같습니다.
+
+### 4-2. 파일
+
+| 위치 | 내용 |
+| --- | --- |
+| `yolo26/yolo26m_flir_rt480_a.dxnn`, `_b.dxnn` (+ `*_compile_metadata.json`) | 검출 타일 A/B. 같은 가중치를 타일 위치별로 두 번 컴파일한 것입니다 |
+| `reid/repvgg_tmot_camel_reid.dxnn` (+ JSON) | 사람 외형 특징(재식별) |
+| `tracker/lwir_tracker_m1.py` | 실행 코드(연구용 스크립트에서 환경 가정만 제거, 차이는 `tracker/CHANGES_FROM_RESEARCH_SCRIPT.md`) |
+| `tracker/gate_gru32_frozen.json` | 학습형 확인 게이트(GRU32) 가중치와 설정 |
+| `tracker/relink_judge_frozen.json` | 학습형 재연결 판정기(고정 모델)와 특징 정의 |
+| `tracker/relabel_online.py`, `relink_online_judge.py` | 번호 되돌리기 코드(판정기, 비교용 KeepID) |
+| `tracker/native_post.py`, `post.cpp` | 박스 디코드·NMS를 하는 C++ 라이브러리와 파이썬 연결(`setup.sh`가 `post.so`로 빌드) |
+| `tracker/models/MANIFEST.json` | DXNN 세 개의 sha256. 실행 시작 때 확인합니다 |
+| `tracker/setup.sh` | 한 번만 실행하는 설치(빌드, 모델 연결, 해시 확인) |
+
+### 4-3. 준비물
+
+- DX-M1(Orange Pi 5 Plus), DXRT 3.4.2, NPU 클럭 1000 MHz. 확인한 환경은 Ubuntu 22.04, Python 3.10, g++ 11.4입니다.
+- Python 패키지: numpy, opencv(cv2), scipy, DEEPX의 `dx_engine`. 번호 되돌리기 모델 실행은 `dx_engine`의 비동기 호출을 씁니다.
+- **NPU가 비어 있어야 합니다.** 스크립트가 시작할 때 NPU 메모리 사용이 1 MiB 미만이고 세 코어 사용률이 1% 미만인지 확인하고, 아니면 멈춥니다. 같은 이름 규칙(`m1_*eval*.py`)의 다른 평가 프로세스가 돌고 있으면 최대 30분 기다립니다.
+- 입력은 **640×512 8비트 흑백 프레임**이어야 합니다(행 16~496 띠를 잘라 쓰므로 480행짜리 영상은 그대로는 쓸 수 없습니다).
+
+### 4-4. 설치와 실행
+
+```bash
+git clone https://github.com/lwir-deepx-tracking-system/model-bank.git
+cd model-bank/tracker
+bash setup.sh        # post.so 빌드, tracker/models/ 에 DXNN 링크, sha256 확인 (한 번만)
+```
+
+입력 폴더는 프레임 이미지와 `coco.json`을 함께 둡니다. `coco.json`의 `images[]`에 `id`, `file_name`(폴더 기준 상대 경로), `extra_info.video_id`(영상 구분, 영상이 바뀌면 추적기가 새로 시작)가 있으면 되고, 정답 상자는 필요 없습니다. 이미지는 `file_name` 순서로 처리합니다.
+
+```bash
+python3 -B lwir_tracker_m1.py \
+  --tracker bytetrack --no-vit --det rt480 --pipeline --preload \
+  --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 3 \
+  --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 2 \
+  --confirm-gate gate_gru32_frozen.json \
+  --judge relink_judge_frozen.json --judge-crops 2 \
+  --data /path/to/frames --out track_run1
+```
+
+| 옵션 | 뜻 |
+| --- | --- |
+| `--det rt480` | 검출 타일 2장(A는 코어 0, B는 코어 1). `RVGGA0_REID2C256`, `NEWMRT480A/B`는 코드 안의 모델 이름이고 `setup.sh`가 위 DXNN 파일에 연결합니다 |
+| `--tracker bytetrack --class-gate` | ByteTrack과 SameClass_connect(사람 트랙은 사람 검출하고만 연결) |
+| `--gmc --gmc-corners 300 --gmc-mindist 5` | OpticalFlow-Fast: 회색 프레임을 2배 축소하고 특징점 300개(최소 간격 5px)로 카메라 움직임을 추정 |
+| `--confirm-gate gate_gru32_frozen.json` | 학습형 게이트. 켜면 `--n-init`(3프레임 연속 확인)은 쓰지 않고 게이트가 새 트랙의 출력 여부를 정합니다 |
+| `--relabel RVGGA0_REID2C256 --judge relink_judge_frozen.json --judge-crops 2` | 학습형 판정기. 프레임당 외형 크롭은 최대 2장(새 번호 먼저, 그다음 갱신). `--judge`를 빼고 `--rl-every 1 --rl-k 99 --rl-new-k 99`를 주면 이전 확정 방식(KeepID)이 됩니다 |
+| `--pipeline --preload` | 다음 프레임 타일을 먼저 NPU에 넣는 파이프라인과, 프레임을 미리 메모리에 올려 두는 측정 조건(JPEG 읽기 시간 제외) |
+| `--gmc-thread --npu-depth 2 --rl-async` | 속도 옵션: 광류를 별도 스레드로, 검출 코어마다 2장 미리 제출, 외형 비교를 비동기로. 결과는 바뀌지 않음 |
+| `--data`, `--out` | 입력 폴더(필수), 결과 폴더 이름(스크립트 폴더 아래에 새로 만들며 이미 있으면 멈춤) |
+
+이전 확정 방식에 한 가지만 바꾼 구성도 만들 수 있습니다. 게이트만: `--judge ...` 대신 `--rl-every 1 --rl-k 99 --rl-new-k 99`(KeepID)를 주고 `--confirm-gate`를 유지합니다. 판정기만: `--confirm-gate`를 빼고 `--n-init 3 --judge ...`를 줍니다. 이전 확정 방식 그대로는 `--confirm-gate`와 `--judge`를 모두 빼고 `--rl-every 1 --rl-k 99 --rl-new-k 99 --n-init 3`을 줍니다.
+
+### 4-5. 출력
+
+| 파일 | 내용 |
+| --- | --- |
+| `TRACKS.jsonl` | 최종 추적 결과. 한 줄이 한 프레임입니다 |
+| `TRACKS_BASE.jsonl` | 번호 되돌리기 전의 추적기 출력(박스는 `TRACKS.jsonl`과 같고 번호만 다름) |
+| `PRED_NEWMRT480.jsonl` | 프레임별 검출(NMS 뒤) |
+| `RESULT.json` | 프레임 간격, 지연, 추적기·게이트·판정기 시간, NPU 코어 사용률, 사용한 옵션과 모델 해시 |
+| `RELABEL_LOG.json`, `REBIND_LOG.json`, `RAW_TIMINGS.json`, `UTIL_SAMPLES.json` | 되돌린 번호 기록, 프레임별 시간, NPU 사용률 |
+
+`TRACKS.jsonl` 한 줄은 `{"image_id", "coco_image_id", "video_id", "tracker_reset", "tracks_xyxy_id_conf_class_detectionindex": [[x1, y1, x2, y2, 번호, 신뢰도, 클래스, 검출 번호], ...]}`이고, 좌표는 640×512 프레임 좌표입니다. 번호는 영상 안에서만 유일합니다.
+
+### 4-6. 확인한 것
+
+- 이 폴더의 `lwir_tracker_m1.py`를 새 폴더에서 `setup.sh`로 설치해 FLIR 시험 영상에 돌린 결과(`TRACKS.jsonl`, `TRACKS_BASE.jsonl`)가 연구용 스크립트의 같은 구성 결과와 **바이트 단위로 같았습니다**(처리 속도 71.8 fps).
+- 학습형 게이트의 파이썬(numpy) 추론은 원래 학습 모델(torch)과 최대 1.7e-7 차이입니다.
+- 게이트를 끈 상태의 출력은 이전 버전(판정기 버전)과 바이트 단위로 같습니다.
+
+### 4-7. 성능 (DX-M1 INT8, FLIR 시험 영상 8편 3,749프레임, 사람, 같은 M1 검출 위에서 추적만 바꿔 비교)
+
+| 구성 | HOTA | IDF1 | 번호 바뀜 | 오검출 | 미검출 | HOTA (키 32px 이상) | 작은 사람 재현율 (키 32px 미만) | 처리 속도 | 프레임 하나의 지연 p50 / p95 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 기준: YOLO26m_(FLIR) INT8 + ByteTrack | 0.5480 | 0.6567 | 111 | 1,466 | 4,010 | 0.6594 | 0.6114 | 52.6 fps | 26.0 / 34.7 ms |
+| 이전 확정: + SameClass_connect + OpticalFlow-Fast + 3FrameConfirm + KeepID | 0.5642 | 0.6897 | 58 | 908 | 4,214 | 0.6971 | 0.5833 | 74.5 fps | 36.4 / 52.7 ms |
+| **최종: 게이트 + 판정기** | 0.5645 | 0.6932 | 31 | 650 | 4,514 | 0.7284 | 0.5466 | 71.8 fps | 38.5 / 54.7 ms |
+
+- 채점은 사람만, 480 띠(행 16~496), IoU 0.5, 고정한 TrackEval(HOTA·IDF1·CLEAR)입니다. 작은 사람 재현율은 IoU 0.3 기준입니다.
+- 프레임 간격은 최종 구성이 p50 13.0 ms · p95 20.1 ms로 30 fps 예산(33.3 ms) 안입니다. 게이트는 프레임당 평균 0.18 ms(M1 CPU, numpy), 판정기는 결정 1회 평균 2.5 ms입니다.
+- 같은 영상을 PC FP32로 한 번 잰 값은 이전 확정 대비 최종의 IDF1 이득이 +1.18점(0.6894 → 0.7012)으로 M1(+0.35점)보다 컸습니다. 두 경우 모두 신뢰구간이 0을 포함하거나 계산하지 않았습니다.
+
+### 4-8. 한계와 주의
+
+- **이득이 작고 통계적으로 확정되지 않았습니다.** M1에서 HOTA 차이는 +0.0003이고, 오검출·번호 바뀜이 줄어드는 대신 미검출이 늘고 작은 사람 재현율이 내려갑니다(오검출을 줄이는 대가).
+- 게이트와 판정기는 **TMOT(고정 교차로, 5~9 fps)** 의 검출로 학습했고, FLIR는 움직이는 차량 카메라(30 fps)입니다. 게이트가 보는 11프레임 창은 TMOT에서 1~2초, 30 fps에서 0.37초입니다. 다른 카메라·프레임률의 영상에서 같은 이득이 난다는 보장은 없습니다.
+- 외형 모델이 TMOT 학습 24편과 CAMEL 14편의 신원 라벨로 학습돼 있어서, 그 영상들에서의 판정기·KeepID 이득은 상한값입니다(시퀀스를 나눠 다시 학습한 외형 모델로 재측정했을 때도 판정기 이득은 유지됐습니다: TMOT 검증 IDF1 +3.4점).
+- **지연이 30 fps 조건을 만족하지 않습니다.** 처리 속도 옵션(NPU 큐 2)이 지연을 늘려 프레임 하나의 지연은 p50 38.5 ms, p95 54.7 ms입니다. 지연이 중요하면 `--npu-depth 1`을 시험해야 하지만 최종 구성으로는 재지 않았습니다.
+- 박스는 검출기가 정하고 추적기는 번호와 출력 여부만 바꿉니다. 검출 품질(작은 사람 놓침)은 이 시스템이 해결하지 않았습니다.
+- 정답이 없는 영상에서는 결과가 맞는지 확인할 수단이 없습니다. 결과를 학습·평가의 정답으로 바로 쓰지 마십시오.
 
 ## 상세 근거
 
@@ -706,9 +824,55 @@ DXNN이 아닌 PyTorch 체크포인트입니다. 위 공통 컴파일 조건은 
 
 **사용**: `git lfs install` 후 clone, 파일 크기 118376293 bytes 확인. Ultralytics로 `YOLO('yolo26/yolo26x.pt').predict(img, imgsz=(480,640), rect=False, conf=0.001, max_det=300)`; `img`는 위 전처리를 거친 480×640×3 uint8. 상자는 패딩·크기 조정을 되돌려 원본 좌표로 복원합니다. TMOT에서 정밀도95%가 되는 임계값은 0.46~0.48이었고, 슈도 라벨은 사람 검수가 필요합니다. 학습·검증은 프로젝트 보관 Ultralytics 8.4.157 수정본을 사용했습니다.
 
+### yolo26m_flir_rt480_a / b.dxnn
+
+| 항목 | 값 |
+| --- | --- |
+| 학습 | YOLO26m_(FLIR): FLIR ADAS v2 열화상 학습 10,491장(16클래스), COCO 사전학습에서 시작, 30 epoch, AdamW lr0 3e-4 → lrf 0.01 코사인, warmup 3, mosaic 1.0, scale 0.75, hsv_h/s 0, BN 통계 고정, seed 202, 정사각 640 캔버스. 학습 비용은 Vast RTX 4090 약 2시간 |
+| 검증 정확도 | FLIR 검증 person AP50:95 50.7486(PC FP32, 위 [yolo26x.pt](#yolo26xpt)의 비교에서 쓴 같은 설정의 재학습) |
+| 컴파일 | DX-COM 2.4.1-rc.1, opt_level 1, aggressive_partitioning 끔, ppu 없음, 보정 **8장 EMA**(CPU), 전처리를 그래프에 넣지 않음. 같은 가중치를 타일 위치별(A: 열 0~384, B: 열 256~640)로 두 번 컴파일 |
+| 입력 | uint8 NHWC `[1,480,384,3]`(8비트 흑백을 3채널로 복제, 정규화 없음). 타일은 640×512 프레임의 행 16~496 띠입니다 |
+| 출력 | `boxes` `[1,4,3780]`, `scores` `[1,16,3780]`(float32, 3780 = 60×48 + 30×24 + 15×12). 앵커 기준 거리 4개와 클래스 점수(시그모이드 전)입니다 |
+| 호스트 후처리 | 거리 → 중심·크기 디코드(`post.cpp`), 점수 시그모이드, B 타일 x에 +256, 합칠 때 중심 x가 320 이상은 B가, 미만은 A가 소유, 클래스별 NMS IoU 0.70, 신뢰도 0.001 이상, 최대 300 |
+| INT8 손실 | FLIR 시험 영상 person AP50:95 0.4654(PC FP32) → 0.4571(M1 INT8), 추적 HOTA 0.5505 → 0.5490 |
+| NPU 시간 | 타일 한 장 약 10.7 ms(코어 0·1 동시), 이전 게시 YOLO26m-RT(512×384 타일)는 약 11.8 ms |
+
+**보정이 8장뿐입니다.** DXNN 안의 컴파일 설정에 `calibration_num` 8, `calibration_method` ema로 기록돼 있습니다. 같은 체크포인트를 보정 100장(대조군)으로 만든 INT8은 person AP50:95 0.4563으로 차이가 0.0008이었습니다.
+
+### repvgg_tmot_camel_reid.dxnn
+
+| 항목 | 값 |
+| --- | --- |
+| 모델 | RepVGG-A0 계열(QARepVGG), 사람 재식별 특징 128차원. 교사 SOLIDER에서 증류 |
+| 학습 데이터 | TMOT 학습 24편 + CAMEL 14편의 신원 라벨 + FLIR 크롭 증류, 60 epoch. 시퀀스를 나눈 재시험용 모델도 따로 만들어 확인했습니다 |
+| 컴파일 | DX-COM 2.4.1-rc.1, 보정 **256장 EMA**, ppu 없음 |
+| 입력 / 출력 | uint8 NHWC `[1,128,64,3]`(사람 크롭을 128×64로 줄이고 흑백을 3채널로 복제) / `embedding` `[1,128]`(호스트에서 L2 정규화) |
+| 시간 | 크롭 한 장 NPU 코어 2에서 2.3 ms |
+| 주의 | TMOT·CAMEL 시퀀스의 신원으로 학습했으므로 그 영상에서의 재식별 성능은 상한값입니다 |
+
+### 학습형 확인 게이트 (`tracker/gate_gru32_frozen.json`)
+
+| 항목 | 값 |
+| --- | --- |
+| 역할 | 새로 생긴 사람 트랙을 출력할지 정합니다(3프레임 연속 확인 대신). 확정된 트랙은 그대로 둡니다 |
+| 모델 | GRU(은닉 32, 가중치 5,121개) + 선형 출력, 입력 11프레임 × 19특징, 문턱 0.3 |
+| 특징 | 이번 프레임에 매칭됨, 낮은 점수로 매칭됨, 신뢰도, 상자 높이/480, 가로세로비, log 높이, 중심 이동/높이, 예측과 검출의 IoU, 다른 사람 트랙과의 최대 겹침, 상자 주변 대비, 상자 질감, 매칭 수/10, 놓침 수/10, 연속 놓침/10, 나이/30, 가장자리 거리/높이, 끊긴 트랙과의 IoU, 끊긴 트랙과의 거리, 유효 표시 |
+| 학습 | TMOT 학습 24편의 M1 INT8 검출 재생 40,353행, Adam lr 2e-3, 12 epoch, batch 512, 시퀀스 6겹 교차검증으로 선택한 뒤 24편 전체로 한 번 학습 |
+| 실행 | M1 CPU에서 numpy로 계산. 프레임당 평균 0.18 ms, 호출 한 번 0.58 ms. NPU에 올리지 않았습니다 |
+
+### 학습형 재연결 판정기 (`tracker/relink_judge_frozen.json`)
+
+| 항목 | 값 |
+| --- | --- |
+| 역할 | 새로 출력되는 사람 번호가 최근에 사라진 사람(90프레임 이내)과 같은 사람인지 새 번호가 나온 그 프레임에서 판정해, 같으면 예전 번호를 이어받게 합니다. 박스·신뢰도·클래스는 바꾸지 않습니다 |
+| 모델 | 고정 로지스틱 회귀, 특징 80개(위치·크기·움직임 일치, 외형 코사인, 후보 순위 등), 문턱 0.40, 일대일 탐욕 연결 |
+| 학습 | TMOT 검증 6편의 정답 쌍 1,430개. 따라서 TMOT 검증 세트 값은 학습에 쓴 데이터의 값입니다 |
+| 외형 | 프레임당 크롭 최대 2장(새 번호 먼저, 그다음 갱신), 키 32px 이상 검출만. 크롭이 없으면 그 특징은 결측 처리 |
+| 실행 | 결정 1회 평균 2.5 ms(FLIR), 크롭 처리는 NPU 코어 2 |
+
 ### 보존 범위
 
-로컬 원본과 중간 ONNX/캘리브레이션 자료는 보존하며, 저장소 계열 폴더에는 DXNN과 그 컴파일 메타데이터 JSON만 둡니다(예외: 슈도 라벨용 `yolo26/yolo26x.pt`와 학습 메타데이터 JSON). PNG/정밀 CSV/JSON은 원본 Library ZIP `libfile_473f586f45ac8191bef1087765316cc2`(SHA-256 `be592eed621b340e112782f81e340eed5c49f5a6f9690dce36c44ba3c47bbe74`)과 로컬에 보존했습니다. 이전 Git 이력의 파일은 삭제하지 않았으며 force push도 하지 않았습니다.
+로컬 원본과 중간 ONNX/캘리브레이션 자료는 보존하며, 저장소 계열 폴더에는 DXNN과 그 컴파일 메타데이터 JSON만 둡니다(예외: 슈도 라벨용 `yolo26/yolo26x.pt`와 학습 메타데이터 JSON, 그리고 최종 추적 시스템의 `tracker/` 폴더: 게이트·판정기 JSON, 실행 코드, 설치 스크립트, 모델 해시 목록). PNG/정밀 CSV/JSON은 원본 Library ZIP `libfile_473f586f45ac8191bef1087765316cc2`(SHA-256 `be592eed621b340e112782f81e340eed5c49f5a6f9690dce36c44ba3c47bbe74`)과 로컬에 보존했습니다. 이전 Git 이력의 파일은 삭제하지 않았으며 force push도 하지 않았습니다.
 
 Ultralytics/model, DEEPX SDK 및 FLIR 이용 조건은 별도로 적용됩니다. [DEEPX compiler](https://developer.deepx.ai/tech-docs/DXNN-SDK/DX-COM/DX-COMPILER_Agent_Driven_Development/) · [Ultralytics DEEPX](https://docs.ultralytics.com/integrations/deepx/).
 
