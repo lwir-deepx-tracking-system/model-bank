@@ -13,7 +13,7 @@ DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1
 
 ## 1. 모델 다운로드
 
-2026-11-03에 최종 추적 시스템용 검출 타일 DXNN 2개(`yolo26m_flir_rt480_a/b`), 사람 외형 비교 DXNN 1개(`repvgg_tmot_camel_reid`), `tracker/` 폴더(게이트·판정기·실행 코드)를 추가했습니다. 현재 게시된 DXNN은 단일 모델 **5개**(2026-11-01 기존 YOLO26m 교사 `yolo26m.dxnn` 삭제, git 기록 `1e957ad`에 남음), NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
+2026-11-03에 최종 추적 시스템용 검출 타일 DXNN 2개(`yolo26m_flir_rt480_a/b`), 사람 외형 비교 DXNN 1개(`repvgg_tmot_camel_reid`), `final_tracker/tracker/` 폴더(게이트·판정기·실행 코드)를 추가했습니다. 현재 게시된 DXNN은 단일 모델 **5개**(2026-11-01 기존 YOLO26m 교사 `yolo26m.dxnn` 삭제, git 기록 `1e957ad`에 남음), NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
 
 | 계열 | 모델 | 학습 구분 | 파일 |
 | --- | --- | --- | --- |
@@ -21,10 +21,10 @@ DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1
 | yolo26 | YOLO26m-RT (E08) | fine-tuned · 2타일 512×384 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_rt_a.dxnn) · [A JSON](yolo26/yolo26m_rt_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_rt_b.dxnn) · [B JSON](yolo26/yolo26m_rt_b_compile_metadata.json) |
 | yolo26 | YOLO26m-CS (KDF) | two-tower 0.75 · KD 최종 · 480×640 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_cs_a.dxnn) · [A JSON](yolo26/yolo26m_cs_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_cs_b.dxnn) · [B JSON](yolo26/yolo26m_cs_b_compile_metadata.json) |
 | yolo26 | YOLO26x (PT · 슈도라벨) | Full FT ·10491장 ·seed202 ·30ep(best 29) · DXNN 없음 | [PT](yolo26/yolo26x.pt) · [JSON](yolo26/yolo26x_train_metadata.json) |
-| yolo26 | YOLO26m_(FLIR)-RT480 (최종 추적 시스템용 검출 타일) | FLIR 학습 10,491장 ·seed202 ·30ep · 2타일 480×384 · 보정 8장 EMA · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_flir_rt480_a.dxnn) · [A JSON](yolo26/yolo26m_flir_rt480_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_flir_rt480_b.dxnn) · [B JSON](yolo26/yolo26m_flir_rt480_b_compile_metadata.json) |
+| yolo26 | YOLO26m_(FLIR)-RT480 (최종 추적 시스템용 검출 타일) | FLIR 학습 10,491장 ·seed202 ·30ep · 2타일 480×384 · 보정 8장 EMA · NPU0/NPU1 | [A DXNN](final_tracker/dxnn/yolo26m_flir_rt480_a.dxnn) · [A JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_a_compile_metadata.json) · [B DXNN](final_tracker/dxnn/yolo26m_flir_rt480_b.dxnn) · [B JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_b_compile_metadata.json) |
 | reid | ViT-lite1 (person re-ID) | SOLIDER 선생님 → FLIR 사람 crop KD 학생 · 128×64 · NPU2 | [DXNN](reid/vit_lite1_reid.dxnn) · [JSON](reid/vit_lite1_reid_compile_metadata.json) |
-| reid | RepVGG_(TMOT,CAMEL) (person re-ID, 최종 추적 시스템용) | RepVGG-A0 · SOLIDER 증류 · 128×64 · 보정 256장 EMA · NPU2 | [DXNN](reid/repvgg_tmot_camel_reid.dxnn) · [JSON](reid/repvgg_tmot_camel_reid_compile_metadata.json) |
-| tracker | 최종 추적기 (학습형 게이트 + 학습형 판정기 + 코드) | 게이트 GRU32 · 판정기 로지스틱 회귀 · M1 실행 코드 | [폴더](tracker/) · [게이트](tracker/gate_gru32_frozen.json) · [판정기](tracker/relink_judge_frozen.json) · [실행 코드](tracker/lwir_tracker_m1.py) · [설치](tracker/setup.sh) |
+| reid | RepVGG_(TMOT,CAMEL) (person re-ID, 최종 추적 시스템용) | RepVGG-A0 · SOLIDER 증류 · 128×64 · 보정 256장 EMA · NPU2 | [DXNN](final_tracker/dxnn/repvgg_tmot_camel_reid.dxnn) · [JSON](final_tracker/compile_metadata/repvgg_tmot_camel_reid_compile_metadata.json) |
+| tracker | 최종 추적기 (학습형 게이트 + 학습형 판정기 + 코드) | 게이트 GRU32 · 판정기 로지스틱 회귀 · M1 실행 코드 | [폴더](final_tracker/tracker/) · [게이트](final_tracker/tracker/gate_gru32_frozen.json) · [판정기](final_tracker/tracker/relink_judge_frozen.json) · [실행 코드](final_tracker/tracker/lwir_tracker_m1.py) · [설치](final_tracker/tracker/setup.sh) |
 | yolov8 | YOLOv8n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8n.dxnn) · [JSON](yolov8/yolov8n_compile_metadata.json) |
 | yolov8 | YOLOv8s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8s.dxnn) · [JSON](yolov8/yolov8s_compile_metadata.json) |
 | yolox | YOLOX-Nano | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_nano.dxnn) · [JSON](yolox/yolox_nano_compile_metadata.json) |
@@ -146,6 +146,8 @@ YOLOX-Nano/S는 원본 실험과 같은 중앙640×640 캔버스로 calibration�
 
 ## 4. 추적 시스템 (최종 버전)
 
+> **쓰는 법만 빨리 보려면 [`final_tracker/README.md`](final_tracker/README.md)를 보세요.** 필요한 파일(검출기 2개 + 외형 모델 1개 + 실행 코드)이 그 폴더 하나에 모여 있습니다. 아래는 같은 내용의 상세판입니다.
+
 ### 4-1. 구성과 한 프레임의 흐름
 
 ```
@@ -166,15 +168,15 @@ NPU 코어 2: repvgg_tmot_camel_reid.dxnn — 판정기가 요청한 사람 크�
 
 | 위치 | 내용 |
 | --- | --- |
-| `yolo26/yolo26m_flir_rt480_a.dxnn`, `_b.dxnn` (+ `*_compile_metadata.json`) | 검출 타일 A/B. 같은 가중치를 타일 위치별로 두 번 컴파일한 것입니다 |
-| `reid/repvgg_tmot_camel_reid.dxnn` (+ JSON) | 사람 외형 특징(재식별) |
-| `tracker/lwir_tracker_m1.py` | 실행 코드(연구용 스크립트에서 환경 가정만 제거, 차이는 `tracker/CHANGES_FROM_RESEARCH_SCRIPT.md`) |
-| `tracker/gate_gru32_frozen.json` | 학습형 확인 게이트(GRU32) 가중치와 설정 |
-| `tracker/relink_judge_frozen.json` | 학습형 재연결 판정기(고정 모델)와 특징 정의 |
-| `tracker/relabel_online.py`, `relink_online_judge.py` | 번호 되돌리기 코드(판정기, 비교용 KeepID) |
-| `tracker/native_post.py`, `post.cpp` | 박스 디코드·NMS를 하는 C++ 라이브러리와 파이썬 연결(`setup.sh`가 `post.so`로 빌드) |
-| `tracker/models/MANIFEST.json` | DXNN 세 개의 sha256. 실행 시작 때 확인합니다 |
-| `tracker/setup.sh` | 한 번만 실행하는 설치(빌드, 모델 연결, 해시 확인) |
+| `final_tracker/dxnn/yolo26m_flir_rt480_a.dxnn`, `_b.dxnn` (+ `*_compile_metadata.json`) | 검출 타일 A/B. 같은 가중치를 타일 위치별로 두 번 컴파일한 것입니다 |
+| `final_tracker/dxnn/repvgg_tmot_camel_reid.dxnn` (+ JSON) | 사람 외형 특징(재식별) |
+| `final_tracker/tracker/lwir_tracker_m1.py` | 실행 코드(연구용 스크립트에서 환경 가정만 제거, 차이는 `final_tracker/tracker/CHANGES_FROM_RESEARCH_SCRIPT.md`) |
+| `final_tracker/tracker/gate_gru32_frozen.json` | 학습형 확인 게이트(GRU32) 가중치와 설정 |
+| `final_tracker/tracker/relink_judge_frozen.json` | 학습형 재연결 판정기(고정 모델)와 특징 정의 |
+| `final_tracker/tracker/relabel_online.py`, `relink_online_judge.py` | 번호 되돌리기 코드(판정기, 비교용 KeepID) |
+| `final_tracker/tracker/native_post.py`, `post.cpp` | 박스 디코드·NMS를 하는 C++ 라이브러리와 파이썬 연결(`setup.sh`가 `post.so`로 빌드) |
+| `final_tracker/tracker/models/MANIFEST.json` | DXNN 세 개의 sha256. 실행 시작 때 확인합니다 |
+| `final_tracker/tracker/setup.sh` | 한 번만 실행하는 설치(빌드, 모델 연결, 해시 확인) |
 
 ### 4-3. 준비물
 
@@ -187,7 +189,7 @@ NPU 코어 2: repvgg_tmot_camel_reid.dxnn — 판정기가 요청한 사람 크�
 
 ```bash
 git clone https://github.com/lwir-deepx-tracking-system/model-bank.git
-cd model-bank/tracker
+cd model-bank/final_tracker/tracker
 bash setup.sh        # post.so 빌드, tracker/models/ 에 DXNN 링크, sha256 확인 (한 번만)
 ```
 
@@ -850,7 +852,7 @@ DXNN이 아닌 PyTorch 체크포인트입니다. 위 공통 컴파일 조건은 
 | 시간 | 크롭 한 장 NPU 코어 2에서 2.3 ms |
 | 주의 | TMOT·CAMEL 시퀀스의 신원으로 학습했으므로 그 영상에서의 재식별 성능은 상한값입니다 |
 
-### 학습형 확인 게이트 (`tracker/gate_gru32_frozen.json`)
+### 학습형 확인 게이트 (`final_tracker/tracker/gate_gru32_frozen.json`)
 
 | 항목 | 값 |
 | --- | --- |
@@ -860,7 +862,7 @@ DXNN이 아닌 PyTorch 체크포인트입니다. 위 공통 컴파일 조건은 
 | 학습 | TMOT 학습 24편의 M1 INT8 검출 재생 40,353행, Adam lr 2e-3, 12 epoch, batch 512, 시퀀스 6겹 교차검증으로 선택한 뒤 24편 전체로 한 번 학습 |
 | 실행 | M1 CPU에서 numpy로 계산. 프레임당 평균 0.18 ms, 호출 한 번 0.58 ms. NPU에 올리지 않았습니다 |
 
-### 학습형 재연결 판정기 (`tracker/relink_judge_frozen.json`)
+### 학습형 재연결 판정기 (`final_tracker/tracker/relink_judge_frozen.json`)
 
 | 항목 | 값 |
 | --- | --- |
@@ -872,7 +874,7 @@ DXNN이 아닌 PyTorch 체크포인트입니다. 위 공통 컴파일 조건은 
 
 ### 보존 범위
 
-로컬 원본과 중간 ONNX/캘리브레이션 자료는 보존하며, 저장소 계열 폴더에는 DXNN과 그 컴파일 메타데이터 JSON만 둡니다(예외: 슈도 라벨용 `yolo26/yolo26x.pt`와 학습 메타데이터 JSON, 그리고 최종 추적 시스템의 `tracker/` 폴더: 게이트·판정기 JSON, 실행 코드, 설치 스크립트, 모델 해시 목록). PNG/정밀 CSV/JSON은 원본 Library ZIP `libfile_473f586f45ac8191bef1087765316cc2`(SHA-256 `be592eed621b340e112782f81e340eed5c49f5a6f9690dce36c44ba3c47bbe74`)과 로컬에 보존했습니다. 이전 Git 이력의 파일은 삭제하지 않았으며 force push도 하지 않았습니다.
+로컬 원본과 중간 ONNX/캘리브레이션 자료는 보존하며, 저장소 계열 폴더에는 DXNN과 그 컴파일 메타데이터 JSON만 둡니다(예외: 슈도 라벨용 `yolo26/yolo26x.pt`와 학습 메타데이터 JSON, 그리고 최종 추적 시스템의 `final_tracker/tracker/` 폴더: 게이트·판정기 JSON, 실행 코드, 설치 스크립트, 모델 해시 목록). PNG/정밀 CSV/JSON은 원본 Library ZIP `libfile_473f586f45ac8191bef1087765316cc2`(SHA-256 `be592eed621b340e112782f81e340eed5c49f5a6f9690dce36c44ba3c47bbe74`)과 로컬에 보존했습니다. 이전 Git 이력의 파일은 삭제하지 않았으며 force push도 하지 않았습니다.
 
 Ultralytics/model, DEEPX SDK 및 FLIR 이용 조건은 별도로 적용됩니다. [DEEPX compiler](https://developer.deepx.ai/tech-docs/DXNN-SDK/DX-COM/DX-COMPILER_Agent_Driven_Development/) · [Ultralytics DEEPX](https://docs.ultralytics.com/integrations/deepx/).
 
