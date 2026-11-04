@@ -1540,11 +1540,11 @@ def main():
             return c_
         mem = None
         if args.preload:         # --preload: decode once, outside every timed interval
-            t_pl = time.perf_counter(); mem = [to_canvas(cv2.imread(str(DATA / im_['file_name']), cv2.IMREAD_GRAYSCALE), im_['file_name']) for im_ in images]
+            t_pl = time.perf_counter(); mem = [to_canvas(cv2.imread(str(DATA / im_['file_name']), cv2.IMREAD_GRAYSCALE | cv2.IMREAD_ANYDEPTH), im_['file_name']) for im_ in images]
             print('PRELOAD %d frames %.1f s' % (len(mem), time.perf_counter() - t_pl), flush=True)
         def read_frame(k):
             if mem is not None: return mem[k], 0.0
-            t = time.perf_counter_ns(); g_ = to_canvas(cv2.imread(str(DATA / images[k]['file_name']), cv2.IMREAD_GRAYSCALE), images[k]['file_name'])
+            t = time.perf_counter_ns(); g_ = to_canvas(cv2.imread(str(DATA / images[k]['file_name']), cv2.IMREAD_GRAYSCALE | cv2.IMREAD_ANYDEPTH), images[k]['file_name'])
             return g_, (time.perf_counter_ns() - t) / 1e6
         def submit_tiles(g_, k):
             t = time.perf_counter_ns()
