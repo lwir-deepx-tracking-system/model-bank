@@ -22,6 +22,7 @@ DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1
 | yolo26 | YOLO26m-CS (KDF) | two-tower 0.75 · KD 최종 · 480×640 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_cs_a.dxnn) · [A JSON](yolo26/yolo26m_cs_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_cs_b.dxnn) · [B JSON](yolo26/yolo26m_cs_b_compile_metadata.json) |
 | yolo26 | YOLO26x (PT · 슈도라벨) | Full FT ·10491장 ·seed202 ·30ep(best 29) · DXNN 없음 | [PT](yolo26/yolo26x.pt) · [JSON](yolo26/yolo26x_train_metadata.json) |
 | yolo26 | YOLO26m_(FLIR)-RT480 (최종 추적 시스템용 검출 타일) | FLIR 학습 10,491장 ·seed202 ·30ep · 2타일 480×384 · 보정 8장 EMA · NPU0/NPU1 | [A DXNN](final_tracker/dxnn/yolo26m_flir_rt480_a.dxnn) · [A JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_a_compile_metadata.json) · [B DXNN](final_tracker/dxnn/yolo26m_flir_rt480_b.dxnn) · [B JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_b_compile_metadata.json) |
+| yolo26 | YOLO26m_(FLIR)-480 (분할 없는 한 장짜리) | 최종 추적 시스템 검출 타일과 같은 FLIR 파인튜닝 가중치(10,491장 ·seed202 ·30ep) · **타일 분할 없이 640×480 한 장** · 보정 8장 EMA · NPU 코어 1개 · 입력 uint8 [1,480,640,3] · 분할 출력 6개 | [DXNN](final_tracker/dxnn/yolo26m_flir_whole480.dxnn) · [JSON](final_tracker/compile_metadata/yolo26m_flir_whole480_compile_metadata.json) |
 | reid | ViT-lite1 (person re-ID) | SOLIDER 선생님 → FLIR 사람 crop KD 학생 · 128×64 · NPU2 | [DXNN](reid/vit_lite1_reid.dxnn) · [JSON](reid/vit_lite1_reid_compile_metadata.json) |
 | reid | RepVGG_(TMOT,CAMEL) (person re-ID, 최종 추적 시스템용) | RepVGG-A0 · SOLIDER 증류 · 128×64 · 보정 256장 EMA · NPU2 | [DXNN](final_tracker/dxnn/repvgg_tmot_camel_reid.dxnn) · [JSON](final_tracker/compile_metadata/repvgg_tmot_camel_reid_compile_metadata.json) |
 | tracker | 최종 추적기 (학습형 게이트 + 학습형 판정기 + 코드) | 게이트 GRU32 · 판정기 로지스틱 회귀 · M1 실행 코드 | [폴더](final_tracker/tracker/) · [게이트](final_tracker/tracker/gate_gru32_frozen.json) · [판정기](final_tracker/tracker/relink_judge_frozen.json) · [실행 코드](final_tracker/tracker/lwir_tracker_m1.py) · [설치](final_tracker/tracker/setup.sh) |
@@ -63,6 +64,19 @@ DX-M1 (Orange Pi 5 Plus, DXRT 3.4.2, NPU 1000MHz), FLIR ADAS v2 `video_thermal_t
 추적은 검출·추적·ViT를 파이프라인으로 돌린 실행입니다(ViT-lite1은 NPU_2). 같은 파이프라인 조건의 ByteTrack(ViT 없음)은 RT 55.0fps · CS 44.4fps이고 실행마다 ±4fps 정도 흔들리므로, **ViT를 켜도 처리 주기는 달라지지 않습니다**(ViT는 NPU_2 코어 사용률 약 3%).
 
 **ViT-lite1 (`reid/vit_lite1_reid.dxnn`)**: 입력 uint8 NHWC [1,128,64,3](사람 crop을 128×64로 resize, gray→RGB 복제), 출력 `embedding` [1,128](호스트에서 L2 정규화), 1.46MB, NPU 101 layer, INT8 보정 128장(EMA). M1 NPU_2에서 crop당 NPU 3.0ms(준비 포함 5.9ms). 추적기는 잃어버린 track과 새 검출의 코사인 ≥ 0.6이면 예전 ID를 되살립니다. **현재 M1 INT8 실측에서는 재식별에 기여하지 못합니다**: 기준선 0.45~0.70 전부에서 ViT 없는 rebind(HOTA 53.95)보다 낮거나 같고, 그 차이는 전부 "외형 비교에 실패한 검출을 움직임 재연결에서 제외하는 hybrid veto" 때문입니다(veto 제거 시 ViT 없음과 동일하게 수렴하는 것으로 오프라인 재현됨, M1 실측 진행 중). 학습 상세(층 수·데이터 수)는 학습 PC 기록을 참조하십시오. 점수는 M1이 저장한 출력(PRED/TRACKS)을 GT로 채점한 값입니다. 실행 기록·채점 스크립트·demo 영상은 M1의 runtime `test/chatgpt/yolobytetrack` 작업 폴더 `results/m1_yolo26m_rt_cs_20261023/`에 있습니다(`results/`는 git 추적 제외).
+
+### YOLO26m_(FLIR)-480 한 장짜리 (타일 분할 없음, 2026-11-04)
+
+최종 추적 시스템의 검출 타일 A·B와 **같은 가중치**를 타일로 자르지 않고 640×480 프레임 한 장으로 컴파일한 DXNN입니다(`yolo26m_flir_whole480.dxnn`, 21.8MB, DX-COM opt_level 1, INT8 PTQ). 입력은 uint8 NHWC [1,480,640,3](RGB 3채널 복제, 정규화 없음), 출력은 타일 모델과 같은 이름·순서의 분할 출력 6개(`box_s8/16/32` [1,4,H/s,W/s], `cls_s8/16/32` [1,16,H/s,W/s], float32)이며 앵커 6,300개입니다. 호스트 후처리(디코드·시그모이드·클래스별 NMS)는 타일 모델과 같고, **타일 합치기(join)만 필요 없습니다.**
+
+| 항목 | 값 |
+| --- | --- |
+| DXNN SHA256 | `1aa827cf11f55d470b979d73cdae248babd77a80577613fcfe98097a9fcc18b9` |
+| 컴파일 확인 | 이 컴파일 환경에서 ONNX(raw 0~255)와 PyTorch 트레이스가 보정 8장 모두 allclose 통과(최대 차이 2.3e-4) |
+| NPU 구성 | NPU 서브그래프 1개 · 코어 1개로 실행(NPU_0 고정) |
+| DX-M1 실측 (코어 1개, 임의 입력 300회) | 호출 1회 p50 24.43 ms · p95 31.22 ms (타일 모델은 코어 2개에 나눠 각 약 12 ms) |
+
+**측정하지 않은 것:** DX-M1 INT8에서의 검출 정확도(AP)와 추적 성능은 이 한 장짜리 모델로 재지 않았습니다. 타일 모델과 같은 가중치이지만 양자화 보정 입력 크기가 달라 결과가 같다고 가정하지 마십시오. 한 장짜리는 코어를 1개만 쓰므로 코어 0·1에 타일을 나눠 올리는 구성보다 호출당 시간이 길고, 대신 남는 코어 1개를 다른 작업에 쓸 수 있습니다.
 
 ## 2. 같은 평가군의 핵심 성능
 
