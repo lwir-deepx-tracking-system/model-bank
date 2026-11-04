@@ -1,0 +1,1026 @@
+{
+ "header": {
+  "version": 8,
+  "signature": "DXNN",
+  "size": 8192,
+  "encode_type": "utf-8",
+  "bytes_order": "little",
+  "hw_config": {
+   "chip_version": "M1A",
+   "mac": 4,
+   "is_unsigned": false
+  },
+  "data": {
+   "merged_model": {
+    "type": "bytes",
+    "offset": 0,
+    "size": 0
+   },
+   "npu_models": {},
+   "cpu_models": {
+    "cpu_0": {
+     "type": "bytes",
+     "offset": 61521,
+     "size": 5282
+    }
+   },
+   "graph_info": {
+    "type": "str",
+    "offset": 66803,
+    "size": 7875
+   },
+   "compile_config": {
+    "type": "str",
+    "offset": 61001,
+    "size": 520
+   },
+   "compiled_data": {
+    "M1A_4K": {
+     "npu_0": {
+      "rmap": {
+       "type": "bytes",
+       "offset": 74678,
+       "size": 10847040
+      },
+      "weight": {
+       "type": "bytes",
+       "offset": 10921718,
+       "size": 13976128
+      },
+      "rmap_info": {
+       "type": "str",
+       "offset": 24897846,
+       "size": 10184
+      }
+     }
+    }
+   },
+   "vis_npu_models": {
+    "npu_0": {
+     "type": "bytes",
+     "offset": 0,
+     "size": 61001
+    }
+   },
+   "vis_cpu_models": {}
+  },
+  "cipher_manager": {
+   "_serializer": {
+    "use_pickle": false
+   },
+   "_cipher": "DXCipherV2"
+  }
+ },
+ "graph": {
+  "offloading": false,
+  "inputs": [
+   "images"
+  ],
+  "outputs": [
+   "output0"
+  ],
+  "toposort_order": [
+   "npu_0",
+   "cpu_0"
+  ],
+  "graphs": [
+   {
+    "name": "npu_0",
+    "device": "NPU",
+    "inputs": [
+     {
+      "name": "images",
+      "owner": null,
+      "users": [
+       "npu_0"
+      ],
+      "head": true,
+      "tail": false
+     }
+    ],
+    "outputs": [
+     {
+      "name": "/Transpose_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Transpose_1_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_8_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_6_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_12_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_1_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_3_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_14_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_4_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_9_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_10_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_7_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_13_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_5_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_15_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_2_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_11_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     }
+    ],
+    "head": true,
+    "tail": false
+   },
+   {
+    "name": "cpu_0",
+    "device": "CPU",
+    "inputs": [
+     {
+      "name": "/Transpose_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Transpose_1_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_8_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_7_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_9_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_6_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_10_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_5_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_11_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_4_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_12_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_3_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_13_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_2_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_14_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_1_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_15_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     }
+    ],
+    "outputs": [
+     {
+      "name": "output0",
+      "owner": "cpu_0",
+      "users": [],
+      "head": false,
+      "tail": true
+     },
+     {
+      "name": "/TopK_output_0",
+      "owner": "cpu_0",
+      "users": [],
+      "head": false,
+      "tail": false
+     }
+    ],
+    "head": false,
+    "tail": true
+   }
+  ]
+ },
+ "config": {
+  "input_shapes": {
+   "images": [
+    1,
+    3,
+    640,
+    640
+   ]
+  },
+  "is_dummy_loader": false,
+  "is_custom_loader": false,
+  "search_calibration_num": false,
+  "search_calibration_num_arguments": {},
+  "package": null,
+  "args": null,
+  "kwargs": null,
+  "dataset_path": null,
+  "file_extensions": null,
+  "calibration_num": 8,
+  "calibration_method": "ema",
+  "preprocessings": [],
+  "train_batchsize": null,
+  "num_samples": null,
+  "ppu": null,
+  "device": "cpu",
+  "enhanced_scheme": {},
+  "use_q_pro": false,
+  "outputs": null,
+  "compile_version": "2.4.1-rc.1",
+  "seed": 42
+ },
+ "rmaps": {
+  "npu_0": {
+   "version": {
+    "npu": "M1A_4K",
+    "rmap": "v0.10.6",
+    "rmapInfo": "2.4.1-rc.1",
+    "opt_level": "M-lite"
+   },
+   "name": "npu_0",
+   "mode": "release",
+   "npu": {
+    "mac": 4096
+   },
+   "size": 63899520,
+   "counts": {
+    "layer": 424,
+    "cmd": 11299
+   },
+   "memory": [
+    {
+     "name": "RMAP",
+     "offset": 0,
+     "size": 10847040,
+     "type": "DRAM"
+    },
+    {
+     "name": "WEIGHT",
+     "offset": 0,
+     "size": 13976128,
+     "type": "DRAM"
+    },
+    {
+     "name": "INPUT",
+     "offset": 0,
+     "size": 1228800,
+     "type": "DRAM"
+    },
+    {
+     "name": "OUTPUT",
+     "offset": 0,
+     "size": 37847552,
+     "type": "DRAM"
+    },
+    {
+     "name": "TEMP",
+     "offset": 0,
+     "size": 0,
+     "type": "DRAM"
+    }
+   ],
+   "inputs": [
+    {
+     "name": "images",
+     "dtype": "UINT8",
+     "shape": [
+      1,
+      640,
+      640,
+      3
+     ],
+     "name_encoded": "%arg0",
+     "dtype_encoded": "UINT8",
+     "shape_encoded": [
+      1,
+      640,
+      640,
+      3
+     ],
+     "layout": "PRE_IM2COL",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "INPUT",
+      "offset": 0,
+      "size": 1228800,
+      "type": "DRAM"
+     }
+    }
+   ],
+   "outputs": [
+    {
+     "name": "/Transpose_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400,
+      4
+     ],
+     "name_encoded": "%767",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400,
+      4
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 16,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 0,
+      "size": 537600,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Transpose_1_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400,
+      16
+     ],
+     "name_encoded": "%789",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400,
+      16
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 16,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 537600,
+      "size": 537600,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_8_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%849",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1075200,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_6_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%841",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1108992,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_12_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%809",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1142784,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_1_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%797",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1176576,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_3_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%829",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1210368,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_14_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%817",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1244160,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_4_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%833",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1277952,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_9_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%853",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1311744,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%793",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1345536,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_10_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%801",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1379328,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_7_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%845",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1413120,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_13_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%813",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1446912,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_5_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%837",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1480704,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_15_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%821",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1514496,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_2_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%825",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1548288,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    },
+    {
+     "name": "/Gather_11_output_0",
+     "dtype": "FLOAT32",
+     "shape": [
+      1,
+      8400
+     ],
+     "name_encoded": "%805",
+     "dtype_encoded": "FLOAT32",
+     "shape_encoded": [
+      1,
+      8400
+     ],
+     "layout": "ALIGNED",
+     "align_unit": 64,
+     "transpose": null,
+     "scale": null,
+     "bias": null,
+     "memory": {
+      "name": "OUTPUT",
+      "offset": 1582080,
+      "size": 33792,
+      "type": "DRAM"
+     }
+    }
+   ]
+  }
+ }
+}

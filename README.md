@@ -18,6 +18,7 @@ DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1
 | 계열 | 모델 | 학습 구분 | 파일 |
 | --- | --- | --- | --- |
 | yolo26 | YOLO26s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolo26/yolo26s.dxnn) · [JSON](yolo26/yolo26s_compile_metadata.json) |
+| yolo26 | YOLO26s_nmsfree_npu (NMS 없는 one-to-one + 최종 출력 [1,300,6], 박스 디코드·시그모이드 NPU) | 위 YOLO26s와 같은 체크포인트(공통6종 ·10742장 ·seed101 ·30ep)의 one-to-one 헤드 · 640×640 · 보정 8장 EMA · NPU 코어 1개 · 입력 uint8 [1,640,640,3] · 출력 `output0` [1,300,6] = x1,y1,x2,y2,점수,클래스(640×640 캔버스 좌표) | [DXNN](yolo26/yolo26s_nmsfree_npu.dxnn) · [JSON](yolo26/yolo26s_nmsfree_npu_compile_metadata.json) · [변환 코드](yolo26/yolo26s_nmsfree_npu_build/) |
 | yolo26 | YOLO26m-RT (E08) | fine-tuned · 2타일 512×384 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_rt_a.dxnn) · [A JSON](yolo26/yolo26m_rt_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_rt_b.dxnn) · [B JSON](yolo26/yolo26m_rt_b_compile_metadata.json) |
 | yolo26 | YOLO26m-CS (KDF) | two-tower 0.75 · KD 최종 · 480×640 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_cs_a.dxnn) · [A JSON](yolo26/yolo26m_cs_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_cs_b.dxnn) · [B JSON](yolo26/yolo26m_cs_b_compile_metadata.json) |
 | yolo26 | YOLO26x (PT · 슈도라벨) | Full FT ·10491장 ·seed202 ·30ep(best 29) · DXNN 없음 | [PT](yolo26/yolo26x.pt) · [JSON](yolo26/yolo26x_train_metadata.json) |
@@ -77,6 +78,35 @@ DX-M1 (Orange Pi 5 Plus, DXRT 3.4.2, NPU 1000MHz), FLIR ADAS v2 `video_thermal_t
 | DX-M1 실측 (코어 1개, 임의 입력 300회) | 호출 1회 p50 24.43 ms · p95 31.22 ms (타일 모델은 코어 2개에 나눠 각 약 12 ms) |
 
 **측정하지 않은 것:** DX-M1 INT8에서의 검출 정확도(AP)와 추적 성능은 이 한 장짜리 모델로 재지 않았습니다. 타일 모델과 같은 가중치이지만 양자화 보정 입력 크기가 달라 결과가 같다고 가정하지 마십시오. 한 장짜리는 코어를 1개만 쓰므로 코어 0·1에 타일을 나눠 올리는 구성보다 호출당 시간이 길고, 대신 남는 코어 1개를 다른 작업에 쓸 수 있습니다.
+
+### YOLO26s_nmsfree_npu (2026-11-04)
+
+위 표의 `yolo26s.dxnn`은 NPU가 6개 헤드 텐서까지만 만들고 박스 디코드·시그모이드·합치기는 CPU가 하며, NMS는 호스트에서 따로 해야 합니다. `yolo26s_nmsfree_npu.dxnn`은 같은 체크포인트의 **one-to-one(NMS 없는) 헤드**를 쓰고, **박스 디코드·시그모이드를 NPU로 옮기고 최종 [1,300,6] 선택(TopK)까지 DXNN 안에 넣은** 변환본입니다. 호스트에서 NMS가 필요 없고, 출력 행을 점수 내림차순으로 바로 쓰면 됩니다.
+
+**무엇이 바뀌었나** (`yolo26s_nmsfree_npu_build/exp_build_e2e.py`, `exp_compile.py`):
+
+- 컴파일러 옵션 `aggressive_partitioning=True`. 기본값(False)에서는 헤드 Conv 출력 이후가 전부 CPU로 갔습니다.
+- 박스 디코드(앵커 ± 거리 × stride)와 시그모이드를 ONNX 그래프 안에 넣었습니다. 이 부분은 NPU 서브그래프로 컴파일됩니다.
+- 후처리는 Ultralytics `Detect.postprocess`(end2end)와 같은 2단계입니다: 앵커별 최대 점수로 상위 300 앵커 → 300×16 점수를 펴서 다시 상위 300 → `[x1,y1,x2,y2,점수,클래스]`.
+
+**NPU로 옮기지 못한 것** (DX-COM 3.x 컴파일 실측):
+
+| 연산 | 결과 |
+| --- | --- |
+| 박스 디코드(Sub·Add·Mul)·Sigmoid·Concat·Transpose | NPU에서 실행 |
+| `ReduceMax` (앵커별 최대 점수) | **컴파일 자체가 실패**(UnknownError). 그래서 클래스 16개를 하나씩 잘라 elementwise `Max` 15번으로 바꿨고, 이 체인은 CPU로 갑니다 |
+| `TopK` ×2, `Gather`/`GatherElements`, `Mod`, `Where` 등 선택·인덱싱 | **CPU에 남음** (NPU 미지원) |
+
+즉 "최종 출력 [1,300,6]을 DXNN이 직접 내놓는다"는 목표는 되지만, 마지막 선택 단계는 CPU입니다. CPU 쪽 입력은 NPU가 낸 디코드된 박스·점수 텐서입니다.
+
+**M1 실측** (FLIR 시험 영상 8편 3,749프레임, 코어 1개, 같은 GT·채점 코드. 비교 대상은 같은 체크포인트·같은 변환 방식(보정 8장, opt_level 0, 640×640, 코어 1개)으로 만든 one-to-many 빌드 S640이며, **표의 위 `yolo26s.dxnn` 파일 자체가 아닙니다**):
+
+| 모델 | 사람 AP50 | 사람 AP50-95 | TP / FP / FN | 호출 1회 p50 / p95 ms |
+| --- | --- | --- | --- | --- |
+| 같은 체크포인트 one-to-many 빌드 S640 (CPU 디코드 + 호스트 NMS) | 0.7233 | 0.4232 | 8267 / 2826 / 4056 | 이번에 같은 조건으로 재지 않음 |
+| **yolo26s_nmsfree_npu** (NMS 없음, 출력 [1,300,6]) | **0.7233** | **0.4219** | 8068 / 2307 / 4255 | **25.52 / 30.33** |
+
+정확도는 같은 수준입니다(AP50 동일, AP50-95 -0.0013, 오검출 감소·검출 증가 대신 미검출 증가). **다만 헤드가 다릅니다:** 비교 빌드는 one-to-many 헤드(+NMS), 이 변환본은 one-to-one 헤드(NMS 없음)라서 순수한 디코드 위치 비교가 아니며, 표의 위 `yolo26s.dxnn`(학습 이미지 100장으로 보정, 별도 빌드)과는 이 방식으로 비교하지 않았습니다. 속도(호출 1회 시간)는 비교 빌드와 같은 조건으로 재지 않아 우열을 주장하지 않습니다. 파일 크기는 24.9MB로 `yolo26s.dxnn`(10.9MB)보다 큽니다(원인은 확인하지 않음). 박스 디코드를 NPU의 INT8로 하는데도 정확도가 유지된 것은 이 영상 8편에서의 결과이며, 다른 데이터에서는 확인하지 않았습니다. 사용: 입력은 640×640 letterbox(FLIR 640×512 프레임 위·아래에 회색 114를 64행씩 패딩) uint8 RGB(0~255, 정규화는 모델 안), 출력 좌표에서 캔버스 y 오프셋 64를 빼면 원본 프레임 좌표입니다. 측정 스크립트는 `yolo26s_nmsfree_npu_build/m1_eval_e2e.py`.
 
 ## 2. 같은 평가군의 핵심 성능
 
