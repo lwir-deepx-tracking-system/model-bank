@@ -1,6 +1,6 @@
 {
   "_source": {
-    "dxnn": "yolov8n_nms.dxnn",
+    "dxnn": "yolov8n_nms_640x640.dxnn",
     "dxnn_bytes": 3696192,
     "dxnn_sha256": "f11c80721fb88d7c4cb153b165d381e778e5bf8de1bc5302d32496baf70831d7",
     "note": "Compile metadata embedded in the DXNN by DX-COM (header, graph_info, compile_config, rmap_info), extracted verbatim; no device run."

@@ -1,9 +1,9 @@
 {
   "_source": {
-    "dxnn": "yolo26m_flir_rt480_a_nms.dxnn",
-    "dxnn_bytes": 21510881,
-    "dxnn_sha256": "dafc67532f79e66aeccd567fde6d75ee93f8ce8c46cc8c096b697d97f315ca15",
-    "internal_name_in_the_tracker_code": "NEWMRT480A",
+    "dxnn": "yolo26m_flir_rt480_b_nms_480x384.dxnn",
+    "dxnn_bytes": 21509921,
+    "dxnn_sha256": "f781787c1a98c7b0961808e1828d6887c7661cf9260642f4ea5ca14e607a9619",
+    "internal_name_in_the_tracker_code": "NEWMRT480B",
     "note": "Compile metadata embedded in the DXNN by DX-COM (header, graph_info, compile_config, rmap_info), extracted verbatim; no device run. Outputs: the six split-head tensors of tensor_requirements.md."
   },
   "header": {
@@ -41,16 +41,16 @@
             "rmap": {
               "type": "bytes",
               "offset": 57939,
-              "size": 902400
+              "size": 901440
             },
             "weight": {
               "type": "bytes",
-              "offset": 960339,
+              "offset": 959379,
               "size": 20537792
             },
             "rmap_info": {
               "type": "str",
-              "offset": 21498131,
+              "offset": 21497171,
               "size": 4558
             }
           }
@@ -196,16 +196,16 @@
       "npu": {
         "mac": 4096
       },
-      "size": 35944640,
+      "size": 35943680,
       "counts": {
-        "layer": 364,
-        "cmd": 940
+        "layer": 363,
+        "cmd": 939
       },
       "memory": [
         {
           "name": "RMAP",
           "offset": 0,
-          "size": 902400,
+          "size": 901440,
           "type": "DRAM"
         },
         {
@@ -274,7 +274,7 @@
             60,
             48
           ],
-          "name_encoded": "%684",
+          "name_encoded": "%681",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
@@ -303,7 +303,7 @@
             30,
             24
           ],
-          "name_encoded": "%713",
+          "name_encoded": "%710",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
@@ -332,7 +332,7 @@
             60,
             48
           ],
-          "name_encoded": "%815",
+          "name_encoded": "%812",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
@@ -361,7 +361,7 @@
             30,
             24
           ],
-          "name_encoded": "%807",
+          "name_encoded": "%804",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
@@ -390,7 +390,7 @@
             15,
             12
           ],
-          "name_encoded": "%791",
+          "name_encoded": "%788",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
@@ -419,7 +419,7 @@
             15,
             12
           ],
-          "name_encoded": "%799",
+          "name_encoded": "%796",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
