@@ -19,12 +19,9 @@ DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1
 | --- | --- | --- | --- |
 | yolo26 | YOLO26s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolo26/yolo26s.dxnn) · [JSON](yolo26/yolo26s_compile_metadata.json) |
 | yolo26 | YOLO26s_nmsfree_npu (NMS 없는 one-to-one + 최종 출력 [1,300,6], 박스 디코드·시그모이드 NPU) | 위 YOLO26s와 같은 체크포인트(공통6종 ·10742장 ·seed101 ·30ep)의 one-to-one 헤드 · 640×640 · 보정 8장 EMA · NPU 코어 1개 · 입력 uint8 [1,640,640,3] · 출력 `output0` [1,300,6] = x1,y1,x2,y2,점수,클래스(640×640 캔버스 좌표) | [DXNN](yolo26/yolo26s_nmsfree_npu.dxnn) · [JSON](yolo26/yolo26s_nmsfree_npu_compile_metadata.json) · [변환 코드](yolo26/yolo26s_nmsfree_npu_build/) |
-| yolo26 | YOLO26m-RT (E08) | fine-tuned · 2타일 512×384 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_rt_a.dxnn) · [A JSON](yolo26/yolo26m_rt_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_rt_b.dxnn) · [B JSON](yolo26/yolo26m_rt_b_compile_metadata.json) |
-| yolo26 | YOLO26m-CS (KDF) | two-tower 0.75 · KD 최종 · 480×640 · NPU0/NPU1 | [A DXNN](yolo26/yolo26m_cs_a.dxnn) · [A JSON](yolo26/yolo26m_cs_a_compile_metadata.json) · [B DXNN](yolo26/yolo26m_cs_b.dxnn) · [B JSON](yolo26/yolo26m_cs_b_compile_metadata.json) |
 | yolo26 | YOLO26x (PT · 슈도라벨) | Full FT ·10491장 ·seed202 ·30ep(best 29) · DXNN 없음 | [PT](yolo26/yolo26x.pt) · [JSON](yolo26/yolo26x_train_metadata.json) |
 | yolo26 | YOLO26m_(FLIR)-RT480 (최종 추적 시스템용 검출 타일) | FLIR 학습 10,491장 ·seed202 ·30ep · 2타일 480×384 · 보정 8장 EMA · NPU0/NPU1 | [A DXNN](final_tracker/dxnn/yolo26m_flir_rt480_a.dxnn) · [A JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_a_compile_metadata.json) · [B DXNN](final_tracker/dxnn/yolo26m_flir_rt480_b.dxnn) · [B JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_b_compile_metadata.json) |
 | yolo26 | YOLO26m_(FLIR)-480 (분할 없는 한 장짜리) | 최종 추적 시스템 검출 타일과 같은 FLIR 파인튜닝 가중치(10,491장 ·seed202 ·30ep) · **타일 분할 없이 640×480 한 장** · 보정 8장 EMA · NPU 코어 1개 · 입력 uint8 [1,480,640,3] · 분할 출력 6개 | [DXNN](final_tracker/dxnn/yolo26m_flir_whole480.dxnn) · [JSON](final_tracker/compile_metadata/yolo26m_flir_whole480_compile_metadata.json) |
-| reid | ViT-lite1 (person re-ID) | SOLIDER 선생님 → FLIR 사람 crop KD 학생 · 128×64 · NPU2 | [DXNN](reid/vit_lite1_reid.dxnn) · [JSON](reid/vit_lite1_reid_compile_metadata.json) |
 | reid | RepVGG_(TMOT,CAMEL) (person re-ID, 최종 추적 시스템용) | RepVGG-A0 · SOLIDER 증류 · 128×64 · 보정 256장 EMA · NPU2 | [DXNN](final_tracker/dxnn/repvgg_tmot_camel_reid.dxnn) · [JSON](final_tracker/compile_metadata/repvgg_tmot_camel_reid_compile_metadata.json) |
 | tracker | 최종 추적기 (학습형 게이트 + 학습형 판정기 + 코드) | 게이트 GRU32 · 판정기 로지스틱 회귀 · M1 실행 코드 | [폴더](final_tracker/tracker/) · [게이트](final_tracker/tracker/gate_gru32_frozen.json) · [판정기](final_tracker/tracker/relink_judge_frozen.json) · [실행 코드](final_tracker/tracker/lwir_tracker_m1.py) · [설치](final_tracker/tracker/setup.sh) |
 | yolov8 | YOLOv8n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8n.dxnn) · [JSON](yolov8/yolov8n_compile_metadata.json) |
@@ -34,6 +31,8 @@ DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1
 
 
 > 2026-10-22 저장소 경량화: YOLO26n, YOLO26s 추가 변형 28개, `experiments/yolo26m_two_core`를 제거하고 git 기록에서도 정리했습니다 (clone 약 449MB → 약 43MB). 아래 성능·컴파일 기록에 남은 해당 이름은 기록용입니다. 정리 전 저장소 전체는 별도 백업으로 보관합니다.
+
+> 2026-11-06 정리: `yolo26m_rt_a/b`(YOLO26m-RT), `yolo26m_cs_a/b`(YOLO26m-CS), `reid/vit_lite1_reid`(ViT-lite1)의 DXNN과 JSON을 제거했습니다. 최종 추적 시스템은 `final_tracker/dxnn/`의 파일을 씁니다. 아래 성능·컴파일 기록에 남은 해당 이름은 기록용이며, 파일은 git 기록(eadf664 이전 커밋)에서 받을 수 있습니다.
 
 YOLO26x와 YOLOX는 다른 모델입니다. YOLO26x는 아래 PT 모델로 별도 제공합니다.
 
