@@ -6,8 +6,8 @@
 
 | 파일 | 하는 일 | 도는 곳 |
 | --- | --- | --- |
-| `dxnn/yolo26m_flir_rt480_a.dxnn` | 사람 검출, 화면 왼쪽 타일 (열 0~384) | NPU 코어 0 |
-| `dxnn/yolo26m_flir_rt480_b.dxnn` | 사람 검출, 화면 오른쪽 타일 (열 256~640) | NPU 코어 1 |
+| `dxnn/yolo26m_flir_rt480_a_nms.dxnn` | 사람 검출, 화면 왼쪽 타일 (열 0~384) | NPU 코어 0 |
+| `dxnn/yolo26m_flir_rt480_b_nms.dxnn` | 사람 검출, 화면 오른쪽 타일 (열 256~640) | NPU 코어 1 |
 | `dxnn/repvgg_tmot_camel_reid.dxnn` | 사람 외형 비교 (끊겼던 사람에게 예전 번호를 돌려줄 때) | NPU 코어 2 |
 | `tracker/` | 실행 코드와 학습된 게이트·판정기 (`lwir_tracker_m1.py`가 실행 파일) | CPU |
 | `compile_metadata/` | 모델 컴파일 기록. 참고용이고 실행에는 필요 없음 | — |
@@ -26,7 +26,7 @@
 
 | 파일 | 하는 일 | 도는 곳 |
 | --- | --- | --- |
-| `dxnn/yolo26m_flir_whole480.dxnn` | 사람 검출, 타일로 자르지 않은 640×480 한 장 | NPU 코어 0 |
+| `dxnn/yolo26m_flir_whole480_nms.dxnn` | 사람 검출, 타일로 자르지 않은 640×480 한 장 | NPU 코어 0 |
 | `tracker/cam_pipe.cpp` | 카메라 원본을 읽어 추적기로 넘기는 프로그램 (`setup.sh`가 빌드) | CPU |
 
 ## 2. 준비물
@@ -116,7 +116,7 @@ python3 -B lwir_tracker_m1.py \
 
 ### 실행
 
-`final_tracker/tracker` 폴더에서 실행합니다. 아래 명령은 검출기가 `yolo26m_flir_whole480` 한 장인 구성입니다. 실제 카메라로 서버 화면을 확인한 구성은 `s640`이고, 이 명령 그대로 실제 카메라에서 돌려 보지는 않았습니다.
+`final_tracker/tracker` 폴더에서 실행합니다. 아래 명령은 검출기가 `yolo26m_flir_whole480_nms` 한 장인 구성입니다. 실제 카메라로 서버 화면을 확인한 구성은 `s640`이고, 이 명령 그대로 실제 카메라에서 돌려 보지는 않았습니다.
 
 ```bash
 python3 -B lwir_tracker_m1.py \

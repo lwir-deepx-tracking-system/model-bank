@@ -15,23 +15,23 @@ DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1
 
 ## 1. 모델 다운로드
 
-아래 문단의 개수에는 2026-11-04 이후 추가한 `yolo26m_flir_whole480`, `yolo26s_nmsfree_npu`가 들어 있지 않습니다.
+아래 문단의 개수에는 2026-11-04 이후 추가한 `yolo26m_flir_whole480_nms`, `yolo26s_nmsfree_npu`가 들어 있지 않습니다.
 
-2026-11-03에 최종 추적 시스템용 검출 타일 DXNN 2개(`yolo26m_flir_rt480_a/b`), 사람 외형 비교 DXNN 1개(`repvgg_tmot_camel_reid`), `final_tracker/tracker/` 폴더(게이트·판정기·실행 코드)를 추가했습니다. 현재 게시된 DXNN은 단일 모델 **5개**(2026-11-01 기존 YOLO26m 교사 `yolo26m.dxnn` 삭제, git 기록 `1e957ad`에 남음), NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
+2026-11-03에 최종 추적 시스템용 검출 타일 DXNN 2개(`yolo26m_flir_rt480_a_nms, yolo26m_flir_rt480_b_nms`), 사람 외형 비교 DXNN 1개(`repvgg_tmot_camel_reid`), `final_tracker/tracker/` 폴더(게이트·판정기·실행 코드)를 추가했습니다. 현재 게시된 DXNN은 단일 모델 **5개**(2026-11-01 기존 YOLO26m 교사 `yolo26m.dxnn` 삭제, git 기록 `1e957ad`에 남음), NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
 
 | 계열 | 모델 | 학습 구분 | 파일 |
 | --- | --- | --- | --- |
-| yolo26 | YOLO26s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolo26/yolo26s.dxnn) · [JSON](yolo26/yolo26s_compile_metadata.json) |
+| yolo26 | YOLO26s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolo26/yolo26s_nms.dxnn) · [JSON](yolo26/yolo26s_nms_compile_metadata.json) |
 | yolo26 | YOLO26s_nmsfree_npu (NMS 없는 one-to-one + 최종 출력 [1,300,6], 박스 디코드·시그모이드 NPU) | FLIR 전체 파인튜닝 ·10742장 ·seed101 ·30ep ·lr0 0.0003 (`best_full_ft_epoch29.pt`, 위 YOLO26s와 다른 체크포인트) · 640×640 · 보정 8장 EMA · NPU 코어 1개 · 입력 uint8 [1,640,640,3] · 출력 float32 [1,300,6] | [DXNN](yolo26/yolo26s_nmsfree_npu.dxnn) · [JSON](yolo26/yolo26s_nmsfree_npu_compile_metadata.json) · [빌드 스크립트](yolo26/yolo26s_nmsfree_npu_build/) |
 | yolo26 | YOLO26x (PT · 슈도라벨) | Full FT ·10491장 ·seed202 ·30ep(best 29) · DXNN 없음 | [PT](yolo26/yolo26x.pt) · [JSON](yolo26/yolo26x_train_metadata.json) |
-| yolo26 | YOLO26m_(FLIR)-RT480 (최종 추적 시스템용 검출 타일) | FLIR 학습 10,491장 ·seed202 ·30ep · 2타일 480×384 · 보정 8장 EMA · NPU0/NPU1 | [A DXNN](final_tracker/dxnn/yolo26m_flir_rt480_a.dxnn) · [A JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_a_compile_metadata.json) · [B DXNN](final_tracker/dxnn/yolo26m_flir_rt480_b.dxnn) · [B JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_b_compile_metadata.json) |
-| yolo26 | YOLO26m_(FLIR)-480 (분할 없는 한 장짜리) | 최종 추적 시스템 검출 타일과 같은 FLIR 파인튜닝 가중치(10,491장 ·seed202 ·30ep) · **타일 분할 없이 640×480 한 장** · 보정 8장 EMA · NPU 코어 1개 · 입력 uint8 [1,480,640,3] · 분할 출력 6개 | [DXNN](final_tracker/dxnn/yolo26m_flir_whole480.dxnn) · [JSON](final_tracker/compile_metadata/yolo26m_flir_whole480_compile_metadata.json) |
+| yolo26 | YOLO26m_(FLIR)-RT480 (최종 추적 시스템용 검출 타일) | FLIR 학습 10,491장 ·seed202 ·30ep · 2타일 480×384 · 보정 8장 EMA · NPU0/NPU1 | [A DXNN](final_tracker/dxnn/yolo26m_flir_rt480_a_nms.dxnn) · [A JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_a_nms_compile_metadata.json) · [B DXNN](final_tracker/dxnn/yolo26m_flir_rt480_b_nms.dxnn) · [B JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_b_nms_compile_metadata.json) |
+| yolo26 | YOLO26m_(FLIR)-480 (분할 없는 한 장짜리) | 최종 추적 시스템 검출 타일과 같은 FLIR 파인튜닝 가중치(10,491장 ·seed202 ·30ep) · **타일 분할 없이 640×480 한 장** · 보정 8장 EMA · NPU 코어 1개 · 입력 uint8 [1,480,640,3] · 분할 출력 6개 | [DXNN](final_tracker/dxnn/yolo26m_flir_whole480_nms.dxnn) · [JSON](final_tracker/compile_metadata/yolo26m_flir_whole480_nms_compile_metadata.json) |
 | reid | RepVGG_(TMOT,CAMEL) (person re-ID, 최종 추적 시스템용) | RepVGG-A0 · SOLIDER 증류 · 128×64 · 보정 256장 EMA · NPU2 | [DXNN](final_tracker/dxnn/repvgg_tmot_camel_reid.dxnn) · [JSON](final_tracker/compile_metadata/repvgg_tmot_camel_reid_compile_metadata.json) |
 | tracker | 최종 추적기 (학습형 게이트 + 학습형 판정기 + 코드) | 게이트 GRU32 · 판정기 로지스틱 회귀 · M1 실행 코드 | [폴더](final_tracker/tracker/) · [게이트](final_tracker/tracker/gate_gru32_frozen.json) · [판정기](final_tracker/tracker/relink_judge_frozen.json) · [실행 코드](final_tracker/tracker/lwir_tracker_m1.py) · [설치](final_tracker/tracker/setup.sh) |
-| yolov8 | YOLOv8n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8n.dxnn) · [JSON](yolov8/yolov8n_compile_metadata.json) |
-| yolov8 | YOLOv8s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8s.dxnn) · [JSON](yolov8/yolov8s_compile_metadata.json) |
-| yolox | YOLOX-Nano | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_nano.dxnn) · [JSON](yolox/yolox_nano_compile_metadata.json) |
-| yolox | YOLOX-s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_s.dxnn) · [JSON](yolox/yolox_s_compile_metadata.json) |
+| yolov8 | YOLOv8n | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8n_nms.dxnn) · [JSON](yolov8/yolov8n_nms_compile_metadata.json) |
+| yolov8 | YOLOv8s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolov8/yolov8s_nms.dxnn) · [JSON](yolov8/yolov8s_nms_compile_metadata.json) |
+| yolox | YOLOX-Nano | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_nano_nms.dxnn) · [JSON](yolox/yolox_nano_nms_compile_metadata.json) |
+| yolox | YOLOX-s | 공통6종 ·10742장 ·seed101 ·30ep | [DXNN](yolox/yolox_s_nms.dxnn) · [JSON](yolox/yolox_s_nms_compile_metadata.json) |
 
 
 > 2026-10-22 저장소 경량화: YOLO26n, YOLO26s 추가 변형 28개, `experiments/yolo26m_two_core`를 제거하고 git 기록에서도 정리했습니다 (clone 약 449MB → 약 43MB). 아래 성능·컴파일 기록에 남은 해당 이름은 기록용입니다. 정리 전 저장소 전체는 별도 백업으로 보관합니다.
@@ -71,7 +71,7 @@ DX-M1 (Orange Pi 5 Plus, DXRT 3.4.2, NPU 1000MHz), FLIR ADAS v2 `video_thermal_t
 
 ### YOLO26m_(FLIR)-480 한 장짜리 (타일 분할 없음, 2026-11-04)
 
-최종 추적 시스템의 검출 타일 A·B와 **같은 가중치**를 타일로 자르지 않고 640×480 프레임 한 장으로 컴파일한 DXNN입니다(`yolo26m_flir_whole480.dxnn`, 21.8MB, DX-COM opt_level 1, INT8 PTQ). 입력은 uint8 NHWC [1,480,640,3](RGB 3채널 복제, 정규화 없음), 출력은 타일 모델과 같은 이름·순서의 분할 출력 6개(`box_s8/16/32` [1,4,H/s,W/s], `cls_s8/16/32` [1,16,H/s,W/s], float32)이며 앵커 6,300개입니다. 호스트 후처리(디코드·시그모이드·클래스별 NMS)는 타일 모델과 같고, **타일 합치기(join)만 필요 없습니다.**
+최종 추적 시스템의 검출 타일 A·B와 **같은 가중치**를 타일로 자르지 않고 640×480 프레임 한 장으로 컴파일한 DXNN입니다(`yolo26m_flir_whole480_nms.dxnn`, 21.8MB, DX-COM opt_level 1, INT8 PTQ). 입력은 uint8 NHWC [1,480,640,3](RGB 3채널 복제, 정규화 없음), 출력은 타일 모델과 같은 이름·순서의 분할 출력 6개(`box_s8/16/32` [1,4,H/s,W/s], `cls_s8/16/32` [1,16,H/s,W/s], float32)이며 앵커 6,300개입니다. 호스트 후처리(디코드·시그모이드·클래스별 NMS)는 타일 모델과 같고, **타일 합치기(join)만 필요 없습니다.**
 
 | 항목 | 값 |
 | --- | --- |
@@ -203,8 +203,8 @@ YOLOX-Nano/S는 원본 실험과 같은 중앙640×640 캔버스로 calibration�
 ```
 열화상 프레임 640×512 (8비트 흑백)
   │  행 16~496 띠를 두 타일로 자름: A = 열 0~384, B = 열 256~640 (가운데 128열 겹침)
-  ├─▶ NPU 코어 0: yolo26m_flir_rt480_a.dxnn ─┐   uint8 [1,480,384,3] → 분할 출력 6개(박스 [1,4,60×48·30×24·15×12] + 클래스 [1,16,같은 격자])
-  └─▶ NPU 코어 1: yolo26m_flir_rt480_b.dxnn ─┤   (호스트가 디코드 → 두 타일 합치기 → 클래스별 NMS IoU 0.70, 최대 300)
+  ├─▶ NPU 코어 0: yolo26m_flir_rt480_a_nms.dxnn ─┐   uint8 [1,480,384,3] → 분할 출력 6개(박스 [1,4,60×48·30×24·15×12] + 클래스 [1,16,같은 격자])
+  └─▶ NPU 코어 1: yolo26m_flir_rt480_b_nms.dxnn ─┤   (호스트가 디코드 → 두 타일 합치기 → 클래스별 NMS IoU 0.70, 최대 300)
                                               ▼
 CPU 메인 스레드: ByteTrack(+ SameClass_connect) ─▶ 학습형 게이트(새 트랙을 출력할지) ─▶ 학습형 판정기(끊겼던 번호를 되돌릴지) ─▶ 출력
 CPU 광류 스레드: OpticalFlow-Fast(카메라 움직임 보정)가 프레임이 들어오자마자 병렬로 계산 ─▶ 추적기의 칼만 예측에 반영
@@ -218,7 +218,7 @@ NPU 코어 2: repvgg_tmot_camel_reid.dxnn — 판정기가 요청한 사람 크�
 
 | 위치 | 내용 |
 | --- | --- |
-| `final_tracker/dxnn/yolo26m_flir_rt480_a.dxnn`, `_b.dxnn` (+ `*_compile_metadata.json`) | 검출 타일 A/B. 같은 가중치를 타일 위치별로 두 번 컴파일한 것입니다 |
+| `final_tracker/dxnn/yolo26m_flir_rt480_a_nms.dxnn`, `_b.dxnn` (+ `*_compile_metadata.json`) | 검출 타일 A/B. 같은 가중치를 타일 위치별로 두 번 컴파일한 것입니다 |
 | `final_tracker/dxnn/repvgg_tmot_camel_reid.dxnn` (+ JSON) | 사람 외형 특징(재식별) |
 | `final_tracker/tracker/lwir_tracker_m1.py` | 실행 코드(연구용 스크립트에서 환경 가정만 제거, 차이는 `final_tracker/tracker/CHANGES_FROM_RESEARCH_SCRIPT.md`) |
 | `final_tracker/tracker/gate_gru32_frozen.json` | 학습형 확인 게이트(GRU32) 가중치와 설정 |
@@ -719,11 +719,11 @@ YOLOX COCO category ID는 index+1이며 detector output index는0부터 시작�
 
 | artifact | 공개 출력 수 | 공개 출력 메타데이터 | 내부 NPU 경계 tensor수 |
 | --- | --- | --- | --- |
-| yolov8s.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 4 |
-| yolo26s.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
-| yolox_nano.dxnn | 1 | output0 [1, 8400, 21] FLOAT | 9 |
-| yolox_s.dxnn | 1 | output0 [1, 8400, 21] FLOAT | 9 |
-| yolov8n.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 4 |
+| yolov8s_nms.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 4 |
+| yolo26s_nms.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 6 |
+| yolox_nano_nms.dxnn | 1 | output0 [1, 8400, 21] FLOAT | 9 |
+| yolox_s_nms.dxnn | 1 | output0 [1, 8400, 21] FLOAT | 9 |
+| yolov8n_nms.dxnn | 1 | output0 [1, 20, 8400] FLOAT | 4 |
 
 DXNN header graph_info와 embedded CPU ONNX ValueInfo를 읽은 정적 확인입니다. 내부 NPU 경계 tensor 여러 개를 공개 출력 tensor 수와 혼동하지 않습니다.
 
@@ -742,7 +742,7 @@ Calibration은 전체 FLIR TRAIN10742 목록에서 round(i*(N-1)/255), i=0..255�
 
 2026-11-01 삭제했습니다. 4,196장으로 학습한 기존 YOLO26m 교사(source PT SHA-256 `dca0f23d…7736`, DXNN SHA-256 `fbda1f1b…c03e`)이며, 파일과 상세 표는 git 기록 `1e957ad`에 남아 있습니다.
 
-### yolov8s.dxnn
+### yolov8s_nms.dxnn
 
 | 항목 | 값 |
 | --- | --- |
@@ -761,7 +761,7 @@ Calibration은 전체 FLIR TRAIN10742 목록에서 round(i*(N-1)/255), i=0..255�
 | 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.00274658203125 / score 6.407499313354492e-06 |
 | 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
-### yolo26s.dxnn
+### yolo26s_nms.dxnn
 
 | 항목 | 값 |
 | --- | --- |
@@ -780,7 +780,7 @@ Calibration은 전체 FLIR TRAIN10742 목록에서 round(i*(N-1)/255), i=0..255�
 | 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.01220703125 / score 9.775161743164062e-06 |
 | 공개 source output | [1, 20, 8400]; raw decoded xywh +16 class scores, 8400 candidates; no separate objectness; external class-aware NMS |
 
-### yolox_nano.dxnn
+### yolox_nano_nms.dxnn
 
 | 항목 | 값 |
 | --- | --- |
@@ -799,7 +799,7 @@ Calibration은 전체 FLIR TRAIN10742 목록에서 round(i*(N-1)/255), i=0..255�
 | 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.0050048828125 / score 2.047419548034668e-05 |
 | 공개 source output | [1, 8400, 21]; raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS |
 
-### yolox_s.dxnn
+### yolox_s_nms.dxnn
 
 | 항목 | 값 |
 | --- | --- |
@@ -818,7 +818,7 @@ Calibration은 전체 FLIR TRAIN10742 목록에서 round(i*(N-1)/255), i=0..255�
 | 3-sample parity | allclose rtol1e-4 atol5e-3; max abs box 0.0062255859375 / score 1.0013580322265625e-05 |
 | 공개 source output | [1, 8400, 21]; raw decoded xywh + objectness +16 class scores;8400 candidates, external objectness-times-class scoring and class-aware NMS |
 
-### yolov8n.dxnn
+### yolov8n_nms.dxnn
 
 | 항목 | 값 |
 | --- | --- |
@@ -876,7 +876,7 @@ DXNN이 아닌 PyTorch 체크포인트입니다. 위 공통 컴파일 조건은 
 
 **사용**: `git lfs install` 후 clone, 파일 크기 118376293 bytes 확인. Ultralytics로 `YOLO('yolo26/yolo26x.pt').predict(img, imgsz=(480,640), rect=False, conf=0.001, max_det=300)`; `img`는 위 전처리를 거친 480×640×3 uint8. 상자는 패딩·크기 조정을 되돌려 원본 좌표로 복원합니다. TMOT에서 정밀도95%가 되는 임계값은 0.46~0.48이었고, 슈도 라벨은 사람 검수가 필요합니다. 학습·검증은 프로젝트 보관 Ultralytics 8.4.157 수정본을 사용했습니다.
 
-### yolo26m_flir_rt480_a / b.dxnn
+### yolo26m_flir_rt480_a_nms / b.dxnn
 
 | 항목 | 값 |
 | --- | --- |

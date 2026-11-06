@@ -4,9 +4,9 @@
 set -eu
 cd "$(dirname "$0")"
 g++ -O3 -shared -fPIC -o post.so post.cpp
-ln -sf ../../dxnn/yolo26m_flir_rt480_a.dxnn models/NEWMRT480A.dxnn
-ln -sf ../../dxnn/yolo26m_flir_rt480_b.dxnn models/NEWMRT480B.dxnn
-ln -sf ../../dxnn/yolo26m_flir_whole480.dxnn models/NEWMRW480.dxnn
+ln -sf ../../dxnn/yolo26m_flir_rt480_a_nms.dxnn models/NEWMRT480A.dxnn
+ln -sf ../../dxnn/yolo26m_flir_rt480_b_nms.dxnn models/NEWMRT480B.dxnn
+ln -sf ../../dxnn/yolo26m_flir_whole480_nms.dxnn models/NEWMRW480.dxnn
 ln -sf ../../dxnn/repvgg_tmot_camel_reid.dxnn models/RVGGA0_REID2C256.dxnn
 python3 - <<'EOF'
 import hashlib, json

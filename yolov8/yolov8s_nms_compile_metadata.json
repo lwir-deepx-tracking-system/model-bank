@@ -1,8 +1,8 @@
 {
   "_source": {
-    "dxnn": "yolov8n.dxnn",
-    "dxnn_bytes": 3696192,
-    "dxnn_sha256": "f11c80721fb88d7c4cb153b165d381e778e5bf8de1bc5302d32496baf70831d7",
+    "dxnn": "yolov8s_nms.dxnn",
+    "dxnn_bytes": 11857151,
+    "dxnn_sha256": "c9783a3ce9765b35163bc876fab6a4b6332314dcab71c3fca282161a3ceaa79f",
     "note": "Compile metadata embedded in the DXNN by DX-COM (header, graph_info, compile_config, rmap_info), extracted verbatim; no device run."
   },
   "header": {
@@ -26,37 +26,37 @@
       "cpu_models": {
         "cpu_0": {
           "type": "bytes",
-          "offset": 33438,
+          "offset": 31964,
           "size": 171947
         }
       },
       "graph_info": {
         "type": "str",
-        "offset": 205385,
+        "offset": 203911,
         "size": 2468
       },
       "compile_config": {
         "type": "str",
-        "offset": 32697,
-        "size": 741
+        "offset": 31232,
+        "size": 732
       },
       "compiled_data": {
         "M1A_4K": {
           "npu_0": {
             "rmap": {
               "type": "bytes",
-              "offset": 207853,
-              "size": 412800
+              "offset": 206379,
+              "size": 428160
             },
             "weight": {
               "type": "bytes",
-              "offset": 620653,
-              "size": 3063744
+              "offset": 634539,
+              "size": 11210816
             },
             "rmap_info": {
               "type": "str",
-              "offset": 3684397,
-              "size": 3603
+              "offset": 11845355,
+              "size": 3604
             }
           }
         }
@@ -65,7 +65,7 @@
         "npu_0": {
           "type": "bytes",
           "offset": 0,
-          "size": 32697
+          "size": 31232
         }
       },
       "vis_cpu_models": {}
@@ -159,7 +159,7 @@
             "tail": false
           },
           {
-            "name": "/model.22/cv3.1/cv3.1.2/Conv_output_0",
+            "name": "/model.22/cv3.2/cv3.2.2/Conv_output_0",
             "owner": "npu_0",
             "users": [
               "cpu_0"
@@ -168,7 +168,7 @@
             "tail": false
           },
           {
-            "name": "/model.22/cv3.2/cv3.2.2/Conv_output_0",
+            "name": "/model.22/cv3.1/cv3.1.2/Conv_output_0",
             "owner": "npu_0",
             "users": [
               "cpu_0"
@@ -216,7 +216,7 @@
     "package": null,
     "args": null,
     "kwargs": null,
-    "dataset_path": "/mnt/c/Users/jsh11/AppData/Local/Temp/yolov8n_dxnn_20261020_5cd07d31_v1/calibration_train_only",
+    "dataset_path": "/mnt/c/Users/jsh11/AppData/Local/Temp/yolov8s_dxnn_20261020_v1/calibration_train_only",
     "file_extensions": [
       "png"
     ],
@@ -271,22 +271,22 @@
       "npu": {
         "mac": 4096
       },
-      "size": 29358144,
+      "size": 47504576,
       "counts": {
-        "layer": 183,
-        "cmd": 430
+        "layer": 190,
+        "cmd": 446
       },
       "memory": [
         {
           "name": "RMAP",
           "offset": 0,
-          "size": 412800,
+          "size": 428160,
           "type": "DRAM"
         },
         {
           "name": "WEIGHT",
           "offset": 0,
-          "size": 3063744,
+          "size": 11210816,
           "type": "DRAM"
         },
         {
@@ -298,7 +298,7 @@
         {
           "name": "OUTPUT",
           "offset": 0,
-          "size": 24652800,
+          "size": 34636800,
           "type": "DRAM"
         },
         {
@@ -349,7 +349,7 @@
             80,
             80
           ],
-          "name_encoded": "%463",
+          "name_encoded": "%458",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
@@ -378,7 +378,7 @@
             40,
             40
           ],
-          "name_encoded": "%438",
+          "name_encoded": "%452",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
@@ -407,7 +407,7 @@
             4,
             8400
           ],
-          "name_encoded": "%457",
+          "name_encoded": "%446",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
@@ -436,7 +436,7 @@
             20,
             20
           ],
-          "name_encoded": "%429",
+          "name_encoded": "%430",
           "dtype_encoded": "FLOAT32",
           "shape_encoded": [
             1,
