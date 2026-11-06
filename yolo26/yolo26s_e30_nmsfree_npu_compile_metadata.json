@@ -1,4 +1,10 @@
 {
+ "_source": {
+  "dxnn": "yolo26s_e30_nmsfree_npu.dxnn",
+  "dxnn_bytes": 24911422,
+  "dxnn_sha256": "0e7504aabd622868b36ff8b5cfdbedd7302516e4b34f78f37c5b934e2f99093f",
+  "note": "Compile metadata embedded in the DXNN by DX-COM, extracted verbatim; no device run."
+ },
  "header": {
   "version": 8,
   "signature": "DXNN",
@@ -40,16 +46,16 @@
       "rmap": {
        "type": "bytes",
        "offset": 74678,
-       "size": 10847040
+       "size": 10842240
       },
       "weight": {
        "type": "bytes",
-       "offset": 10921718,
+       "offset": 10916918,
        "size": 13976128
       },
       "rmap_info": {
        "type": "str",
-       "offset": 24897846,
+       "offset": 24893046,
        "size": 10184
       }
      }
@@ -118,7 +124,61 @@
       "tail": false
      },
      {
-      "name": "/Gather_8_output_0",
+      "name": "/Gather_10_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_13_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_9_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_5_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_2_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_11_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_15_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -136,7 +196,25 @@
       "tail": false
      },
      {
-      "name": "/Gather_12_output_0",
+      "name": "/Gather_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_4_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_8_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -163,6 +241,15 @@
       "tail": false
      },
      {
+      "name": "/Gather_12_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
       "name": "/Gather_14_output_0",
       "owner": "npu_0",
       "users": [
@@ -172,88 +259,7 @@
       "tail": false
      },
      {
-      "name": "/Gather_4_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_9_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_10_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
       "name": "/Gather_7_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_13_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_5_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_15_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_2_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_11_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -288,24 +294,6 @@
       "tail": false
      },
      {
-      "name": "/Gather_8_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_7_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
       "name": "/Gather_9_output_0",
       "owner": "npu_0",
       "users": [
@@ -315,7 +303,7 @@
       "tail": false
      },
      {
-      "name": "/Gather_6_output_0",
+      "name": "/Gather_8_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -333,7 +321,7 @@
       "tail": false
      },
      {
-      "name": "/Gather_5_output_0",
+      "name": "/Gather_7_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -351,7 +339,7 @@
       "tail": false
      },
      {
-      "name": "/Gather_4_output_0",
+      "name": "/Gather_6_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -369,7 +357,7 @@
       "tail": false
      },
      {
-      "name": "/Gather_3_output_0",
+      "name": "/Gather_5_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -387,7 +375,7 @@
       "tail": false
      },
      {
-      "name": "/Gather_2_output_0",
+      "name": "/Gather_4_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -397,6 +385,33 @@
      },
      {
       "name": "/Gather_14_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_3_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_15_output_0",
+      "owner": "npu_0",
+      "users": [
+       "cpu_0"
+      ],
+      "head": false,
+      "tail": false
+     },
+     {
+      "name": "/Gather_2_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -415,15 +430,6 @@
      },
      {
       "name": "/Gather_1_output_0",
-      "owner": "npu_0",
-      "users": [
-       "cpu_0"
-      ],
-      "head": false,
-      "tail": false
-     },
-     {
-      "name": "/Gather_15_output_0",
       "owner": "npu_0",
       "users": [
        "cpu_0"
@@ -497,16 +503,16 @@
    "npu": {
     "mac": 4096
    },
-   "size": 63899520,
+   "size": 63894720,
    "counts": {
-    "layer": 424,
-    "cmd": 11299
+    "layer": 423,
+    "cmd": 11294
    },
    "memory": [
     {
      "name": "RMAP",
      "offset": 0,
-     "size": 10847040,
+     "size": 10842240,
      "type": "DRAM"
     },
     {
@@ -574,7 +580,7 @@
       8400,
       4
      ],
-     "name_encoded": "%767",
+     "name_encoded": "%764",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -601,7 +607,7 @@
       8400,
       16
      ],
-     "name_encoded": "%789",
+     "name_encoded": "%786",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -621,13 +627,13 @@
      }
     },
     {
-     "name": "/Gather_8_output_0",
+     "name": "/Gather_10_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%849",
+     "name_encoded": "%798",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -646,13 +652,13 @@
      }
     },
     {
-     "name": "/Gather_6_output_0",
+     "name": "/Gather_13_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%841",
+     "name_encoded": "%810",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -671,13 +677,13 @@
      }
     },
     {
-     "name": "/Gather_12_output_0",
+     "name": "/Gather_9_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%809",
+     "name_encoded": "%850",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -696,13 +702,13 @@
      }
     },
     {
-     "name": "/Gather_1_output_0",
+     "name": "/Gather_5_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%797",
+     "name_encoded": "%834",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -721,13 +727,13 @@
      }
     },
     {
-     "name": "/Gather_3_output_0",
+     "name": "/Gather_2_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%829",
+     "name_encoded": "%822",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -746,13 +752,13 @@
      }
     },
     {
-     "name": "/Gather_14_output_0",
+     "name": "/Gather_11_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%817",
+     "name_encoded": "%802",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -771,13 +777,13 @@
      }
     },
     {
-     "name": "/Gather_4_output_0",
+     "name": "/Gather_15_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%833",
+     "name_encoded": "%818",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -796,13 +802,13 @@
      }
     },
     {
-     "name": "/Gather_9_output_0",
+     "name": "/Gather_6_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%853",
+     "name_encoded": "%838",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -827,7 +833,7 @@
       1,
       8400
      ],
-     "name_encoded": "%793",
+     "name_encoded": "%790",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -846,13 +852,13 @@
      }
     },
     {
-     "name": "/Gather_10_output_0",
+     "name": "/Gather_4_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%801",
+     "name_encoded": "%830",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -871,13 +877,13 @@
      }
     },
     {
-     "name": "/Gather_7_output_0",
+     "name": "/Gather_8_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%845",
+     "name_encoded": "%846",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -896,13 +902,13 @@
      }
     },
     {
-     "name": "/Gather_13_output_0",
+     "name": "/Gather_1_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%813",
+     "name_encoded": "%794",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -921,13 +927,13 @@
      }
     },
     {
-     "name": "/Gather_5_output_0",
+     "name": "/Gather_3_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%837",
+     "name_encoded": "%826",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -946,13 +952,13 @@
      }
     },
     {
-     "name": "/Gather_15_output_0",
+     "name": "/Gather_12_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%821",
+     "name_encoded": "%806",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -971,13 +977,13 @@
      }
     },
     {
-     "name": "/Gather_2_output_0",
+     "name": "/Gather_14_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%825",
+     "name_encoded": "%814",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
@@ -996,13 +1002,13 @@
      }
     },
     {
-     "name": "/Gather_11_output_0",
+     "name": "/Gather_7_output_0",
      "dtype": "FLOAT32",
      "shape": [
       1,
       8400
      ],
-     "name_encoded": "%805",
+     "name_encoded": "%842",
      "dtype_encoded": "FLOAT32",
      "shape_encoded": [
       1,
