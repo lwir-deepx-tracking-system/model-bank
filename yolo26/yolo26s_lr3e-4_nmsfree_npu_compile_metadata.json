@@ -1,6 +1,6 @@
 {
  "_source": {
-  "dxnn": "yolo26s_e30_nmsfree_npu.dxnn",
+  "dxnn": "yolo26s_lr3e-4_nmsfree_npu.dxnn",
   "dxnn_bytes": 24911422,
   "dxnn_sha256": "0e7504aabd622868b36ff8b5cfdbedd7302516e4b34f78f37c5b934e2f99093f",
   "note": "Compile metadata embedded in the DXNN by DX-COM, extracted verbatim; no device run."
