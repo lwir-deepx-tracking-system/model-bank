@@ -88,9 +88,10 @@ ROOT = HERE.parent
 SHAPE = {'DRT512A': (512, 384), 'DRT512B': (512, 384)}                       # --det rt512: two 512x384 column tiles (default)
 SHAPE_TT = {'TTA75': (480, 640), 'TTB75': (480, 640)}                          # --det tt75: two full-frame towers on rows 16:496 (claude_tt75_deploy_01)
 SHAPE_RT480 = {'NEWMRT480A': (480, 384), 'NEWMRT480B': (480, 384)}            # --det rt480: new m RT480 column tiles on rows 16:496 (claude_ft_deploy_o1_01/NEWM)
-CORE = {'DRT512A': 0, 'DRT512B': 1, 'TTA75': 0, 'TTB75': 1, 'NEWMRT480A': 0, 'NEWMRT480B': 1}
+SHAPE_W480 = {'NEWMRW480': (480, 640), 'S640': (640, 640)}                                         # --det w480 (v16): one model on the whole camera band, rows 16:496
+CORE = {'DRT512A': 0, 'DRT512B': 1, 'TTA75': 0, 'TTB75': 1, 'NEWMRT480A': 0, 'NEWMRT480B': 1, 'NEWMRW480': 0, 'S640': 0}
 DET = {'rt512': dict(names=['DRT512A', 'DRT512B'], yoff=0.0), 'tt75': dict(names=['TTA75', 'TTB75'], yoff=16.0),
-       'rt480': dict(names=['NEWMRT480A', 'NEWMRT480B'], yoff=16.0)}   # yoff: detector y -> frame y
+       'rt480': dict(names=['NEWMRT480A', 'NEWMRT480B'], yoff=16.0), 'w480': dict(names=['NEWMRW480'], yoff=16.0), 's640': dict(names=['S640'], yoff=-64.0)}   # yoff: detector y -> frame y
 PERSON_CLS = 0
 TARGET = {0, 2, 6}
 
@@ -1199,7 +1200,7 @@ def main():
                     'frame\'s association (hybrid rule); the asynchronous round-robin gallery refresh stays'); ap.add_argument('--sync-k', type=int, default=2)
     ap.add_argument('--hybrid-fallback', action='store_true', help='with --vit-sync --app-first: a featured detection with no appearance match may take the '
                     'motion fallback, but only against lost tracks that have NO gallery feature (the appearance veto stays where both sides have one); default off')
-    ap.add_argument('--det', choices=['rt512', 'tt75', 'rt480'], default='rt512', help="detector front-end: rt512 = DRT512A/B column tiles (default, unchanged); tt75 = two full-frame towers "
+    ap.add_argument('--det', choices=['rt512', 'tt75', 'rt480', 'w480', 's640'], default='rt512', help="detector front-end: rt512 = DRT512A/B column tiles (default, unchanged); tt75 = two full-frame towers "
                     "TTA75/TTB75 on rows 16:496, host average of the raw outputs -> one Decoder(480,640) -> fast_nms (claude_tt75_deploy_01)")
     ap.add_argument('--mock-tt-onnx', default='D:/LIG-Runs/flir_yolo26/yolo26m_m1_wholegraph_20261022_v1/claude_tt75_deploy_01/pulled/export_kd_kd_epoch22_snapshot')
     ap.add_argument('--mock-rt480-onnx', default='D:/LIG-Runs/flir_yolo26/yolo26m_m1_wholegraph_20261022_v1/claude_ft_deploy_o1_01/NEWM',
@@ -1256,6 +1257,12 @@ def main():
     ap.add_argument('--judge', default='', help='v10: path of RELINK_JUDGE_FROZEN.json = the learned relink judge replaces the KeepID rule in the --relabel path '
                     '(relink_online_judge.OnlineJudge; same re-ID engine / crops on NPU_2); requires --relabel; default off = unchanged')
     ap.add_argument('--split6', action=argparse.BooleanOptionalAction, default=True, help='the detector DXNNs have the six split-head outputs (box_s8/16/32, cls_s8/16/32) of tensor_requirements.md and the host merges them into boxes/scores (default on); --no-split6 = DXNNs with the two outputs boxes/scores')
+    ap.add_argument('--live-port', type=int, default=0, help='v14: live camera mode, serve the annotated MJPEG stream on this port (0 = off = normal file run)')
+    ap.add_argument('--live-bind', default='127.0.0.1', help='address of the web page. The page has no password; the default is this device only, give the address of a trusted network to view it from another computer')
+    ap.add_argument('--live-seconds', type=float, default=600, help='v14: live run length in seconds')
+    ap.add_argument('--live-cam', default='', help='v14: path of the cam_pipe helper (default: next to this script)')
+    ap.add_argument('--live-map', choices=['fixed', 'pct'], default='pct', help='v14: 16 -> 8 bit mapping: fixed = linear 0..65535 (team runtime), pct = smoothed 1..99 percentile window')
+    ap.add_argument('--live-scale', type=float, default=1.5, help='v14: display scale of the streamed picture')
     ap.add_argument('--confirm-gate', default='', help='v11: path of GATE_GRU32_FROZEN.json = the learned confirmation gate replaces 3FrameConfirm (GateTracker); requires --tracker bytetrack --class-gate --no-vit; default off = unchanged')
     ap.add_argument('--judge-crops', type=int, default=2, help='v10: with --judge, crops per frame on NPU_2 (new IDs first, then refresh); 0 = every eligible crop')
     args = ap.parse_args()
@@ -1265,6 +1272,7 @@ def main():
     if args.gmc_thread and not (args.gmc and args.pipeline): raise SystemExit('--gmc-thread requires --gmc --pipeline')
     if args.npu_depth < 1 or (args.npu_depth > 1 and not (args.pipeline and args.no_vit)): raise SystemExit('--npu-depth > 1 requires --pipeline --no-vit')
     if args.rl_async and not args.relabel: raise SystemExit('--rl-async requires --relabel')
+    if args.det == 's640': args.split6 = False   # YOLO26s build with the two outputs boxes + scores
     if args.zoom and not (args.det == 'rt480' and args.pipeline and args.no_vit and not args.vit_bench_n and not args.vit_budget):
         raise SystemExit('--zoom requires --det rt480 --pipeline --no-vit (no --vit-bench-n / --vit-budget)')
     if args.zoom_lost and not args.zoom: raise SystemExit('--zoom-lost requires --zoom')
@@ -1308,14 +1316,14 @@ def main():
         tag += '_zoom' + ''.join('_%s%g' % (k_, v_) for k_, v_, d_ in zd_ if v_ != d_) + ('_zl' if args.zoom_lost else '') + ('_zc' if args.zoom_cls else '')
     if args.judge: tag += '_judge' + ('_jc%d' % args.judge_crops if args.judge_crops != 2 else '')   # v10
     if args.confirm_gate: tag += '_cgate'   # v11
-    det_names, det_yoff = DET[args.det]['names'], DET[args.det]['yoff']; det_shape = {**SHAPE, **SHAPE_TT, **SHAPE_RT480}
+    det_names, det_yoff = DET[args.det]['names'], DET[args.det]['yoff']; det_shape = {**SHAPE, **SHAPE_TT, **SHAPE_RT480, **SHAPE_W480}
     if args.mock:
         make_mock_dx(args); DATA = Path(args.mock_data); out = HERE / 'tmp' / 'mock_track' / tag; out.mkdir(parents=True, exist_ok=True); man = {}
         if not hasattr(os, 'sched_setaffinity'): os.sched_setaffinity = lambda *a: None
     else:
         man = json.loads((HERE / 'models' / 'MANIFEST.json').read_text())
         for n in det_names + ([args.vit] if (use_vit or args.vit_bench_n) else []) + ([args.relabel] if args.relabel else []): assert sha(HERE / 'models' / (n + '.dxnn')) == man[n], n
-        if not args.data: raise SystemExit('--data <frame folder with coco.json> is required')
+        if not args.data and not args.live_port: raise SystemExit('--data <frame folder with coco.json> is required')
         DATA = Path(args.data); out = HERE / (args.out or ('track_' + tag)); out.mkdir(exist_ok=False)
         waited = wait_m1_free()
         sys.path.insert(0, str(HERE))   # native_post.py + post.so (built by setup.sh) sit next to this script
@@ -1341,9 +1349,18 @@ def main():
     cfg = dx.Configuration()
     for item, attr in [('CUSTOM_INTRA_OP_THREADS', 'CUSTOM_INTRA_OP_THREADS_NUM'), ('CUSTOM_INTER_OP_THREADS', 'CUSTOM_INTER_OP_THREADS_NUM')]:
         cfg.set_attribute(getattr(dx.Configuration.ITEM, item), getattr(dx.Configuration.ATTRIBUTE, attr), str(args.ort_threads) if item == 'CUSTOM_INTRA_OP_THREADS' else '1'); cfg.set_enable(getattr(dx.Configuration.ITEM, item), True)
-    coco = json.loads((DATA / 'coco.json').read_text(encoding='utf-8'))
-    images = sorted(coco['images'], key=lambda x: x['file_name'])
-    if args.max_frames: images = images[:args.max_frames]
+    LIVE = None
+    if args.live_port:
+        class LiveImages:   # endless list of camera frames; it ends (IndexError) when the live time is over
+            def __len__(self): return 10 ** 9
+            def __getitem__(self, i):
+                if LIVE.stopped: raise IndexError(i)
+                return dict(id=int(i), file_name='live_%09d.png' % i, extra_info=dict(video_id='live'))
+        images = LiveImages()
+    else:
+        coco = json.loads((DATA / 'coco.json').read_text(encoding='utf-8'))
+        images = sorted(coco['images'], key=lambda x: x['file_name'])
+        if args.max_frames: images = images[:args.max_frames]
     synth_hide = None; synth_st = None
     if args.synth_plan:
         synth_plan, synth_hide = load_synth_plan(args.synth_plan); names_ = {Path(im['file_name']).name for im in images}
@@ -1491,11 +1508,17 @@ def main():
                 return (time.perf_counter_ns() - t0_) / 1e6
         dec = [Decoder(512, 384), Decoder(512, 384)]; jo = np.empty((1, 20, 2 * anchors(512, 384)), np.float32)
         dec480 = [Decoder(480, 384), Decoder(480, 384)]; jo480 = np.empty((1, 20, 2 * anchors(480, 384)), np.float32)   # --det rt480
-        dec_tt = Decoder(480, 640); n_tt = anchors(480, 640); mrg_out = [np.empty((1, 4, n_tt), np.float32), np.empty((1, 16, n_tt), np.float32)]; half = np.float32(.5)
+        dec_s = Decoder(640, 640); dec_tt = Decoder(480, 640); n_tt = anchors(480, 640); mrg_out = [np.empty((1, 4, n_tt), np.float32), np.empty((1, 16, n_tt), np.float32)]; half = np.float32(.5)
         def avg_merge(ra, rb):   # claude_tt75_deploy_01 AvgMerge: element-wise average of the two towers' raw boxes / score logits
             for a_, b_, o in zip(ra, rb, mrg_out): np.add(a_, b_, out=o); np.multiply(o, half, out=o)
             return mrg_out
         def detect(ra, rb):      # raw NPU outputs -> NMS detections in FRAME coordinates (512x640), columns x1,y1,x2,y2,conf,cls
+            if args.det == 's640':   # v16: outputs by name (boxes, scores), model y -> frame y
+                p_ = fast_nms(dec_s(ra if a.names[0] == 'boxes' else ra[::-1])).copy(); p_[:, 1] += det_yoff; p_[:, 3] += det_yoff
+                return p_
+            if args.det == 'w480':   # v16
+                p_ = fast_nms(dec_tt(ra)).copy(); p_[:, 1] += det_yoff; p_[:, 3] += det_yoff
+                return p_
             if args.det == 'tt75':
                 p_ = fast_nms(dec_tt(avg_merge(ra, rb)))
                 if det_yoff: p_ = p_.copy(); p_[:, 1] += det_yoff; p_[:, 3] += det_yoff
@@ -1526,7 +1549,7 @@ def main():
                 if g is None or not crop_into(g, meta['box']): continue
                 vit.submit(vit_x, now_frame); inflight = (meta, time.perf_counter_ns())
             return w
-        a, b = eng[det_names[0]], eng[det_names[1]]
+        a = eng[det_names[0]]; b = eng[det_names[1]] if len(det_names) > 1 else None   # v16: --det w480 has one engine
         FRAME_DY = [0.0]; FRAME_ROWS = [None]   # FRAME_DY: output y shift (16.0 for 640x480 inputs, 0.0 for 640x512 frames)
         def to_canvas(g_, name_):
             """Standard input 640x480 8-bit gray -> rows 16:496 of a 640x512 canvas (edge rows replicated); 640x512 as is (validated FLIR form); anything else stops with a message."""
@@ -1539,17 +1562,132 @@ def main():
             c_ = np.empty((512, 640), np.uint8); c_[16:496] = g_; c_[:16] = g_[0]; c_[496:] = g_[-1]
             return c_
         mem = None
+        if args.live_port:
+            import threading as lv_th, subprocess as lv_sp, http.server as lv_http, collections as lv_col
+            TILE_BUFS = [[np.zeros((1, 480, 384, 3), np.uint8), np.zeros((1, 480, 384, 3), np.uint8)] for _ in range(args.npu_depth + 3)]   # ring of input buffers: the DXRT binding keeps every submitted input array alive (about 0.55 MB per tile and frame leaked), so live mode reuses fixed buffers
+            WHOLE_BUFS = [np.zeros((1, 480, 640, 3), np.uint8) for _ in range(args.npu_depth + 3)]   # v16: --det w480
+            S640_BUFS = [np.full((1, 640, 640, 3), 114, np.uint8) for _ in range(args.npu_depth + 3)]   # v16: --det s640
+            class _Live: pass
+            LIVE = _Live(); LIVE.stopped = False; LIVE.cam_lost = False; LIVE.q = lv_col.deque(maxlen=3); LIVE.cond = lv_th.Condition(); LIVE.arr = lv_col.deque()
+            LIVE.jpeg = b''; LIVE.seq = 0; LIVE.jcond = lv_th.Condition(); LIVE.t0 = time.monotonic(); LIVE.cam_fps = 0.0; LIVE.done_ts = lv_col.deque(maxlen=40)
+            LIVE.lo = None; LIVE.hi = None; LIVE.last = None; LIVE.log = open(out / 'cam_pipe.log', 'w')
+            LIVE.proc = lv_sp.Popen([args.live_cam or str(HERE / 'cam_pipe')], stdout=lv_sp.PIPE, stderr=LIVE.log, bufsize=0)
+            LIVE_W, LIVE_H = 640, 480
+            def lv_reader():
+                n_ = LIVE_W * LIVE_H * 2; buf_ = bytearray(n_); cnt_ = 0; tl_ = time.monotonic()
+                while not LIVE.stopped:
+                    mv_ = memoryview(buf_); got_ = 0
+                    while got_ < n_:
+                        k_ = LIVE.proc.stdout.readinto(mv_[got_:])
+                        if not k_:
+                            LIVE.cam_lost = True
+                            with LIVE.cond: LIVE.cond.notify_all()
+                            return
+                        got_ += k_
+                    raw_ = np.frombuffer(buf_, np.uint16).reshape(LIVE_H, LIVE_W).copy()
+                    with LIVE.cond: LIVE.q.append((time.perf_counter(), raw_)); LIVE.cond.notify()
+                    cnt_ += 1; now_ = time.monotonic()
+                    if now_ - tl_ >= 1.0: LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
+            lv_th.Thread(target=lv_reader, daemon=True).start()
+            def lv_to8(raw_):
+                if args.live_map == 'fixed': return cv2.convertScaleAbs(raw_, alpha=255.0 / 65535.0)
+                hist_ = np.bincount((raw_ >> 4).ravel(), minlength=4096).cumsum(); tot_ = hist_[-1]
+                lo_ = float(np.searchsorted(hist_, tot_ * 0.01)) * 16; hi_ = float(np.searchsorted(hist_, tot_ * 0.99)) * 16 + 16
+                if hi_ - lo_ < 200: hi_ = lo_ + 200
+                if LIVE.lo is None: LIVE.lo, LIVE.hi = lo_, hi_
+                else: LIVE.lo += 0.1 * (lo_ - LIVE.lo); LIVE.hi += 0.1 * (hi_ - LIVE.hi)
+                return np.clip((raw_.astype(np.float32) - LIVE.lo) * (255.0 / (LIVE.hi - LIVE.lo)), 0, 255).astype(np.uint8)
+            def live_next():
+                with LIVE.cond:
+                    while not LIVE.q:
+                        if LIVE.stopped or LIVE.cam_lost: break
+                        if not LIVE.cond.wait(timeout=10): raise RuntimeError('no camera frame for 10 s')
+                    if not LIVE.q:
+                        if LIVE.last is None: raise RuntimeError('camera delivered no frame')
+                        return LIVE.last
+                    t_, raw_ = LIVE.q.popleft()
+                FRAME_DY[0] = 16.0; g8_ = lv_to8(raw_); gg_ = np.empty((512, 640), np.uint8); gg_[16:496] = g8_; gg_[:16] = g8_[0]; gg_[496:] = g8_[-1]
+                LIVE.arr.append(t_); LIVE.last = gg_
+                return gg_
+            def live_publish(g_, rows_, row_):
+                now_ = time.perf_counter(); t_in = LIVE.arr.popleft() if LIVE.arr else now_
+                LIVE.done_ts.append(now_)
+                fps_ = (len(LIVE.done_ts) - 1) / (LIVE.done_ts[-1] - LIVE.done_ts[0]) if len(LIVE.done_ts) > 2 and LIVE.done_ts[-1] > LIVE.done_ts[0] else 0.0
+                sc_ = args.live_scale
+                img_ = cv2.cvtColor(g_[16:496], cv2.COLOR_GRAY2BGR)
+                if sc_ != 1: img_ = cv2.resize(img_, None, fx=sc_, fy=sc_, interpolation=cv2.INTER_LINEAR)
+                npers_ = 0
+                for r_ in rows_:
+                    x1_, y1_, x2_, y2_ = [float(v_) for v_ in r_[:4]]; tid_, cls_ = int(r_[4]), int(r_[6]); y1_ -= 16; y2_ -= 16
+                    if cls_ != 0: continue   # v16: people only
+                    col_ = (60, 220, 60); npers_ += 1
+                    p1_ = (int(x1_ * sc_), int(y1_ * sc_)); p2_ = (int(x2_ * sc_), int(y2_ * sc_))
+                    cv2.rectangle(img_, p1_, p2_, col_, 2); cv2.putText(img_, str(tid_), (p1_[0], max(p1_[1] - 4, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col_, 2)
+                txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, relabeler.stats['new_ids'] if relabeler is not None else 0, relabeler.stats['relabelled'] if relabeler is not None else 0)
+                cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0), -1); cv2.putText(img_, txt_, (8, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+                ok_, jb_ = cv2.imencode('.jpg', img_, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                with LIVE.jcond: LIVE.jpeg = jb_.tobytes(); LIVE.seq += 1; LIVE.jcond.notify_all()
+                if time.monotonic() - LIVE.t0 > args.live_seconds or LIVE.cam_lost: LIVE.stopped = True
+                if relabeler is not None and time.monotonic() - getattr(LIVE, 'rl_t', 0.0) > 20:
+                    LIVE.rl_t = time.monotonic(); print('RLSTAT', json.dumps(dict(relabeler.stats, last_event=(relabeler.events[-1] if relabeler.events else None))), flush=True)
+                if len(rows) > 6000:   # long live runs: keep only the recent records in memory
+                    del rows[:3000]; del preds[:3000]; del tracks_out[:3000]
+                    if relabeler is not None: del tracks_base[:3000]; del relabeler.per_frame[:3000]
+            class lv_Handler(lv_http.BaseHTTPRequestHandler):
+                def log_message(self, *a): pass
+                def do_GET(self):
+                    try:
+                        if self.path.startswith('/stream'):
+                            self.send_response(200); self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame'); self.send_header('Cache-Control', 'no-cache'); self.end_headers()
+                            last_ = 0
+                            while not LIVE.stopped:
+                                with LIVE.jcond:
+                                    LIVE.jcond.wait_for(lambda: LIVE.seq != last_ or LIVE.stopped, timeout=2)
+                                    if LIVE.seq == last_: continue
+                                    last_ = LIVE.seq; jb_ = LIVE.jpeg
+                                self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n' % len(jb_) + jb_ + b'\r\n')
+                        elif self.path.startswith('/snap.jpg'):
+                            with LIVE.jcond: jb_ = LIVE.jpeg
+                            self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.send_header('Content-Length', str(len(jb_))); self.end_headers(); self.wfile.write(jb_)
+                        else:
+                            body_ = ("<!doctype html><html><head><meta charset='utf-8'><title>LWIR live</title><style>body{background:#111;color:#ddd;font-family:sans-serif;margin:0;padding:10px}"
+                                     "img{max-width:100%;display:block;margin:auto}</style></head><body><div>DX-M1 final tracker on the live camera: boxes + track ids (green = person)</div><img src='/stream'></body></html>").encode()
+                            self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body_))); self.end_headers(); self.wfile.write(body_)
+                    except (BrokenPipeError, ConnectionResetError, OSError): pass
+            lv_srv = lv_http.ThreadingHTTPServer((args.live_bind, args.live_port), lv_Handler); lv_srv.daemon_threads = True
+            lv_th.Thread(target=lv_srv.serve_forever, daemon=True).start()
+            def live_close():
+                LIVE.stopped = True
+                with LIVE.jcond: LIVE.jcond.notify_all()
+                lv_srv.shutdown()
+                LIVE.proc.terminate()
+                try: LIVE.proc.wait(5)
+                except Exception: LIVE.proc.kill()
+            print('LIVE http://%s:%d/ for %d s' % (args.live_bind, args.live_port, args.live_seconds), flush=True)
         if args.preload:         # --preload: decode once, outside every timed interval
             t_pl = time.perf_counter(); mem = [to_canvas(cv2.imread(str(DATA / im_['file_name']), cv2.IMREAD_GRAYSCALE | cv2.IMREAD_ANYDEPTH), im_['file_name']) for im_ in images]
             print('PRELOAD %d frames %.1f s' % (len(mem), time.perf_counter() - t_pl), flush=True)
         def read_frame(k):
+            if LIVE is not None: return live_next(), 0.0
             if mem is not None: return mem[k], 0.0
             t = time.perf_counter_ns(); g_ = to_canvas(cv2.imread(str(DATA / images[k]['file_name']), cv2.IMREAD_GRAYSCALE | cv2.IMREAD_ANYDEPTH), images[k]['file_name'])
             return g_, (time.perf_counter_ns() - t) / 1e6
         def submit_tiles(g_, k):
             t = time.perf_counter_ns()
             if args.det == 'rt480':  # = m1_flir_eval_pipe.py prep('NEWMRT480'): camera band rows 16:496, column tiles 0:384 / 256:640
-                src_ = g_[16:496]; a.submit(cv2.cvtColor(src_[:, 0:384], cv2.COLOR_GRAY2RGB)[None], k); b.submit(cv2.cvtColor(src_[:, 256:640], cv2.COLOR_GRAY2RGB)[None], k)
+                src_ = g_[16:496]
+                if args.live_port:   # v14: reuse a ring of preallocated input buffers (see TILE_BUFS)
+                    tb_ = TILE_BUFS[k % len(TILE_BUFS)]; cv2.cvtColor(src_[:, 0:384], cv2.COLOR_GRAY2RGB, dst=tb_[0][0]); cv2.cvtColor(src_[:, 256:640], cv2.COLOR_GRAY2RGB, dst=tb_[1][0]); a.submit(tb_[0], k); b.submit(tb_[1], k)
+                else: a.submit(cv2.cvtColor(src_[:, 0:384], cv2.COLOR_GRAY2RGB)[None], k); b.submit(cv2.cvtColor(src_[:, 256:640], cv2.COLOR_GRAY2RGB)[None], k)
+            elif args.det == 's640':   # v16: YOLO26s letterbox
+                if args.live_port:
+                    sb_ = S640_BUFS[k % len(S640_BUFS)]; cv2.cvtColor(g_[16:496], cv2.COLOR_GRAY2RGB, dst=sb_[0, 80:560]); a.submit(sb_, k)
+                elif FRAME_DY[0] == 16.0: a.submit(cv2.cvtColor(cv2.copyMakeBorder(g_[16:496], 80, 80, 0, 0, cv2.BORDER_CONSTANT, value=114), cv2.COLOR_GRAY2RGB)[None], k)
+                else: a.submit(cv2.cvtColor(cv2.copyMakeBorder(g_, 64, 64, 0, 0, cv2.BORDER_CONSTANT, value=114), cv2.COLOR_GRAY2RGB)[None], k)
+            elif args.det == 'w480':   # v16: one model on the whole camera band (rows 16:496)
+                if args.live_port:
+                    wb_ = WHOLE_BUFS[k % len(WHOLE_BUFS)]; cv2.cvtColor(g_[16:496], cv2.COLOR_GRAY2RGB, dst=wb_[0]); a.submit(wb_, k)
+                else: a.submit(cv2.cvtColor(g_[16:496], cv2.COLOR_GRAY2RGB)[None], k)
             elif args.det == 'tt75':   # the SAME camera band (rows 16:496) to both towers
                 x = cv2.cvtColor(g_[16:496], cv2.COLOR_GRAY2RGB)[None]; a.submit(x, k); b.submit(x.copy(), k)
             else:
@@ -1610,7 +1748,7 @@ def main():
             if args.pipeline:
                 # frame i's tiles were submitted before this iteration (t0); wait, then read + submit frame i+1 BEFORE post-processing i
                 g, t0 = ahead.pop(0)
-                ra = a.wait(); rb = b.wait(); t1 = time.perf_counter_ns()
+                ra = a.wait(); rb = b.wait() if b is not None else None; t1 = time.perf_counter_ns()
                 read_ms = 0.0
                 if i + args.npu_depth < len(images):
                     g_n, read_ms = read_frame(i + args.npu_depth); ahead.append((g_n, submit_tiles(g_n, i + args.npu_depth))); gmc_submit(i + args.npu_depth, g_n)
@@ -1620,7 +1758,7 @@ def main():
                 g, _ = read_frame(i); read_ms = 0.0
                 t0 = submit_tiles(g, i)
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                          # sync point 1
-                ra = a.wait(); rb = b.wait(); t1 = time.perf_counter_ns(); t_nms0 = t1
+                ra = a.wait(); rb = b.wait() if b is not None else None; t1 = time.perf_counter_ns(); t_nms0 = t1
                 p = detect(ra, rb); t2 = time.perf_counter_ns()
                 if async_vit: vw += vit_sync(g, prev_gray, i)                                                   # sync point 2
                 t3 = time.perf_counter_ns()
@@ -1726,17 +1864,19 @@ def main():
             if relabeler is not None:
                 tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
                                         tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in base_rows]))
+            if LIVE is not None: live_publish(g, tr_rows, row)
             prev_gray = g
             if budget: prev_arr = arr
             if i % 50 == 0 and not args.mock:
                 s_ = dx.DeviceStatus.get_current_status(0); util.append(dict(frame=i, core_util=[s_.get_core_utilization(k) for k in range(3)], mem=s_.get_memory_used()))
             if (i + 1) % 500 == 0: print('FRAMES', i + 1, round(time.monotonic() - t_start, 1), 'vit delivered', delivered, flush=True)
+        if LIVE is not None: live_close()
         if vit is not None and inflight is not None: vit_sync(None, None, len(images))
         if relabeler is not None: relabeler.reset()          # v7: drains an asynchronous refresh still in flight
         if gmc_pool is not None: gmc_pool.shutdown(wait=True)
         with (out / 'TRACKS.jsonl').open('w', encoding='utf-8', newline='\n') as fh:
             for r in tracks_out: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
-        with (out / ('PRED_NEWMRT480.jsonl' if args.det == 'rt480' else 'PRED_DRT512.jsonl')).open('w', encoding='utf-8', newline='\n') as fh:
+        with (out / ({'rt480': 'PRED_NEWMRT480.jsonl', 'w480': 'PRED_NEWMRW480.jsonl', 's640': 'PRED_S640.jsonl'}.get(args.det, 'PRED_DRT512.jsonl'))).open('w', encoding='utf-8', newline='\n') as fh:
             for r in preds: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
         (out / 'RAW_TIMINGS.json').write_text(json.dumps(rows)); (out / 'UTIL_SAMPLES.json').write_text(json.dumps(util)); (out / 'REBIND_LOG.json').write_text(json.dumps(rebind_log))
         if relabeler is not None:

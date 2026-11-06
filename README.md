@@ -9,9 +9,13 @@
 
 DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1) + 사람 외형 비교(RepVGG_(TMOT,CAMEL) INT8, NPU 코어 2) + 추적(ByteTrack + SameClass_connect + OpticalFlow-Fast) + 학습형 게이트(GRU32) + 학습형 판정기**를 파이프라인으로 돌리는 최종 후보입니다. FLIR 시험 영상 8편 3,749프레임의 DX-M1 INT8 실측에서 기준(YOLO26m_(FLIR) INT8 + ByteTrack만) 대비 **IDF1 0.6567 → 0.6932, 번호 바뀜 111 → 31, 오검출 1,466 → 650, 71.8 fps**입니다. 대신 **미검출이 4,010 → 4,514로 늘고 작은 사람(키 32px 미만) 재현율이 0.611 → 0.547로 내려갑니다.** 사람이 단 정답이 없는 새 영상에서의 성능과 신뢰구간은 측정하지 않았습니다. 사용법, 구성, 한계는 [4. 추적 시스템 (최종 버전)](#4-추적-시스템-최종-버전)에 있습니다.
 
+카메라를 연결해 실시간으로 돌리고 웹 페이지로 보는 서버는 [final_tracker/README.md 8절](final_tracker/README.md#8-실시간-서버-카메라--웹-화면)에 있습니다(2026-11-06 추가. 짐벌 제어와 PC GUI 연결은 아직 없음).
+
 학습을 마친 LWIR 탐지기의 **INT8 PTQ 컴파일 파일**을 계열별로 제공합니다. 성능표는 **원본 FP32 모델 평가**이며, DX-M1에서 양자화 후 정확도·속도·추적 성능은 아직 측정하지 않았습니다. 예외로 **YOLO26m-RT·YOLO26m-CS는 DX-M1 INT8 실측값**을 아래 [DX-M1 INT8 실측](#dx-m1-int8-실측--yolo26m-rt--yolo26m-cs)에 따로 적었습니다.
 
 ## 1. 모델 다운로드
+
+아래 문단의 개수에는 2026-11-04 이후 추가한 `yolo26m_flir_whole480`, `yolo26s_e30_nmsfree_npu`가 들어 있지 않습니다.
 
 2026-11-03에 최종 추적 시스템용 검출 타일 DXNN 2개(`yolo26m_flir_rt480_a/b`), 사람 외형 비교 DXNN 1개(`repvgg_tmot_camel_reid`), `final_tracker/tracker/` 폴더(게이트·판정기·실행 코드)를 추가했습니다. 현재 게시된 DXNN은 단일 모델 **5개**(2026-11-01 기존 YOLO26m 교사 `yolo26m.dxnn` 삭제, git 기록 `1e957ad`에 남음), NPU 2코어용 2파일 패키지 **2종(YOLO26m-RT, YOLO26m-CS · 파일 4개)**, 사람 재식별용 **ViT-lite1 1개**이고, 이와 별도로 슈도 라벨용 PT **YOLO26x 1개**가 있습니다(`yolo26x_train_metadata.json`은 컴파일이 아니라 학습 메타데이터). 각 DXNN 옆의 `*_compile_metadata.json`은 DXNN 파일 안에 DX-COM이 저장한 컴파일 메타데이터(header · graph_info · compile_config · rmap_info)를 그대로 추출한 것입니다.
 
