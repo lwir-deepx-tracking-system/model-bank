@@ -23,6 +23,8 @@ DX-M1 한 장치에서 **검출(YOLO26m_(FLIR) INT8 타일 2장, NPU 코어 0·1
 | --- | --- | --- | --- |
 | yolo26 | YOLO26s (헤드 6개, NMS 필요) | 공통6종 ·10742장 ·seed101 ·30ep · 640×640 · 보정 8장 EMA · opt_level 1 · 코어 1개 · 출력 float32 헤드 6개 | [DXNN](yolo26/yolo26s_nms_640x640.dxnn) · [JSON](yolo26/yolo26s_nms_640x640_compile_metadata.json) · [빌드 스크립트](yolo26/yolo26_640x640_build/) |
 | yolo26 | YOLO26m_(FLIR) (헤드 6개, NMS 필요) | FLIR 학습 10,491장 ·seed202 ·30ep · 640×640 · 보정 8장 EMA · opt_level 1 · 코어 1개 · 출력 float32 헤드 6개 | [DXNN](yolo26/yolo26m_flir_nms_640x640.dxnn) · [JSON](yolo26/yolo26m_flir_nms_640x640_compile_metadata.json) · [빌드 스크립트](yolo26/yolo26_640x640_build/) |
+| yolo26 | YOLO26s 640×480 (헤드 6개, NMS 필요) | 위 YOLO26s와 **같은 가중치** · 입력만 640×480(카메라 띠) · 보정 8장 EMA(640×640 보정 텐서의 80~560행) · opt_level 1 · 코어 1개 · 출력 float32 헤드 6개 **60/30/15 (요구 형식 예외)** | [DXNN](yolo26/yolo26s_nms_640x480.dxnn) · [JSON](yolo26/yolo26s_nms_640x480_compile_metadata.json) · [빌드 스크립트](yolo26/yolo26_640x480_build/) |
+| yolo26 | YOLO26m_(FLIR) 640×480 (헤드 6개, NMS 필요) | 위 YOLO26m_(FLIR)과 **같은 가중치** · 입력만 640×480 · `final_tracker/dxnn/yolo26m_flir_whole480_nms_640x480.dxnn`과 같은 파일 · 출력 float32 헤드 6개 **60/30/15 (요구 형식 예외)** | [DXNN](yolo26/yolo26m_flir_nms_640x480.dxnn) · [JSON](yolo26/yolo26m_flir_nms_640x480_compile_metadata.json) |
 | yolo26 | YOLO26s_nmsfree_npu_640x640 (NMS 없는 one-to-one + 최종 출력 [1,300,6], 박스 디코드·시그모이드 NPU) | FLIR 전체 파인튜닝 ·10742장 ·seed101 ·30ep ·lr0 0.0003 (`best_full_ft_epoch29.pt`, 위 YOLO26s와 다른 체크포인트) · 640×640 · 보정 8장 EMA · NPU 코어 1개 · 입력 uint8 [1,640,640,3] · 출력 float32 [1,300,6] | [DXNN](yolo26/yolo26s_nmsfree_npu_640x640.dxnn) · [JSON](yolo26/yolo26s_nmsfree_npu_640x640_compile_metadata.json) · [빌드 스크립트](yolo26/yolo26s_nmsfree_npu_640x640_build/) |
 | yolo26 | YOLO26x (PT · 슈도라벨) | Full FT ·10491장 ·seed202 ·30ep(best 29) · DXNN 없음 | [PT](yolo26/yolo26x.pt) · [JSON](yolo26/yolo26x_train_metadata.json) |
 | yolo26 | YOLO26m_(FLIR)-RT480 (최종 추적 시스템용 검출 타일) | FLIR 학습 10,491장 ·seed202 ·30ep · 2타일 480×384 · 보정 8장 EMA · NPU0/NPU1 | [A DXNN](final_tracker/dxnn/yolo26m_flir_rt480_a_nms_480x384.dxnn) · [A JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_a_nms_480x384_compile_metadata.json) · [B DXNN](final_tracker/dxnn/yolo26m_flir_rt480_b_nms_480x384.dxnn) · [B JSON](final_tracker/compile_metadata/yolo26m_flir_rt480_b_nms_480x384_compile_metadata.json) |
@@ -96,6 +98,25 @@ DX-M1 (Orange Pi 5 Plus, DXRT 3.4.2, NPU 1000MHz), FLIR ADAS v2 `video_thermal_t
 
 **요구 사항의 예외:** `final_tracker/dxnn/`의 `yolo26m_flir_rt480_a_nms_480x384`, `yolo26m_flir_rt480_b_nms_480x384`, `yolo26m_flir_whole480_nms_640x480`은 최종 추적 시스템이 쓰는 입력 크기 그대로라 헤드 크기가 80·40·20이 아닙니다. 타일 모델은 프레임을 둘로 나눠 넣는 구조라 640×640으로 바꿀 수 없어 그대로 두었습니다.
 
+
+### YOLO26 640×480 헤드 6개 (2026-11-09)
+
+카메라 영상(640×480)을 그대로 넣기 위한 빌드입니다. **640×480으로 따로 학습한 모델이 아닙니다.** 두 모델 모두 640 정사각으로 학습했고(체크포인트 `train_args`: imgsz 640, rect False), 640×640 빌드와 같은 가중치를 입력 크기만 640×480으로 바꿔 컴파일했습니다. 보정은 640×640 빌드와 같은 8장을 카메라 띠 창(80~560행)으로 자른 것입니다. `yolo26s_nms_640x480`은 컴파일 전 ONNX가 원래 YOLO26s와 보정 8장 모두에서 일치했습니다(최대 차이 0.0003).
+
+- 입력 uint8 `[1,480,640,3]`, 출력 float32 `[1,4,60,80] [1,4,30,40] [1,4,15,20] [1,16,60,80] [1,16,30,40] [1,16,15,20]`, NPU 서브그래프 1개, 앵커 6,300개. 디코드·시그모이드·NMS는 호스트가 합니다.
+- **요구 사항의 예외:** 헤드 크기가 `tensor_requirements.md`의 80·40·20이 아니라 60·30·15입니다. 640×640 입력이 필요한 곳에는 위 640×640 빌드를 쓰십시오.
+- `yolo26m_flir_nms_640x480.dxnn`은 `final_tracker/dxnn/yolo26m_flir_whole480_nms_640x480.dxnn`과 같은 파일입니다(sha256 `1aa827cf…`). 이름을 640×640 빌드와 맞춰 `yolo26/`에도 두었습니다.
+
+**M1 실측** (실카메라 24 fps, 최종 추적기 전체 경로: 파이프라인 depth 1 · GMC · 재식별 · 짐벌 연동 · PC GUI 영상 전송 켬, 각 20초 약 480프레임, 2026-11-09). 정확도(AP)는 이 640×480 빌드로 재지 않았습니다.
+
+| 모델 | 입력→출력 지연 p50 / p95 ms | NPU 대기 p50 ms | 출력 fps |
+| --- | --- | --- | --- |
+| yolo26m_flir_nms_640x480 | 50.5 / 85.2 | 21.9 | 24.1 |
+| yolo26s_nms_640x480 | 50.4 / 84.4 | 21.0 | 23.9 |
+| yolo26m_flir_nms_640x640 | 50.6 / 85.3 | 26.3 | 24.2 |
+| yolo26s_nms_640x640 | 50.7 / 83.6 | 21.2 | 24.5 |
+
+**읽는 법:** 네 모델 모두 카메라 프레임 간격(약 41 ms) 안에 처리가 끝나므로 지연은 카메라 간격으로 정해지고 모델 사이 차이가 나지 않습니다. 모델 차이는 NPU 대기에서만 보입니다. 한 번씩 잰 값이고 구간 추정은 하지 않았습니다.
 
 ### YOLO26s_nmsfree_npu_640x640 (2026-11-06)
 
