@@ -927,6 +927,8 @@ DXNN이 아닌 PyTorch 체크포인트입니다. 위 공통 컴파일 조건은 
 
 **보정이 8장뿐입니다.** DXNN 안의 컴파일 설정에 `calibration_num` 8, `calibration_method` ema로 기록돼 있습니다. 같은 체크포인트를 보정 100장(대조군)으로 만든 INT8은 person AP50:95 0.4563으로 차이가 0.0008이었습니다.
 
+> 재식별 모델(RepVGG-A0, ViT-lite)과 GRU 확인 게이트의 입력·출력 정리: [final_tracker/reid_gru_io.md](final_tracker/reid_gru_io.md)
+
 ### repvgg_tmot_camel_reid.dxnn
 
 | 항목 | 값 |
