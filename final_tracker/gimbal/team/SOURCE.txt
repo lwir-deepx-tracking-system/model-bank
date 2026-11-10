@@ -1,0 +1,4 @@
+Unchanged copy of part of the team repository lwir-deepx-tracking-system/runtime.
+Commit 5219bce (branch refactor/pipeline, the code on the board on 2026-11-06 17:00). The control and gui files are identical to commit 06bdd76 (only tracker files changed between the two).
+Files: include/{common,config,control,gui,app}, include/pipeline/runtime_control.hpp, src/common/logger.cpp, src/control/*, src/gui/*, src/pipeline/runtime_control.cpp, docs/pc_communication.md, docs/auto_control.md, tests/gui/test_gui_protocol.cpp (fixtures).
+Only gimbal_bridge.cpp next to this folder is new. Update by copying the same files from a newer commit.

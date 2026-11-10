@@ -81,6 +81,7 @@ choice --n-init 3 --radius 1.5 (idsw_fix/RESULT_KO.md, C_F4_n3+F5_r1.5) was veri
 import os
 os.environ.update(OMP_NUM_THREADS='1', MKL_NUM_THREADS='1', OPENBLAS_NUM_THREADS='1', PYTHONDONTWRITEBYTECODE='1')
 import sys, json, time, hashlib, subprocess, traceback, argparse, re
+import zlib   # v22f: lossless measurement video
 from pathlib import Path
 import numpy as np
 HERE = Path(__file__).resolve().parent
@@ -88,10 +89,15 @@ ROOT = HERE.parent
 SHAPE = {'DRT512A': (512, 384), 'DRT512B': (512, 384)}                       # --det rt512: two 512x384 column tiles (default)
 SHAPE_TT = {'TTA75': (480, 640), 'TTB75': (480, 640)}                          # --det tt75: two full-frame towers on rows 16:496 (claude_tt75_deploy_01)
 SHAPE_RT480 = {'NEWMRT480A': (480, 384), 'NEWMRT480B': (480, 384)}            # --det rt480: new m RT480 column tiles on rows 16:496 (claude_ft_deploy_o1_01/NEWM)
-SHAPE_W480 = {'NEWMRW480': (480, 640), 'S640': (640, 640)}                                         # --det w480 (v16): one model on the whole camera band, rows 16:496
-CORE = {'DRT512A': 0, 'DRT512B': 1, 'TTA75': 0, 'TTB75': 1, 'NEWMRT480A': 0, 'NEWMRT480B': 1, 'NEWMRW480': 0, 'S640': 0}
+SHAPE_W480 = {'NEWMRW480': (480, 640), 'S480': (480, 640), 'FT1': (480, 640), 'FT9': (480, 640), 'S640': (640, 640), 'M640': (640, 640), 'S6': (640, 640)}                                         # --det w480 (v16): one model on the whole camera band, rows 16:496
+CORE = {'DRT512A': 0, 'DRT512B': 1, 'TTA75': 0, 'TTB75': 1, 'NEWMRT480A': 0, 'NEWMRT480B': 1, 'NEWMRW480': 0, 'S640': 0, 'M640': 0, 'S6': 0, 'S480': 0, 'FT1': 0, 'FT9': 0}
 DET = {'rt512': dict(names=['DRT512A', 'DRT512B'], yoff=0.0), 'tt75': dict(names=['TTA75', 'TTB75'], yoff=16.0),
-       'rt480': dict(names=['NEWMRT480A', 'NEWMRT480B'], yoff=16.0), 'w480': dict(names=['NEWMRW480'], yoff=16.0), 's640': dict(names=['S640'], yoff=-64.0)}   # yoff: detector y -> frame y
+       'rt480': dict(names=['NEWMRT480A', 'NEWMRT480B'], yoff=16.0), 'w480': dict(names=['NEWMRW480'], yoff=16.0), 's640': dict(names=['S640'], yoff=-64.0),
+       'm640': dict(names=['M640'], yoff=-64.0),
+       's6': dict(names=['S6'], yoff=-64.0),
+       's480': dict(names=['S480'], yoff=16.0),
+       'ft1': dict(names=['FT1'], yoff=16.0),
+       'ft9': dict(names=['FT9'], yoff=16.0)}   # v24e (11-10): YOLO26m_(FLIR) + room/close-range labels + real empty-office negatives + FLIR rehearsal (m_rehearsal_v9); PC gate: 0 wrong boxes at conf >= .4   # v22i: YOLO26m_(FLIR) fine-tuned on our camera labels   # v22h: YOLO26s 640x480 on the camera band, as w480   # v22g: YOLO26s 640x640, six split-head outputs (model bank yolo26s_nms_640x640)   # v22: YOLO26m_(FLIR) 640x640, six split-head outputs (tensor_requirements.md)   # yoff: detector y -> frame y
 PERSON_CLS = 0
 TARGET = {0, 2, 6}
 
@@ -201,6 +207,20 @@ class GMC:
 
 
 TRACKED, LOST, REMOVED = 1, 2, 3
+
+
+# v24f (11-10, user approved both rules): WARM_MIN = raw 16-bit 95th percentile a person box must reach (0 = off). Measured 11-10 on this camera (AGC on):
+# person boxes p95 >= 47,749 in the room, >= 60,170 close-up B, cut-off slivers down to 40,387; ceiling lights (v9 false tracks) <= 43,397; warm wall object <= 49,155.
+# EDGE_BIRTH = score a detection touching a frame edge (within EDGE_PX) needs to START a track (existing tracks keep matching at lower scores); 0 = off.
+WARM_MIN, EDGE_BIRTH, EDGE_PX = 0, 0.0, 4.0
+CANVAS_W, CANVAS_H, CANVAS_Y0 = 640.0, 512.0, 16.0   # detections live on the 640x512 canvas; camera rows are 16..496
+
+
+def edge_ok(det):
+    """False when the detection touches a frame edge and its score is below EDGE_BIRTH (v24f edge birth rule)."""
+    if EDGE_BIRTH <= 0 or det.score >= EDGE_BIRTH: return True
+    x, y, w, h = det.xywh0
+    return not (x - w / 2 <= EDGE_PX or x + w / 2 >= CANVAS_W - EDGE_PX or y - h / 2 <= CANVAS_Y0 + EDGE_PX or y + h / 2 >= CANVAS_Y0 + 480.0 - EDGE_PX)
 
 
 class Track:
@@ -400,7 +420,7 @@ class Tracker:
             for i in uu: unconfirmed[i].state = REMOVED; removed.append(unconfirmed[i])
         else: ud3 = list(range(len(dets)))
         for j in ud3:
-            if dets[j].score >= self.new:
+            if dets[j].score >= self.new and edge_ok(dets[j]):   # v24f
                 dets[j].activate(self.kf, self.frame_id, self._nid()); act.append(dets[j]); self.new_this_frame.append(dets[j])
                 if self.diag is not None: self._diag_new(dets[j])
                 if getattr(dets[j], 'det_feat', None) is not None: dets[j].set_feat(dets[j].det_feat); dets[j].feat_frame = self.frame_id
@@ -599,7 +619,7 @@ class LostFirstTracker(Tracker):
             for i in uu: unconfirmed[i].state = REMOVED; removed.append(unconfirmed[i])
         else: ud3 = list(range(len(dets)))
         for j in ud3:
-            if dets[j].score >= self.new:
+            if dets[j].score >= self.new and edge_ok(dets[j]):   # v24f
                 dets[j].activate(self.kf, fid, self._nid()); act.append(dets[j]); self.new_this_frame.append(dets[j])
                 if self.diag is not None: self._diag_new(dets[j])
                 df = getattr(dets[j], 'det_feat', None)
@@ -810,7 +830,7 @@ class GateTracker(Tracker):
                 if unconfirmed[i] not in uu_keep: unconfirmed[i].state = REMOVED; removed.append(unconfirmed[i])
         else: ud3 = list(range(len(dets)))
         for j in ud3:
-            if dets[j].score >= self.new:
+            if dets[j].score >= self.new and edge_ok(dets[j]):   # v24f
                 dets[j].activate(self.kf, self.frame_id, self._nid()); act.append(dets[j]); self.new_this_frame.append(dets[j]); self._init_track(dets[j])
                 self.stats['births'] += 1; self.stats['births_frame1'] += int(dets[j].is_activated)
         for t in self.lost:
@@ -1188,6 +1208,7 @@ def make_mock_dx(args):
 
 # ---------------------------------------------------------------------------------------------------------------- main
 def main():
+    global WARM_MIN, EDGE_BIRTH, EDGE_PX   # v24f
     ap = argparse.ArgumentParser()
     ap.add_argument('--tracker', choices=['bytetrack', 'rebind'], default='rebind'); ap.add_argument('--no-vit', action='store_true')
     ap.add_argument('--vit', default='VIT_REID1', help='ViT DXNN name in models/ (batch 1)'); ap.add_argument('--vit-every', type=int, default=2)
@@ -1200,7 +1221,7 @@ def main():
                     'frame\'s association (hybrid rule); the asynchronous round-robin gallery refresh stays'); ap.add_argument('--sync-k', type=int, default=2)
     ap.add_argument('--hybrid-fallback', action='store_true', help='with --vit-sync --app-first: a featured detection with no appearance match may take the '
                     'motion fallback, but only against lost tracks that have NO gallery feature (the appearance veto stays where both sides have one); default off')
-    ap.add_argument('--det', choices=['rt512', 'tt75', 'rt480', 'w480', 's640'], default='rt512', help="detector front-end: rt512 = DRT512A/B column tiles (default, unchanged); tt75 = two full-frame towers "
+    ap.add_argument('--det', choices=['rt512', 'tt75', 'rt480', 'w480', 's640', 'm640', 's6', 's480', 'ft1', 'ft9'], default='rt512', help="detector front-end: rt512 = DRT512A/B column tiles (default, unchanged); tt75 = two full-frame towers "
                     "TTA75/TTB75 on rows 16:496, host average of the raw outputs -> one Decoder(480,640) -> fast_nms (claude_tt75_deploy_01)")
     ap.add_argument('--mock-tt-onnx', default='D:/LIG-Runs/flir_yolo26/yolo26m_m1_wholegraph_20261022_v1/claude_tt75_deploy_01/pulled/export_kd_kd_epoch22_snapshot')
     ap.add_argument('--mock-rt480-onnx', default='D:/LIG-Runs/flir_yolo26/yolo26m_m1_wholegraph_20261022_v1/claude_ft_deploy_o1_01/NEWM',
@@ -1227,6 +1248,9 @@ def main():
                     'LostFirstTracker = current hybrid association + EMA gallery (use --sim 0.6 --gate 3.5 for the chosen G1_A1_g3.5_s0.6_N2); no asynchronous queue. '
                     'Requires the ViT (no --no-vit), --tracker rebind; not with --vit-sync / --vit-bench-n')
     ap.add_argument('--vit-priority', choices=['lostfirst'], default='lostfirst', help='with --vit-budget: crop priority (only lostfirst = P1 > P2 > P3 > P4)')
+    ap.add_argument('--warm-min', type=int, default=0, help='v24f: drop a person detection whose box raw 16-bit 95th percentile is below this (0 = off; 45000 measured safe for this camera: lights <= 43397)')
+    ap.add_argument('--edge-birth', type=float, default=0.0, help='v24f: score a detection touching a frame edge (--edge-px) needs to start a new track (0 = off; existing tracks keep matching at lower scores)')
+    ap.add_argument('--edge-px', type=float, default=4.0, help='v24f: how close to the frame edge counts as touching')
     ap.add_argument('--n-init', type=int, default=2, help='matched frames, the birth frame included, before a NEW track is output (default 2 = unchanged: '
                     'birth frame + 1 hit; 1 behaves like 2; tracks born on a video\'s first frame are output at once). Offline choice: 3 '
                     '(idsw_fix/RESULT_KO.md, verified with --tracker rebind --no-vit only)')
@@ -1260,22 +1284,49 @@ def main():
     ap.add_argument('--live-port', type=int, default=0, help='v14: live camera mode, serve the annotated MJPEG stream on this port (0 = off = normal file run)')
     ap.add_argument('--live-bind', default='127.0.0.1', help='address of the web page. The page has no password; the default is this device only, give the address of a trusted network to view it from another computer')
     ap.add_argument('--live-seconds', type=float, default=600, help='v14: live run length in seconds')
+    ap.add_argument('--measure-dir', default='/mnt/lwir_data/results/live_measure', help='v22c: folder for the measurement button files (a YYYYMMDD subfolder per day); the run folder when it cannot be written')
+    ap.add_argument('--live-wait', type=float, default=90, help='v21: seconds to wait for the first camera frame; 0 = never give up: the page and the gimbal link stay up with a placeholder picture and the camera is reopened every 180 s until --live-seconds ends')
     ap.add_argument('--live-cam', default='', help='v14: path of the cam_pipe helper (default: next to this script)')
     ap.add_argument('--live-map', choices=['fixed', 'pct'], default='pct', help='v14: 16 -> 8 bit mapping: fixed = linear 0..65535 (team runtime), pct = smoothed 1..99 percentile window')
     ap.add_argument('--live-scale', type=float, default=1.5, help='v14: display scale of the streamed picture')
+    ap.add_argument('--mamba', default='', help='v18: folder of the Mamba relabeler (replaces --judge); needs --relabel and --gmc')
+    ap.add_argument('--mamba-crops', type=int, default=3, help='v18: appearance crops per frame for the Mamba relabeler')
+    ap.add_argument('--gimbal', default='', help='v19: serial device of the gimbal (e.g. /dev/ttyUSB0). Live server only: a click on a person on the web page makes the gimbal follow that ID')
+    ap.add_argument('--gimbal-bridge', default='', help='v19: path of the gimbal_bridge program (default: next to this script)')
+    ap.add_argument('--gimbal-speed', type=int, default=30, help='v19: manual speed and highest following speed, in device units')
+    ap.add_argument('--gimbal-aim-y', type=float, default=0.3, help='v22e: the point of the person box the gimbal brings to the image centre, as a fraction of the box height from its top (0.3 = chest; 0.5 = box centre, the team rule)')
+    ap.add_argument('--gimbal-kp', type=float, default=30.0, help='v19: proportional gain of the following control')
+    ap.add_argument('--gimbal-x-sign', type=int, default=1, choices=[-1, 1], help='v19: -1 if the pan axis runs the wrong way')
+    ap.add_argument('--gimbal-y-sign', type=int, default=1, choices=[-1, 1], help='v19: -1 if the tilt axis runs the wrong way')
+    ap.add_argument('--gimbal-opts', default='', help='v19: further options of gimbal_bridge, as one string, for example: --deadband 0.06 --input-timeout-ms 400')
+    ap.add_argument('--gui-host', default='', help="v20: address of the PC that runs the team's GUI (pc-application). Sends it the camera video (H.264/RTP, UDP 5000) and the track boxes (UDP 5001) and takes its commands (TCP 5002) through the team's own code in gimbal_bridge. Needs --gimbal")
+    ap.add_argument('--gui-bind', default='0.0.0.0', help='v20: address the GUI command listener binds to (the board address on the GUI network, or 0.0.0.0)')
+    ap.add_argument('--gui-video-port', type=int, default=5000); ap.add_argument('--gui-metadata-port', type=int, default=5001)
+    ap.add_argument('--gui-command-port', type=int, default=5002, help='v20: 0 = send only, no command listener')
+    ap.add_argument('--gui-encoder', default='mpph264enc', help='v20: GStreamer encoder: mpph264enc (board hardware), x264enc (software, tests), mppjpegenc / jpegenc with --gui-codec jpeg')
+    ap.add_argument('--gui-codec', choices=['h264', 'jpeg'], default='h264'); ap.add_argument('--gui-bitrate', type=int, default=3000, help='v20: kbit/s'); ap.add_argument('--gui-fps', type=int, default=30)
+    ap.add_argument('--gui-map', choices=['team', 'pct'], default='team', help="v20: picture sent to the GUI. team = the raw 16-bit frame, mapped like the team runtime (fixed 0..65535); pct = the same 1..99 percent mapping as the web page")
+    ap.add_argument('--gui-opts', default='', help='v20: further --gui-* options of gimbal_bridge, as one string')
+    ap.add_argument('--mamba-link-without-appearance', action='store_true', help='v19: also link when a track has no appearance. Off by default: on TMOT train and the FLIR test nearly all wrong links are of this kind, but half of the known correct links are too')
+    ap.add_argument('--mamba-duplicates', action='store_true', help='v18: hide the younger of two person boxes that overlap heavily and look alike (one person boxed twice)')
     ap.add_argument('--confirm-gate', default='', help='v11: path of GATE_GRU32_FROZEN.json = the learned confirmation gate replaces 3FrameConfirm (GateTracker); requires --tracker bytetrack --class-gate --no-vit; default off = unchanged')
     ap.add_argument('--judge-crops', type=int, default=2, help='v10: with --judge, crops per frame on NPU_2 (new IDs first, then refresh); 0 = every eligible crop')
     args = ap.parse_args()
+    WARM_MIN, EDGE_BIRTH, EDGE_PX = int(args.warm_min), float(args.edge_birth), float(args.edge_px)   # v24f
     if args.prepare: return prepare(args)
     if args.relabel and (args.tracker != 'bytetrack' or not args.no_vit or args.vit_budget or args.vit_bench_n):
         raise SystemExit('--relabel requires --tracker bytetrack --no-vit (no --vit-budget / --vit-bench-n)')
     if args.gmc_thread and not (args.gmc and args.pipeline): raise SystemExit('--gmc-thread requires --gmc --pipeline')
     if args.npu_depth < 1 or (args.npu_depth > 1 and not (args.pipeline and args.no_vit)): raise SystemExit('--npu-depth > 1 requires --pipeline --no-vit')
     if args.rl_async and not args.relabel: raise SystemExit('--rl-async requires --relabel')
+    if args.det in ('m640', 's6', 's480', 'ft1', 'ft9') and (args.zoom or not args.split6): raise SystemExit('--det m640: six split-head outputs only, no --zoom (the zoom canvas is a 480x384 tile model)')   # v22
     if args.det == 's640': args.split6 = False   # YOLO26s build with the two outputs boxes + scores
     if args.zoom and not (args.det == 'rt480' and args.pipeline and args.no_vit and not args.vit_bench_n and not args.vit_budget):
         raise SystemExit('--zoom requires --det rt480 --pipeline --no-vit (no --vit-bench-n / --vit-budget)')
     if args.zoom_lost and not args.zoom: raise SystemExit('--zoom-lost requires --zoom')
+    if args.gimbal and not args.live_port: raise SystemExit('--gimbal needs --live-port')
+    if args.gui_host and not args.gimbal: raise SystemExit('--gui-host needs --gimbal (the GUI commands go to the gimbal executor; for a test without a gimbal give a pseudo terminal)')
+    if args.mamba and (not args.relabel or not args.gmc or args.judge or not Path(args.mamba).is_dir()): raise SystemExit('--mamba needs an existing folder, --relabel and --gmc, and replaces --judge')
     if args.judge and not args.relabel: raise SystemExit('--judge requires --relabel <re-ID DXNN> (the crops run on the same engine)')
     if args.judge and (args.judge_crops < 0 or not Path(args.judge).is_file()): raise SystemExit('--judge needs an existing RELINK_JUDGE_FROZEN.json and --judge-crops >= 0')
     if args.confirm_gate and (args.tracker != 'bytetrack' or not args.class_gate or not args.no_vit or not Path(args.confirm_gate).is_file()): raise SystemExit('--confirm-gate needs an existing GATE_GRU32_FROZEN.json, --tracker bytetrack --class-gate --no-vit')
@@ -1369,6 +1420,59 @@ def main():
                         planned_frames_in_run=len(set(synth_hide) & names_), planned_boxes_in_run=int(sum(len(synth_hide[k]) for k in set(synth_hide) & names_)),
                         frames_applied=0, hidden_dets=0, planned_boxes_without_det=0)
         print('SYNTH_PLAN', json.dumps(synth_st), flush=True)
+    # ---- v23: live model change (catalog, request state) ----
+    import threading as md_th
+    MODEL_CAT = [('w480', 'NEWMRW480', 'YOLO26m_(FLIR) 640x480'), ('s480', 'S480', 'YOLO26s 640x480'), ('m640', 'M640', 'YOLO26m_(FLIR) 640x640'),
+                 ('s6', 'S6', 'YOLO26s 640x640'), ('ft1', 'FT1', 'YOLO26m_(FLIR) + 우리 카메라 학습 640x480'), ('ft9', 'FT9', 'YOLO26m_(FLIR) + 근접·빈장면 학습 v9 640x480 (시험용)')]
+    MODEL = dict(lock=md_th.Lock(), req=None, busy=False, last=None, history=[], catalog=[])
+    if args.det in [c_[0] for c_ in MODEL_CAT]:   # only for the single-engine detectors; the two-tile builds are not in the catalog
+        MODEL['catalog'] = [dict(id=0, det=c_[0], key=c_[1], name=c_[2]) for c_ in MODEL_CAT if args.mock or (c_[1] in man and (HERE / 'models' / (c_[1] + '.dxnn')).exists())]
+        for i_, c_ in enumerate(MODEL['catalog']): c_['id'] = i_ + 1
+    RULES = dict(lock=md_th.Lock(), pending=None, tracker='gate' if args.confirm_gate else ('rebind' if args.tracker == 'rebind' else 'confirm3'), relabel=bool(args.relabel), last=None, changes=0)   # v24g
+    RULES_PRESETS = [('gate', 'ByteTrack + GRU 확인 게이트' + ('' if args.confirm_gate else ' (이 실행에서는 불가)')), ('confirm3', 'ByteTrack + 3프레임 확인'), ('rebind', '재결합 추적기 (motion re-bind)')]
+    def rules_state():
+        with RULES['lock']:
+            return dict(warm_min=WARM_MIN, edge_birth=EDGE_BIRTH, edge_px=EDGE_PX, tracker=RULES['tracker'], relabel=RULES['relabel'], relabel_available=bool(args.relabel),
+                        gate_available=bool(args.confirm_gate), presets=[dict(key=k_, name=n_) for k_, n_ in RULES_PRESETS], pending=RULES['pending'], last=RULES['last'], changes=RULES['changes'],
+                        warm_dropped=(LIVE.warm_dropped if LIVE is not None else None), vit='꺼짐 (재시작 필요)' if args.no_vit else '켜짐', mamba=bool(args.mamba))
+    def rules_request(q_):
+        """q_: dict of lists from parse_qs. Thresholds change at once; tracker / relabel are queued for the frame boundary. Returns (ok, text)."""
+        global WARM_MIN, EDGE_BIRTH, EDGE_PX
+        try:
+            if 'warm_min' in q_: WARM_MIN = max(0, min(65535, int(float(q_['warm_min'][0]))))
+            if 'edge_birth' in q_: EDGE_BIRTH = max(0.0, min(1.0, float(q_['edge_birth'][0])))
+            if 'edge_px' in q_: EDGE_PX = max(0.0, min(100.0, float(q_['edge_px'][0])))
+        except (ValueError, IndexError): return False, '숫자가 아님'
+        pend_ = {}
+        if 'tracker' in q_:
+            tk_ = q_['tracker'][0]
+            if tk_ not in ('gate', 'confirm3', 'rebind'): return False, '없는 추적기 종류'
+            if tk_ == 'gate' and not args.confirm_gate: return False, 'GRU 게이트는 이 실행에서 쓸 수 없음'
+            pend_['tracker'] = tk_
+        if 'relabel' in q_:
+            if not args.relabel and q_['relabel'][0] in ('1', 'true', 'on'): return False, '재식별 모델이 이 실행에 없음'
+            pend_['relabel'] = q_['relabel'][0] in ('1', 'true', 'on')
+        with RULES['lock']:
+            if pend_: RULES['pending'] = dict(RULES['pending'] or {}, **pend_, t=time.time())
+            RULES['changes'] += 1; RULES['last'] = dict(at=time.strftime('%H:%M:%S'), warm_min=WARM_MIN, edge_birth=EDGE_BIRTH, queued=sorted(pend_.keys()))
+        print('RULES set warm_min %d edge_birth %.2f pending %s' % (WARM_MIN, EDGE_BIRTH, pend_), flush=True)
+        return True, '적용됨' if not pend_ else '다음 프레임에 적용'
+    MODEL_TEXT = {0: '바뀜', 1: '없는 모델 번호', 2: '다른 변경이 진행 중', 3: '모델을 만들지 못함', 4: '실패해서 이전 모델로 되돌림', 5: '되돌리기도 실패', 6: '준비 안 됨'}
+    def model_state():
+        with MODEL['lock']:
+            cur_ = next((c_ for c_ in MODEL['catalog'] if c_['det'] == args.det), None)
+            return dict(catalog=[dict(id=c_['id'], name=c_['name'], det=c_['det']) for c_ in MODEL['catalog']], current=cur_['id'] if cur_ else None,
+                        pending=next((c_['id'] for c_ in MODEL['catalog'] if MODEL['req'] and c_['det'] == MODEL['req']['det']), None), busy=MODEL['busy'] or MODEL['req'] is not None,
+                        last=MODEL['last'], history=MODEL['history'][-5:])
+    def model_request(model_id, req_no=None):
+        """-> PipelineResult code when decided now (0 Ok, 1 InvalidId, 2 Busy, 6 NotReady), or -1 when queued for the frame loop."""
+        with MODEL['lock']:
+            if not MODEL['catalog']: return 6
+            c_ = next((x_ for x_ in MODEL['catalog'] if x_['id'] == model_id), None)
+            if c_ is None: return 1
+            if MODEL['req'] is not None or MODEL['busy']: return 2
+            if c_['det'] == args.det: return 0   # already running
+            MODEL['req'] = dict(det=c_['det'], id=c_['id'], req=req_no, t=time.time()); return -1
     pending, eng = {}, {}
     class Engine:
         def __init__(self, name, core, depth=1, model=None):
@@ -1430,7 +1534,12 @@ def main():
         if args.relabel:
             from relabel_online import OnlineRelabel
             rl_eng = Engine(args.relabel, 2); rl_x = np.zeros((1, rl_eng.H, rl_eng.W, 3), np.uint8)
-            if args.judge:   # v10: the learned judge takes OnlineRelabel's place (same step / reset / stats / events / per_frame interface)
+            if args.mamba:   # v18
+                sys.path.insert(0, str(Path(args.mamba).resolve()))
+                from mamba_relabel import MambaRelabel
+                relabeler = MambaRelabel(args.mamba, crops=args.mamba_crops, duplicates=args.mamba_duplicates, need_appearance=not args.mamba_link_without_appearance)
+                print('MAMBA', json.dumps(dict(folder=str(args.mamba), crops=args.mamba_crops, veto=relabeler.veto, duplicates=args.mamba_duplicates)), flush=True)
+            elif args.judge:   # v10: the learned judge takes OnlineRelabel's place (same step / reset / stats / events / per_frame interface)
                 from relink_online_judge import OnlineJudge
                 relabeler = OnlineJudge(args.judge, crops=args.judge_crops)
                 print('JUDGE', json.dumps(dict(spec=str(args.judge), sha256=relabeler.spec_sha, config=relabeler.spec['config'], threshold=relabeler.thr, features=len(relabeler.feats), crops=args.judge_crops)), flush=True)
@@ -1516,8 +1625,11 @@ def main():
             if args.det == 's640':   # v16: outputs by name (boxes, scores), model y -> frame y
                 p_ = fast_nms(dec_s(ra if a.names[0] == 'boxes' else ra[::-1])).copy(); p_[:, 1] += det_yoff; p_[:, 3] += det_yoff
                 return p_
-            if args.det == 'w480':   # v16
+            if args.det in ('w480', 's480', 'ft1', 'ft9'):   # v16 (v22h: s480)
                 p_ = fast_nms(dec_tt(ra)).copy(); p_[:, 1] += det_yoff; p_[:, 3] += det_yoff
+                return p_
+            if args.det in ('m640', 's6'):   # v22 (v22g: s6): six heads merged by the Engine into boxes/scores over the 8,400 anchors of 640x640, model y -> frame y
+                p_ = fast_nms(dec_s(ra)).copy(); p_[:, 1] += det_yoff; p_[:, 3] += det_yoff
                 return p_
             if args.det == 'tt75':
                 p_ = fast_nms(dec_tt(avg_merge(ra, rb)))
@@ -1570,25 +1682,130 @@ def main():
             class _Live: pass
             LIVE = _Live(); LIVE.stopped = False; LIVE.cam_lost = False; LIVE.q = lv_col.deque(maxlen=3); LIVE.cond = lv_th.Condition(); LIVE.arr = lv_col.deque()
             LIVE.jpeg = b''; LIVE.seq = 0; LIVE.jcond = lv_th.Condition(); LIVE.t0 = time.monotonic(); LIVE.cam_fps = 0.0; LIVE.done_ts = lv_col.deque(maxlen=40)
-            LIVE.lo = None; LIVE.hi = None; LIVE.last = None; LIVE.log = open(out / 'cam_pipe.log', 'w')
-            LIVE.proc = lv_sp.Popen([args.live_cam or str(HERE / 'cam_pipe')], stdout=lv_sp.PIPE, stderr=LIVE.log, bufsize=0)
+            LIVE.meas = None; LIVE.meas_n = 0; LIVE.meas_last = None; LIVE.meas_lock = lv_th.Lock(); LIVE.meas_hist = []; LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
+            LIVE.lo = None; LIVE.hi = None; LIVE.last = None; LIVE.log = open(out / 'cam_pipe.log', 'w'); LIVE.raws = lv_col.deque(); LIVE.rawq = lv_col.deque(); LIVE.warm_dropped = 0; LIVE.last_frame_t = time.monotonic(); LIVE.cam_fail_n = 0; LIVE.cam_next_spawn = None; LIVE.frames_in = 0   # v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)
             LIVE_W, LIVE_H = 640, 480
-            def lv_reader():
+            def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a new reader
                 n_ = LIVE_W * LIVE_H * 2; buf_ = bytearray(n_); cnt_ = 0; tl_ = time.monotonic()
-                while not LIVE.stopped:
+                while True:   # v24c: never stop reading before EOF; after LIVE.stopped the frames are thrown away (cam_pipe must not block on a full pipe: it then cannot act on SIGTERM and was SIGKILLed with the camera open)
                     mv_ = memoryview(buf_); got_ = 0
                     while got_ < n_:
-                        k_ = LIVE.proc.stdout.readinto(mv_[got_:])
+                        k_ = p_.stdout.readinto(mv_[got_:])
                         if not k_:
-                            LIVE.cam_lost = True
+                            if p_ is LIVE.proc: LIVE.cam_lost = True
                             with LIVE.cond: LIVE.cond.notify_all()
                             return
                         got_ += k_
+                    if LIVE.stopped: continue
                     raw_ = np.frombuffer(buf_, np.uint16).reshape(LIVE_H, LIVE_W).copy()
-                    with LIVE.cond: LIVE.q.append((time.perf_counter(), raw_)); LIVE.cond.notify()
-                    cnt_ += 1; now_ = time.monotonic()
+                    ta_ = time.perf_counter()
+                    with LIVE.cond: LIVE.q.append((ta_, raw_)); LIVE.cond.notify()
+                    rc_ = LIVE.rec   # v22d: measurement video
+                    if rc_ is not None:
+                        with rc_['cond']:
+                            if len(rc_['q']) < 240: rc_['q'].append((ta_, raw_)); rc_['cond'].notify()
+                            else: rc_['dropped'] += 1
+                    cnt_ += 1; now_ = time.monotonic(); LIVE.last_frame_t = now_; LIVE.cam_fail_n = 0; LIVE.frames_in += 1
                     if now_ - tl_ >= 1.0: LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
-            lv_th.Thread(target=lv_reader, daemon=True).start()
+            def lv_spawn():   # v21: open (or reopen) the camera process and its reader
+                LIVE.cam_lost = False; LIVE.proc = lv_sp.Popen([args.live_cam or str(HERE / 'cam_pipe')], stdout=lv_sp.PIPE, stderr=LIVE.log, bufsize=0); LIVE.proc_t0 = time.monotonic()
+                lv_th.Thread(target=lv_reader, args=(LIVE.proc,), daemon=True).start()
+            lv_spawn()
+            def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimbal link up. v24: cam_pipe repairs a stalled camera itself (ResetMainBoard + reopen, about 30 s), so the server only restarts it when it ended on its own or stayed silent for 240 s. (v21-v23 restarted a healthy cam_pipe after any 10 s gap once it was older than 180 s; the next open then often stayed dead.)
+                now_ = time.monotonic(); since_ = now_ - LIVE.t0; idle_ = now_ - max(LIVE.last_frame_t, LIVE.proc_t0)
+                if since_ > args.live_seconds: LIVE.stopped = True; raise RuntimeError('no camera frame within --live-seconds (%.0f s)' % since_)
+                if LIVE.cam_lost and now_ - LIVE.proc_t0 > 20:   # v24d: cam_pipe ended on its own. Exit 0 = normal; 6 = four engine resets without a frame; 7 = another cam_pipe holds the camera; 2/3 = scan/open failed. Failures are retried with a growing pause (60 s, 5 min, 15 min) so a dead camera does not get an engine reset every minute, and the page shows the FAILED state.
+                    rc_ = LIVE.proc.poll()
+                    if LIVE.cam_next_spawn is None:
+                        LIVE.cam_fail_n = LIVE.cam_fail_n + 1 if rc_ not in (0, None) else 0
+                        wait_ = 0 if LIVE.cam_fail_n == 0 else (60, 300, 900)[min(LIVE.cam_fail_n - 1, 2)]
+                        LIVE.cam_next_spawn = now_ + wait_
+                        print('LIVE camera: cam_pipe ended with code %s after %.0f s without a frame (failures in a row: %d), next start in %d s' % (rc_, idle_, LIVE.cam_fail_n, wait_), flush=True)
+                    if now_ >= LIVE.cam_next_spawn:
+                        LIVE.cam_next_spawn = None; print('LIVE camera: starting cam_pipe', flush=True); lv_spawn()
+                elif idle_ > 240:   # cam_pipe alive but silent for 4 min (it should have reset the engine itself by now): SIGTERM, wait up to 45 s (never kill while the camera may be open), start a new one
+                    LIVE.proc.terminate()
+                    try: LIVE.proc.wait(45)
+                    except Exception: print('LIVE camera: cam_pipe did not end on SIGTERM in 45 s, SIGKILL', flush=True); LIVE.proc.kill()
+                    print('LIVE camera: no frame for %.0f s from a live cam_pipe, restarting it' % idle_, flush=True); LIVE.cam_next_spawn = None; lv_spawn()
+                img_ = np.zeros((480, 640, 3), np.uint8)
+                cv2.putText(img_, 'NO CAMERA FRAME  %.0f s' % idle_, (90, 230), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+                if LIVE.cam_fail_n: cv2.putText(img_, 'CAMERA FAILED: %d restarts without a frame - check the USB cable / power' % LIVE.cam_fail_n, (20, 275), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
+                else: cv2.putText(img_, 'the camera restarts itself (about 30 s); page and gimbal keys stay live', (20, 275), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+                if GB is not None:
+                    st_ = GB.state; gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle'
+                    if GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s' % ('connected' if gu_['client'] else 'no client')
+                    cv2.putText(img_, gtxt_, (8, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+                ok_, jb_ = cv2.imencode('.jpg', img_, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                with LIVE.jcond: LIVE.jpeg = jb_.tobytes(); LIVE.seq += 1; LIVE.jcond.notify_all()
+            GB = None
+            if args.gimbal:   # v19
+                import os as lv_os, shlex
+                if abs(time.perf_counter() - time.monotonic()) > 0.01: raise SystemExit('perf_counter is not CLOCK_MONOTONIC here: the capture times sent to the gimbal bridge would be wrong')
+                try: in_use_ = lv_sp.run(['fuser', args.gimbal], capture_output=True, text=True).stdout.strip()
+                except FileNotFoundError: in_use_ = ''; print('GIMBAL fuser is not installed: cannot check whether another program uses the device', flush=True)
+                if in_use_: raise SystemExit('gimbal device %s is in use by process %s' % (args.gimbal, in_use_))
+                class _Gimbal: pass
+                GB = _Gimbal(); GB.lock = lv_th.Lock(); GB.people = []; GB.frame = 0; GB.skipped = 0; GB.state = dict(running=True, ready=False, auto=0, lost=0, moving=0, error=0, id=0, answer='')
+                GB.gui = bool(args.gui_host); GB.state['gui'] = dict(on=GB.gui, client=0, given=0, sent=0, encoded=0, rtp_bytes=0, failed=0)
+                GB.log = open(out / 'gimbal_bridge.log', 'w')
+                gui_opts_ = ['--gui-host', args.gui_host, '--gui-bind', args.gui_bind, '--gui-video-port', str(args.gui_video_port), '--gui-metadata-port', str(args.gui_metadata_port), '--gui-command-port', str(args.gui_command_port),
+                             '--gui-encoder', args.gui_encoder, '--gui-codec', args.gui_codec, '--gui-bitrate', str(args.gui_bitrate), '--gui-fps', str(args.gui_fps), '--gui-clip', '0,65535',
+                             *shlex.split(args.gui_opts)] if GB.gui else []   # v20. --gui-map pct sends the 8-bit picture scaled to 16 bit, so the clip is the same
+                GB.proc = lv_sp.Popen([args.gimbal_bridge or str(HERE / 'gimbal_bridge'), '--device', args.gimbal, '--manual-speed', str(args.gimbal_speed), '--speed-max', str(args.gimbal_speed), '--kp', str(args.gimbal_kp), '--aim-y', str(args.gimbal_aim_y),
+                                       '--x-sign', str(args.gimbal_x_sign), '--y-sign', str(args.gimbal_y_sign), '--model-count', str(len(MODEL['catalog'])), *shlex.split(args.gimbal_opts), *gui_opts_], stdin=lv_sp.PIPE, stdout=lv_sp.PIPE, stderr=GB.log)
+                GB.fd = GB.proc.stdin.fileno()
+                # v20: one writer thread owns the pipe. Short lines queue up (at most 64); a frame with its picture (about 0.6 MB) replaces the previous one that was not sent yet,
+                # so the tracker never waits for the bridge and the bridge always gets the newest frame.
+                GB.wq = lv_col.deque(); GB.wframe = None; GB.wcond = lv_th.Condition(); GB.wopen = True
+                def gb_send(line_):
+                    with GB.wcond:
+                        if not GB.wopen: return False
+                        if len(GB.wq) >= 64: GB.skipped += 1; return False
+                        GB.wq.append((line_ + '\n').encode()); GB.wcond.notify()
+                    return True
+                def gb_send_frame(header_, picture_):
+                    with GB.wcond:
+                        if not GB.wopen: return
+                        if GB.wframe is not None: GB.skipped += 1
+                        GB.wframe = (header_ + '\n').encode() + picture_; GB.wcond.notify()
+                def gb_writer():
+                    try:
+                        while True:
+                            with GB.wcond:
+                                GB.wcond.wait_for(lambda: GB.wq or GB.wframe is not None or not GB.wopen)
+                                if not GB.wopen and not GB.wq and GB.wframe is None: break
+                                chunks_ = list(GB.wq); GB.wq.clear()
+                                if GB.wframe is not None: chunks_.append(GB.wframe); GB.wframe = None
+                            for c_ in chunks_: GB.proc.stdin.write(c_)
+                            GB.proc.stdin.flush()
+                    except (OSError, ValueError): pass
+                    with GB.wcond: GB.wopen = False; GB.wq.clear(); GB.wframe = None
+                lv_th.Thread(target=gb_writer, daemon=True).start()
+                def gb_reader():
+                    while True:
+                        line_ = GB.proc.stdout.readline()
+                        if not line_: break
+                        line_ = line_.decode(errors='replace'); f_ = line_.split()
+                        if not f_: continue
+                        if f_[0] == 'READY': GB.state['ready'] = True; print('GIMBAL ready', args.gimbal, flush=True)
+                        elif f_[0] == 'R':
+                            GB.state['answer'] = {'OK': '', 'INVALID': 'that person is not available', 'NOT_READY': 'the gimbal is not ready'}.get(f_[2], f_[2]); print('GIMBAL', line_.strip(), flush=True)
+                        elif f_[0] == 'S':
+                            GB.state.update(auto=int(f_[1]), lost=int(f_[2]), moving=int(f_[3]), error=int(f_[4]), id=int(f_[5])); print('GIMBAL', line_.strip(), flush=True)
+                        elif f_[0] == 'M' and len(f_) >= 3:   # v23: the PC GUI asks for a model change: M <req> <id>
+                            r_ = model_request(int(f_[2]), int(f_[1])); print('MODEL request from the PC GUI: id', f_[2], '->', 'queued' if r_ < 0 else r_, flush=True)
+                            if r_ >= 0: gb_send('N %d %d' % (int(f_[1]), r_))
+                        elif f_[0] == 'T' and len(f_) >= 7:   # v20: GUI link status, once a second
+                            g_ = GB.state['gui']; client_ = int(f_[1])
+                            if client_ != g_['client']: print('GUI client', 'connected' if client_ else 'disconnected', flush=True)
+                            g_.update(client=client_, given=int(f_[2]), sent=int(f_[3]), encoded=int(f_[4]), rtp_bytes=int(f_[5]), failed=int(f_[6]))
+                    # the bridge ended. After a normal end it has sent STOP itself; after a crash the last move would go on, so this stop is sent in any case
+                    GB.state.update(running=False, auto=0, lost=0, moving=0, id=0); print('GIMBAL bridge ended, code', GB.proc.poll(), flush=True)
+                    try:
+                        fd_ = lv_os.open(args.gimbal, lv_os.O_WRONLY | lv_os.O_NOCTTY | lv_os.O_NONBLOCK); lv_os.write(fd_, b'{"T":135}\n'); lv_os.close(fd_)
+                    except OSError: pass
+                lv_th.Thread(target=gb_reader, daemon=True).start()
             def lv_to8(raw_):
                 if args.live_map == 'fixed': return cv2.convertScaleAbs(raw_, alpha=255.0 / 65535.0)
                 hist_ = np.bincount((raw_ >> 4).ravel(), minlength=4096).cumsum(); tot_ = hist_[-1]
@@ -1598,43 +1815,254 @@ def main():
                 else: LIVE.lo += 0.1 * (lo_ - LIVE.lo); LIVE.hi += 0.1 * (hi_ - LIVE.hi)
                 return np.clip((raw_.astype(np.float32) - LIVE.lo) * (255.0 / (LIVE.hi - LIVE.lo)), 0, 255).astype(np.uint8)
             def live_next():
-                with LIVE.cond:
-                    while not LIVE.q:
-                        if LIVE.stopped or LIVE.cam_lost: break
-                        if not LIVE.cond.wait(timeout=10): raise RuntimeError('no camera frame for 10 s')
-                    if not LIVE.q:
-                        if LIVE.last is None: raise RuntimeError('camera delivered no frame')
-                        return LIVE.last
-                    t_, raw_ = LIVE.q.popleft()
+                while True:
+                    with LIVE.cond:
+                        while not LIVE.q:
+                            if LIVE.stopped or (LIVE.cam_lost and args.live_wait): break
+                            wait_s_ = (args.live_wait or 10) if LIVE.last is None else 10   # v20: the real camera takes >10 s to start (scan, open, shutter calibration)
+                            if LIVE.cond.wait(timeout=wait_s_): continue
+                            if args.live_wait: raise RuntimeError('no camera frame for %d s' % wait_s_)
+                            break   # v21: --live-wait 0: no frame yet
+                        if LIVE.q:
+                            if not args.pipeline:
+                                while len(LIVE.q) > 1: LIVE.q.popleft()
+                            t_, raw_ = LIVE.q.popleft(); break
+                        if LIVE.stopped or args.live_wait:
+                            if LIVE.last is None: raise RuntimeError('camera delivered no frame')
+                            return LIVE.last
+                    lv_cam_wait()   # v21: outside the lock: may reopen the camera process
                 FRAME_DY[0] = 16.0; g8_ = lv_to8(raw_); gg_ = np.empty((512, 640), np.uint8); gg_[16:496] = g8_; gg_[:16] = g8_[0]; gg_[496:] = g8_[-1]
                 LIVE.arr.append(t_); LIVE.last = gg_
+                if GB is not None and GB.gui: LIVE.raws.append(raw_ if args.gui_map == 'team' else (g8_.astype(np.uint16) * 257))   # v20: the picture for the GUI, paired with LIVE.arr
+                LIVE.rawq.append(raw_)   # v24f/g: raw frame for the warmth veto, paired with LIVE.arr (always, so the veto can be switched on live)
                 return gg_
             def live_publish(g_, rows_, row_):
                 now_ = time.perf_counter(); t_in = LIVE.arr.popleft() if LIVE.arr else now_
+                raw16_ = LIVE.raws.popleft() if LIVE.raws else None   # v20
+                if LIVE.rawq: LIVE.rawq.popleft()   # v24f
                 LIVE.done_ts.append(now_)
+                if LIVE.meas is not None:   # v22
+                    with LIVE.meas_lock:
+                        if LIVE.meas is not None: LIVE.meas['boxes'].append((t_in, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0, int(b_[4]), float(b_[5]), int(b_[6])) for b_ in rows_]))   # v22d
+                        if LIVE.meas is not None: LIVE.meas['rows'].append((now_, (now_ - t_in) * 1000.0, float(row_.get('frame_total_ms', 0.0)), float(row_.get('pre_model_ms', 0.0)), float(row_.get('tracker_ms', 0.0)), float(LIVE.cam_fps)))
                 fps_ = (len(LIVE.done_ts) - 1) / (LIVE.done_ts[-1] - LIVE.done_ts[0]) if len(LIVE.done_ts) > 2 and LIVE.done_ts[-1] > LIVE.done_ts[0] else 0.0
                 sc_ = args.live_scale
                 img_ = cv2.cvtColor(g_[16:496], cv2.COLOR_GRAY2BGR)
                 if sc_ != 1: img_ = cv2.resize(img_, None, fx=sc_, fy=sc_, interpolation=cv2.INTER_LINEAR)
-                npers_ = 0
+                npers_ = 0; gb_people_ = []; gb_id_ = GB.state['id'] if GB is not None else 0
                 for r_ in rows_:
                     x1_, y1_, x2_, y2_ = [float(v_) for v_ in r_[:4]]; tid_, cls_ = int(r_[4]), int(r_[6]); y1_ -= 16; y2_ -= 16
                     if cls_ != 0: continue   # v16: people only
-                    col_ = (60, 220, 60); npers_ += 1
+                    col_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else (60, 220, 60); npers_ += 1
+                    if GB is not None and len(gb_people_) < 60: gb_people_.append((tid_, x1_, y1_, x2_, y2_, float(r_[5])))
                     p1_ = (int(x1_ * sc_), int(y1_ * sc_)); p2_ = (int(x2_ * sc_), int(y2_ * sc_))
                     cv2.rectangle(img_, p1_, p2_, col_, 2); cv2.putText(img_, str(tid_), (p1_[0], max(p1_[1] - 4, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.55, col_, 2)
+                if GB is not None:
+                    GB.people = gb_people_; GB.frame += 1
+                    people_txt_ = ''.join(' %d %.1f %.1f %.1f %.1f %.3f' % (p_[0], p_[1], p_[2], p_[3] - p_[1], p_[4] - p_[2], p_[5]) for p_ in gb_people_)
+                    if GB.gui and raw16_ is not None and raw16_.shape == (LIVE_H, LIVE_W):   # v20: frame + picture to the gimbal executor and the PC GUI
+                        gb_send_frame('G %d %d %d %d %d' % (GB.frame, int(t_in * 1e9), LIVE_W, LIVE_H, len(gb_people_)) + people_txt_, np.ascontiguousarray(raw16_, dtype=np.uint16).tobytes())
+                    else: gb_send('F %d %d %d' % (GB.frame, int(t_in * 1e9), len(gb_people_)) + people_txt_)
                 txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, relabeler.stats['new_ids'] if relabeler is not None else 0, relabeler.stats['relabelled'] if relabeler is not None else 0)
                 cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0), -1); cv2.putText(img_, txt_, (8, 19), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+                if GB is not None:
+                    st_ = GB.state
+                    gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else ('gimbal: lost %d, waiting' % st_['id'] if st_['lost'] else 'gimbal: following %d' % st_['id'] if st_['auto'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle, click a person')
+                    if GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s: sent %d, failed %d' % ('connected' if gu_['client'] else 'no client', gu_['sent'], gu_['failed'])   # v20
+                    cv2.rectangle(img_, (0, 26), (img_.shape[1], 50), (0, 0, 0), -1); cv2.putText(img_, gtxt_, (8, 44), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255) if st_['auto'] else (255, 255, 255), 1)
                 ok_, jb_ = cv2.imencode('.jpg', img_, [cv2.IMWRITE_JPEG_QUALITY, 80])
                 with LIVE.jcond: LIVE.jpeg = jb_.tobytes(); LIVE.seq += 1; LIVE.jcond.notify_all()
-                if time.monotonic() - LIVE.t0 > args.live_seconds or LIVE.cam_lost: LIVE.stopped = True
+                if time.monotonic() - LIVE.t0 > args.live_seconds or (LIVE.cam_lost and args.live_wait): LIVE.stopped = True
+                if args.mamba and len(relabeler.events) and relabeler.events[-1] is not getattr(LIVE, 'rl_last', None):
+                    new_ = []
+                    for ev_ in reversed(relabeler.events):
+                        if ev_ is getattr(LIVE, 'rl_last', None): break
+                        new_.append(ev_)
+                    for ev_ in reversed(new_): print('RLEVENT', json.dumps(ev_), flush=True)
+                    LIVE.rl_last = relabeler.events[-1]
                 if relabeler is not None and time.monotonic() - getattr(LIVE, 'rl_t', 0.0) > 20:
-                    LIVE.rl_t = time.monotonic(); print('RLSTAT', json.dumps(dict(relabeler.stats, last_event=(relabeler.events[-1] if relabeler.events else None))), flush=True)
+                    LIVE.rl_t = time.monotonic(); print('RLSTAT', json.dumps(dict(relabeler.stats, last_event=(relabeler.events[-1] if relabeler.events else None), **({'ms': relabeler.timing()} if args.mamba else {}))), flush=True)
                 if len(rows) > 6000:   # long live runs: keep only the recent records in memory
                     del rows[:3000]; del preds[:3000]; del tracks_out[:3000]
                     if relabeler is not None: del tracks_base[:3000]; del relabeler.per_frame[:3000]
+            GB_PAGE = ("<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>LWIR live</title><style>body{background:#111;color:#ddd;font-family:sans-serif;margin:0;padding:10px}"
+                       "img{max-width:100%;display:block;margin:auto;cursor:crosshair}button{font-size:18px;padding:8px 24px;margin:6px 0;background:#b00020;color:#fff;border:0;border-radius:6px}#s{margin-left:12px}"
+                       "#pad{display:inline-grid;grid-template-columns:repeat(3,64px);gap:4px;margin:6px 16px 6px 0;vertical-align:middle}#pad button{background:#333;padding:10px 0;margin:0;touch-action:none;user-select:none;-webkit-user-select:none}</style></head><body>"
+                       "<div>사람을 클릭하면 짐벌이 그 사람을 따라갑니다. 수동: 키보드 방향키 또는 아래 화살표 버튼(누르는 동안 움직임). 정지: 스페이스 또는 정지 버튼. 이 페이지를 닫으면 짐벌이 멈춥니다.</div>"
+                       "<div><div id='pad'><span></span><button data-x='0' data-y='1'>&#9650;</button><span></span><button data-x='-1' data-y='0'>&#9664;</button><button data-x='0' data-y='-1'>&#9660;</button><button data-x='1' data-y='0'>&#9654;</button></div>"
+                       "<button id='b'>정지</button><span id='s'></span></div><div style='margin:6px 0'><button id='mst' style='background:#0b6'>측정 시작</button> <button id='msp' style='background:#555'>측정 끝</button> <span id='mi'></span></div><div id='mr' style='font-family:monospace;white-space:pre;font-size:14px;margin:4px 0'></div><img id='v' src='/stream'><script>"
+                       "const v=document.getElementById('v'),S=document.getElementById('s');"
+                       "function show(t){if(!t.running)S.textContent='짐벌 프로그램이 꺼져 있습니다';else if(t.error)S.textContent='짐벌 오류: 서버를 다시 켜야 합니다';"
+                       "else if(t.lost)S.textContent=t.id+'번 놓침, 잠시 기다립니다';else if(t.auto)S.textContent=t.id+'번을 따라가는 중';else if(t.moving)S.textContent='수동으로 움직이는 중';else S.textContent='대기 중';"
+                       "if(t.answer)S.textContent+=' ('+t.answer+')';}"
+                       "function post(u){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json()).then(show).catch(()=>{S.textContent='서버 연결 끊김'});}"
+                       "v.addEventListener('click',e=>{const r=v.getBoundingClientRect();post('/gimbal/click?x='+((e.clientX-r.left)/r.width)+'&y='+((e.clientY-r.top)/r.height));});"
+                       "document.getElementById('b').addEventListener('click',()=>post('/gimbal/stop'));"
+                       "const K={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,1],ArrowDown:[0,-1]};let held=null;"
+                       "addEventListener('keydown',e=>{if(e.code==='Space'){e.preventDefault();held=null;post('/gimbal/stop');return;}const m=K[e.key];if(!m)return;e.preventDefault();if(e.repeat||held===e.key)return;held=e.key;post('/gimbal/move?x='+m[0]+'&y='+m[1]);});"
+                       "addEventListener('keyup',e=>{if(e.key===held){held=null;post('/gimbal/move?x=0&y=0');}});"
+                       "addEventListener('blur',()=>{if(held){held=null;post('/gimbal/move?x=0&y=0');}});"
+                       "let padDown=false;for(const b of document.querySelectorAll('#pad button')){const go=e=>{e.preventDefault();if(padDown)return;padDown=true;b.setPointerCapture&&b.setPointerCapture(e.pointerId);post('/gimbal/move?x='+b.dataset.x+'&y='+b.dataset.y);};"
+                       "const stop=e=>{if(!padDown)return;padDown=false;post('/gimbal/move?x=0&y=0');};b.addEventListener('pointerdown',go);for(const n of ['pointerup','pointercancel','pointerleave'])b.addEventListener(n,stop);b.addEventListener('contextmenu',e=>e.preventDefault());}"
+                       "setInterval(()=>post('/gimbal/ping'),400);post('/gimbal/ping');const MI=document.getElementById('mi'),MR=document.getElementById('mr');function f1(x){return x==null?'-':x.toFixed(1);}function mshow(m){if(m.on){MI.textContent='측정 중: '+m.frames+'프레임, '+m.seconds.toFixed(0)+'초';}else MI.textContent=m.last?'측정 '+m.last.n+'회차 끝, 저장: '+m.last.file:'측정 대기';const r=m.last;if(!r||!r.frames){MR.textContent=r?'프레임이 없습니다':'';return;}let t='측정 '+r.n+'회차: '+r.frames+'프레임, '+r.seconds.toFixed(1)+'초, 출력 '+f1(r.out_fps)+' fps, 카메라 '+f1(r.cam_fps)+' fps\n';t+='항목                    p50     p95     p99     최대   33ms 초과\n';for(const [k,lab] of [['delay','입력→출력 지연 (ms)'],['interval','출력 간격 (ms)'],['compute','처리 시간 (ms)'],['npu_wait','NPU 대기 (ms)'],['tracker','트래커 (ms)']]){const s=r[k];if(!s)continue;t+=(lab+'                        ').slice(0,22)+[s.p50,s.p95,s.p99,s.max].map(v=>f1(v).padStart(8)).join('')+(f1(s.over33)+'%').padStart(10)+'\n';}MR.textContent=t;}function mpost(u){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json()).then(mshow).catch(()=>{MI.textContent='서버 연결 끊김';});}document.getElementById('mst').addEventListener('click',()=>mpost('/measure/start'));document.getElementById('msp').addEventListener('click',()=>mpost('/measure/stop'));setInterval(()=>fetch('/measure').then(r=>r.json()).then(mshow).catch(()=>{}),1000);"
+                       "</script></body></html>").encode()
+            if (HERE / 'live_page.html').exists(): GB_PAGE = (HERE / 'live_page.html').read_bytes()   # v22: the designed page (gimbal pad + measurement button) next to this script; the inline page above is the fallback
+            def meas_stats(v_):   # v22
+                if not v_: return None
+                a_ = np.asarray(v_, np.float64)
+                return dict(p50=float(np.percentile(a_, 50)), p95=float(np.percentile(a_, 95)), p99=float(np.percentile(a_, 99)), max=float(a_.max()), mean=float(a_.mean()), over33=float(100.0 * (a_ > 33.0).mean()))
+            def meas_dir(day_):   # v22c: the data card first, the run folder when it cannot be written
+                try:
+                    d_ = Path(args.measure_dir) / day_; d_.mkdir(parents=True, exist_ok=True)
+                    t_ = d_ / '.write_test'; t_.write_text('x'); t_.unlink(); return d_
+                except OSError as e_: print('MEASURE dir not writable, using the run folder:', e_, flush=True); return out
+            def meas_clean(t_, n_):   # v22b: user text, bounded
+                return str(t_ or '').replace('\r', '').strip()[:n_]
+            def meas_start(name_='', memo_='', video_=True):
+                with LIVE.meas_lock:
+                    if LIVE.meas is not None: return
+                    LIVE.meas_n += 1; m_ = dict(n=LIVE.meas_n, t0=time.perf_counter(), wall=time.strftime('%Y-%m-%d %H:%M:%S'), stamp=time.strftime('%Y%m%d_%H%M%S'), rows=[], boxes=[], name=meas_clean(name_, 80), memo=meas_clean(memo_, 2000), video=bool(video_))
+                    safe_ = ''.join(c_ if (c_.isalnum() or c_ in '-_') else '_' for c_ in m_['name'])[:40].strip('_')
+                    m_['dir'] = meas_dir(m_['stamp'][:8]) / ('MEASURE_%s_%d' % (m_['stamp'], m_['n']) + ('_' + safe_ if safe_ else '')); m_['dir'].mkdir(parents=True, exist_ok=True)
+                    if m_['video']:
+                        rc_ = dict(q=lv_col.deque(), cond=lv_th.Condition(), f=open(m_['dir'] / 'frames.raw.gz', 'wb'), z=zlib.compressobj(1, zlib.DEFLATED, 31), times=[], dropped=0, stop=False)   # v22f: gzip stream, lossless
+                        def rec_writer(rc_=rc_):
+                            while True:
+                                with rc_['cond']:
+                                    while not rc_['q'] and not rc_['stop']: rc_['cond'].wait(0.5)
+                                    if not rc_['q'] and rc_['stop']: return
+                                    t_, r_ = rc_['q'].popleft()
+                                rc_['f'].write(rc_['z'].compress(r_.astype('<u2', copy=False).tobytes())); rc_['times'].append(t_)
+                        rc_['th'] = lv_th.Thread(target=rec_writer, daemon=True); rc_['th'].start(); m_['rec'] = rc_; LIVE.rec = rc_
+                    LIVE.meas = m_
+            def meas_stop(memo_=None):
+                with LIVE.meas_lock: m_ = LIVE.meas; LIVE.meas = None; LIVE.rec = None
+                if m_ is None: return
+                rc_ = m_.get('rec'); vinfo_ = None
+                if rc_ is not None:   # v22d: let the writer finish the queued frames
+                    with rc_['cond']: rc_['stop'] = True; rc_['cond'].notify_all()
+                    rc_['th'].join(60); rc_['f'].write(rc_['z'].flush()); rc_['f'].close()
+                    vinfo_ = dict(file='frames.raw.gz', width=LIVE_W, height=LIVE_H, dtype='uint16 little endian', frames=len(rc_['times']), dropped=rc_['dropped'],
+                                  bytes=len(rc_['times']) * LIVE_W * LIVE_H * 2, gz_bytes=(m_['dir'] / 'frames.raw.gz').stat().st_size,
+                                  note='lossless gzip of the raw frames: after decompression frame i = bytes [i*W*H*2, (i+1)*W*H*2); raw camera values, not mapped to 8 bit',
+                                  times_s=[round(t_ - m_['t0'], 4) for t_ in rc_['times']])
+                    (m_['dir'] / 'frames.json').write_text(json.dumps(vinfo_, ensure_ascii=False), encoding='utf-8')
+                if memo_ is not None: m_['memo'] = meas_clean(memo_, 2000)
+                rw_ = m_['rows']; secs_ = time.perf_counter() - m_['t0']
+                ts_ = [r_[0] for r_ in rw_]; iv_ = [(b2_ - a2_) * 1000.0 for a2_, b2_ in zip(ts_, ts_[1:])]
+                res_ = dict(n=m_['n'], name=m_['name'], memo=m_['memo'], started=m_['wall'], seconds=secs_, frames=len(rw_), out_fps=(len(rw_) - 1) / (ts_[-1] - ts_[0]) if len(rw_) > 2 and ts_[-1] > ts_[0] else None,
+                            cam_fps=float(np.mean([r_[5] for r_ in rw_])) if rw_ else None, delay=meas_stats([r_[1] for r_ in rw_]), interval=meas_stats(iv_),
+                            compute=meas_stats([r_[2] for r_ in rw_]), npu_wait=meas_stats([r_[3] for r_ in rw_]), tracker=meas_stats([r_[4] for r_ in rw_]),
+                            config=dict(det=args.det, pipeline=args.pipeline, npu_depth=args.npu_depth, gmc=args.gmc, gimbal=bool(args.gimbal), gui=bool(getattr(args, 'gui_host', None))),
+                            note='delay = camera frame received by the server -> result published (the camera\'s own sensor-to-USB delay is not included); interval = between published results; compute = frame_total_ms')
+                res_['fields'] = MEAS_FIELDS
+                md_ = m_['dir']; fn_ = 'summary.json'; res_['folder'] = str(md_); res_['file'] = str(md_ / fn_); res_['csv'] = str(md_ / 'timing.csv')
+                res_['server_run'] = str(out); res_['video'] = {k_: v_ for k_, v_ in vinfo_.items() if k_ != 'times_s'} if vinfo_ else None
+                if vinfo_:   # our tracker's boxes, tied to frames.raw by the arrival time
+                    ix_ = {t_: i_ for i_, t_ in enumerate(rc_['times'])}
+                    with open(md_ / 'tracks.csv', 'w', encoding='utf-8', newline='') as ft_:
+                        ft_.write('raw_frame,track_id,class_id,confidence,x,y,width,height\n')
+                        for t_, bs_ in m_['boxes']:
+                            i_ = ix_.get(t_)
+                            if i_ is None: continue
+                            for x1_, y1_, x2_, y2_, tid_, cf_, cl_ in bs_: ft_.write('%d,%d,%d,%.4f,%.2f,%.2f,%.2f,%.2f\n' % (i_, tid_, cl_, cf_, x1_, y1_, x2_ - x1_, y2_ - y1_))
+                (md_ / 'README_KO.txt').write_text('측정 %d: %s\n시작 %s, %.1f초\n메모: %s\n\n' % (m_['n'], m_['name'], m_['wall'], secs_, m_['memo']) +
+                    'summary.json  요약(지연·처리 시간 p50/p95/p99), 이름·메모, 항목 설명, 프레임별 시간\n'
+                    'timing.csv    프레임별 시간, 한글 열 이름 (엑셀)\n'
+                    + ('frames.raw.gz 측정 동안 카메라가 보낸 모든 프레임. 16비트 원본값, 640x480, 리틀 엔디언, 앞에서부터 이어 붙임 (%d장, 놓친 프레임 %d장)\n' % (vinfo_['frames'], vinfo_['dropped']) +
+                       '              (frames.raw.gz = 무손실 압축. 풀면 원본과 똑같음: gzip -dk frames.raw.gz 또는 파이썬 gzip.open)\n'
+                       'frames.json   프레임 크기·형식, 각 프레임 도착 시각(측정 시작 후 초)\n'
+                       'tracks.csv    우리 추적기 출력: raw_frame(영상 안의 프레임 번호, 0부터), 추적 번호, 클래스(0=사람), 점수, 박스 x,y,w,h (640x480 좌표)\n' if vinfo_ else '영상 저장 안 함\n'), encoding='utf-8')
+                with open(md_ / 'timing.csv', 'w', encoding='utf-8-sig', newline='') as fc_:   # utf-8-sig: Excel reads the Korean header
+                    fc_.write('# 측정 ' + str(m_['n']) + ': ' + m_['name'].replace(',', ' ') + ' | 시작 ' + m_['wall'] + ' | 메모: ' + m_['memo'].replace('\n', ' / ').replace(',', ' ') + '\n')
+                    fc_.write('프레임순번,측정시작후_초,입력출력지연_ms,처리시간_ms,NPU대기_ms,트래커_ms,카메라_fps\n')
+                    for i_, r_ in enumerate(rw_): fc_.write('%d,%.4f,%.3f,%.3f,%.3f,%.3f,%.2f\n' % (i_ + 1, r_[0] - m_['t0'], r_[1], r_[2], r_[3], r_[4], r_[5]))
+                res_['rows_saved'] = len(rw_)
+                (md_ / fn_).write_text(json.dumps(dict(res_, rows=[dict(t=round(r_[0] - m_['t0'], 4), delay_ms=round(r_[1], 3), compute_ms=round(r_[2], 3), npu_wait_ms=round(r_[3], 3), tracker_ms=round(r_[4], 3), cam_fps=round(r_[5], 2)) for r_ in rw_]), ensure_ascii=False), encoding='utf-8')
+                print('MEASURE', json.dumps({k_: res_[k_] for k_ in ('n', 'frames', 'seconds', 'out_fps', 'cam_fps', 'delay', 'interval', 'file')}), flush=True)
+                LIVE.meas_last = res_; LIVE.meas_hist.append(res_)
+            def meas_state():
+                with LIVE.meas_lock: m_ = LIVE.meas; nf_ = len(m_['rows']) if m_ else 0; rc_ = m_.get('rec') if m_ else None
+                return dict(on=m_ is not None, frames=nf_, video_frames=len(rc_['times']) if rc_ else None, video_dropped=rc_['dropped'] if rc_ else None, seconds=(time.perf_counter() - m_['t0']) if m_ else 0.0, last=LIVE.meas_last,
+                            cur=dict(n=m_['n'], name=m_['name'], memo=m_['memo']) if m_ else None,
+                            history=[dict(n=h_['n'], name=h_['name'], started=h_['started'], frames=h_['frames'], delay_p50=(h_['delay'] or {}).get('p50'), delay_p95=(h_['delay'] or {}).get('p95')) for h_ in LIVE.meas_hist])
+            def meas_note(n_, name_, memo_):   # v22b: change the name/memo of a finished measurement; rewrites its JSON (the CSV keeps its first line)
+                h_ = next((x_ for x_ in LIVE.meas_hist if x_['n'] == n_), None)
+                if h_ is None: return False
+                if name_ is not None: h_['name'] = meas_clean(name_, 80)
+                if memo_ is not None: h_['memo'] = meas_clean(memo_, 2000)
+                fp_ = Path(h_['file'])
+                try: d_ = json.loads(fp_.read_text(encoding='utf-8')); d_.update(name=h_['name'], memo=h_['memo']); fp_.write_text(json.dumps(d_, ensure_ascii=False), encoding='utf-8')
+                except Exception as e_: print('MEASURE note failed', e_, flush=True); return False
+                return True
+            MEAS_FIELDS = {
+                'name, memo': '사용자가 적은 측정 이름과 메모',
+                'delay': '입력→출력 지연(ms): 카메라 프레임이 서버에 도착한 순간부터 그 프레임의 추적 결과가 나온 순간까지. 카메라 안에서 걸리는 시간은 빠짐',
+                'interval': '출력 간격(ms): 추적 결과가 나오는 간격. 카메라 프레임 간격보다 짧아질 수 없음',
+                'compute': '처리 시간(ms): 한 프레임을 넣고 결과를 받기까지 서버 안에서 걸린 시간. 파이프라인을 켜면 다음 프레임을 기다리는 시간이 들어감',
+                'npu_wait': 'NPU 대기(ms): 검출 모델(NPU) 결과를 받을 때까지 기다린 시간, NPU 계산 포함',
+                'tracker': '트래커(ms): 박스를 이전 프레임과 이어 붙이는 추적 계산 시간',
+                'p50, p95, p99, max, mean': '프레임의 50/95/99%가 이 값 이하 / 가장 느린 프레임 / 평균',
+                'over33': '33 ms(30 fps 한 프레임 시간)를 넘긴 프레임 비율(%)',
+                'out_fps': '초당 추적 결과 수', 'cam_fps': '카메라가 보낸 초당 프레임 수(측정 구간 평균)',
+                'rows': '프레임별 기록 t(측정 시작 후 초), delay_ms, compute_ms, npu_wait_ms, tracker_ms, cam_fps. 같은 내용이 같은 이름의 .csv에 한글 열 이름으로 있음'}
             class lv_Handler(lv_http.BaseHTTPRequestHandler):
                 def log_message(self, *a): pass
+                def do_POST(self):
+                    # a page on another site cannot send this header without permission, so it cannot move the gimbal through the viewer's browser
+                    if self.path.startswith('/model/set') and self.headers.get('X-Gimbal') == '1':   # v23: model change from the page (works without the gimbal too)
+                        from urllib.parse import urlsplit as us_, parse_qs as pq_
+                        try: mid_ = int(pq_(us_(self.path).query)['id'][0])
+                        except (KeyError, ValueError, IndexError): self.send_error(400); return
+                        r_ = model_request(mid_)
+                        if r_ >= 0:
+                            with MODEL['lock']: MODEL['last'] = dict(id=mid_, result=r_, text=MODEL_TEXT.get(r_, '?'), at=time.strftime('%H:%M:%S'))
+                        b_ = json.dumps(model_state()).encode()
+                        try: self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                        except (BrokenPipeError, ConnectionResetError, OSError): pass
+                        return
+                    if self.path.startswith('/rules/set') and self.headers.get('X-Gimbal') == '1':   # v24g: live rule / tracker switches
+                        from urllib.parse import urlsplit as us2_, parse_qs as pq2_
+                        ok_, text_ = rules_request(pq2_(us2_(self.path).query))
+                        b_ = json.dumps(dict(rules_state(), ok=ok_, text=text_), ensure_ascii=False).encode()
+                        try: self.send_response(200 if ok_ else 400); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                        except (BrokenPipeError, ConnectionResetError, OSError): pass
+                        return
+                    if self.path.startswith('/measure/') and self.headers.get('X-Gimbal') == '1':   # v22: measurement button (works without the gimbal too)
+                        try:
+                            ln_ = min(int(self.headers.get('Content-Length') or 0), 8192); bd_ = json.loads(self.rfile.read(ln_).decode('utf-8')) if ln_ else {}
+                            if not isinstance(bd_, dict): bd_ = {}
+                        except (ValueError, UnicodeDecodeError): self.send_error(400); return
+                        if self.path.startswith('/measure/start'): meas_start(bd_.get('name', ''), bd_.get('memo', ''), bd_.get('video', True) is not False)
+                        elif self.path.startswith('/measure/stop'): meas_stop(bd_.get('memo'))
+                        elif self.path.startswith('/measure/note'):
+                            try: n_ = int(bd_.get('n'))
+                            except (TypeError, ValueError): self.send_error(400); return
+                            if not meas_note(n_, bd_.get('name'), bd_.get('memo')): self.send_error(404); return
+                        else: self.send_error(404); return
+                        b_ = json.dumps(meas_state()).encode()
+                        try: self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                        except (BrokenPipeError, ConnectionResetError, OSError): pass
+                        return
+                    if GB is None or self.headers.get('X-Gimbal') != '1': self.send_error(403); return
+                    from urllib.parse import urlsplit, parse_qs
+                    u_ = urlsplit(self.path); q_ = parse_qs(u_.query)
+                    try:
+                        gb_send('P')
+                        if u_.path == '/gimbal/click':
+                            x_, y_ = float(q_['x'][0]) * LIVE_W, float(q_['y'][0]) * LIVE_H
+                            inside_ = [p_ for p_ in GB.people if p_[1] <= x_ <= p_[3] and p_[2] <= y_ <= p_[4]]
+                            if inside_:
+                                GB.state['answer'] = ''; gb_send('A %d' % min(inside_, key=lambda p_: (p_[3] - p_[1]) * (p_[4] - p_[2]))[0])
+                            else: GB.state['answer'] = 'no person there'
+                        elif u_.path == '/gimbal/stop': GB.state['answer'] = ''; gb_send('H')
+                        elif u_.path == '/gimbal/move': GB.state['answer'] = ''; gb_send('V %d %d' % (int(q_['x'][0]), int(q_['y'][0])))
+                        elif u_.path != '/gimbal/ping': self.send_error(404); return
+                    except (KeyError, ValueError, IndexError): self.send_error(400); return
+                    try:
+                        b_ = json.dumps(dict(GB.state, cam_idle=round(time.monotonic() - LIVE.last_frame_t, 1), cam_fail=LIVE.cam_fail_n)).encode()   # v24: cam_idle = seconds since the last camera frame; v24d: cam_fail = cam_pipe failures in a row (0 = fine or repairing)
+                        self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                    except (BrokenPipeError, ConnectionResetError, OSError): pass
                 def do_GET(self):
                     try:
                         if self.path.startswith('/stream'):
@@ -1646,11 +2074,33 @@ def main():
                                     if LIVE.seq == last_: continue
                                     last_ = LIVE.seq; jb_ = LIVE.jpeg
                                 self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n' % len(jb_) + jb_ + b'\r\n')
+                        elif self.path.startswith('/gimbal/people') and GB is not None:   # v19: read only
+                            b_ = json.dumps(dict(state=GB.state, people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in GB.people], width=LIVE_W, height=LIVE_H)).encode()
+                            self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                        elif self.path.startswith('/rules'):   # v24g
+                            b_ = json.dumps(rules_state(), ensure_ascii=False).encode()
+                            self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                        elif self.path.startswith('/healthz'):   # v24d: read-only liveness for the keep-alive supervisor (never POST /gimbal/ping from a script: that is the page's safety heartbeat)
+                            now_ = time.monotonic(); last_out_ = LIVE.done_ts[-1] if LIVE.done_ts else None
+                            try: rss_ = int(open('/proc/self/statm').read().split()[1]) * 4096 // 1048576
+                            except Exception: rss_ = None
+                            h_ = dict(up=round(now_ - LIVE.t0, 1), cam_idle=round(now_ - LIVE.last_frame_t, 1), out_idle=(round(time.perf_counter() - last_out_, 1) if last_out_ is not None else None), frames_in=LIVE.frames_in,
+                                      cam_fail=LIVE.cam_fail_n, warm_dropped=LIVE.warm_dropped, cam_pipe_alive=LIVE.proc.poll() is None, gimbal_alive=(GB.proc.poll() is None) if GB is not None else None, rss_mb=rss_, stopped=LIVE.stopped)
+                            b_ = json.dumps(h_).encode()
+                            self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                        elif self.path.startswith('/model'):   # v23
+                            b_ = json.dumps(model_state()).encode()
+                            self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                        elif self.path.startswith('/measure'):   # v22
+                            q_n_ = self.path[len('/measure/'):] if self.path.startswith('/measure/') else ''
+                            b_ = json.dumps(next((h_ for h_ in LIVE.meas_hist if str(h_['n']) == q_n_), None) if q_n_ else meas_state()).encode()
+                            self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                         elif self.path.startswith('/snap.jpg'):
                             with LIVE.jcond: jb_ = LIVE.jpeg
                             self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.send_header('Content-Length', str(len(jb_))); self.end_headers(); self.wfile.write(jb_)
                         else:
-                            body_ = ("<!doctype html><html><head><meta charset='utf-8'><title>LWIR live</title><style>body{background:#111;color:#ddd;font-family:sans-serif;margin:0;padding:10px}"
+                            lp_ = HERE / 'live_page.html'   # v22: read on every request, so the page can be changed without restarting the server
+                            body_ = lp_.read_bytes() if GB is not None and lp_.exists() else GB_PAGE if GB is not None else ("<!doctype html><html><head><meta charset='utf-8'><title>LWIR live</title><style>body{background:#111;color:#ddd;font-family:sans-serif;margin:0;padding:10px}"
                                      "img{max-width:100%;display:block;margin:auto}</style></head><body><div>DX-M1 final tracker on the live camera: boxes + track ids (green = person)</div><img src='/stream'></body></html>").encode()
                             self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8'); self.send_header('Content-Length', str(len(body_))); self.end_headers(); self.wfile.write(body_)
                     except (BrokenPipeError, ConnectionResetError, OSError): pass
@@ -1658,10 +2108,18 @@ def main():
             lv_th.Thread(target=lv_srv.serve_forever, daemon=True).start()
             def live_close():
                 LIVE.stopped = True
+                try: meas_stop()   # v22: keep a measurement that is still running
+                except Exception as e_: print('MEASURE save failed', e_, flush=True)
                 with LIVE.jcond: LIVE.jcond.notify_all()
                 lv_srv.shutdown()
+                if GB is not None:
+                    with GB.wcond: GB.wopen = False; GB.wcond.notify_all()   # v20: the writer thread lets go of the pipe
+                    try: GB.proc.stdin.close()   # the bridge sends STOP and ends
+                    except OSError: pass
+                    try: GB.proc.wait(5)
+                    except Exception: GB.proc.kill()
                 LIVE.proc.terminate()
-                try: LIVE.proc.wait(5)
+                try: LIVE.proc.wait(20)   # v24c: was 5 s
                 except Exception: LIVE.proc.kill()
             print('LIVE http://%s:%d/ for %d s' % (args.live_bind, args.live_port, args.live_seconds), flush=True)
         if args.preload:         # --preload: decode once, outside every timed interval
@@ -1679,12 +2137,12 @@ def main():
                 if args.live_port:   # v14: reuse a ring of preallocated input buffers (see TILE_BUFS)
                     tb_ = TILE_BUFS[k % len(TILE_BUFS)]; cv2.cvtColor(src_[:, 0:384], cv2.COLOR_GRAY2RGB, dst=tb_[0][0]); cv2.cvtColor(src_[:, 256:640], cv2.COLOR_GRAY2RGB, dst=tb_[1][0]); a.submit(tb_[0], k); b.submit(tb_[1], k)
                 else: a.submit(cv2.cvtColor(src_[:, 0:384], cv2.COLOR_GRAY2RGB)[None], k); b.submit(cv2.cvtColor(src_[:, 256:640], cv2.COLOR_GRAY2RGB)[None], k)
-            elif args.det == 's640':   # v16: YOLO26s letterbox
+            elif args.det in ('s640', 'm640', 's6'):   # v16: YOLO26s letterbox; v22: same canvas for YOLO26m_(FLIR) 640x640
                 if args.live_port:
                     sb_ = S640_BUFS[k % len(S640_BUFS)]; cv2.cvtColor(g_[16:496], cv2.COLOR_GRAY2RGB, dst=sb_[0, 80:560]); a.submit(sb_, k)
                 elif FRAME_DY[0] == 16.0: a.submit(cv2.cvtColor(cv2.copyMakeBorder(g_[16:496], 80, 80, 0, 0, cv2.BORDER_CONSTANT, value=114), cv2.COLOR_GRAY2RGB)[None], k)
                 else: a.submit(cv2.cvtColor(cv2.copyMakeBorder(g_, 64, 64, 0, 0, cv2.BORDER_CONSTANT, value=114), cv2.COLOR_GRAY2RGB)[None], k)
-            elif args.det == 'w480':   # v16: one model on the whole camera band (rows 16:496)
+            elif args.det in ('w480', 's480', 'ft1', 'ft9'):   # v16: one model on the whole camera band (rows 16:496); v22h: s480
                 if args.live_port:
                     wb_ = WHOLE_BUFS[k % len(WHOLE_BUFS)]; cv2.cvtColor(g_[16:496], cv2.COLOR_GRAY2RGB, dst=wb_[0]); a.submit(wb_, k)
                 else: a.submit(cv2.cvtColor(g_[16:496], cv2.COLOR_GRAY2RGB)[None], k)
@@ -1721,8 +2179,47 @@ def main():
         if args.pipeline and images:
             for k_ in range(min(args.npu_depth, len(images))):
                 g_k, _ = read_frame(k_); ahead.append((g_k, submit_tiles(g_k, k_))); gmc_submit(k_, g_k)
+        def do_model_swap(new_det):
+            """Release the old engine and create the new one on the same core. -> PipelineResult code (0 Ok, 3 CreationFailed, 4 Restored, 5 RestoreFailed)."""
+            nonlocal a, b, det_names, det_yoff
+            import gc
+            c_ = next(x_ for x_ in MODEL['catalog'] if x_['det'] == new_det); key_ = c_['key']; old_det, old_key = args.det, det_names[0]
+            if not args.mock and sha(HERE / 'models' / (key_ + '.dxnn')) != man[key_]: print('MODEL sha mismatch for', key_, flush=True); return 3
+            t_ = time.perf_counter(); eng.pop(old_key, None); a = None; gc.collect(); time.sleep(0.3)
+            try: eng[key_] = Engine(key_, CORE[key_], args.npu_depth)
+            except Exception as e_:
+                print('MODEL creation of', key_, 'failed:', repr(e_)[:200], flush=True)
+                try: eng[old_key] = Engine(old_key, CORE[old_key], args.npu_depth); a = eng[old_key]; return 4
+                except Exception as e2_: print('MODEL restore of', old_key, 'failed:', repr(e2_)[:200], flush=True); return 5
+            a = eng[key_]; b = None; det_names = [key_]; det_yoff = DET[new_det]['yoff']; args.det = new_det
+            print('MODEL changed %s -> %s in %.1f s' % (old_det, new_det, time.perf_counter() - t_), flush=True); return 0
         for i, im in enumerate(images):
             vid = im['extra_info']['video_id']; reset = vid != prev_vid
+            if MODEL['req'] is not None:   # v23: a model change was asked for; taken here, between two frames
+                rq_ = MODEL['req']; MODEL['busy'] = True
+                for _ in ahead: a.wait()   # frames already submitted to the old model: collected and dropped, they go in again below
+                code_ = do_model_swap(rq_['det'])
+                if args.pipeline and code_ != 5: ahead[:] = [(g_, submit_tiles(g_, i + n_)) for n_, (g_, _) in enumerate(ahead)]
+                with MODEL['lock']:
+                    MODEL['req'] = None; MODEL['busy'] = False
+                    MODEL['last'] = dict(id=rq_['id'], result=code_, text=MODEL_TEXT.get(code_, '?'), at=time.strftime('%H:%M:%S'), seconds=round(time.time() - rq_['t'], 1))
+                    MODEL['history'].append(dict(MODEL['last'], det=rq_['det'], frame=i))
+                if rq_['req'] is not None and GB is not None: gb_send('N %d %d' % (rq_['req'], code_))
+                if code_ == 5: raise RuntimeError('detector model could not be restored')
+            if RULES['pending'] is not None and tracker is not None:   # v24g: tracker preset / relabel switch between two frames
+                with RULES['lock']: pd_ = RULES['pending']; RULES['pending'] = None
+                if 'relabel' in pd_: RULES['relabel'] = pd_['relabel']
+                if 'tracker' in pd_ and pd_['tracker'] != RULES['tracker']:
+                    old_ = RULES['tracker']; RULES['tracker'] = pd_['tracker']
+                    for k_, a_ in (('motion', 'rebinds_motion'), ('appearance', 'rebinds_app'), ('cand_frames', 'cand_frames'), ('cand_crops', 'cand_crops'), ('sync_frames', 'sync_frames'), ('sync_crops', 'sync_crops')):
+                        reb_tot[k_] += getattr(tracker, a_, 0)
+                    if relabeler is not None: relabeler.reset()
+                    if pd_['tracker'] == 'gate': tracker = GateTracker(gate=GATE_FN, thr_out=GATE_FN.thr_out, thr_low=GATE_FN.thr_low, n_init=args.n_init, class_gate=args.class_gate, radius=args.radius); gate_trackers.append(tracker)
+                    else: tracker = Tracker('rebind' if pd_['tracker'] == 'rebind' else 'bytetrack', sim=args.sim, app=False, late_window=args.late_window, app_first=False, gate=args.gate, motion_fallback=not args.no_motion_fallback,
+                                            vit_conf=args.vit_conf, vit_min_h=args.vit_min_h, hybrid=True, sync_k=args.sync_k, hybrid_fallback=False, radius=args.radius, n_init=max(3, args.n_init) if pd_['tracker'] == 'confirm3' else args.n_init, class_gate=args.class_gate)
+                    if args.gmc: tracker.kf = GKF()
+                    print('RULES tracker %s -> %s at frame %d' % (old_, pd_['tracker'], i), flush=True)
+                with RULES['lock']: RULES['last'] = dict(RULES['last'] or {}, applied=time.strftime('%H:%M:%S'), tracker=RULES['tracker'], relabel=RULES['relabel'])
             if reset:
                 if vit is not None and inflight is not None: vit_sync(None, None, i)   # drain before the reset
                 if tracker is not None:
@@ -1795,6 +2292,14 @@ def main():
                     if not t_.is_activated and t_.mean is not None:
                         m_, c_ = gmc_warp(t_.mean[None].copy(), t_.cov[None], W_); t_.mean, t_.cov = m_[0], c_[0]
                 gmc_ms = (time.perf_counter_ns() - tg_) / 1e6
+            if LIVE is not None and WARM_MIN > 0 and len(arr) and LIVE.rawq:   # v24f warmth veto: a person box must contain pixels as warm as a person (raw p95 >= WARM_MIN)
+                raw_i_ = LIVE.rawq[0]; keep_ = np.ones(len(arr), bool)
+                for k_ in range(len(arr)):
+                    if int(arr[k_, 5]) != PERSON_CLS: continue
+                    a_, b_, c_, d_ = int(max(0, arr[k_, 0])), int(max(0, arr[k_, 1] - 16)), int(min(640, arr[k_, 2])), int(min(480, arr[k_, 3] - 16))
+                    if c_ - a_ < 4 or d_ - b_ < 4: continue
+                    if float(np.percentile(raw_i_[b_:d_:2, a_:c_:2], 95)) < WARM_MIN: keep_[k_] = False
+                if not keep_.all(): LIVE.warm_dropped += int((~keep_).sum()); arr = arr[keep_]
             n_sync0 = len(sync_lat)
             if budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association
                 lf_frame_ms[0] = 0.0
@@ -1808,11 +2313,12 @@ def main():
                 tr_rows = tracker.update(arr, None, feat_fn); t4 = time.perf_counter_ns()
                 vs = sync_lat[-1] if len(sync_lat) > n_sync0 else 0.0
             base_rows = tr_rows; rl_ms = 0.0
-            if relabeler is not None:   # --relabel: P and crop boxes in the saved-PRED form (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
+            if relabeler is not None and RULES['relabel']:   # --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
+                mamba_kw_ = dict(warp=W_, ts_ns=None if args.live_port else (i + 1) * 33333333) if args.mamba else {}
                 tr_rows = relabeler.step(tr_rows, P_, lambda ks, g_=g, b_=P_: rl_embed(ks, g_, b_), frame=Path(im['file_name']).name,
-                                         embed_async=(lambda ks, g_=g, b_=P_: rl_async.submit(ks, g_, b_)) if rl_async is not None else None)
+                                         embed_async=(lambda ks, g_=g, b_=P_: rl_async.submit(ks, g_, b_)) if rl_async is not None else None, **mamba_kw_)
                 rl_ms = (time.perf_counter_ns() - tr0_) / 1e6
             zc_ms = 0.0; n_zc = 0; n_zw = 0
             if zoom_eng is not None and ahead and i + 1 < len(images) and images[i + 1]['extra_info']['video_id'] == vid:
@@ -1847,7 +2353,7 @@ def main():
             if bench_eng is not None: row['tracker_ms'] -= bench_ms; row['vit_bench_ms'] = bench_ms
             if gmc is not None: row['tracker_ms'] -= gmc_ms; row['gmc_ms'] = gmc_ms
             if budget: row['vit_crops'] = int(tracker.per_frame[-1][0]); row['vit_demand'] = list(tracker.per_frame[-1][1:])   # vit_sync_ms = this frame's crop ms
-            if relabeler is not None: row['relabel_ms'] = rl_ms; row['relabel_crops'] = int(relabeler.per_frame[-1][0])
+            if relabeler is not None: row['relabel_ms'] = rl_ms; row['relabel_crops'] = int(relabeler.per_frame[-1][0]) if (RULES['relabel'] and relabeler.per_frame) else 0
             if zoom_eng is not None:   # v9: wait + merge are between t3 and t4 (excluded from tracker_ms); the canvas build is before t5 (inside frame_total / latency / period)
                 row['tracker_ms'] -= z_ms[0] + z_ms[1]; row['zoom_wait_ms'] = z_ms[0]; row['zoom_merge_ms'] = z_ms[1]; row['zoom_canvas_ms'] = zc_ms
                 row['zoom_cands'] = n_zc; row['zoom_wins'] = n_zw; row['zoom_acc'] = n_zacc
@@ -1876,7 +2382,7 @@ def main():
         if gmc_pool is not None: gmc_pool.shutdown(wait=True)
         with (out / 'TRACKS.jsonl').open('w', encoding='utf-8', newline='\n') as fh:
             for r in tracks_out: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
-        with (out / ({'rt480': 'PRED_NEWMRT480.jsonl', 'w480': 'PRED_NEWMRW480.jsonl', 's640': 'PRED_S640.jsonl'}.get(args.det, 'PRED_DRT512.jsonl'))).open('w', encoding='utf-8', newline='\n') as fh:
+        with (out / ({'rt480': 'PRED_NEWMRT480.jsonl', 'w480': 'PRED_NEWMRW480.jsonl', 's640': 'PRED_S640.jsonl', 'm640': 'PRED_M640.jsonl', 's6': 'PRED_S6.jsonl', 's480': 'PRED_S480.jsonl', 'ft1': 'PRED_FT1.jsonl', 'ft9': 'PRED_FT9.jsonl'}.get(args.det, 'PRED_DRT512.jsonl'))).open('w', encoding='utf-8', newline='\n') as fh:
             for r in preds: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
         (out / 'RAW_TIMINGS.json').write_text(json.dumps(rows)); (out / 'UTIL_SAMPLES.json').write_text(json.dumps(util)); (out / 'REBIND_LOG.json').write_text(json.dumps(rebind_log))
         if relabeler is not None:

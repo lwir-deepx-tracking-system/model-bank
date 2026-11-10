@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>LWIR 추적</title>
+<style>
+/* v25: palette A (dark grey + orange). Orange is used only for the followed / selected state. */
+:root{--bg:#1b1b1b;--bar:#242424;--pan:#212121;--field:#161616;--line:#353535;--line2:#505050;--ink:#e6e6e6;--ink2:#b2b2b2;--mut:#838383;--acc:#e07a24;--acc-ink:#161616;--sel:#3a3a3a;--stop:#a92b23;--key:#2b2b2b;--warn:#d2a046;--bad:#c5473d;--r:3px;--bar-h:40px;--pan-w:340px}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:13.5px/1.45 "Malgun Gothic","Segoe UI","Noto Sans KR",-apple-system,sans-serif;display:flex;flex-direction:column;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,.result,.file,.minfo,.rmemo{-webkit-user-select:text;user-select:text}
+img,button,select,.pad{-webkit-user-drag:none;-webkit-touch-callout:none}
+button,select,summary{touch-action:manipulation;font-family:inherit}
+.num{font-family:"Segoe UI","Malgun Gothic",sans-serif;font-variant-numeric:tabular-nums}
+/* top bar */
+header{height:var(--bar-h);flex:none;display:flex;align-items:center;gap:18px;padding:0 16px;background:var(--bar);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.2px;margin-right:auto;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink2);max-width:360px;white-space:nowrap}
+.chip span:last-child{overflow:hidden;text-overflow:ellipsis}
+.dot{width:8px;height:8px;border-radius:1px;background:transparent;border:1px solid var(--mut);flex:none}
+.dot.good{background:var(--ink2);border-color:var(--ink2)}.dot.warn{background:var(--warn);border-color:var(--warn)}.dot.bad{background:var(--bad);border-color:var(--bad)}.dot.live{background:var(--bad);border-color:var(--bad);animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+/* layout */
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--pan-w);gap:0;width:100%}
+.view{min-height:0;display:flex;align-items:flex-start;justify-content:center;padding:12px}
+.vbox{width:min(100%,calc((100dvh - var(--bar-h) - 24px - 26px) * 4 / 3))}
+.frame{position:relative;width:100%;aspect-ratio:4/3;background:#000;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.frame img{display:block;width:100%;height:100%;object-fit:contain;cursor:crosshair;background:#000}
+.hint{font-size:12px;color:var(--mut);margin-top:6px}
+.panel{min-height:0;background:var(--pan);border-left:1px solid var(--line);display:flex;flex-direction:column}
+.secs{flex:1;min-height:0;overflow-y:auto}
+/* status block */
+.st{padding:14px 16px 12px;border-bottom:1px solid var(--line)}
+.sthead{display:flex;align-items:center;gap:10px}
+.sq{width:12px;height:12px;border-radius:2px;border:1.5px solid var(--mut);flex:none}
+.sq.auto{background:var(--acc);border-color:var(--acc)}.sq.lost{background:transparent;border-color:var(--acc)}.sq.man{background:var(--ink2);border-color:var(--ink2)}.sq.bad{background:var(--bad);border-color:var(--bad)}
+.status{font-size:15px;font-weight:700;margin:0;min-height:22px;line-height:1.3}
+.ans{font-size:12px;color:var(--mut);margin:3px 0 0 22px;min-height:16px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:10px 0 0 22px;font-size:12.5px}
+.kv dt{color:var(--mut)}.kv dd{margin:0;color:var(--ink);text-align:right}
+.mobhint{display:none;font-size:12px;color:var(--mut);margin-top:8px}
+/* pad */
+.padsec{padding:12px 16px 10px;border-bottom:1px solid var(--line)}
+.padsec .lbl2{font-size:12px;color:var(--mut);margin:0 0 8px}
+.pad{display:grid;grid-template-columns:52px 64px 52px;grid-template-rows:44px 52px 44px;gap:6px;justify-content:center}
+.pad button{border:1px solid var(--line2);background:var(--key);color:var(--ink);border-radius:var(--r);font-size:16px;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer;padding:0}
+.pad button:active,.pad button.on{background:var(--sel);border-color:var(--ink2)}
+.pad .u{grid-column:2;grid-row:1}.pad .l{grid-column:1;grid-row:2}.pad .c{grid-column:2;grid-row:2}.pad .rt{grid-column:3;grid-row:2}.pad .d{grid-column:2;grid-row:3}
+.pad .stop{background:var(--stop);border-color:var(--stop);color:#fff;font-size:15px;font-weight:700;display:none}
+.pad .stop:active{background:#c93a30}
+.padhint{display:none;font-size:12px;color:var(--mut);margin-top:10px;text-align:center}
+.stopbar{flex:none;margin:0;width:100%;height:46px;border:0;border-top:1px solid var(--line);background:var(--stop);color:#fff;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.5px}
+.stopbar:active{background:#c93a30}
+/* sections */
+details.sec{border-bottom:1px solid var(--line)}
+details.sec>summary{list-style:none;cursor:pointer;padding:10px 16px;font-size:13px;font-weight:700;color:var(--ink2);display:flex;justify-content:space-between;align-items:center}
+details.sec>summary::-webkit-details-marker{display:none}
+details.sec>summary::after{content:"";width:6px;height:6px;border-right:1.5px solid var(--mut);border-bottom:1.5px solid var(--mut);transform:rotate(-45deg);transition:transform .15s;margin-right:3px}
+details.sec[open]>summary::after{transform:rotate(45deg)}
+.body{padding:0 16px 14px}
+.ctl{font-size:12.5px;color:var(--ink2);line-height:1.6}.ctl b{color:var(--ink);font-weight:600}.ctl small{display:block;color:var(--mut);font-size:11.5px}
+.row{display:flex;gap:8px;align-items:center}
+.btn{flex:1;border:1px solid var(--line2);border-radius:var(--r);padding:8px 12px;font-size:13.5px;font-weight:600;cursor:pointer;color:var(--ink);background:var(--key);white-space:nowrap}
+.btn.start{background:var(--ink2);border-color:var(--ink2);color:var(--acc-ink)}.btn.accent{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.btn.small{flex:none;padding:6px 10px;font-size:12.5px}
+.btn:disabled{opacity:.35;cursor:default}
+select,input,textarea{width:100%;background:var(--field);color:var(--ink);border:1px solid var(--line2);border-radius:var(--r);padding:7px 9px;font:inherit;font-size:13px}
+select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
+textarea{resize:vertical;min-height:34px}
+.stack{display:flex;flex-direction:column;gap:7px}
+.chk{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);white-space:nowrap;cursor:pointer}
+.chk input{width:auto;margin:0;accent-color:var(--acc)}
+.minfo{margin:8px 0 0;font-size:12.5px;color:var(--mut);min-height:18px}
+.result{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.rtitle{font-size:13.5px;font-weight:700;margin:0 0 2px}
+.rmemo{font-size:12.5px;color:var(--ink2);white-space:pre-wrap;margin:0 0 6px}
+.sum{font-size:12.5px;color:var(--mut);margin:2px 0 6px}
+table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+th,td{padding:4px 3px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mut);font-weight:500}
+td small{display:block;font-size:10.5px;color:var(--mut);font-weight:400}
+td.over{color:var(--warn)}
+details.fold{margin-top:8px;border-top:1px solid var(--line);padding-top:6px}
+details.fold summary{cursor:pointer;font-size:12.5px;color:var(--mut);list-style:none;display:flex;justify-content:space-between;align-items:center}
+details.fold summary::-webkit-details-marker{display:none}
+details.fold summary::after{content:"";width:5px;height:5px;border-right:1.5px solid var(--mut);border-bottom:1.5px solid var(--mut);transform:rotate(-45deg);transition:transform .15s;margin-right:3px}
+details.fold[open] summary::after{transform:rotate(45deg)}
+details.fold>*:not(summary){margin-top:6px}
+.legend{margin:0;font-size:12px;color:var(--mut);display:grid;grid-template-columns:auto 1fr;gap:3px 10px}
+.legend dt{color:var(--ink);font-weight:600;white-space:nowrap}.legend dd{margin:0}
+.file{font-size:11.5px;color:var(--mut);word-break:break-all;line-height:1.5}
+.edit{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.hist button{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;background:transparent;border:0;border-radius:var(--r);color:var(--ink);padding:5px 6px;font:inherit;font-size:12.5px;cursor:pointer}
+.hist button:hover{background:var(--sel)}.hist button.sel{background:var(--sel);box-shadow:inset 2px 0 0 var(--acc)}
+.hist .hn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hist .hv{color:var(--mut);white-space:nowrap;font-variant-numeric:tabular-nums}
+.keys{font-size:12.5px;color:var(--mut);line-height:1.9}
+kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r);padding:0 5px;font-size:11.5px;background:var(--field);color:var(--ink)}
+.lbl{color:var(--mut);font-size:12px;white-space:nowrap}
+.row input[type=number]{width:84px;min-width:0}
+/* phone, portrait */
+@media (max-width:900px){
+  :root{--bar-h:48px}
+  body{display:block;height:auto;min-height:100%}
+  header{gap:14px;padding:0 14px}
+  header .desk{display:none}
+  main{display:flex;flex-direction:column}
+  .view{padding:0}
+  .vbox{width:100%}
+  .frame{border-left:0;border-right:0;border-radius:0}
+  .hint{display:none}
+  .mobhint{display:block}
+  .panel{border-left:0}
+  .st{padding:12px 14px 10px}
+  .kv{grid-template-columns:repeat(6,auto);justify-content:space-between;gap:2px 6px;margin-left:22px}
+  .padsec{padding:14px 14px 10px;display:flex;flex-direction:column;align-items:center}
+  .padsec .lbl2{display:none}
+  .pad{grid-template-columns:100px 142px 100px;grid-template-rows:80px 100px 80px;gap:8px}
+  .pad button{font-size:22px}
+  .pad .stop{display:block;font-size:18px}
+  .padhint{display:block}
+  .stopbar{display:none}
+}
+/* phone, landscape: picture left, keys right */
+@media (max-width:900px) and (orientation:landscape){
+  main{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:min-content 1fr min-content}
+  .view{grid-column:1;grid-row:1/3;align-items:center}
+  .vbox{width:min(100%,calc((100dvh - var(--bar-h)) * 4 / 3))}
+  .frame{border:0;border-radius:0}
+  .panel{display:contents}
+  .st{grid-column:2;grid-row:1;border-bottom:0;width:300px;padding-bottom:4px}
+  .kv{grid-template-columns:auto 1fr;gap:2px 14px}
+  .mobhint{display:none}
+  .padsec{grid-column:2;grid-row:2;align-self:end;padding-top:4px;border-bottom:0}
+  .pad{grid-template-columns:72px 100px 72px;grid-template-rows:60px 72px 60px}
+  .padhint{display:none}
+  .secs{grid-column:1/3;grid-row:3;overflow:visible;border-top:1px solid var(--line)}
+  .stopbar{display:none}
+}
+</style></head><body>
+<header>
+  <h1>LWIR 추적</h1>
+  <span class="chip"><span class="dot" id="cdot"></span><span id="ctext">연결 확인 중</span></span>
+  <span class="chip desk num"><span id="fps">–</span><span>&nbsp;fps</span></span>
+  <span class="chip desk"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
+  <span class="chip desk"><span class="dot" id="mcdot"></span><span id="mctext">모델</span></span>
+  <span class="chip"><span class="dot" id="mdot"></span><span id="mtext">측정 대기</span></span>
+</header>
+<main>
+  <section class="view">
+    <div class="vbox">
+      <div class="frame"><img id="v" src="/stream" alt="실시간 영상" draggable="false"></div>
+      <div class="hint">사람을 클릭하면 짐벌이 따라갑니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
+    </div>
+  </section>
+  <aside class="panel">
+    <section class="st">
+      <div class="sthead"><span class="sq" id="sq"></span><div class="status" id="s">대기 중</div></div>
+      <div class="ans" id="ans"></div>
+      <dl class="kv num"><dt>가로 오차</dt><dd id="ex">–</dd><dt>세로 오차</dt><dd id="ey">–</dd><dt>놓친 시간</dt><dd id="lt">–</dd></dl>
+      <div class="mobhint">화면에서 사람을 누르면 그 사람을 따라갑니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
+    </section>
+    <section class="padsec">
+      <p class="lbl2">짐벌 · 누르는 동안 움직입니다</p>
+      <div class="pad" id="pad">
+        <button class="u" data-x="0" data-y="1" aria-label="위">&#9650;</button>
+        <button class="l" data-x="-1" data-y="0" aria-label="왼쪽">&#9664;</button>
+        <button class="c stop" id="b">정지</button>
+        <button class="rt" data-x="1" data-y="0" aria-label="오른쪽">&#9654;</button>
+        <button class="d" data-x="0" data-y="-1" aria-label="아래">&#9660;</button>
+      </div>
+      <div class="padhint">누르는 동안 움직이고, 손을 떼면 멈춥니다</div>
+    </section>
+    <div class="secs">
+      <details class="sec" data-k="ctl">
+        <summary>짐벌 제어기</summary>
+        <div class="body ctl">
+          <!-- v25: these are the values in run/run_real_gui.sh (--gimbal-opts), written here as fixed text; change both together. The bridge has no live gain command yet. -->
+          <b>PD</b> · Kp <b class="num">30</b> · Ki <b class="num">0</b> · Kd <b class="num">6</b> · 불감대 <b class="num">0.06</b> · 자동 속도 최대 <b class="num">10</b> · 방향키 속도 <b class="num">20</b>
+          <small>화면에서는 바꿀 수 없습니다 (run/run_real_gui.sh 에서 고침 · 2026-11-10 조정값)</small>
+        </div>
+      </details>
+      <details class="sec" data-k="model">
+        <summary>검출 모델</summary>
+        <div class="body">
+          <div class="row"><select id="msel" aria-label="검출 모델"></select><button class="btn accent small" id="mapply" disabled>바꾸기</button></div>
+          <div class="minfo" id="minfo">모델 목록을 불러오는 중…</div>
+        </div>
+      </details>
+      <details class="sec" data-k="rules">
+        <summary>거름·추적기</summary>
+        <div class="body stack">
+          <div class="row"><label class="lbl" for="rwarm">온기 기준</label><input id="rwarm" type="number" min="0" max="65535" step="500" aria-label="온기 기준 (원시값)"><label class="lbl" for="redge">가장자리 신뢰도</label><input id="redge" type="number" min="0" max="1" step="0.05" aria-label="가장자리 새 궤적 신뢰도"></div>
+          <div class="row"><select id="rtrk" aria-label="추적기 종류"></select><label class="chk"><input type="checkbox" id="rrel"> 재식별(RepVGG+판정기)</label><button class="btn accent small" id="rapply">적용</button></div>
+          <div class="minfo" id="rinfo" style="margin-top:0">규칙을 불러오는 중…</div>
+        </div>
+      </details>
+      <details class="sec" data-k="meas">
+        <summary>측정</summary>
+        <div class="body">
+          <div class="stack">
+            <input id="mname" maxlength="80" placeholder="측정 이름 (예: 사람 2명, 짐벌 추종)" aria-label="측정 이름">
+            <textarea id="mmemo" rows="1" maxlength="2000" placeholder="메모 (선택, 측정 중에도 고칠 수 있음)" aria-label="메모"></textarea>
+            <div class="row"><button class="btn start" id="mst">측정 시작</button><button class="btn" id="msp" disabled>측정 끝</button></div>
+            <label class="chk"><input type="checkbox" id="mvid" checked> 영상 저장 (16비트 원본 무손실, 1분 ≈ 400 MB)</label>
+          </div>
+          <div class="minfo" id="mi">시작을 누르면 그 순간부터 프레임마다 기록합니다.</div>
+          <div id="mr"></div>
+          <div id="mh"></div>
+        </div>
+      </details>
+      <details class="sec" data-k="keys">
+        <summary>단축키</summary>
+        <div class="body keys">
+          <kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> 짐벌 이동 (누르는 동안) &nbsp;·&nbsp; <kbd>Space</kbd> 정지<br>
+          영상 위 사람 클릭: 그 사람 따라가기 &nbsp;·&nbsp; 입력칸에 글을 쓰는 동안 방향키는 짐벌을 움직이지 않습니다
+        </div>
+      </details>
+    </div>
+    <button class="stopbar" id="bstop">정지</button>
+  </aside>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const v=$('v'),S=$('s');
+function chip(d,t,cls,txt){$(d).className='dot '+cls;$(t).textContent=txt;}
+// section fold state (v25): desktop open, phone closed, remembered per browser
+const MOB=matchMedia('(max-width:900px)');
+let openSaved={};try{openSaved=JSON.parse(localStorage.getItem('lwir_live_open')||'{}')||{};}catch(_){openSaved={};}
+for(const d of document.querySelectorAll('details.sec')){const k=d.dataset.k;d.open=(k in openSaved)?!!openSaved[k]:!MOB.matches;
+  d.querySelector('summary').addEventListener('click',()=>setTimeout(()=>{openSaved[k]=d.open;try{localStorage.setItem('lwir_live_open',JSON.stringify(openSaved));}catch(_){}},0));}   // saved only on the user's click, never the default
+// connection chip (v24): good = answers keep coming, yellow = nothing for 1.5 s, red = nothing for 4 s. One failed request never turns it red; time asleep (phone screen off) does not count (wake() restarts the clock).
+let lastOk=Date.now(),grace=Date.now(),camIdle=0,camFail=0,wasDown=false,sN=0;
+function openStream(){v.src='/stream?'+(++sN);}
+function netChip(){
+  const idle=Date.now()-Math.max(lastOk,grace);
+  if(idle>4000){wasDown=true;chip('cdot','ctext','bad','서버 연결 끊김');S.textContent='서버 연결 끊김';$('sq').className='sq bad';$('fps').textContent='–';hzPrev=null;return;}
+  if(idle>1500){wasDown=true;chip('cdot','ctext','warn','연결 불안정');return;}   // a 1.5 s+ gap may have cut the picture stream too
+  if(wasDown){wasDown=false;openStream();}   // the picture stream died with the connection: open it again
+  if(camFail>0){chip('cdot','ctext','bad','서버 연결됨 · 카메라 응답 없음 '+Math.round(camIdle)+'초 · 자동 복구 '+camFail+'회 실패 · USB 선과 전원을 확인하세요');return;}
+  chip('cdot','ctext',camIdle>3?'warn':'good',camIdle>3?'서버 연결됨 · 카메라 영상 '+Math.round(camIdle)+'초째 안 들어옴 (스스로 복구 중)':'서버 연결됨');}
+v.addEventListener('error',()=>setTimeout(openStream,2000));
+// v25: the bridge answers in English; shown in Korean
+const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
+let lostSince=null,autoNow=false,hzPrev=null;
+function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;netChip();
+  let txt,cls='good',sq='';
+  if(!t.running){txt='짐벌 프로그램이 꺼져 있습니다';cls='bad';sq='bad';}
+  else if(t.error){txt='짐벌 오류: 서버를 다시 켜야 합니다';cls='bad';sq='bad';}
+  else if(t.lost){txt=t.id+'번 놓침, 잠시 기다립니다';cls='warn';sq='lost';}
+  else if(t.auto){txt=t.id+'번을 따라가는 중';sq='auto';}
+  else if(t.moving){txt='수동으로 움직이는 중';sq='man';}
+  else if(t.ready===false){txt='짐벌 준비 중';cls='';}
+  else{txt='대기 중 · 영상에서 사람을 클릭하세요';cls='';}
+  S.textContent=txt;$('sq').className='sq '+sq;$('ans').textContent=t.answer?(ANS[t.answer]||t.answer):'';
+  chip('gdot','gtext',cls,t.running?(t.auto?'추종 '+t.id+'번':t.moving?'수동 이동':'짐벌 대기'):'짐벌 꺼짐');
+  if(t.lost){if(lostSince==null)lostSince=Date.now();$('lt').textContent=((Date.now()-lostSince)/1000).toFixed(1)+' 초';}
+  else{lostSince=null;$('lt').textContent='–';}
+  autoNow=!!(t.running&&t.auto&&!t.lost);if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
+}
+function post(u,ka){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',keepalive:!!ka}).then(r=>r.json()).then(show).catch(()=>{S.textContent='명령이 전달되지 않았습니다';netChip();});}
+v.addEventListener('click',e=>{const r=v.getBoundingClientRect();
+  // the image keeps 4:3 inside its box (object-fit: contain): map the click into the picture itself
+  const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
+  const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;
+  post('/gimbal/click?x='+x+'&y='+y);});
+const stopAll=()=>post('/gimbal/stop');
+$('b').addEventListener('click',stopAll);$('bstop').addEventListener('click',stopAll);   // phone: centre key; desktop: bar at the panel bottom — the same command
+for(const el of [v,$('pad')]){el.addEventListener('contextmenu',e=>e.preventDefault());el.addEventListener('dragstart',e=>e.preventDefault());}
+addEventListener('dragstart',e=>{if(e.target&&e.target.tagName==='IMG')e.preventDefault();});
+const K={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,1],ArrowDown:[0,-1]};let held=null;
+const typing=e=>{const t=e.target;return t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT');};   // keys typed into the boxes never move the gimbal
+addEventListener('keydown',e=>{if(typing(e))return;if(e.code==='Space'){e.preventDefault();held=null;post('/gimbal/stop');return;}const m=K[e.key];if(!m)return;e.preventDefault();if(e.repeat||held===e.key)return;held=e.key;post('/gimbal/move?x='+m[0]+'&y='+m[1]);});
+addEventListener('keyup',e=>{if(typing(e))return;if(e.key===held){held=null;post('/gimbal/move?x=0&y=0');}});
+let padDown=false,padBtn=null;
+function release(){let sent=false;if(held){held=null;sent=true;}if(padDown){padDown=false;if(padBtn)padBtn.classList.remove('on');padBtn=null;sent=true;}if(sent)post('/gimbal/move?x=0&y=0',true);}   // keepalive: the stop still leaves when the page is being hidden
+addEventListener('blur',release);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)release();});addEventListener('pagehide',release);   // v25: screen off / app switched while a key is held: stop
+for(const b of document.querySelectorAll('#pad button[data-x]')){
+  const go=e=>{e.preventDefault();if(padDown)return;padDown=true;padBtn=b;b.classList.add('on');try{b.setPointerCapture&&b.setPointerCapture(e.pointerId);}catch(_){}try{if(e.pointerType==='touch'&&navigator.vibrate)navigator.vibrate(8);}catch(_){}post('/gimbal/move?x='+b.dataset.x+'&y='+b.dataset.y);};
+  const stop=e=>{if(!padDown)return;padDown=false;padBtn=null;b.classList.remove('on');post('/gimbal/move?x=0&y=0');};
+  b.addEventListener('pointerdown',go);for(const n of ['pointerup','pointercancel','pointerleave','lostpointercapture'])b.addEventListener(n,stop);b.addEventListener('contextmenu',e=>e.preventDefault());}
+let pingBusy=false;   // one ping at a time, each with a 1.5 s limit, so requests never pile up behind a slow link
+function ping(){if(pingBusy)return;pingBusy=true;const c=new AbortController(),t=setTimeout(()=>c.abort(),1500);
+  fetch('/gimbal/ping',{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',signal:c.signal}).then(r=>r.json()).then(show).catch(()=>{}).finally(()=>{clearTimeout(t);pingBusy=false;netChip();});}
+setInterval(ping,400);ping();setInterval(netChip,500);
+const pageT0=Date.now();
+function wake(){grace=Date.now();ping();if(Date.now()-pageT0>3000)openStream();}   // screen back on / tab shown / network back: the picture stream may have died while the page slept
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)wake();});addEventListener('pageshow',wake);addEventListener('online',wake);
+// v25: frame rate from /healthz (read only): frames_in difference / up difference over the last 2 s
+function hztick(){if(document.hidden)return;fetch('/healthz',{cache:'no-store'}).then(r=>r.json()).then(h=>{lastOk=Date.now();
+  if(hzPrev&&h.up>hzPrev.up){const f=(h.frames_in-hzPrev.frames_in)/(h.up-hzPrev.up);$('fps').textContent=f>0?f.toFixed(1):'0';}hzPrev=h;}).catch(()=>{});}
+setInterval(hztick,2000);hztick();
+// v25: aim error while following (read only): /gimbal/people gives the boxes; the bridge brings the point 0.3 of the box height below its top to the picture centre (gimbal_bridge_v25.cpp aimed(), --aim-y 0.3)
+const AIM_Y=0.3,PX=x=>(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(0)+' px';
+function etick(){if(document.hidden||!autoNow)return;fetch('/gimbal/people',{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();
+  const id=p.state&&p.state.id,b=(p.people||[]).find(q=>q.id===id);if(!b||!autoNow){$('ex').textContent='–';$('ey').textContent='–';return;}
+  $('ex').textContent=PX((b.x1+b.x2)/2-p.width/2);$('ey').textContent=PX(b.y1+AIM_Y*(b.y2-b.y1)-p.height/2);}).catch(()=>{});}
+setInterval(etick,500);
+// measurement
+const MI=$('mi'),MR=$('mr'),MH=$('mh'),MN=$('mname'),MM=$('mmemo');
+MM.addEventListener('input',()=>{MM.style.height='auto';MM.style.height=Math.min(MM.scrollHeight,140)+'px';});
+const f1=x=>x==null?'-':x.toFixed(1);
+const esc=t=>String(t==null?'':t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const LEGEND='<details class="fold"><summary>항목 설명</summary><dl class="legend">'+
+  '<dt>입력→출력</dt><dd>카메라 프레임이 서버에 도착한 순간부터 그 프레임의 추적 결과가 나온 순간까지. 카메라 안에서 걸리는 시간은 빠져 있습니다.</dd>'+
+  '<dt>출력 간격</dt><dd>추적 결과가 나오는 간격. 카메라 프레임 간격(24 fps면 약 41 ms)보다 짧아질 수 없습니다.</dd>'+
+  '<dt>처리</dt><dd>한 프레임을 넣고 결과를 받기까지 서버 안에서 걸린 시간. 파이프라인을 켜면 다음 프레임을 기다리는 시간이 들어갑니다.</dd>'+
+  '<dt>NPU 대기</dt><dd>검출 모델(NPU) 결과를 받을 때까지 기다린 시간. NPU 계산 시간이 포함됩니다.</dd>'+
+  '<dt>트래커</dt><dd>박스를 이전 프레임과 이어 붙이는 추적 계산 시간.</dd>'+
+  '<dt>p50 · p95 · p99</dt><dd>프레임의 50% · 95% · 99%가 이 값 이하라는 뜻. 최대는 가장 느린 한 프레임입니다.</dd>'+
+  '<dt>&gt;33</dt><dd>33 ms(30 fps 한 프레임 시간)를 넘긴 프레임의 비율. 33 ms를 넘긴 칸은 노란색입니다.</dd></dl></details>';
+let sel=null, shownKey='', lastState=null, editing=false, miHold=0;
+const note=t=>{MI.textContent=t;miHold=Date.now()+4000;};
+const openState=(root,sel_)=>{const o={};root.querySelectorAll(sel_).forEach(d=>{if(d.dataset.k)o[d.dataset.k]=d.open;});return o;};
+const applyOpen=(root,sel_,o)=>{root.querySelectorAll(sel_).forEach(d=>{if(d.dataset.k in o)d.open=o[d.dataset.k];});};
+function table(r){
+  if(!r.frames)return '<div class="sum">기록된 프레임이 없습니다.</div>';
+  let h='<div class="sum">'+r.frames+'프레임 · '+r.seconds.toFixed(1)+'초 · 출력 '+f1(r.out_fps)+' fps · 카메라 '+f1(r.cam_fps)+' fps</div>';
+  h+='<table><tr><th>ms</th><th>p50</th><th>p95</th><th>p99</th><th>최대</th><th>&gt;33</th></tr>';
+  for(const [k,lab,sub] of [['delay','입력→출력','카메라 도착→결과'],['interval','출력 간격','결과 사이 시간'],['compute','처리','서버 안 계산'],['npu_wait','NPU 대기','검출 결과 대기'],['tracker','트래커','추적 계산']]){
+    const s=r[k];if(!s)continue;
+    h+='<tr><td>'+lab+'<small>'+sub+'</small></td>'+[s.p50,s.p95,s.p99,s.max].map(x=>'<td'+(x>33?' class="over"':'')+'>'+f1(x)+'</td>').join('')+'<td>'+f1(s.over33)+'%</td></tr>';}
+  return h+'</table>';}
+function render(r){
+  if(editing)return;
+  const keep=openState(MR,'details');
+  if(!r){MR.innerHTML='<div class="result"><div class="sum">아직 측정 결과가 없습니다.</div>'+LEGEND.replace('<details class="fold">','<details class="fold" data-k="legend">')+'</div>';applyOpen(MR,'details',keep);return;}
+  const vid=r.video?'영상 frames.raw.gz · '+r.video.frames+'장 · '+Math.round((r.video.gz_bytes||0)/1048576)+' MB'+(r.video.dropped?' · 놓침 '+r.video.dropped+'장':'')+'<br>우리 추적 결과 tracks.csv':'영상 저장 안 함';
+  MR.innerHTML='<div class="result"><div class="row" style="justify-content:space-between"><div class="rtitle">'+r.n+'회차 · '+(r.name?esc(r.name):'<span style="color:var(--mut)">이름 없음</span>')+'</div><button class="btn small" id="medit">고치기</button></div>'+
+    (r.memo?'<div class="rmemo">'+esc(r.memo)+'</div>':'')+table(r)+
+    '<details class="fold" data-k="file"><summary>저장 위치</summary><div class="file">'+esc(r.folder||r.file)+'<br>'+vid+'<br>엑셀용 timing.csv · 요약 summary.json</div></details>'+
+    LEGEND.replace('<details class="fold">','<details class="fold" data-k="legend">')+'</div>';
+  applyOpen(MR,'details',keep);
+  $('medit').onclick=()=>{editing=true;$('medit').closest('.row').outerHTML='<div class="edit"><input id="en" maxlength="80" value="'+esc(r.name)+'" placeholder="측정 이름"><textarea id="em" rows="3" maxlength="2000" placeholder="메모">'+esc(r.memo)+'</textarea><div class="row"><button class="btn accent small" id="esv">저장</button><button class="btn small" id="ecn">취소</button></div></div>';
+    $('ecn').onclick=()=>{editing=false;shownKey='';tick();};
+    $('esv').onclick=()=>fetch('/measure/note',{method:'POST',headers:{'X-Gimbal':'1','Content-Type':'application/json'},body:JSON.stringify({n:r.n,name:$('en').value,memo:$('em').value})})
+      .then(x=>{if(!x.ok)throw 0;editing=false;shownKey='';note(r.n+'회차 이름·메모를 저장했습니다.');return tick();}).catch(()=>{note('저장하지 못했습니다');});};}
+function history(m){
+  const hs=m.history||[];if(!hs.length){MH.innerHTML='';return;}
+  const keep=openState(MH,'details');
+  let h='<details class="fold hist" data-k="hist"><summary>지난 측정 '+hs.length+'회 · 입력→출력 p50 / p95</summary><div>';
+  for(const x of hs.slice().reverse()){const on=(sel==null?(m.last&&m.last.n===x.n):sel===x.n);
+    h+='<button data-n="'+x.n+'"'+(on?' class="sel"':'')+'><span class="hn">'+x.n+'회차 · '+(x.name?esc(x.name):'이름 없음')+'</span><span class="hv">'+f1(x.delay_p50)+' / '+f1(x.delay_p95)+' ms</span></button>';}
+  MH.innerHTML=h+'</div></details>';applyOpen(MH,'details',keep);
+  for(const b of MH.querySelectorAll('button'))b.onclick=()=>{const n=+b.dataset.n;sel=(m.last&&m.last.n===n)?null:n;shownKey='';tick();};}
+function mshow(m){
+  lastState=m;$('mst').disabled=m.on;$('msp').disabled=!m.on;
+  if(m.on){chip('mdot','mtext','live','측정 중');MI.textContent=m.cur.n+'회차 측정 중'+(m.cur.name?' · '+m.cur.name:'')+' · '+m.frames+'프레임 · '+m.seconds.toFixed(0)+'초'+(m.video_frames!=null?' · 영상 '+m.video_frames+'장'+(m.video_dropped?' (놓침 '+m.video_dropped+')':''):'');}
+  else{chip('mdot','mtext',m.last?'good':'',m.last?'측정 '+m.last.n+'회차 완료':'측정 대기');if(Date.now()>miHold)MI.textContent=m.last?'측정 끝 · 시작을 누르면 새 측정이 시작됩니다':'시작을 누르면 그 순간부터 프레임마다 기록합니다.';}
+  history(m);
+  if(sel!=null){const key='h'+sel;if(shownKey!==key){shownKey=key;fetch('/measure/'+sel).then(x=>x.json()).then(render).catch(()=>{});}return;}
+  const key=m.last?('l'+m.last.n+'|'+m.last.name+'|'+m.last.memo):'none';if(shownKey!==key){shownKey=key;render(m.last);}}
+function tick(){if(document.hidden)return Promise.resolve();return fetch('/measure',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(mshow).catch(()=>{});}
+function mpost(u,body){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1','Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(r=>r.json()).then(m=>{sel=null;shownKey='';mshow(m);}).catch(()=>{note('서버 연결 끊김');});}
+$('mst').addEventListener('click',()=>mpost('/measure/start',{name:MN.value,memo:MM.value,video:$('mvid').checked}));
+$('msp').addEventListener('click',()=>mpost('/measure/stop',{memo:MM.value}).then(()=>{MN.value='';MM.value='';MM.style.height='';}));
+// detector model
+const MS=$('msel'),MA=$('mapply'),MIN=$('minfo');let mcat='',mdirty=false,mlast=null;
+function mdl(m){
+  mlast=m;
+  const key=JSON.stringify(m.catalog);
+  if(key!==mcat){mcat=key;MS.innerHTML=m.catalog.map(c=>'<option value="'+c.id+'">'+c.id+'. '+esc(c.name)+'</option>').join('');}
+  if(!m.catalog.length){MIN.textContent='이 실행에서는 모델을 바꿀 수 없습니다.';MA.disabled=true;chip('mcdot','mctext','','모델 고정');return;}
+  const cur=m.catalog.find(c=>c.id===m.current);
+  if(!mdirty&&!m.busy&&cur)MS.value=String(cur.id);
+  chip('mcdot','mctext',m.busy?'live':'good',m.busy?'모델 바꾸는 중':(cur?cur.name:'모델'));
+  MA.disabled=m.busy||MS.value===String(m.current);
+  let t=cur?'지금: '+cur.name:'';
+  if(m.busy){const p=m.catalog.find(c=>c.id===m.pending);t='바꾸는 중'+(p?': '+p.name:'')+' · 카메라 영상이 들어오는 다음 프레임에 바뀝니다';}
+  else if(m.last){t+=' · '+m.last.at+' '+m.last.text+(m.last.seconds!=null?' ('+m.last.seconds+'초)':'');}
+  MIN.textContent=t;}
+function mtick(){if(document.hidden)return Promise.resolve();return fetch('/model',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(mdl).catch(()=>{});}
+MS.addEventListener('change',()=>{mdirty=true;if(mlast)MA.disabled=mlast.busy||MS.value===String(mlast.current);});
+MA.addEventListener('click',()=>{MA.disabled=true;fetch('/model/set?id='+MS.value,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json()).then(m=>{mdirty=false;mdl(m);}).catch(()=>{MIN.textContent='서버 연결 끊김';});});
+setInterval(mtick,1000);mtick();
+// rules / tracker (v24g)
+const RW=$('rwarm'),RE=$('redge'),RT=$('rtrk'),RR=$('rrel'),RA=$('rapply'),RI=$('rinfo');let rdirty=false,rlast=null,rcat='';
+for(const el of [RW,RE,RT,RR])el.addEventListener('input',()=>{rdirty=true;});
+function rshow(r){rlast=r;const key=JSON.stringify(r.presets);if(key!==rcat){rcat=key;RT.innerHTML=r.presets.map(p=>'<option value="'+p.key+'">'+esc(p.name)+'</option>').join('');}
+  if(!rdirty){RW.value=r.warm_min;RE.value=r.edge_birth;RT.value=r.tracker;RR.checked=!!r.relabel;}
+  RR.disabled=!r.relabel_available;
+  const tk=(r.presets.find(p=>p.key===r.tracker)||{}).name||r.tracker;
+  let t='지금: 온기 '+r.warm_min+(r.warm_min>0?' 이상만 사람':' (꺼짐)')+' · 가장자리 새 궤적 '+(r.edge_birth>0?r.edge_birth+' 이상':'제한 없음')+' · '+tk+' · 재식별 '+(r.relabel?'켜짐':'꺼짐')+' · ViT '+r.vit;
+  if(r.warm_dropped!=null)t+=' · 온기 거름 '+r.warm_dropped+'개';
+  if(r.pending)t+=' · 다음 프레임에 적용 중';
+  RI.textContent=t;}
+function rtick(){if(document.hidden)return Promise.resolve();return fetch('/rules',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(rshow).catch(()=>{});}
+RA.addEventListener('click',()=>{RA.disabled=true;const q='warm_min='+encodeURIComponent(RW.value||0)+'&edge_birth='+encodeURIComponent(RE.value||0)+'&tracker='+encodeURIComponent(RT.value)+'&relabel='+(RR.checked?1:0);
+  fetch('/rules/set?'+q,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json()).then(r=>{rdirty=false;rshow(r);RI.textContent=(r.text||'')+' · '+RI.textContent;}).catch(()=>{RI.textContent='서버 연결 끊김';}).finally(()=>{RA.disabled=false;});});
+setInterval(rtick,2000);rtick();
+setInterval(tick,1000);tick();
+</script>
+</body></html>
