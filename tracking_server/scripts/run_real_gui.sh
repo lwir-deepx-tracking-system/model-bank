@@ -30,6 +30,7 @@ GUI_HOST="${LWIR_GUI_HOST:-192.168.50.1}"
 GIMBAL_DEV="${LWIR_GIMBAL_DEV:-/dev/ttyUSB0}"
 SPEED_MAX="${LWIR_GIMBAL_SPEED_MAX:-100}"
 REACQUIRE_MS="${LWIR_GIMBAL_REACQUIRE_MS:-10000}"
+AIM_Y="${LWIR_GIMBAL_AIM_Y:-0.08}"   # 사람 상자의 어느 높이를 화면 가운데에 둘지 (위에서부터의 비율). 0.08 = 머리 (2026-11-11 부터, 그 전에는 0.3 = 가슴). 화면의 세로 오차 표시(page/js/04_ping_fps_aim.js 의 AIM_Y)와 같아야 한다.
 BRIDGE="${LWIR_GIMBAL_BRIDGE:-src/gimbal/gimbal_bridge_v25}"   # 짐벌 프로그램. v27(움직임 부드럽게, 시험용)을 쓰려면 scripts/live.env 에 LWIR_GIMBAL_BRIDGE=src/gimbal/gimbal_bridge_v27
 EXTRA_OPTS="${LWIR_GIMBAL_EXTRA_OPTS:-}"                     # 짐벌 프로그램에 더 줄 옵션 (예: --deadband-exit 0.10 --axis-reversal 1)
 [ -n "$BIND" ] || { echo "no page address: tailscale0 has no IPv4 address; set LWIR_LIVE_BIND in scripts/live.env"; exit 8; }
@@ -41,5 +42,5 @@ echo "START $(date +%T) page=$BIND:$PORT gui=$GUI_HOST gimbal=$GIMBAL_DEV speed_
 exec python3 -B start_tracking_server.py --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 3 --warm-min 45000 --edge-birth 0.5 \
   --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 1 --confirm-gate models/track/gate_gru32_frozen.json --judge models/track/relink_judge_frozen.json --judge-crops 2 \
   --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 \
-  --gimbal "$GIMBAL_DEV" --gimbal-speed 10 --gimbal-bridge "$BRIDGE" --gimbal-opts "--controller pid --ki 0 --kd 6 --integral-limit 3 --deadband 0.06 --manual-speed 20 --speed-max $SPEED_MAX --reacquire-ms $REACQUIRE_MS $EXTRA_OPTS" \
+  --gimbal "$GIMBAL_DEV" --gimbal-speed 10 --gimbal-aim-y "$AIM_Y" --gimbal-bridge "$BRIDGE" --gimbal-opts "--controller pid --ki 0 --kd 6 --integral-limit 3 --deadband 0.06 --manual-speed 20 --speed-max $SPEED_MAX --reacquire-ms $REACQUIRE_MS $EXTRA_OPTS" \
   --gui-host "$GUI_HOST" --gui-bind 0.0.0.0
