@@ -6,6 +6,7 @@ from ..common.state import APP
 from ..common.shared_values import HERE
 from ..track.position_memory import POSP
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
+from ..camera import replay_link
 
 
 def dash_rect(img, p1, p2, col, th=2, dash=7):
@@ -65,6 +66,7 @@ def live_publish(g_, rows_, row_):
         APP.GB.people = gb_people_; APP.GB.frame += 1
         if sC_ is not None: gb_people_ = stab_people_real(gb_people_, sC_, float(APP.LIVE_W), float(APP.LIVE_H))   # stab: the F / G lines below carry real camera coordinates
         if frozen_: gb_people_ = []   # 11-12 frozen picture: the gimbal program sees its person as lost and stops (selection kept for the reacquire time)
+        if replay_link.frame_blocked(t_in): gb_people_ = []; APP.GB.people = []   # 11-12 recording replay: the gimbal never gets the replayed people (and a click cannot pick one)
         if APP.CTL['lead']: gb_people_ = APP.lead_shift(gb_people_, APP.GB.people, gb_id_, t_in, float(APP.LIVE_W), float(APP.LIVE_H))   # v40 예측 제어: only the followed person's box in the F / G line moves ahead
         elif APP.CTL['lv'] is not None or APP.CTL['lead_px']: APP.CTL['lv'] = None; APP.CTL['lead_px'] = 0.0
         people_txt_ = ''.join(' %d %.1f %.1f %.1f %.1f %.3f' % (p_[0], p_[1], p_[2], p_[3] - p_[1], p_[4] - p_[2], p_[5]) for p_ in gb_people_)
@@ -89,7 +91,9 @@ def live_publish(g_, rows_, row_):
                     dash_rect(img_, p1_, p2_, pc_, 2); APP.cv2.putText(img_, '%d predict' % tid_, (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, pc_, 2)   # v36: same colour as the track, dashed = estimate
             except Exception: pass
         txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
-        APP.cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0), -1); APP.cv2.putText(img_, txt_, (8, 19), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+        rp_ = getattr(APP.LIVE, 'replay', None)
+        if rp_ is not None: txt_ = '%s | TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | persons %d' % (replay_link.top_text(rp_), fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, npers_)   # 11-12: shorter line so the name fits
+        APP.cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0) if rp_ is None else (0, 0, 150), -1); APP.cv2.putText(img_, txt_, (8, 19), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
         if APP.GB is not None:
             st_ = APP.GB.state
             gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else ('gimbal: lost %d, waiting' % st_['id'] if st_['lost'] else 'gimbal: following %d' % st_['id'] if st_['auto'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle, click a person')
@@ -166,12 +170,26 @@ def make_lv_Handler():
                 try: self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 except (BrokenPipeError, ConnectionResetError, OSError): pass
                 return
+            if self.path.startswith('/replay/') and self.headers.get('X-Gimbal') == '1':   # 11-12: recording replay (works without the gimbal too)
+                from urllib.parse import urlsplit as us4_, parse_qs as pq4_
+                u4_ = us4_(self.path)
+                if u4_.path == '/replay/start': code_, text_ = replay_link.start_request(pq4_(u4_.query))
+                elif u4_.path == '/replay/stop': code_, text_ = replay_link.stop_request()
+                else: self.send_error(404); return
+                b_ = json.dumps(dict(ok=code_ == 200, text=text_, state=replay_link.state()), ensure_ascii=False).encode()
+                try: self.send_response(code_); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                except (BrokenPipeError, ConnectionResetError, OSError): pass
+                return
             if APP.GB is None or self.headers.get('X-Gimbal') != '1': self.send_error(403); return
             from urllib.parse import urlsplit, parse_qs
             u_ = urlsplit(self.path); q_ = parse_qs(u_.query)
             try:
                 ip_ = self.client_address[0]; APP.GB.mover_t[ip_] = time.monotonic()
                 APP.gb_send('P')
+                if u_.path in ('/gimbal/click', '/gimbal/move') and replay_link.blocking() and (u_.path == '/gimbal/click' or int(q_['x'][0]) or int(q_['y'][0])):   # 11-12: no gimbal move while a recording is played (a move of 0 0 = stop is let through)
+                    APP.GB.mover = None; APP.GB.state['answer'] = '녹화 재생 중에는 짐벌을 움직이지 않습니다. 재생을 멈춘 뒤 사람을 다시 누르세요'
+                    b_ = json.dumps(dict(APP.GB.state, cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n, refused=True), ensure_ascii=False).encode()
+                    self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
                 if getattr(APP.GB, 'usb_hold', False) and u_.path in ('/gimbal/click', '/gimbal/move'): u_ = u_._replace(path='/gimbal/stop')   # v35: USB power is being cycled, no new move
                 if u_.path in ('/gimbal/click', '/gimbal/stop'): APP.GB.mover = None
                 elif u_.path == '/gimbal/move': APP.GB.mover = ip_ if (int(q_['x'][0]) or int(q_['y'][0])) else None
@@ -228,7 +246,7 @@ def make_lv_Handler():
                               cam_fail=APP.LIVE.cam_fail_n, warm_dropped=APP.LIVE.warm_dropped, frozen_frames=getattr(APP.LIVE, 'frozen_total', 0), pictures=APP.LIVE.pic_n, viewers=APP.LIVE.viewers, cam_pipe_alive=APP.LIVE.proc.poll() is None, gimbal_alive=(APP.GB.proc is not None and APP.GB.proc.poll() is None) if APP.GB is not None else None,
                               gimbal_ready=bool(APP.GB.state['ready']) if APP.GB is not None else None, gimbal_error=int(APP.GB.state['error']) if APP.GB is not None else None, gimbal_starts=(APP.GB.restarts + 1) if APP.GB is not None else None,
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,
-                              q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
+                              q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, replay=(getattr(APP.LIVE, 'replay', None) or {}).get('name'), track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
                     with APP.LIVE.dlock: dl_ = [d_ for t_, d_ in APP.LIVE.delays if time.perf_counter() - t_ <= 30.0]   # v26b: delay of the last 30 s (camera frame arrival -> picture ready), ms
                     if dl_: dl_.sort(); h_.update(delay_n=len(dl_), delay_p50=round(dl_[len(dl_) // 2], 1), delay_p95=round(dl_[min(len(dl_) - 1, int(len(dl_) * 0.95))], 1), delay_max=round(dl_[-1], 1))
                     else: h_.update(delay_n=0, delay_p50=None, delay_p95=None, delay_max=None)
@@ -240,6 +258,10 @@ def make_lv_Handler():
                 elif self.path.startswith('/measure'):   # v22
                     q_n_ = self.path[len('/measure/'):] if self.path.startswith('/measure/') else ''
                     b_ = json.dumps(next((h_ for h_ in APP.LIVE.meas_hist if str(h_['n']) == q_n_), None) if q_n_ else APP.meas_state()).encode()
+                    self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                elif self.path.startswith('/replay'):   # 11-12: recordings that can be played, and the replay state
+                    from urllib.parse import urlsplit as us5_, parse_qs as pq5_
+                    b_ = json.dumps(replay_link.get_info(pq5_(us5_(self.path).query)), ensure_ascii=False).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/snap.jpg'):
                     APP.LIVE.snap_t = time.perf_counter()   # 11-12: pictures for every frame during the next 3 s

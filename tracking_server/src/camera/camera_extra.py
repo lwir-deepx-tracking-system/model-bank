@@ -298,7 +298,8 @@ def spawn():   # lv_spawn 의 시간표 판: cam_pipe 에 같은 설정을 환�
     stamp_ = not _S['stamp_off']; shm_ = stamp_ and os.environ.get('LWIR_CAM_SHM') == '1' and not _S['shm_off']
     env_ = dict(os.environ); env_['LWIR_CAM_STAMP'] = '1' if stamp_ else '0'; env_['LWIR_CAM_SHM'] = '1' if shm_ else '0'
     _ring_once()
-    p_ = APP.lv_sp.Popen([APP.args.live_cam or str(HERE / 'src' / 'camera' / 'cam_pipe')], stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0, env=env_)
+    from .replay_link import cam_argv   # 11-12: the same command as lv_spawn (the replay program while a recording is played)
+    p_ = APP.lv_sp.Popen(cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0, env=env_)
     p_.lwir_stamp = stamp_
     APP.LIVE.proc = p_; APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()
     log_start()

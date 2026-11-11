@@ -5,6 +5,7 @@ import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
 from ..track.stabilizer import STAB, stab_live, stab_off
+from . import replay_link   # 11-12: recording replay from the page (does nothing until it is used)
 from . import camera_extra   # 2026-11-11: 지워지지 않는 카메라 기록(기본 켜짐), 프레임 시간표와 공유 메모리(환경 변수로만 켜짐)
 
 
@@ -47,7 +48,7 @@ def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a ne
 
 def lv_spawn():   # v21: open (or reopen) the camera process and its reader
     if camera_extra.wanted(): return camera_extra.spawn()   # LWIR_CAM_STAMP=1 (off by default): the same start with the setting passed on to cam_pipe
-    APP.LIVE.proc = APP.lv_sp.Popen([APP.args.live_cam or str(HERE / 'src' / 'camera' / 'cam_pipe')], stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0); APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()   # v26: cam_lost is cleared after the new process is in place (the old reader's end-of-file could set it for the new one and start a second cam_pipe)
+    APP.LIVE.proc = APP.lv_sp.Popen(replay_link.cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0); APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()   # v26: cam_lost is cleared after the new process is in place (the old reader's end-of-file could set it for the new one and start a second cam_pipe)
     APP.lv_th.Thread(target=APP.lv_reader, args=(APP.LIVE.proc,), daemon=True).start()
     camera_extra.log_start()   # camera_events.log: cam_pipe's lines and the server's camera lines, kept over restarts (LWIR_CAM_LOG=0 turns it off)
 
@@ -56,6 +57,7 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
     now_ = time.monotonic(); since_ = now_ - APP.LIVE.t0; idle_ = now_ - max(APP.LIVE.last_frame_t, APP.LIVE.proc_t0)
     if since_ > APP.args.live_seconds: APP.LIVE.stopped = True; raise RuntimeError('no camera frame within --live-seconds (%.0f s)' % since_)
     if APP.LIVE.cam_hold: return   # v33: the reset / reboot button is handling the camera process
+    if APP.LIVE.cam_lost and replay_link.on_cam_lost(now_): return   # 11-12: the replay program ended (end of a single pass, or an error): back to the camera
     if APP.LIVE.cam_lost and now_ - APP.LIVE.proc_t0 > 20:   # v24d: cam_pipe ended on its own. Exit 0 = normal; 6 = four engine resets without a frame; 7 = another cam_pipe holds the camera; 2/3 = scan/open failed. Failures are retried with a growing pause (60 s, 5 min, 15 min) so a dead camera does not get an engine reset every minute, and the page shows the FAILED state.
         rc_ = APP.LIVE.proc.poll()
         if rc_ is None:   # v26b: its output is closed but the process is still there (it is closing the camera). A new cam_pipe now would find the camera busy; wait for the old one, ask it to end after a minute.
@@ -87,6 +89,8 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
     APP.cv2.putText(img_, 'NO CAMERA FRAME  %.0f s' % idle_, (90, 230), APP.cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
     if APP.LIVE.cam_fail_n: APP.cv2.putText(img_, 'CAMERA FAILED: %d restarts without a frame - check the USB cable / power' % APP.LIVE.cam_fail_n, (20, 275), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
     else: APP.cv2.putText(img_, 'the camera restarts itself (about 30 s); page and gimbal keys stay live', (20, 275), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+    rp_ = getattr(APP.LIVE, 'replay', None)
+    if rp_ is not None or getattr(APP.LIVE, 'replay_busy', False): APP.cv2.putText(img_, (replay_link.top_text(rp_) + ': loading the frames') if rp_ is not None else 'REPLAY: switching the picture source', (20, 320), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 1)   # 11-12
     if APP.GB is not None:
         st_ = APP.GB.state; gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle'
         if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s' % ('connected' if gu_['client'] else 'no client')
@@ -282,5 +286,6 @@ def cam_reset_request():
         if APP.LIVE.stopped or APP.args.live_wait: return False, '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
         if APP.LIVE.cam_hold: return False, '이미 초기화 중'
         if APP.LIVE.meas is not None: return False, '측정 중에는 초기화하지 않음'
+        if replay_link.blocking(): return False, '녹화 재생 중에는 카메라 초기화를 하지 않음. 먼저 재생을 멈추세요'   # 11-12
         APP.LIVE.cam_hold = True
     APP.lv_th.Thread(target=APP.cam_reset_work, daemon=True).start(); return True, '카메라 초기화 시작'

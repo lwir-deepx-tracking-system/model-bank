@@ -11,6 +11,7 @@
 #   LWIR_GIMBAL_DEV  serial device of the gimbal (default /dev/ttyUSB0)
 #   LWIR_GIMBAL_SPEED_MAX     top speed of automatic following (default 100)
 #   LWIR_GIMBAL_REACQUIRE_MS  how long the gimbal waits for a lost person before it gives up, in ms (default 10000)
+#   LWIR_REPLAY_ROOT recordings the web page can play instead of the camera (default /mnt/lwir_data/label_web/LWIR_labels; a missing folder = replay unavailable)
 # Normally started by scripts/keepalive.sh (cron). By hand, from any folder:  bash scripts/run_real_gui.sh   (messages: real_gui_1.out, results: real_gui_1/)
 #
 # 2026-11-11 (새 폴더 배치): 실행 파일은 start_tracking_server.py, 이 스크립트는 scripts/ 에 있다. 실행 폴더는 전처럼 실행 파일이 있는 폴더(tracking_server/)다.
@@ -37,6 +38,7 @@ REACQUIRE_MS="${LWIR_GIMBAL_REACQUIRE_MS:-10000}"
 CONFIRM_MS="${LWIR_CONFIRM_MS:-130}"   # 새 사람 확인 시간(ms). 0 = 끔 (--n-init 3 장 그대로)
 AIM_Y="${LWIR_GIMBAL_AIM_Y:-0.08}"   # 사람 상자의 어느 높이를 화면 가운데에 둘지 (위에서부터의 비율). 0.08 = 머리 (2026-11-11 부터, 그 전에는 0.3 = 가슴). 화면의 세로 오차 표시(page/js/04_ping_fps_aim.js 의 AIM_Y)와 같아야 한다.
 BRIDGE="${LWIR_GIMBAL_BRIDGE:-src/gimbal/gimbal_bridge_v25}"   # 짐벌 프로그램. v27(움직임 부드럽게, 시험용)을 쓰려면 scripts/live.env 에 LWIR_GIMBAL_BRIDGE=src/gimbal/gimbal_bridge_v27
+REPLAY_ROOT="${LWIR_REPLAY_ROOT:-/mnt/lwir_data/label_web/LWIR_labels}"   # 녹화 재생(웹 화면 "녹화 재생")에 쓰는 라벨 사이트 녹화 폴더. 폴더가 없으면 서버가 재생을 끈다
 EXTRA_OPTS="${LWIR_GIMBAL_EXTRA_OPTS:-}"                     # 짐벌 프로그램에 더 줄 옵션 (예: --deadband-exit 0.10 --axis-reversal 1)
 [ -n "$BIND" ] || { echo "no page address: tailscale0 has no IPv4 address; set LWIR_LIVE_BIND in scripts/live.env"; exit 8; }
 [ -x "$BRIDGE" ] || { echo "$BRIDGE missing: run scripts/setup.sh (needs OpenCV and GStreamer)"; exit 7; }
@@ -46,6 +48,6 @@ fuser "$GIMBAL_DEV" > /dev/null 2>&1 && { echo "gimbal busy"; exit 5; }
 echo "START $(date +%T) page=$BIND:$PORT gui=$GUI_HOST gimbal=$GIMBAL_DEV speed_max=$SPEED_MAX reacquire_ms=$REACQUIRE_MS confirm_ms=$CONFIRM_MS"
 exec python3 -B start_tracking_server.py --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 3 --confirm-ms "$CONFIRM_MS" --warm-min 45000 --edge-birth 0.5 \
   --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 1 --confirm-gate models/track/gate_gru32_frozen.json --judge models/track/relink_judge_frozen.json --judge-crops 2 \
-  --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 \
+  --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 --replay-root "$REPLAY_ROOT" \
   --gimbal "$GIMBAL_DEV" --gimbal-speed 10 --gimbal-aim-y "$AIM_Y" --gimbal-bridge "$BRIDGE" --gimbal-opts "--controller pid --ki 0 --kd 6 --integral-limit 3 --deadband 0.06 --manual-speed 20 --speed-max $SPEED_MAX --reacquire-ms $REACQUIRE_MS $EXTRA_OPTS" \
   --gui-host "$GUI_HOST" --gui-bind 0.0.0.0

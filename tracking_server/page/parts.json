@@ -13,7 +13,7 @@
     {"file": "css/08_phone.css", "what": "휴대폰 화면 — 세로일 때와 가로일 때의 배치"},
     {"file": "css/09_settings_tree.css", "what": "설정 구역 — 줄, 칸, 선택됨 · 잠김 표시, 모델 폴더 상자"},
     {"file": "css/10_joystick.css", "what": "휴대폰에서 영상을 끌 때 나오는 원(조이스틱), 정지 키 크기 (정지 키도 지금 화면에 없고 모양 규칙만 남아 있음)"},
-    {"file": "html/2_body.html", "what": "화면에 보이는 뼈대 전부 — 맨 위 줄, 영상과 그래프 상자, 상태 칸, Filter 값 · 짐벌 제어기 · 설정 · System · 측정 · 단축키 구역과 그 안의 설명 글. </style> 로 시작하고 <script> 로 끝남"},
+    {"file": "html/2_body.html", "what": "화면에 보이는 뼈대 전부 — 맨 위 줄, 영상과 그래프 상자, 상태 칸, Filter 값 · 짐벌 제어기 · 설정 · System · 녹화 재생 · 측정 · 단축키 구역과 그 안의 설명 글. </style> 로 시작하고 <script> 로 끝남"},
     {"file": "js/01_helpers.js", "what": "공통 도우미 — 요소 찾기($), 상태 점 바꾸기(chip), 접는 구역의 열림 · 닫힘 기억"},
     {"file": "js/02_connection_status.js", "what": "연결 표시와 상태 글자 — 서버 연결 점, 영상 다시 열기, '따라가는 중 / 놓침 / 대기' 글자"},
     {"file": "js/03_gimbal_control.js", "what": "짐벌 조작 — 명령 보내기(post), 영상 누르기(사람 고르기 · 멈춤), 키보드(방향키 · W A S D · Space), 손을 떼면 정지, 휴대폰 끌기"},
@@ -29,6 +29,7 @@
     {"file": "js/13_system_buttons.js", "what": "System 구역 — 카메라 초기화, 재부팅 버튼"},
     {"file": "js/14_start_timers.js", "what": "설정과 측정을 1초마다 다시 읽기 시작"},
     {"file": "js/15_perf_graph.js", "what": "속도 · 지연 그래프 — 켜기 · 끄기, 시간 범위, 1초마다 값 받기, 그리기"},
+    {"file": "js/16_replay.js", "what": "녹화 재생 — 녹화 목록 고르기, 초당 장 수 · 반복, 재생 시작 · 멈춤, 상태 글자, 8비트 주의 (구역이 열려 있을 때 1초마다 읽기)"},
     {"file": "html/3_tail.html", "what": "문서 끝 — </script> 와 닫는 표시"}
   ]
 }

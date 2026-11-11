@@ -27,7 +27,7 @@ def meas_clean(t_, n_):   # v22b: user text, bounded
 def meas_start(name_='', memo_='', video_=True):
     with APP.LIVE.meas_lock:
         if APP.LIVE.meas is not None: return
-        APP.LIVE.meas_n += 1; m_ = dict(n=APP.LIVE.meas_n, t0=time.perf_counter(), wall=time.strftime('%Y-%m-%d %H:%M:%S'), stamp=time.strftime('%Y%m%d_%H%M%S'), rows=[], boxes=[], name=APP.meas_clean(name_, 80), memo=APP.meas_clean(memo_, 2000), video=bool(video_))
+        APP.LIVE.meas_n += 1; rp_ = getattr(APP.LIVE, 'replay', None); m_ = dict(n=APP.LIVE.meas_n, t0=time.perf_counter(), wall=time.strftime('%Y-%m-%d %H:%M:%S'), stamp=time.strftime('%Y%m%d_%H%M%S'), rows=[], boxes=[], name=APP.meas_clean(name_, 80), memo=APP.meas_clean(memo_, 2000), video=bool(video_), **(dict(replay=[rp_['name']]) if rp_ is not None else {}))   # 11-12: replay = recordings played during this measurement (src/camera/replay_link.py adds the later ones)
         safe_ = ''.join(c_ if (c_.isalnum() or c_ in '-_') else '_' for c_ in m_['name'])[:40].strip('_')
         m_['dir'] = APP.meas_dir(m_['stamp'][:8]) / ('MEASURE_%s_%d' % (m_['stamp'], m_['n']) + ('_' + safe_ if safe_ else '')); m_['dir'].mkdir(parents=True, exist_ok=True)
         if m_['video']:
@@ -63,6 +63,7 @@ def meas_stop(memo_=None):
                 compute=APP.meas_stats([r_[2] for r_ in rw_]), npu_wait=APP.meas_stats([r_[3] for r_ in rw_]), tracker=APP.meas_stats([r_[4] for r_ in rw_]),
                 config=dict(det=APP.args.det, pipeline=APP.args.pipeline, npu_depth=APP.args.npu_depth, gmc=APP.args.gmc, gimbal=bool(APP.args.gimbal), gui=bool(getattr(APP.args, 'gui_host', None))),
                 note='delay = camera frame received by the server -> result published (the camera\'s own sensor-to-USB delay is not included); interval = between published results; compute = frame_total_ms')
+    if m_.get('replay'): res_['replay'] = list(m_['replay']); res_['replay_note'] = '이 측정에는 카메라가 아니라 저장된 녹화를 재생한 구간이 있음: ' + ', '.join(m_['replay'])   # 11-12
     res_['fields'] = APP.MEAS_FIELDS
     md_ = m_['dir']; fn_ = 'summary.json'; res_['folder'] = str(md_); res_['file'] = str(md_ / fn_); res_['csv'] = str(md_ / 'timing.csv')
     res_['server_run'] = str(APP.out); res_['video'] = {k_: v_ for k_, v_ in vinfo_.items() if k_ != 'times_s'} if vinfo_ else None
@@ -74,7 +75,7 @@ def meas_stop(memo_=None):
                 i_ = ix_.get(t_)
                 if i_ is None: continue
                 for x1_, y1_, x2_, y2_, tid_, cf_, cl_ in bs_: ft_.write('%d,%d,%d,%.4f,%.2f,%.2f,%.2f,%.2f\n' % (i_, tid_, cl_, cf_, x1_, y1_, x2_ - x1_, y2_ - y1_))
-    (md_ / 'README_KO.txt').write_text('측정 %d: %s\n시작 %s, %.1f초\n메모: %s\n\n' % (m_['n'], m_['name'], m_['wall'], secs_, m_['memo']) +
+    (md_ / 'README_KO.txt').write_text('측정 %d: %s\n시작 %s, %.1f초\n메모: %s\n\n' % (m_['n'], m_['name'], m_['wall'], secs_, m_['memo']) + (('주의: ' + res_['replay_note'] + '\n\n') if m_.get('replay') else '') +
         'summary.json  요약(지연·처리 시간 p50/p95/p99), 이름·메모, 항목 설명, 프레임별 시간\n'
         'timing.csv    프레임별 시간, 한글 열 이름 (엑셀)\n'
         + ('frames.raw.gz 측정 동안 카메라가 보낸 모든 프레임. 16비트 원본값, 640x480, 리틀 엔디언, 앞에서부터 이어 붙임 (%d장, 놓친 프레임 %d장)\n' % (vinfo_['frames'], vinfo_['dropped']) +
