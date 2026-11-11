@@ -8,20 +8,32 @@
 
 ## 목차
 
-1. [한눈에 보기](#1-한눈에-보기) · 2. [빠른 시작](#2-빠른-시작) · 3. [폴더](#3-폴더) · 4. [설정](#4-설정-scriptsliveenv) · 5. [거르는 곳](#5-거르는-곳) · 6. [짐벌 안전](#6-짐벌이-멈추는-경우) · 7. [속도](#7-속도-장치에서-잰-값) · 8. [다시 켜기, 끄기](#8-꺼지면-다시-켜기-끄기) · 9. [웹 화면](#9-웹-화면) · 10. [모델](#10-모델) · 11. [확인한 것](#11-확인한-것과-확인하지-않은-것)
+1. [한눈에 보기](#1-한눈에-보기)
+2. [빠른 시작](#2-빠른-시작)
+3. [폴더](#3-폴더)
+4. [설정](#4-설정-scriptsliveenv)
+5. [거르는 곳](#5-거르는-곳)
+6. [짐벌이 멈추는 경우](#6-짐벌이-멈추는-경우)
+7. [속도: 장치에서 잰 값](#7-속도-장치에서-잰-값)
+8. [꺼지면 다시 켜기, 끄기](#8-꺼지면-다시-켜기-끄기)
+9. [웹 화면](#9-웹-화면)
+10. [모델](#10-모델)
+11. [확인한 것과 확인하지 않은 것](#11-확인한-것과-확인하지-않은-것)
 
 ## 1. 한눈에 보기
 
-| 단계 | 하는 일 | 어디서 | 코드 |
-|---|---|---|---|
-| 1. 영상 받기 | 카메라에서 16비트 640×480 영상을 받음 | CPU | `src/camera/` |
-| 2. 검출 | YOLO26m(`.dxnn`, INT8)으로 사람 상자를 찾음 | **NPU 코어 0** | `src/detect/` |
-| 3. 검출 뒤 Filter | 온도 범위 밖인 상자, 화면 끝의 점수 낮은 상자를 버림 | CPU | `src/track/` |
-| 4. 추적 | 앞 장의 사람과 짝지어 번호를 유지 (BoT-SORT, Kalman filter) | CPU | `src/track/` |
-| 5. 다시 알아보기 | 외형 특징(`.dxnn`)으로 같은 사람인지 확인, 돌아온 사람에게 옛 번호 (KeepID) | **NPU 코어 2** + CPU | `src/reid/` |
-| 6. 조준 | 고른 사람의 머리를 화면 가운데로: 150 ms 앞을 내다보고 PID 로 짐벌 속도 명령 | CPU | `src/gimbal/` |
+| 단계 | 하는 일 | 어디서 |
+|---|---|---|
+| 1. 영상 받기 | 16비트 640×480 영상 | CPU |
+| 2. 검출 | YOLO26m 으로 사람 상자 | **NPU 코어 0** |
+| 3. 검출 뒤 Filter | 온도·가장자리로 상자 거르기 | CPU |
+| 4. 추적 | 번호 유지 (BoT-SORT, Kalman) | CPU |
+| 5. 다시 알아보기 | 외형으로 옛 번호 (KeepID) | **NPU 코어 2** + CPU |
+| 6. 조준 | 머리를 가운데로, PID | CPU |
 
-신경망 두 개(검출, 외형)는 모두 DX-M1 NPU 에서 돕니다. CPU 에서 도는 신경망은 없습니다.
+- 신경망 두 개(검출, 외형)는 모두 `.dxnn`(INT8)으로 DX-M1 NPU 에서 돕니다. CPU 에서 도는 신경망은 없습니다.
+- 조준은 150 ms 앞을 내다보고(예측 제어) 짐벌에 속도 명령을 보냅니다.
+- 코드 자리: 1 `src/camera/`, 2 `src/detect/`, 3·4 `src/track/`, 5 `src/reid/`, 6 `src/gimbal/`.
 
 ## 2. 빠른 시작
 
@@ -72,8 +84,8 @@ bash model-bank/tracking_server/scripts/run_real_gui.sh  # 켜기
 |---|---|
 | 4 | 서버가 이미 떠 있음 |
 | 5 | 짐벌 장치를 다른 프로그램이 씀 |
-| 7 | 짐벌 프로그램이 없음 (`scripts/setup.sh` 다시) |
-| 8 | 페이지 주소 없음 (`scripts/live.env` 에 `LWIR_LIVE_BIND`) |
+| 7 | 짐벌 프로그램이 없음 (`setup.sh` 다시) |
+| 8 | 페이지 주소 없음 (`LWIR_LIVE_BIND`) |
 | 9 | 폴더 이동 실패 |
 
 </details>
@@ -84,19 +96,19 @@ bash model-bank/tracking_server/scripts/run_real_gui.sh  # 켜기
 tracking_server/
 ├── start_tracking_server.py   서버를 켜는 파일
 ├── models/                    모델 파일
-│   ├── detect/                검출 모델 (yolo26m, yolo26s, yolo26x, yolov8, yolox)
-│   ├── track/                 추적용 파일 (위치 기억, 확인 판정기, 번호 잇기 판정기)
-│   └── reid/                  외형 비교 모델 (RepVGG, ViT-lite)
+│   ├── detect/                검출 모델
+│   ├── track/                 추적용 파일
+│   └── reid/                  외형 비교 모델
 ├── src/                       서버 코드
-│   ├── app.py                 본체: 옵션 → 준비 → 프레임 반복 → 결과
+│   ├── app.py                 본체
 │   ├── detect/                검출
 │   ├── track/                 추적, 검출 뒤 Filter
 │   ├── reid/                  외형 비교
-│   ├── camera/                카메라 프로그램과 읽는 코드
-│   ├── gimbal/                짐벌 제어 프로그램, 팀 제어 코드 사본, 시험
-│   ├── web/                   8090 요청 처리, 화면 설정, 측정 저장
+│   ├── camera/                카메라
+│   ├── gimbal/                짐벌
+│   ├── web/                   8090 화면 처리
 │   └── common/                같이 쓰는 값
-├── page/                      8090 화면 (한 파일 + 소스 조각 + 합치는 도구)
+├── page/                      8090 화면
 ├── scripts/                   준비, 켜기, 다시 켜기
 └── images/                    이 글의 그림
 ```
@@ -106,73 +118,154 @@ tracking_server/
 <details>
 <summary>폴더별 파일</summary>
 
-| 폴더 | 파일 |
-|---|---|
-| `src/detect/` | `npu_engine.py` NPU 에 모델 올리기·돌리기, `detect_frame.py` 프레임 → 상자, `model_scan.py` 검출 모델 파일 스스로 찾기, `zoom_redetect.py` 작은 사람 확대 재검출, `native_post.py` + `post.cpp` 검출기 출력을 푸는 빠른 계산, `frame_feed.py` 번갈아 넣기(꺼짐) |
-| `src/track/` | `trackers.py` 추적기, `kalman.py` Kalman filter, `camera_motion.py` 카메라 움직임 추정, `position_memory.py` 놓친 사람 위치 기억, `gate.py` 확인 판정기, `confirm_time.py` 새 사람 확인을 시간으로, `warm_p95.py` 온도 Filter 숫자 계산, `stitch.py` 끊긴 추적 잇기, `stabilizer.py` 화면 흔들림 보정 |
-| `src/reid/` | `reid_models.py` 외형 모델 목록과 실행 중 바꾸기, `reid_embed.py` 사람 조각에서 특징 뽑기, `relabel_online.py` KeepID 규칙, `relink_online_judge.py` 번호 잇기 판정기 |
-| `src/camera/` | `cam_pipe.cpp` 카메라 프로그램, `camera_link.py` 그 프로그램을 띄우고 읽기·카메라 초기화, `camera_extra.py` 카메라 기록, `replay_cam.py` 저장된 녹화를 카메라처럼 보내기 |
-| `src/gimbal/` | `gimbal_bridge_v25.cpp` 짐벌 + PC GUI 프로그램, `team/` 팀 제어·GUI 코드 사본(출처 `team/SOURCE.txt`), `gimbal_link.py` 그 프로그램을 띄우고 명령 보내기, `test_*.py` 시험, `PID_TUNING_RECORD_20261110.md` 제어값 기록, `gimbal_bridge_v27.cpp` + `v27/` + `sim/` 시험용 판 |
-| `src/web/` | `page_handler.py` 주소별 처리와 화면 그림, `page_settings.py` 화면에서 바꾸는 설정·모델 바꾸기, `measure.py` 측정 버튼, `system_buttons.py` 재부팅 버튼 |
-| `src/common/` | `shared_values.py` 고정 값, `state.py` 공유 값 보관함, `settings.py` 실행 중 바뀌는 설정, `stage_timing.py` 단계별 시간 재기, `result_summary.py` 결과 요약, `device_wait.py` 다른 측정 기다리기, `pc_dry_run.py`·`research_*.py` PC 에서 돌려 보기와 연구용 기능 |
-| `page/` | `live_page.html` 서버가 읽는 한 파일, `html/` `css/` `js/` 조각, `build_page.py` 합치는 도구, `parts.json` 조각 순서 |
-| `scripts/` | `setup.sh` 준비, `run_real_gui.sh` 켜기, `keepalive.sh` 꺼지면 다시 켜기, `live.env.example` 장치별 설정 예, `gui_model_client.py` PC GUI 명령 시험 |
+**`src/detect/`**
+- `npu_engine.py` NPU 에 모델 올리기·돌리기
+- `detect_frame.py` 프레임 → 상자
+- `model_scan.py` 검출 모델 파일 스스로 찾기
+- `zoom_redetect.py` 작은 사람 확대 재검출
+- `native_post.py` + `post.cpp` 검출기 출력을 푸는 빠른 계산
+- `frame_feed.py` 번갈아 넣기 (꺼짐)
+
+**`src/track/`**
+- `trackers.py` 추적기, `kalman.py` Kalman filter
+- `camera_motion.py` 카메라 움직임 추정
+- `position_memory.py` 놓친 사람 위치 기억
+- `gate.py` 확인 판정기
+- `confirm_time.py` 새 사람 확인을 시간으로
+- `warm_p95.py` 온도 Filter 숫자 계산
+- `stitch.py` 끊긴 추적 잇기
+- `stabilizer.py` 화면 흔들림 보정
+
+**`src/reid/`**
+- `reid_models.py` 외형 모델 목록과 실행 중 바꾸기
+- `reid_embed.py` 사람 조각에서 특징 뽑기
+- `relabel_online.py` KeepID 규칙
+- `relink_online_judge.py` 번호 잇기 판정기
+
+**`src/camera/`**
+- `cam_pipe.cpp` 카메라 프로그램
+- `camera_link.py` 그 프로그램을 띄우고 읽기, 카메라 초기화
+- `camera_extra.py` 카메라 기록
+- `replay_cam.py` 저장된 녹화를 카메라처럼 보내기
+
+**`src/gimbal/`**
+- `gimbal_bridge_v25.cpp` 짐벌 + PC GUI 프로그램
+- `gimbal_bridge_v27.cpp` + `v27/` + `sim/` 시험용 판
+- `team/` 팀 제어·GUI 코드 사본 (출처 `team/SOURCE.txt`)
+- `gimbal_link.py` 짐벌 프로그램을 띄우고 명령 보내기
+- `test_*.py` 시험
+- `PID_TUNING_RECORD_20261110.md` 제어값 기록
+
+**`src/web/`**
+- `page_handler.py` 주소별 처리와 화면 그림
+- `page_settings.py` 화면에서 바꾸는 설정, 모델 바꾸기
+- `measure.py` 측정 버튼
+- `system_buttons.py` 재부팅 버튼
+
+**`src/common/`**
+- `shared_values.py` 고정 값, `state.py` 공유 값 보관함
+- `settings.py` 실행 중 바뀌는 설정
+- `stage_timing.py` 단계별 시간 재기
+- `result_summary.py` 결과 요약
+- `device_wait.py` 다른 측정 기다리기
+- `pc_dry_run.py`, `research_*.py` PC 에서 돌려 보기와 연구용 기능
+
+**`page/`**
+- `live_page.html` 서버가 읽는 한 파일
+- `html/` `css/` `js/` 조각, `parts.json` 조각 순서
+- `build_page.py` 합치는 도구
+
+**`scripts/`**
+- `setup.sh` 준비, `run_real_gui.sh` 켜기
+- `keepalive.sh` 꺼지면 다시 켜기
+- `live.env.example` 장치별 설정 예
+- `gui_model_client.py` PC GUI 명령 시험
 
 </details>
 
 ## 4. 설정 (`scripts/live.env`)
 
-| 값 | 뜻 | 기본 |
-|---|---|---|
-| `LWIR_LIVE_BIND` | 웹 화면 주소 | 장치의 Tailscale 주소 |
-| `LWIR_LIVE_PORT` | 웹 화면 포트 | 8090 |
-| `LWIR_GUI_HOST` | 팀 PC GUI 주소 | 192.168.50.1 |
-| `LWIR_GIMBAL_DEV` | 짐벌 직렬 장치 | 고정 이름을 먼저 찾고, 없으면 `/dev/ttyUSB0` |
-| `LWIR_GIMBAL_AIM_Y` | 사람 상자의 어느 높이를 화면 가운데에 둘지 (위에서부터의 비율) | 0.08 = 머리 (0.3 = 가슴) |
-| `LWIR_GIMBAL_SPEED_MAX` | 자동으로 따라갈 때의 최고 속도 | 100 |
-| `LWIR_GIMBAL_REACQUIRE_MS` | 놓친 사람을 기다리는 시간 (ms) | 10000 |
-| `LWIR_CONFIRM_MS` | 새 사람을 화면에 내기 전에 확인하는 시간 (ms). 0 = 끔 (늘 3장) | 130 |
-| `LWIR_GIMBAL_BRIDGE` | 짐벌 프로그램 | `src/gimbal/gimbal_bridge_v25` |
-| `LWIR_GIMBAL_EXTRA_OPTS` | 짐벌 프로그램에 더 줄 옵션 | 없음 |
+| 값 | 기본 |
+|---|---|
+| `LWIR_LIVE_BIND` | 장치의 Tailscale 주소 |
+| `LWIR_LIVE_PORT` | 8090 |
+| `LWIR_GUI_HOST` | 192.168.50.1 |
+| `LWIR_GIMBAL_DEV` | 고정 이름, 없으면 `/dev/ttyUSB0` |
+| `LWIR_GIMBAL_AIM_Y` | 0.08 (머리) |
+| `LWIR_GIMBAL_SPEED_MAX` | 100 |
+| `LWIR_GIMBAL_REACQUIRE_MS` | 10000 |
+| `LWIR_CONFIRM_MS` | 130 |
+| `LWIR_GIMBAL_BRIDGE` | `gimbal_bridge_v25` |
+| `LWIR_GIMBAL_EXTRA_OPTS` | 없음 |
+
+뜻:
+
+- `LWIR_LIVE_BIND`, `LWIR_LIVE_PORT` — 웹 화면 주소와 포트
+- `LWIR_GUI_HOST` — 팀 PC GUI 주소
+- `LWIR_GIMBAL_DEV` — 짐벌 직렬 장치
+- `LWIR_GIMBAL_AIM_Y` — 사람 상자의 어느 높이를 화면 가운데에 둘지 (위에서부터 비율. 0.08 = 머리, 0.3 = 가슴)
+- `LWIR_GIMBAL_SPEED_MAX` — 자동으로 따라갈 때의 최고 속도
+- `LWIR_GIMBAL_REACQUIRE_MS` — 놓친 사람을 기다리는 시간 (ms)
+- `LWIR_CONFIRM_MS` — 새 사람을 화면에 내기 전에 확인하는 시간 (ms). 0 = 끔 (늘 3장)
+- `LWIR_GIMBAL_BRIDGE` — 짐벌 프로그램 (`src/gimbal/` 아래)
+- `LWIR_GIMBAL_EXTRA_OPTS` — 짐벌 프로그램에 더 줄 옵션
 
 시험·측정용 값(단계별 시간 재기, 카메라 시간표, 번갈아 넣기 등)은 `scripts/live.env.example` 아래쪽에 설명이 있고, 모두 기본 꺼짐입니다.
 
-**짐벌 제어값.** PD 제어(Kp 30, Ki 0, Kd 6), 불감대 0.06, 손으로 움직일 때 속도 20. 최고 속도 10 일 때 맞춘 값입니다(`src/gimbal/PID_TUNING_RECORD_20261110.md`). 최고 속도 100 에 맞춘 값은 아직 없습니다.
+**짐벌 제어값**
+- PD 제어 (Kp 30, Ki 0, Kd 6), 불감대 0.06, 손으로 움직일 때 속도 20.
+- 최고 속도 10 일 때 맞춘 값입니다 (`src/gimbal/PID_TUNING_RECORD_20261110.md`). 최고 속도 100 에 맞춘 값은 아직 없습니다.
 
-**v27.** 움직임을 부드럽게 하려는 시험용 판입니다. `src/gimbal/V27_CHANGES.md` 의 명령으로 빌드하고, 옵션 예는 `--deadband-exit 0.10 --axis-reversal 1` 입니다. 실제 짐벌에서 흔들림이 줄어드는지는 아직 재지 않았습니다.
+**v27 (시험용 판)**
+- 움직임을 부드럽게 하려는 판입니다. `src/gimbal/V27_CHANGES.md` 의 명령으로 빌드합니다.
+- 옵션 예: `--deadband-exit 0.10 --axis-reversal 1`
+- 실제 짐벌에서 흔들림이 줄어드는지는 아직 재지 않았습니다.
 
-**조준 높이.** `LWIR_GIMBAL_AIM_Y` 를 바꾸면 화면의 세로 오차 표시 기준(`page/js/04_ping_fps_aim.js` 의 `AIM_Y`)도 같이 바꿉니다.
+**조준 높이**
+- `LWIR_GIMBAL_AIM_Y` 를 바꾸면 화면의 세로 오차 표시 기준(`page/js/04_ping_fps_aim.js` 의 `AIM_Y`)도 같이 바꿉니다.
 
-**새 사람 확인 시간 (`LWIR_CONFIRM_MS`).**
-
-- 장 수 = 130 × 잰 초당 장 수 ÷ 1000 을 반올림. 초당 22~27장이면 3장(전과 같음), 28장을 넘으면 4장. 느려져도 3장보다 작아지지 않습니다.
+**새 사람 확인 시간 (`LWIR_CONFIRM_MS`)**
+- 장 수 = 130 × 잰 초당 장 수 ÷ 1000 을 반올림.
+- 초당 22~27장이면 3장(전과 같음), 28장을 넘으면 4장. 느려져도 3장보다 작아지지 않습니다.
 - 서버를 켠 채로 화면 "Filter 값 → 새 사람 확인 시간"에서 바꿀 수 있습니다 (`POST /rules/set?confirm_ms=160`). 화면에서 바꾼 값은 저장되어 다음에 켤 때 먼저 쓰입니다.
-- 지금 값은 화면의 "지금 적용된 값"에 나옵니다. 코드 `src/track/confirm_time.py`, PC 시험 `python -m unittest src.track.test_confirm_time`.
+- 지금 값은 화면의 "지금 적용된 값"에 나옵니다.
+- 코드 `src/track/confirm_time.py`, PC 시험 `python -m unittest src.track.test_confirm_time`.
 
 ## 5. 거르는 곳
 
 영상 한 장에서 상자가 버려지는 곳을 순서대로 적었습니다.
 
-| 번호 | 이름 | 무엇을 버리나 | 어디서 바꾸나 |
-|---|---|---|---|
-| ① | 점수 · 겹침 | 점수 낮은 상자, 같은 사람에 겹친 상자 | `scripts/run_real_gui.sh` |
-| ② | 온도 Filter | 사람 상자 안의 16비트 원본 값(상위 5 % 지점)이 정한 범위 밖인 것 | 화면 "Filter 값" |
-| ③ | 종류 | 사람과 차를 서로 짝짓는 것 | `scripts/run_real_gui.sh` |
-| ④ | 가장자리 Filter | 화면 끝에 닿은 상자 중 점수가 낮은 것은 새 번호를 받지 못함 | 화면 "Filter 값" |
-| ⑤ | 새 사람 확인 (130 ms) | 130 ms 동안 이어서 잡히지 않은 것은 화면에 나오지 않음 | 화면 "Filter 값" 또는 `LWIR_CONFIRM_MS` |
-| ⑥ | 불감대 | 조준점이 가운데 가까이 있으면 짐벌이 움직이지 않음 | `scripts/run_real_gui.sh` |
+**① 점수 · 겹침** — 점수 낮은 상자, 같은 사람에 겹친 상자를 버림. 바꾸는 곳: `scripts/run_real_gui.sh`
+
+**② 온도 Filter** — 사람 상자 안의 16비트 원본 값(상위 5 % 지점)이 정한 범위 밖이면 버림. 바꾸는 곳: 화면 "Filter 값"
+
+**③ 종류** — 사람과 차를 서로 짝짓지 않음. 바꾸는 곳: `scripts/run_real_gui.sh`
+
+**④ 가장자리 Filter** — 화면 끝에 닿은 상자 중 점수가 낮은 것은 새 번호를 받지 못함. 바꾸는 곳: 화면 "Filter 값"
+
+**⑤ 새 사람 확인 (130 ms)** — 130 ms 동안 이어서 잡히지 않은 것은 화면에 나오지 않음. 바꾸는 곳: 화면 "Filter 값" 또는 `LWIR_CONFIRM_MS`
+
+**⑥ 불감대** — 조준점이 가운데 가까이 있으면 짐벌이 움직이지 않음. 바꾸는 곳: `scripts/run_real_gui.sh`
 
 ## 6. 짐벌이 멈추는 경우
 
 짐벌 속도 명령은 스스로 꺼지지 않습니다. 아래 경우에 누가 멈추는지 정리했습니다 (2026-11-12, 코드로 확인).
 
-| 무슨 일 | 누가 멈추나 | 멈출 때까지 |
-|---|---|---|
-| 서버 처리가 멈춤 (새 상자가 안 옴) | 짐벌 프로그램: 250 ms 넘은 영상은 쓰지 않음 | 약 0.3초 |
-| 영상은 오는데 **그림이 이전 장과 똑같음** | 서버: 그 장은 짐벌에 사람을 보내지 않음. 고른 사람은 다시 찾는 시간 동안 유지 | 다음 장 (기록에 `FROZEN`, `/healthz` 에 `frozen_frames`) |
-| 서버 프로그램이 죽음 | 짐벌 프로그램: 입력이 끊기면 멈춤 명령을 보내고 끝남 | 바로 |
-| 짐벌 프로그램이 죽음 | 서버: 짐벌 장치에 멈춤 명령을 직접 씀 | 바로 |
-| 웹 화면을 닫음 (손으로 움직이던 중) | 1.5초 동안 화면 신호가 없으면 멈춤 | 1.5초 |
+| 무슨 일 | 멈출 때까지 |
+|---|---|
+| 서버 처리가 멈춤 | 약 0.3초 |
+| 그림이 이전 장과 똑같음 | 다음 장 |
+| 서버 프로그램이 죽음 | 바로 |
+| 짐벌 프로그램이 죽음 | 바로 |
+| 웹 화면을 닫음 (손으로 움직이던 중) | 1.5초 |
+
+누가 멈추나:
+
+- **서버 처리가 멈춤 (새 상자가 안 옴)** — 짐벌 프로그램이 250 ms 넘은 영상은 쓰지 않고 멈춥니다.
+- **영상은 오는데 그림이 이전 장과 똑같음** — 서버가 그 장은 짐벌에 사람을 보내지 않습니다. 고른 사람은 다시 찾는 시간 동안 유지합니다. 기록에 `FROZEN`, `/healthz` 에 `frozen_frames`.
+- **서버 프로그램이 죽음** — 짐벌 프로그램이 입력이 끊기면 멈춤 명령을 보내고 끝납니다.
+- **짐벌 프로그램이 죽음** — 서버가 짐벌 장치에 멈춤 명령을 직접 씁니다.
+- **웹 화면을 닫음** — 1.5초 동안 화면 신호가 없으면 멈춥니다.
 
 **아직 막지 못한 것**
 
@@ -181,36 +274,45 @@ tracking_server/
 
 ## 7. 속도: 장치에서 잰 값
 
-장치(DX-M1, 진짜 NPU)에서 저장된 실외 녹화를 재생해 180초씩 3번 잰 값입니다 (2026-11-12, 짐벌 없음).
+장치(DX-M1, 진짜 NPU)에서 저장된 실외 녹화를 재생해 180초씩 3번 잰 값입니다 (2026-11-12, 짐벌 없음). "도착 → 결과"의 중간값입니다.
 
-| 속도 | 방식 | 도착 → 결과 중간값 | 늦을 때 (p95) | 버린 장 |
-|---|---|---|---|---|
-| 초당 25장 | 지금 방식 (코어 0) | 72 ms | 86 ms | 0 |
-| | 번갈아 넣기 (코어 0·1) | 66 ms | 85 ms | 0.5 % |
-| 초당 30장 | 지금 방식 (코어 0) | 63 ms | 87~90 ms | 0~3장 |
-| | 번갈아 넣기 (코어 0·1) | 75 ms | 100 ms | 5 % |
+**초당 25장**
 
-**번갈아 넣기는 켜지 마세요.** 초당 25장에서 중간값은 줄지만 장을 버리고, 30장에서는 느려집니다.
+| 방식 | 중간값 | 버린 장 |
+|---|---|---|
+| 지금 방식 (코어 0) | 72 ms | 0 |
+| 번갈아 넣기 (코어 0·1) | 66 ms | 0.5 % |
+
+**초당 30장**
+
+| 방식 | 중간값 | 버린 장 |
+|---|---|---|
+| 지금 방식 (코어 0) | 63 ms | 0~3장 |
+| 번갈아 넣기 (코어 0·1) | 75 ms | 5 % |
+
+- 늦을 때(p95)는 초당 25장에서 86 ms 대 85 ms, 초당 30장에서 87~90 ms 대 100 ms 였습니다.
+- **번갈아 넣기는 켜지 마세요.** 초당 25장에서 중간값은 줄지만 장을 버리고, 30장에서는 느려집니다.
 
 **한 장의 단계별 시간** (초당 25장, 지금 방식, 중간값)
 
-| 단계 | 시간 | 어디서 |
-|---|---|---|
-| 도착 → NPU 에 넣음 | 3 ms | CPU |
-| NPU 검출 | 30 ms | NPU 코어 0 |
-| 상자 풀기 + 다음 장 넣기 | 12 ms | CPU |
-| 추적 전 준비 (이 가운데 온도 Filter 7 ms) | 8 ms | CPU |
-| 추적 | 3 ms | CPU |
-| 번호 잇기 | 2 ms | NPU 코어 2 + CPU |
-| 내보내기 (짐벌 전송, 화면용 색 그림 6 ms, JPEG 5 ms) | 12 ms | CPU |
+| 단계 | 시간 |
+|---|---|
+| 도착 → NPU 에 넣음 | 3 ms |
+| NPU 검출 (코어 0) | 30 ms |
+| 상자 풀기 + 다음 장 넣기 | 12 ms |
+| 추적 전 준비 | 8 ms |
+| 추적 | 3 ms |
+| 번호 잇기 (코어 2 + CPU) | 2 ms |
+| 내보내기 | 12 ms |
+
+- 추적 전 준비 8 ms 가운데 온도 Filter 가 7 ms 였습니다 (사람이 최대 9명인 녹화).
+- 내보내기 12 ms 는 짐벌 전송과 화면용 그림(색 그림 6 ms, JPEG 5 ms)입니다.
 
 **위 측정 뒤에 고친 것** (PC 에서 결과가 똑같은지 확인, 장치에서는 아직 안 잼)
 
-| 고친 것 | 줄어들 것 (추정) |
-|---|---|
-| 온도 Filter 숫자를 같은 값이 나오는 가벼운 계산으로 (`src/track/warm_p95.py`, 시작할 때 스스로 같은지 확인) | 상자 하나 136 → 28 μs (PC) |
-| 짐벌 명령을 화면 그림보다 먼저 보냄 | 짐벌 쪽 약 6 ms |
-| 화면을 보는 사람이 없으면 화면 그림을 1초에 한 장만 만듦 | 보는 사람이 없을 때 약 11 ms |
+- **온도 Filter 숫자를 가벼운 계산으로** — 같은 값이 나오는 방법 (`src/track/warm_p95.py`, 시작할 때 스스로 같은지 확인). 상자 하나 136 → 28 μs (PC).
+- **짐벌 명령을 화면 그림보다 먼저 보냄** — 짐벌 쪽 약 6 ms 빨라질 것으로 봄.
+- **보는 사람이 없으면 화면 그림을 1초에 한 장만** — 그때 약 11 ms 빠질 것으로 봄.
 
 ## 8. 꺼지면 다시 켜기, 끄기
 
@@ -220,12 +322,13 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 * * * * * flock -n $HOME/.lwir_keepalive.lock bash <클론 경로>/tracking_server/scripts/keepalive.sh >> $HOME/lwir_keepalive.log 2>&1
 ```
 
-| 하고 싶은 일 | 방법 |
-|---|---|
-| 다시 켜기를 잠시 멈춤 | `touch ~/lwir_keepalive.pause` |
-| 다시 돌림 | `rm ~/lwir_keepalive.pause` |
-| 서버 끄기 | 위처럼 멈춘 뒤 `kill -TERM $(pgrep -f 'python3 -B [s]tart_tracking_server.py')` |
-| 기록 보기 | `~/lwir_keepalive.log`, 꺼질 때의 마지막 메시지는 `~/lwir_crash.log` |
+- **다시 켜기를 잠시 멈춤:** `touch ~/lwir_keepalive.pause`
+- **다시 돌림:** `rm ~/lwir_keepalive.pause`
+- **서버 끄기:** 위처럼 멈춘 뒤
+  `kill -TERM $(pgrep -f 'python3 -B [s]tart_tracking_server.py')`
+- **기록 보기:** `~/lwir_keepalive.log`, 꺼질 때의 마지막 메시지는 `~/lwir_crash.log`
+
+주의:
 
 - 카메라 프로그램(`cam_pipe`)은 서버가 끝나면 스스로 끝납니다. `kill -9` 로 끄지 마세요 (카메라가 다음에 안 열릴 수 있습니다).
 - **NPU 측정 프로그램을 돌리기 전에는 서버를 먼저 꺼 주세요.** 같이 돌면 NPU 서비스가 죽어 서버가 꺼집니다. 측정 프로그램(`lwir_benchmark`)이 도는 동안에는 다시 켜기가 기다립니다.
@@ -236,7 +339,8 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 - 5초마다 `/healthz` 를 읽습니다. 서버 프로세스가 없거나, 30초 동안 답이 없거나, 프레임은 오는데 30초 동안 결과가 안 나오거나, 짐벌 프로그램이 3번 연속 없으면 다시 켭니다. 시작 뒤 180초 동안은 멈춤 검사를 하지 않습니다.
 - 다시 켤 때 이전 `real_gui_1/` 을 `real_gui_prev/` 로 옮겨 둡니다. 손으로 켜면 이전 `real_gui_1/` 을 지웁니다.
 - 10분에 3번 다시 켜면 10분 쉽니다.
-- 장치 재부팅 단계는 `~/lwir_keepalive.allow_reboot` 파일이 있을 때만 켜집니다 (카메라 프로그램이 3번 연속 실패, 15분 동안 프레임 없음, 켜진 지 30분 넘음, 하루 2번까지, 60분 간격). **카메라가 USB 에서 아예 보이지 않으면 재부팅하지 않습니다** (재부팅으로는 살아나지 않고, 선을 다시 꽂아야 합니다).
+- 장치 재부팅 단계는 `~/lwir_keepalive.allow_reboot` 파일이 있을 때만 켜집니다 (카메라 프로그램이 3번 연속 실패, 15분 동안 프레임 없음, 켜진 지 30분 넘음, 하루 2번까지, 60분 간격).
+- **카메라가 USB 에서 아예 보이지 않으면 재부팅하지 않습니다** (재부팅으로는 살아나지 않고, 선을 다시 꽂아야 합니다).
 
 </details>
 
@@ -253,33 +357,31 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 <details>
 <summary>주소 목록</summary>
 
-읽기 (GET):
+**읽기 (GET)**
 
-| 주소 | 주는 것 |
-|---|---|
-| `/` | 웹 화면 |
-| `/stream`, `/snap.jpg` | 상자와 번호를 그린 영상, 그림 한 장 (보는 사람이 없으면 그림은 1초에 한 장만 새로 만듦) |
-| `/healthz` | 살아 있는지, 지연 값, 멈춘 그림 수(`frozen_frames`), 만든 그림 수(`pictures`), 보는 사람 수(`viewers`) |
-| `/model` | 검출 모델 목록과 지금 쓰는 모델 |
-| `/rules` | 지금 설정 (추적기, Filter 값, 새 사람 확인, 외형 모델, 위치 기억, 짐벌 프로그램에 넘긴 값 `gimbal_cfg`) |
-| `/perf` | 그래프용 초당 기록 |
-| `/measure`, `/measure/<번호>` | 측정 상태, 지난 측정 하나 |
-| `/gimbal/people` | 짐벌 상태와 지금 화면의 사람 상자 |
+- `/` — 웹 화면
+- `/stream`, `/snap.jpg` — 상자와 번호를 그린 영상, 그림 한 장. 보는 사람이 없으면 그림은 1초에 한 장만 새로 만듭니다.
+- `/healthz` — 살아 있는지, 지연 값, 멈춘 그림 수(`frozen_frames`), 만든 그림 수(`pictures`), 보는 사람 수(`viewers`)
+- `/model` — 검출 모델 목록과 지금 쓰는 모델
+- `/rules` — 지금 설정 (추적기, Filter 값, 새 사람 확인, 외형 모델, 위치 기억, 짐벌 프로그램에 넘긴 값 `gimbal_cfg`)
+- `/perf` — 그래프용 초당 기록
+- `/measure`, `/measure/<번호>` — 측정 상태, 지난 측정 하나
+- `/gimbal/people` — 짐벌 상태와 지금 화면의 사람 상자
 
-바꾸기 (POST, 머리말 `X-Gimbal: 1` 이 있어야 함):
+**바꾸기 (POST, 머리말 `X-Gimbal: 1` 이 있어야 함)**
 
-| 주소 | 하는 일 |
-|---|---|
-| `/model/set?id=<번호>` | 검출 모델 바꾸기 |
-| `/rules/set?...` | 추적기, Filter 값(`confirm_ms` 포함), 외형 모델, 위치 기억, 예측 제어(`lead=1`) 등 바꾸기 |
-| `/measure/start`, `/measure/stop`, `/measure/note` | 측정 시작, 끝, 메모 |
-| `/camera/reset` | 카메라 초기화 |
-| `/system/reboot?confirm=REBOOT` | 장치 재부팅 |
-| `/gimbal/click`, `/gimbal/move`, `/gimbal/stop` | 사람 고르기, 손으로 움직이기, 멈추기 |
-| `/gimbal/ping` | 화면이 살아 있다는 안전 신호. **스크립트에서 보내지 마세요** |
+- `/model/set?id=<번호>` — 검출 모델 바꾸기
+- `/rules/set?...` — 추적기, Filter 값(`confirm_ms` 포함), 외형 모델, 위치 기억, 예측 제어(`lead=1`) 등 바꾸기
+- `/measure/start`, `/measure/stop`, `/measure/note` — 측정 시작, 끝, 메모
+- `/camera/reset` — 카메라 초기화
+- `/system/reboot?confirm=REBOOT` — 장치 재부팅
+- `/gimbal/click`, `/gimbal/move`, `/gimbal/stop` — 사람 고르기, 손으로 움직이기, 멈추기
+- `/gimbal/ping` — 화면이 살아 있다는 안전 신호. **스크립트에서 보내지 마세요**
 
-측정은 `<측정 폴더>/<날짜>/MEASURE_<시각>_<번호>/` 에 남습니다 (기본 `/mnt/lwir_data/results/live_measure`, 옵션 `--measure-dir`).
-팀 PC GUI 와는 짐벌 프로그램이 통신합니다: 영상 H.264/RTP → UDP 5000, 추적 상자 → UDP 5001, PC 의 명령 ← TCP 5002.
+**그 밖**
+
+- 측정은 `<측정 폴더>/<날짜>/MEASURE_<시각>_<번호>/` 에 남습니다 (기본 `/mnt/lwir_data/results/live_measure`, 옵션 `--measure-dir`).
+- 팀 PC GUI 와는 짐벌 프로그램이 통신합니다: 영상 H.264/RTP → UDP 5000, 추적 상자 → UDP 5001, PC 의 명령 ← TCP 5002.
 
 </details>
 
@@ -294,22 +396,22 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 
 ## 11. 확인한 것과 확인하지 않은 것
 
-| 확인한 것 | 날짜 | 방법 |
-|---|---|---|
-| 나누기 전 한 파일짜리 서버와 동작이 같음 | 2026-11-11 | PC 에서 가짜 카메라·NPU·짐벌로 나란히 돌려 비교 (독립 검사 3번) |
-| 장치에서 설치와 실행이 됨 | 2026-11-11 | DX-M1 에서 `setup.sh`, 켜기, 영상, 짐벌 연결, 검출·외형 모델 바꾸기 |
-| 꺼지면 다시 켜짐 | 2026-11-11 | 장치에서 서버를 끄고 1분 안에 다시 켜지는 것을 확인 |
-| 단계별 시간, 번갈아 넣기 판정 | 2026-11-12 | 장치에서 저장된 실외 녹화 재생, 진짜 NPU (7절) |
-| 7절 "고친 것"과 멈춘 그림 멈춤이 결과를 바꾸지 않음 | 2026-11-12 | PC 가짜 장치로 고치기 전·후 714장 비교: 추적 결과와 짐벌 명령이 똑같음 |
+**확인한 것**
 
-| 확인하지 않은 것 |
-|---|
-| 실제 짐벌로 사람을 따라갈 때의 흔들림 (v25, v27 모두) |
-| 최고 속도 100 에 맞는 제어값 |
-| 7절 "고친 것"이 장치에서 실제로 몇 ms 줄이는지 |
-| 몇 시간 이상 연속 실행, 재부팅 뒤 자동 시작 |
-| 우리 카메라 영상에서의 검출·추적 점수 (정답이 없어 재지 않음) |
-| 시험용 모델(실내·실외 fine-tuning, 실내 외형 모델)의 장치 정확도 |
+- **나누기 전 한 파일짜리 서버와 동작이 같음** (2026-11-11) — PC 에서 가짜 카메라·NPU·짐벌로 나란히 돌려 비교, 독립 검사 3번
+- **장치에서 설치와 실행이 됨** (2026-11-11) — DX-M1 에서 `setup.sh`, 켜기, 영상, 짐벌 연결, 검출·외형 모델 바꾸기
+- **꺼지면 다시 켜짐** (2026-11-11) — 장치에서 서버를 끄고 1분 안에 다시 켜지는 것을 확인
+- **단계별 시간, 번갈아 넣기 판정** (2026-11-12) — 장치에서 저장된 실외 녹화 재생, 진짜 NPU (7절)
+- **7절 "고친 것"과 멈춘 그림 멈춤이 결과를 바꾸지 않음** (2026-11-12) — PC 가짜 장치로 고치기 전·후 714장 비교, 추적 결과와 짐벌 명령이 똑같음
+
+**확인하지 않은 것**
+
+- 실제 짐벌로 사람을 따라갈 때의 흔들림 (v25, v27 모두)
+- 최고 속도 100 에 맞는 제어값
+- 7절 "고친 것"이 장치에서 실제로 몇 ms 줄이는지
+- 몇 시간 이상 연속 실행, 재부팅 뒤 자동 시작
+- 우리 카메라 영상에서의 검출·추적 점수 (정답이 없어 재지 않음)
+- 시험용 모델(실내·실외 fine-tuning, 실내 외형 모델)의 장치 정확도
 
 **알아 둘 것**
 
