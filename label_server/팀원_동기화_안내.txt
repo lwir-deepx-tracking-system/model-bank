@@ -1,0 +1,18 @@
+LWIR 라벨 작업 - 팀원용 동기화 안내 (2026-11-10)
+
+처음 한 번
+1. 초대 메일(또는 공유 링크)을 열고 자기 Microsoft 계정으로 로그인한다.
+2. OneDrive 웹 화면에서 LWIR_labels 폴더를 선택하고 "내 파일에 바로 가기 추가"를 누른다.
+3. PC의 OneDrive 프로그램에 같은 계정으로 로그인한다. 탐색기 OneDrive 안에 LWIR_labels 가 나타난다.
+4. 맡은 seq_0NN 폴더를 오른쪽 클릭하고 "이 장치에 항상 유지"를 누른다. 초록 체크가 될 때까지 기다린다.
+
+작업할 때
+1. LWIR_labels 안의 label_editor.html 을 Chrome 또는 Edge 로 연다.
+2. "폴더 열기"에서 opi_sequences 안의 맡은 seq_0NN 폴더를 고른다.
+3. 저장하면 같은 폴더에 tracks_edited_mot.txt, review_state.json 이 생기고 자동으로 올라간다.
+4. 작업을 끝낼 때 작업 표시줄의 OneDrive 아이콘이 "최신 상태"인지 확인한다.
+
+규칙
+- 한 시퀀스는 한 사람만 작업한다. 두 사람이 같은 시퀀스를 저장하면 충돌 사본이 생기고 한쪽 작업이 따로 떨어진다.
+- images 폴더와 tracks_mot.txt 는 지우거나 고치지 않는다. tracks_mot.txt 는 자동 후보이며 GT 가 아니다.
+- 파일 이름에 "-PC이름" 이 붙은 사본이 보이면 충돌이 난 것이다. 지우지 말고 알려 준다.

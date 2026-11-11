@@ -1,0 +1,50 @@
+/* v40: settings tree. One row per step, top row first; a row whose nodes are all locked is drawn with a dashed line. Orange = selected (same meaning as elsewhere on the page). */
+.ot-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;padding:10px 0 10px 14px;border-left:2px solid var(--line2);position:relative;margin-left:6px}
+.ot-row:before{content:"";position:absolute;left:-6px;top:16px;width:10px;height:10px;border-radius:50%;background:var(--key);border:2px solid var(--line2)}
+.ot-row.off{border-left-style:dashed}
+/* v41: a row that belongs to one node of the row above (외형 비교 under BoT-SORT) is drawn inside that row, only while that node is chosen */
+.ot-kid{flex:1 1 100%;min-width:0;margin:2px 0 0 10px;padding:8px 0 2px 12px;border-left:2px solid var(--key)}
+.ot-kidlab{font-size:12px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.ot-kidlab small{font-size:11px;font-weight:400;color:var(--mut);margin-left:6px}
+/* v42: the child sits in the same outline as the tile it belongs to (BoT-SORT = header strip, 외형 비교 inside) */
+.ot-grp.ot-own>.ot-n.sel{display:block;width:100%;border:0;border-bottom:1px solid var(--acc);border-radius:0;background:rgba(224,122,36,.14);padding:7px 10px}
+.ot-own>.ot-kid{margin:0;padding:8px 8px 10px;border-left:0}
+.ot-kid .ot-n{overflow-wrap:anywhere}
+.ot-lab{font-size:13px;font-weight:600;color:var(--ink);padding-top:6px}
+.ot-lab small{display:block;font-size:11px;font-weight:400;color:var(--mut)}
+.ot-nodes{display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start}
+.ot-n{font:inherit;font-size:13px;padding:6px 10px;border-radius:var(--r);border:1px solid var(--line2);background:var(--key);color:var(--ink);cursor:pointer;text-align:left;line-height:1.35;max-width:100%}
+.ot-n small{display:block;font-size:11px;color:var(--ink2)}
+.ot-n.sel{border:2px solid var(--acc);background:rgba(224,122,36,.14);padding:5px 9px}
+.ot-n.sel small{color:var(--ink)}
+.ot-n.lock{border-style:dashed;background:transparent;color:var(--mut)}
+.ot-n.lock small{color:var(--mut)}
+.ot-n:focus-visible{outline:1px solid var(--ink2);outline-offset:1px}
+.ot-ic{width:11px;height:11px;vertical-align:-1px}
+.ot-f{font-weight:600;min-width:112px}
+.ot-f small{font-weight:400}
+.ot-f.open{border-color:var(--ink2);border-bottom-left-radius:0;border-bottom-right-radius:0}
+.ot-f.sel.open{border-color:var(--acc)}
+.ot-sub{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;padding:8px 10px 10px;border:1px solid var(--line2);border-radius:var(--r);background:rgba(255,255,255,.03)}
+.ot-subh{flex-basis:100%;font-size:11px;color:var(--mut)}
+/* open folder = one box: the folder is the header strip, its models sit inside the same outline (user 11-11: "위에서 열렸다는 느낌이 없어") */
+.ot-grp{flex-basis:100%;border:1px solid var(--ink2);border-radius:var(--r);background:rgba(255,255,255,.03);overflow:hidden}
+.ot-grp.sel{border:2px solid var(--acc)}
+.ot-grp>.ot-f{display:block;width:100%;border:0;border-bottom:1px solid var(--line2);border-radius:0;background:rgba(255,255,255,.05);padding:7px 10px}
+.ot-grp.sel>.ot-f{background:rgba(224,122,36,.14);border-bottom-color:var(--acc)}
+.ot-grp>.ot-sub{border:0;border-radius:0;background:transparent}
+/* second level inside an architecture folder: one box per model size (user 11-11: "m s 모델 분류 ... 한번더 세부적으로") */
+.ot-sg{flex-basis:100%;border:1px solid var(--line2);border-radius:var(--r);overflow:hidden}
+.ot-sg.sel{border-color:var(--acc)}
+.ot-sg>.ot-f{display:block;width:100%;min-width:0;border:0;border-radius:0;background:rgba(255,255,255,.04);padding:6px 10px}
+.ot-sg>.ot-f.open{border-bottom:1px solid var(--line2)}
+.ot-sg.sel>.ot-f{background:rgba(224,122,36,.10)}
+.ot-sg.sel>.ot-f.open{border-bottom-color:var(--acc)}
+.ot-sg>.ot-sub{border:0;border-radius:0;background:transparent}
+.ot-none{font-size:12px;color:var(--mut);padding:4px 0}
+.ot-leg{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:12px;color:var(--mut)}
+.ot-leg .ot-n{display:inline-block;cursor:default;font-size:12px;padding:1px 8px}
+.ot-hint{font-size:13px;color:var(--warn);min-height:20px}
+.ot-sum{border-top:1px solid var(--line);padding-top:8px;font-size:13px;color:var(--ink2);-webkit-user-select:text;user-select:text}
+#ot-sum{color:var(--ink)}
+@media(max-width:560px){.ot-row{grid-template-columns:1fr;gap:6px}.ot-lab{padding-top:0}.ot-lab small{display:inline;margin-left:6px}}

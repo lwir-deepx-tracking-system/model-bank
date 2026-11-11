@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LWIR 라벨 편집</title>
+<style>
+:root{--bg:#0e1116;--panel:#161b22;--line:#263040;--ink:#e6edf3;--muted:#8b98a9;--accent:#2f81f7;--good:#2ea043;--warn:#d29922;--bad:#f85149}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:14px/1.45 "Segoe UI","Noto Sans KR","Malgun Gothic",sans-serif;display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:16px;margin:0 10px 0 0}
+button{background:#21262d;color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:6px 12px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--accent)}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button.danger{background:#3a1416;border-color:#6e2328;color:#ffb3ad}button:disabled{opacity:.4;cursor:default}
+.st{color:var(--muted);font-size:13px}
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:12px;padding:12px}
+.view{display:flex;flex-direction:column;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
+.cv{flex:1;min-height:0;position:relative}
+canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+.bar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.bar input[type=range]{flex:1;min-width:200px}
+.side{display:flex;flex-direction:column;gap:12px;min-height:0;overflow-y:auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+.card h2{font-size:13px;color:var(--muted);margin:0 0 8px;font-weight:600}
+.row{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0}
+.row button{flex:1}
+input[type=number],input[type=text]{background:#0b0f14;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 7px;font:inherit;width:80px}
+#ids{max-height:260px;overflow-y:auto}
+.idrow{display:flex;align-items:center;gap:6px;padding:3px 4px;border-radius:6px;cursor:pointer;font-variant-numeric:tabular-nums}
+.idrow:hover,.idrow.sel{background:#1f2630}
+.sw{width:12px;height:12px;border-radius:3px;flex:none}
+.idrow .n{margin-left:auto;color:var(--muted);font-size:12px}
+.keys{font-size:12px;color:var(--muted);line-height:1.7}
+kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 4px;font-size:11px;background:#0b0f14;color:var(--ink)}
+#drop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(14,17,22,.85);font-size:20px;z-index:9}
+.badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:12px;background:#0b0f14;border:1px solid var(--line)}
+.badge.ok{color:var(--good);border-color:#1f6f33}
+@media (max-width:900px){main{grid-template-columns:1fr}.cv{height:60vh;flex:none}}
+</style></head><body>
+<header>
+  <h1>LWIR 라벨 편집</h1>
+  <button class="primary" id="open">폴더 열기</button>
+  <input type="file" id="pick" webkitdirectory multiple hidden>
+  <button id="save" disabled>저장</button>
+  <span class="st" id="st">원드라이브의 녹화 폴더(labels_yolo26x_bytetrack)를 여세요.</span>
+</header>
+<main>
+  <section class="view">
+    <div class="cv"><canvas id="c"></canvas></div>
+    <div class="bar">
+      <button id="prev" title="이전 프레임 (←)">◀</button>
+      <button id="play" title="재생/정지 (Space)">▶ 재생</button>
+      <button id="next" title="다음 프레임 (→)">▶</button>
+      <button id="zout" title="축소 (-)">－</button><span id="zpct" class="st" style="min-width:3.2em;text-align:center">100%</span><button id="zin" title="확대 (+)">＋</button><button id="zfit" title="화면에 맞춤 (0)">맞춤</button>
+      <input type="range" id="slider" min="1" max="1" value="1">
+      <span id="fno" class="st">-</span>
+      <span id="rev" class="badge">미확인</span>
+    </div>
+  </section>
+  <div class="side">
+    <section class="card">
+      <h2>선택한 박스</h2>
+      <div id="selinfo" class="st">박스를 클릭하세요.</div>
+      <div class="row"><button class="danger" id="delbox" disabled>이 박스 지우기 <kbd>Del</kbd></button></div>
+      <div class="row"><button class="danger" id="deltrack" disabled>이 번호 전체 지우기</button></div>
+      <div class="row" style="align-items:center">번호를 <input type="number" id="newid" min="1"> 로 <button id="relabel" disabled>바꾸기</button> <button id="swapid" disabled title="두 번호를 서로 맞바꿉니다 (번호가 뒤바뀐 경우)">맞바꾸기</button></div>
+      <div class="row"><label class="st"><input type="checkbox" id="fromhere" checked> 이 프레임부터 뒤로만</label></div>
+      <div class="row"><button id="copyprev" title="선택 번호의 이전 프레임 박스를 이 프레임에 복사 (C)">이전 프레임에서 복사 <kbd>C</kbd></button></div>
+    </section>
+    <section class="card">
+      <h2>작은 박스 무시</h2>
+      <div class="row" style="align-items:center">넓이 <input type="number" id="igarea" min="0" step="50" style="width:80px"> px² 이하 <button id="igapply">무시로 표시</button></div>
+      <div class="row"><button id="igtoggle" disabled>이 박스 무시/해제 <kbd>I</kbd></button></div>
+      <div class="st" id="iginfo">무시 박스는 지우지 않고 회색 점선으로 남깁니다. 학습 때 사람도 배경도 아닌 영역으로 뺍니다. 0을 넣고 누르면 모두 해제됩니다.</div>
+    </section>
+    <section class="card">
+      <h2>새 박스 그리기</h2>
+      <div class="row" style="align-items:center">번호 <input type="number" id="drawid" min="1"> <button id="draw">그리기 시작 <kbd>N</kbd></button></div>
+      <div class="st">빈 곳을 드래그하면 박스가 생깁니다. 번호를 비우면 새 번호가 붙습니다.</div>
+    </section>
+    <section class="card">
+      <h2>모아 보기</h2>
+      <label class="st" style="color:var(--ink)"><input type="checkbox" id="multi"> 박스 2개 이상인 프레임만 보기</label>
+      <div class="st" id="multiinfo" style="margin:6px 0">-</div>
+      <div id="runs" style="max-height:180px;overflow-y:auto"></div>
+    </section>
+    <section class="card">
+      <h2>추적 번호 (클릭하면 처음 나온 프레임으로)</h2>
+      <div id="ids" class="st">-</div>
+    </section>
+    <section class="card">
+      <h2>확인 표시</h2>
+      <div class="row"><button id="markrev">이 프레임 확인함 <kbd>R</kbd></button></div>
+      <div class="row"><button id="markall">전체 검수 완료</button></div>
+      <div class="st" id="revcount">-</div>
+    </section>
+    <section class="card">
+      <h2>프레임 삭제</h2>
+      <div class="row"><button class="danger" id="delcur">이 프레임 삭제</button><kbd style="align-self:center">X</kbd></div>
+      <div class="row" style="align-items:center"><input type="number" id="delfrom" min="1" style="width:70px"> ~ <input type="number" id="delto" min="1" style="width:70px"></div>
+      <div class="row"><button id="delset1">시작=현재</button><button id="delset2">끝=현재</button></div>
+      <div class="row"><button class="danger" id="delrange">구간 삭제</button><button id="undelrange">구간 되살리기</button></div>
+      <label class="st" style="color:var(--ink)"><input type="checkbox" id="showdel"> 삭제한 프레임도 넘기며 보기</label>
+      <div class="st" id="delinfo" style="margin:6px 0">-</div>
+      <div id="delruns" style="max-height:120px;overflow-y:auto"></div>
+      <div class="row"><button class="danger" id="purge" style="display:none">삭제한 프레임의 영상 파일 지우기</button></div>
+      <div class="st">프레임 삭제만으로는 영상 파일이 남습니다. 삭제한 프레임은 넘길 때 건너뛰고 학습에서 뺍니다. 영상 파일까지 지우면 편집 화면에서 되살릴 수 없고, 남은 프레임 번호는 그대로입니다.</div>
+    </section>
+    <section class="card keys">
+      <b>단축키</b><br>
+      <kbd>←</kbd><kbd>→</kbd> 프레임 이동 · <kbd>Shift</kbd>+화살표 10프레임<br>
+      <kbd>Space</kbd> 재생/정지 · <kbd>Del</kbd> 박스 지우기<br>
+      <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 선택한 박스 1픽셀 이동 · <kbd>Shift</kbd>와 함께 10픽셀<br>
+      오른쪽 버튼 누른 채 위·아래로 끌기: 확대·축소 · 마우스 휠도 같음 · <kbd>+</kbd><kbd>-</kbd> 확대·축소 · <kbd>0</kbd> 맞춤<br>
+      확대한 채 화면 옮기기: <kbd>Shift</kbd>+오른쪽 버튼 끌기 또는 휠 버튼 끌기<br>
+      <kbd>N</kbd> 새 박스 · <kbd>C</kbd> 이전 프레임에서 복사<br>
+      <kbd>Ctrl+C</kbd> 박스 복사(선택한 것, 없으면 프레임 전체) · <kbd>Ctrl+V</kbd> 이 프레임에 붙여넣기<br>
+      <kbd>M</kbd> 박스 2개 이상만 보기 켜기/끄기<br>
+      <kbd>X</kbd> 프레임 삭제/되살리기 · <kbd>R</kbd> 확인 표시 · <kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기 · <kbd>Ctrl</kbd>+<kbd>S</kbd> 저장<br>
+      박스 가운데를 끌면 이동, 모서리를 끌면 크기 조절.
+    </section>
+  </div>
+</main>
+<div id="drop">폴더를 여기에 놓으세요</div>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+const C=$('c'),X=C.getContext('2d'),ST=$('st');
+const W0=640,H0=480;
+let dirHandle=null,files={},nFrames=0,cur=1,boxes=new Map(),reviewed=new Set(),removed=new Set(),purged=new Set(),sel=null,undo=[],dirty=false,playing=null,drawMode=false,drag=null,cache=new Map(),srcName='';
+// boxes: frame -> [{id,x,y,w,h,c,m}]  (m = manual)
+const col=id=>{const h=(id*137.508)%360;return `hsl(${h},75%,60%)`;};
+function status(t){ST.textContent=t;}
+function parseMot(txt){const m=new Map();for(const l of txt.split(/\r?\n/)){const p=l.trim().split(',');if(p.length<6)continue;const f=+p[0],b={id:+p[1],x:+p[2],y:+p[3],w:+p[4],h:+p[5],c:p.length>6?+p[6]:1,m:false,g:p.length>7&&+p[7]===1};if(!m.has(f))m.set(f,[]);m.get(f).push(b);}return m;}
+function toMot(){const out=[];for(const f of [...boxes.keys()].sort((a,b)=>a-b))for(const b of boxes.get(f))out.push([f,b.id,b.x.toFixed(2),b.y.toFixed(2),b.w.toFixed(2),b.h.toFixed(2),(b.m?1:b.c).toFixed(4),b.g?1:0,-1,-1].join(','));return out.join('\n')+'\n';}
+function snapshot(){undo.push(JSON.stringify([[...boxes],[...reviewed],[...removed]]));if(undo.length>200)undo.shift();dirty=true;$('save').disabled=false;try{localStorage.setItem('lwir_edit_'+srcName,JSON.stringify({boxes:[...boxes],reviewed:[...reviewed],removed:[...removed],t:Date.now()}));}catch(e){}}
+function doUndo(){const s=undo.pop();if(!s)return;const [b,r,x]=JSON.parse(s);boxes=new Map(b);reviewed=new Set(r);removed=new Set(x||[]);for(const f of purged)removed.add(f);sel=null;refresh();}
+// ---------- loading ----------
+async function readText(name){if(files[name])return await files[name].text();return null;}
+async function loadFromFiles(list){
+  files={};let imgs=0;
+  for(const f of list){const rel=(f.webkitRelativePath||f.name).split('/');const nm=rel[rel.length-1];const parent=rel.length>1?rel[rel.length-2]:'';
+    if(parent==='images'&&/^\d{6}\.png$/.test(nm)){files['images/'+nm]=f;imgs++;}else files[nm]=f;}
+  srcName=(list[0]&&list[0].webkitRelativePath||'').split('/')[0]||'folder';
+  await afterLoad(imgs);
+}
+async function loadFromDir(h){
+  dirHandle=h;files={};let imgs=0;srcName=h.name;
+  for await(const [nm,e] of h.entries()){if(e.kind==='file')files[nm]=await e.getFile();
+    else if(nm==='images'){for await(const [n2,e2] of e.entries())if(e2.kind==='file'&&/^\d{6}\.png$/.test(n2)){files['images/'+n2]=e2;imgs++;}}}
+  await afterLoad(imgs);
+}
+async function afterLoad(imgs){
+  if(!imgs){status('images 폴더를 찾지 못했습니다. labels_yolo26x_bytetrack 폴더를 여세요.');return;}
+  nFrames=imgs;cache.clear();
+  const edited=await readText('tracks_edited_mot.txt'),orig=await readText('tracks_mot.txt');
+  const rv=await readText('review_state.json');
+  boxes=parseMot(edited||orig||'');reviewed=new Set(rv?JSON.parse(rv).reviewed||[]:[]);removed=new Set(rv?JSON.parse(rv).removed||[]:[]);purged=new Set(rv?JSON.parse(rv).purged||[]:[]);for(const f of purged)removed.add(f);
+  let note=edited?'고친 라벨(tracks_edited_mot.txt)을 불러왔습니다':'원래 라벨(tracks_mot.txt)을 불러왔습니다';
+  try{const ls=JSON.parse(localStorage.getItem('lwir_edit_'+srcName)||'null');
+    if(ls&&confirm('이 브라우저에 저장 안 된 편집이 남아 있습니다 ('+new Date(ls.t).toLocaleString()+'). 불러올까요?')){boxes=new Map(ls.boxes);reviewed=new Set(ls.reviewed);removed=new Set(ls.removed||[]);for(const f of purged)removed.add(f);note='저장 안 된 편집을 불러왔습니다';dirty=true;$('save').disabled=false;}}catch(e){}
+  $('slider').max=nFrames;cur=1;undo=[];sel=null;
+  status(note+' · '+nFrames+'프레임'+(dirHandle?' · 저장하면 이 폴더에 바로 씁니다':' · 저장하면 파일로 내려받습니다'));
+  refresh();
+}
+async function frameImage(f){
+  if(cache.has(f))return cache.get(f);
+  const k='images/'+String(f).padStart(6,'0')+'.png';let src=files[k];if(!src)return null;
+  if(src.getFile)src=await src.getFile();
+  const bmp=await createImageBitmap(src);cache.set(f,bmp);if(cache.size>60){cache.delete(cache.keys().next().value);}
+  return bmp;
+}
+$('open').onclick=async()=>{
+  if(window.showDirectoryPicker){try{await loadFromDir(await showDirectoryPicker({mode:'readwrite'}));}catch(e){if(e.name!=='AbortError')status('폴더를 열지 못했습니다: '+e.message);}}
+  else $('pick').click();
+};
+$('pick').onchange=e=>loadFromFiles([...e.target.files]);
+// ---------- drawing ----------
+let view={s:1,ox:0,oy:0};
+let Z={k:1,cx:W0/2,cy:H0/2},zdrag=null;   // zoom factor and the image point shown at the canvas centre
+function fit(){const r=C.getBoundingClientRect(),dpr=devicePixelRatio||1;C.width=r.width*dpr;C.height=r.height*dpr;const s0=Math.min(C.width/W0,C.height/H0),s=s0*Z.k;
+  let ox=C.width/2-Z.cx*s,oy=C.height/2-Z.cy*s;
+  if(W0*s<=C.width)ox=(C.width-W0*s)/2;else ox=Math.min(0,Math.max(C.width-W0*s,ox));
+  if(H0*s<=C.height)oy=(C.height-H0*s)/2;else oy=Math.min(0,Math.max(C.height-H0*s,oy));
+  Z.cx=(C.width/2-ox)/s;Z.cy=(C.height/2-oy)/s;view={s,s0,ox,oy,dpr};}
+function zoomAt(k,px,py,ip){k=Math.max(1,Math.min(16,k));Z.k=k;const s=view.s0*k;Z.cx=(C.width/2-(px-ip.x*s))/s;Z.cy=(C.height/2-(py-ip.y*s))/s;if(k===1){Z.cx=W0/2;Z.cy=H0/2;}render();const z=$('zpct');if(z)z.textContent=Math.round(k*100)+'%';}
+function zoomBy(f){zoomAt(Z.k*f,C.width/2,C.height/2,{x:Z.cx,y:Z.cy});}
+function zoomReset(){zoomAt(1,C.width/2,C.height/2,{x:W0/2,y:H0/2});}
+const cpx=(e)=>{const r=C.getBoundingClientRect();return{x:(e.clientX-r.left)*view.dpr,y:(e.clientY-r.top)*view.dpr};};
+const toImg=(e)=>{const r=C.getBoundingClientRect(),d=view.dpr;return{x:((e.clientX-r.left)*d-view.ox)/view.s,y:((e.clientY-r.top)*d-view.oy)/view.s};};
+async function render(){
+  fit();X.fillStyle='#000';X.fillRect(0,0,C.width,C.height);
+  const f=cur;const img=nFrames?await frameImage(f):null;if(f!==cur)return;
+  if(img)X.drawImage(img,view.ox,view.oy,W0*view.s,H0*view.s);
+  const bs=boxes.get(f)||[];X.lineWidth=Math.max(2,view.s*1.6);X.font=`${Math.round(13*view.s)}px sans-serif`;
+  for(const b of bs){const c=b.g?'#8a8a8a':col(b.id),isSel=sel&&sel.f===f&&bs[sel.i]===b;
+    X.strokeStyle=c;X.setLineDash(b.g?[2,4]:b.m?[6,4]:[]);X.lineWidth=isSel?Math.max(3,view.s*3):Math.max(2,view.s*1.6);
+    X.strokeRect(view.ox+b.x*view.s,view.oy+b.y*view.s,b.w*view.s,b.h*view.s);X.setLineDash([]);
+    const t=`${b.id}${b.g?' 무시':b.m?' 수동':' '+b.c.toFixed(2)}`;const tw=X.measureText(t).width+8,th=16*view.s;
+    const ty=view.oy+b.y*view.s-th<0?view.oy+b.y*view.s:view.oy+b.y*view.s-th;   // a box touching the top edge: label inside the box
+    X.fillStyle=c;X.fillRect(view.ox+b.x*view.s,ty,tw,th);X.fillStyle='#000';X.fillText(t,view.ox+b.x*view.s+4,ty+th-4*view.s);
+    if(isSel){X.fillStyle=c;for(const [hx,hy] of corners(b))X.fillRect(view.ox+hx*view.s-5,view.oy+hy*view.s-5,10,10);}}
+  if(removed.has(f)){X.fillStyle='rgba(0,0,0,.62)';X.fillRect(view.ox,view.oy,W0*view.s,H0*view.s);X.fillStyle='#ff6b6b';X.font=`${Math.round(22*view.s)}px sans-serif`;const t=purged.has(f)?'영상 파일까지 지운 프레임':'삭제한 프레임 (학습에서 제외)';X.fillText(t,view.ox+(W0*view.s-X.measureText(t).width)/2,view.oy+H0*view.s/2);}
+  if(drag&&drag.kind==='new'){X.strokeStyle='#fff';X.setLineDash([4,4]);const r=normRect(drag);X.strokeRect(view.ox+r.x*view.s,view.oy+r.y*view.s,r.w*view.s,r.h*view.s);X.setLineDash([]);}
+}
+const corners=b=>[[b.x,b.y],[b.x+b.w,b.y],[b.x,b.y+b.h],[b.x+b.w,b.y+b.h]];
+const normRect=d=>({x:Math.min(d.x0,d.x1),y:Math.min(d.y0,d.y1),w:Math.abs(d.x1-d.x0),h:Math.abs(d.y1-d.y0)});
+function refresh(){
+  $('slider').value=cur;$('fno').textContent=nFrames?`${cur} / ${nFrames} 프레임 · 박스 ${(boxes.get(cur)||[]).length}개${removed.has(cur)?' · 삭제됨':''}`:'-';
+  const r=reviewed.has(cur);$('rev').textContent=r?'확인함':'미확인';$('rev').className='badge'+(r?' ok':'');
+  $('revcount').textContent=`확인한 프레임 ${reviewed.size} / ${nFrames}`;
+  const b=sel&&(boxes.get(sel.f)||[])[sel.i];
+  $('selinfo').innerHTML=b?`번호 <b style="color:${col(b.id)}">${b.id}</b> · ${b.g?'무시 · ':''}${b.m?'수동':'점수 '+b.c.toFixed(2)} · x ${b.x.toFixed(0)} y ${b.y.toFixed(0)} w ${b.w.toFixed(0)} h ${b.h.toFixed(0)} · 넓이 ${(b.w*b.h).toFixed(0)}`:'박스를 클릭하세요.';
+  for(const id of ['delbox','deltrack','relabel','swapid','igtoggle'])$(id).disabled=!b;{let n=0,t=0;for(const bs of boxes.values())for(const x of bs){t++;if(x.g)n++;}if(nFrames&&n)$('iginfo').textContent=`무시 박스 ${n}개 / 전체 ${t}개`;}
+  delPanel();idList();multiPanel();render();
+}
+function idList(){
+  const cnt=new Map(),first=new Map();for(const [f,bs] of boxes)for(const b of bs){cnt.set(b.id,(cnt.get(b.id)||0)+1);if(!first.has(b.id)||f<first.get(b.id))first.set(b.id,f);}
+  const selId=sel&&(boxes.get(sel.f)||[])[sel.i]?.id;
+  $('ids').innerHTML=[...cnt.keys()].sort((a,b)=>first.get(a)-first.get(b)).map(id=>`<div class="idrow${id===selId?' sel':''}" data-id="${id}" data-f="${first.get(id)}"><span class="sw" style="background:${col(id)}"></span>${id}번<span class="n">${first.get(id)}~ · ${cnt.get(id)}개</span></div>`).join('')||'박스 없음';
+  for(const r of $('ids').querySelectorAll('.idrow'))r.onclick=()=>{go(+r.dataset.f);const bs=boxes.get(cur)||[];const i=bs.findIndex(b=>b.id===+r.dataset.id);sel=i>=0?{f:cur,i}:null;refresh();};
+}
+// ---------- frames with 2+ boxes ----------
+function multiFrames(){const a=[];for(const [f,bs] of boxes)if(bs.length>=2)a.push(f);return a.sort((x,y)=>x-y);}
+function step(d){if(!$('multi').checked){let t=cur+d;if(!$('showdel').checked)while(t>=1&&t<=nFrames&&removed.has(t))t+=d;if(t<1||t>nFrames){if(cur+d>=1&&cur+d<=nFrames)status(d>0?'뒤쪽은 모두 삭제한 프레임입니다':'앞쪽은 모두 삭제한 프레임입니다');return false;}go(t);return true;}
+  const a=multiFrames();if(!a.length){status('박스 2개 이상인 프레임이 없습니다');return false;}
+  let t=null;if(d>0){for(const f of a)if(f>cur){t=f;break;}}else{for(let i=a.length-1;i>=0;i--)if(a[i]<cur){t=a[i];break;}}
+  if(t==null){status(d>0?'마지막 겹친 프레임입니다':'첫 겹친 프레임입니다');return false;}go(t);return true;}
+function stepN(d,n){for(let k=0;k<n;k++)if(!step(d))break;}
+function multiPanel(){
+  const a=multiFrames();const runs=[];for(const f of a){const r=runs[runs.length-1];if(r&&f===r[1]+1)r[1]=f;else runs.push([f,f]);}
+  const done=a.filter(f=>reviewed.has(f)).length;
+  $('multiinfo').textContent=`박스 2개 이상: ${a.length}프레임, ${runs.length}구간 · 확인함 ${done}`;
+  $('runs').innerHTML=runs.map(([s,e])=>{const ids=new Set();for(let f=s;f<=e;f++)for(const b of boxes.get(f)||[])ids.add(b.id);
+    const ok=[...Array(e-s+1).keys()].every(k=>reviewed.has(s+k));const here=cur>=s&&cur<=e;
+    return `<div class="idrow${here?' sel':''}" data-f="${s}">${s===e?s:s+'–'+e}<span class="n">${e-s+1}장 · 번호 ${[...ids].sort((x,y)=>x-y).join(', ')}${ok?' · ✓':''}</span></div>`;}).join('')||'<div class="st">없음</div>';
+  for(const r of $('runs').querySelectorAll('.idrow'))r.onclick=()=>{go(+r.dataset.f);};
+}
+$('multi').onchange=()=>{if($('multi').checked&&(boxes.get(cur)||[]).length<2){const a=multiFrames();const t=a.find(f=>f>=cur)??a[0];if(t)go(t);}refresh();};
+function go(f){if(!nFrames)return;cur=Math.max(1,Math.min(nFrames,f));if(sel&&sel.f!==cur){const id=(boxes.get(sel.f)||[])[sel.i]?.id;const i=(boxes.get(cur)||[]).findIndex(b=>b.id===id);sel=i>=0?{f:cur,i}:null;}refresh();}
+// ---------- mouse ----------
+function hit(p){const bs=boxes.get(cur)||[];const tol=8/view.s;
+  if(sel&&sel.f===cur){const b=bs[sel.i];if(b){const cs=corners(b);for(let k=0;k<4;k++)if(Math.abs(p.x-cs[k][0])<tol&&Math.abs(p.y-cs[k][1])<tol)return{i:sel.i,corner:k};}}
+  let best=null;for(let i=0;i<bs.length;i++){const b=bs[i];if(p.x>=b.x&&p.x<=b.x+b.w&&p.y>=b.y&&p.y<=b.y+b.h){const a=b.w*b.h;if(!best||a<best.a)best={i,a};}}return best?{i:best.i}:null;}
+C.addEventListener('contextmenu',e=>e.preventDefault());
+C.addEventListener('wheel',e=>{if(!nFrames)return;e.preventDefault();const c=cpx(e);zoomAt(Z.k*Math.exp(-e.deltaY*(e.deltaMode?0.05:0.0015)),c.x,c.y,toImg(e));},{passive:false});
+C.addEventListener('pointerdown',e=>{if(!nFrames)return;const p=toImg(e);try{C.setPointerCapture(e.pointerId);}catch(_){}
+  if(e.button===2||e.button===1){e.preventDefault();const c=cpx(e);zdrag={kind:e.button===2&&!e.shiftKey?'zoom':'pan',y0:e.clientY,k0:Z.k,c,ip:p};return;}
+  if(drawMode){drag={kind:'new',x0:p.x,y0:p.y,x1:p.x,y1:p.y};return;}
+  const h=hit(p);if(!h){sel=null;refresh();return;}
+  sel={f:cur,i:h.i};const b=boxes.get(cur)[h.i];drag={kind:h.corner!=null?'corner':'move',corner:h.corner,p0:p,b0:{...b},moved:false};refresh();});
+C.addEventListener('pointermove',e=>{if(zdrag){const c=cpx(e);if(zdrag.kind==='zoom')zoomAt(zdrag.k0*Math.exp((zdrag.y0-e.clientY)/120),zdrag.c.x,zdrag.c.y,zdrag.ip);else zoomAt(Z.k,c.x,c.y,zdrag.ip);return;}
+  if(!drag)return;const p=toImg(e);
+  if(drag.kind==='new'){drag.x1=p.x;drag.y1=p.y;render();return;}
+  const b=boxes.get(cur)[sel.i];const dx=p.x-drag.p0.x,dy=p.y-drag.p0.y;
+  if(!drag.moved){if(Math.abs(dx)+Math.abs(dy)<2/view.s)return;snapshot();drag.moved=true;}
+  if(drag.kind==='move'){b.x=drag.b0.x+dx;b.y=drag.b0.y+dy;}
+  else{let x1=drag.b0.x,y1=drag.b0.y,x2=x1+drag.b0.w,y2=y1+drag.b0.h;const k=drag.corner;if(k===0||k===2)x1+=dx;else x2+=dx;if(k===0||k===1)y1+=dy;else y2+=dy;b.x=Math.min(x1,x2);b.y=Math.min(y1,y2);b.w=Math.abs(x2-x1);b.h=Math.abs(y2-y1);}
+  b.m=true;render();});
+C.addEventListener('pointerup',e=>{if(zdrag){zdrag=null;return;}if(!drag)return;
+  if(drag.kind==='new'){const r=normRect(drag);drag=null;if(r.w>4&&r.h>4){snapshot();let id=+$('drawid').value;if(!id){id=1;for(const bs of boxes.values())for(const b of bs)id=Math.max(id,b.id+1);$('drawid').value=id;}
+      if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);const dup=bs.findIndex(b=>b.id===id);const nb={id,...clip(r),c:1,m:true};if(dup>=0)bs[dup]=nb;else bs.push(nb);sel={f:cur,i:dup>=0?dup:bs.length-1};}
+    setDraw(false);refresh();return;}
+  const b=boxes.get(cur)[sel.i];Object.assign(b,clip(b));drag=null;refresh();});
+const clip=r=>{const x=Math.max(0,r.x),y=Math.max(0,r.y);return{x,y,w:Math.min(W0,r.x+r.w)-x,h:Math.min(H0,r.y+r.h)-y};};
+// ---------- edits ----------
+function selBox(){return sel&&(boxes.get(sel.f)||[])[sel.i];}
+function igApply(){if(!nFrames)return;const T=+$('igarea').value;if(!(T>=0)||$('igarea').value===''){status('넓이 기준(px²)을 숫자로 넣으세요. 예: 높이 40 × 너비 15 = 600');return;}
+  let on=0,off=0;for(const bs of boxes.values())for(const b of bs){const g=T>0&&b.w*b.h<=T;if(g&&!b.g)on++;if(!g&&b.g)off++;}
+  if(!on&&!off){status('바뀌는 박스가 없습니다.');return;}
+  if(!confirm(`넓이 ${T} px² 이하 박스를 무시로 표시합니다.
+새로 무시 ${on}개, 무시 해제 ${off}개 (모든 프레임, 되돌리기 Ctrl+Z 가능)`))return;
+  snapshot();for(const bs of boxes.values())for(const b of bs)b.g=T>0&&b.w*b.h<=T;try{localStorage.setItem('lwir_igarea',String(T));}catch(e){}
+  status(`무시 표시 ${on}개, 해제 ${off}개. 저장하면 반영됩니다.`);refresh();}
+function igToggle(){const b=selBox();if(!b)return;snapshot();b.g=!b.g;refresh();}
+function delBox(){const b=selBox();if(!b)return;snapshot();boxes.get(sel.f).splice(sel.i,1);sel=null;refresh();}
+function delTrack(){const b=selBox();if(!b)return;const id=b.id;let n=0;for(const bs of boxes.values())n+=bs.filter(x=>x.id===id).length;
+  if(!confirm(`${id}번 박스 ${n}개를 모든 프레임에서 지웁니다. (되돌리기 Ctrl+Z 가능)`))return;snapshot();for(const [f,bs] of boxes)boxes.set(f,bs.filter(x=>x.id!==id));sel=null;refresh();}
+function relabel(){const b=selBox();const to=+$('newid').value;if(!b||!to||to===b.id)return;const from=b.id,start=$('fromhere').checked?cur:1;
+  let clash=0;for(const [f,bs] of boxes)if(f>=start&&bs.some(x=>x.id===from)&&bs.some(x=>x.id===to))clash++;
+  if(clash&&!confirm(`${clash}개 프레임에 ${to}번이 이미 있습니다. 그 프레임에서는 기존 ${to}번 박스를 지우고 바꿉니다. 계속할까요?`))return;
+  snapshot();for(const [f,bs] of boxes){if(f<start||!bs.some(x=>x.id===from))continue;const keep=bs.filter(x=>x.id!==to);for(const x of keep)if(x.id===from)x.id=to;boxes.set(f,keep);}
+  const i=(boxes.get(cur)||[]).findIndex(x=>x.id===to);sel=i>=0?{f:cur,i}:null;status(`${from}번을 ${to}번으로 바꿨습니다 (${start===1?'전체':start+'프레임부터'})`);refresh();}
+function swapIds(){const b=selBox();const to=+$('newid').value;if(!b||!to||to===b.id)return;const from=b.id,start=$('fromhere').checked?cur:1;let n=0;
+  snapshot();for(const [f,bs] of boxes){if(f<start)continue;for(const x of bs){if(x.id===from){x.id=to;n++;}else if(x.id===to){x.id=from;n++;}}}
+  const i=(boxes.get(cur)||[]).findIndex(x=>x.id===to);sel=i>=0?{f:cur,i}:null;status(`${from}번과 ${to}번을 서로 맞바꿨습니다 (${start===1?'전체':start+'프레임부터'}, 박스 ${n}개)`);refresh();}
+let cbuf=[],cbufF=0;
+function copyPrev(){const b=selBox();let id=b?b.id:+$('drawid').value;if(!id){status('복사할 번호를 고르세요 (박스 선택 또는 새 박스 번호 입력).');return;}
+  for(let f=cur-1;f>=1;f--){const p=(boxes.get(f)||[]).find(x=>x.id===id);if(p){snapshot();if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);const k=bs.findIndex(x=>x.id===id);const nb={...p,m:true,c:1};if(k>=0)bs[k]=nb;else bs.push(nb);sel={f:cur,i:k>=0?k:bs.length-1};status(`${f}프레임의 ${id}번 박스를 복사했습니다`);refresh();return;}}
+  status(`이전 프레임에 ${id}번 박스가 없습니다`);}
+function delPanel(){const a=[...removed].sort((x,y)=>x-y),runs=[];for(const f of a){const r=runs[runs.length-1];if(r&&f===r[1]+1)r[1]=f;else runs.push([f,f]);}
+  $('delinfo').textContent=nFrames?`삭제한 프레임 ${a.length} / ${nFrames} · 남은 ${nFrames-a.length}`:'-';$('delcur').textContent=removed.has(cur)?'이 프레임 되살리기':'이 프레임 삭제';
+  $('delruns').innerHTML=runs.map(([s,e])=>`<div class="idrow${cur>=s&&cur<=e?' sel':''}" data-f="${s}">${s===e?s:s+'–'+e}<span class="n">${e-s+1}장</span></div>`).join('');
+  for(const r of $('delruns').querySelectorAll('.idrow'))r.onclick=()=>go(+r.dataset.f);}
+function delFrames(a,b,on){if(!nFrames)return;a=Math.max(1,Math.min(nFrames,Math.round(a)));b=Math.max(1,Math.min(nFrames,Math.round(b)));if(a>b)[a,b]=[b,a];
+  let n=0;for(let f=a;f<=b;f++)if(removed.has(f)!==on&&!purged.has(f))n++;if(!n){status('바뀌는 프레임이 없습니다.');return;}
+  if(b>a&&!confirm(`${a}–${b} 프레임 중 ${n}장을 ${on?'삭제합니다. 영상 파일은 그대로 두고 학습과 검수에서만 뺍니다':'되살립니다'}. (되돌리기 Ctrl+Z 가능)`))return;
+  snapshot();for(let f=a;f<=b;f++){if(on)removed.add(f);else if(!purged.has(f))removed.delete(f);}
+  status(`${a===b?a:a+'–'+b} 프레임 ${n}장을 ${on?'삭제했습니다':'되살렸습니다'}. 자동 저장됩니다.`);
+  if(on&&removed.has(cur)&&!$('showdel').checked&&removed.size<nFrames){let t=cur;while(t<=nFrames&&removed.has(t))t++;if(t>nFrames){t=cur;while(t>=1&&removed.has(t))t--;}cur=t;sel=null;}
+  refresh();}
+function delRange(on){const a=+$('delfrom').value,b=+$('delto').value;if(!a||!b){status('구간의 시작과 끝 프레임 번호를 넣으세요. "시작=현재", "끝=현재" 버튼을 쓰면 편합니다.');return;}delFrames(a,b,on);}
+function markAll(){if(!nFrames)return;const left=nFrames-reviewed.size;
+  if(left<=0){if(!confirm('이미 모든 프레임이 확인됨입니다. 전체 확인 표시를 지울까요? (되돌리기 Ctrl+Z 가능)'))return;snapshot();reviewed=new Set();status('전체 확인 표시를 지웠습니다.');refresh();return;}
+  if(!confirm(`아직 확인하지 않은 ${left}개 프레임을 포함해 ${nFrames}개 프레임 전체를 확인함으로 표시합니다. (되돌리기 Ctrl+Z 가능)`))return;
+  snapshot();for(let f=1;f<=nFrames;f++)reviewed.add(f);refresh();status(`전체 ${nFrames}개 프레임을 검수 완료로 표시했습니다. 저장합니다…`);$('save').click();}
+function markRev(){snapshot();if(reviewed.has(cur))reviewed.delete(cur);else reviewed.add(cur);refresh();}
+function setDraw(on){drawMode=on;$('draw').textContent=on?'그리는 중… (Esc 취소)':'그리기 시작';$('draw').className=on?'primary':'';C.style.cursor=on?'copy':'crosshair';}
+$('delbox').onclick=delBox;$('deltrack').onclick=delTrack;$('relabel').onclick=relabel;$('swapid').onclick=swapIds;$('copyprev').onclick=copyPrev;$('markrev').onclick=markRev;$('draw').onclick=()=>setDraw(!drawMode);
+// ---------- play / nav ----------
+function togglePlay(){if(playing){clearInterval(playing);playing=null;$('play').textContent='▶ 재생';return;}$('play').textContent='❚❚ 정지';playing=setInterval(()=>{if(cur>=nFrames||!step(1)){togglePlay();}},42);}
+$('prev').onclick=()=>step(-1);$('next').onclick=()=>step(1);$('play').onclick=togglePlay;$('slider').oninput=e=>go(+e.target.value);
+addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'&&e.target.type!=='range'&&e.target.type!=='checkbox')return;
+  const k=e.key;if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='z'){e.preventDefault();doUndo();return;}
+  if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='s'){e.preventDefault();save();return;}
+  if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='c'){e.preventDefault();const b=selBox();cbuf=(b?[b]:(boxes.get(cur)||[])).map(x=>({...x}));cbufF=cur;status(cbuf.length?`${cur}프레임의 박스 ${cbuf.length}개를 복사했습니다${b?' ('+b.id+'번)':' (프레임 전체)'}. Ctrl+V 로 붙여 넣으세요.`:'복사할 박스가 없습니다.');return;}
+  if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='v'){e.preventDefault();if(!nFrames)return;if(!cbuf.length){status('먼저 Ctrl+C 로 복사하세요.');return;}snapshot();if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);let last=-1;for(const p of cbuf){const nb={...p,m:true,c:1};const i=bs.findIndex(x=>x.id===p.id);if(i>=0){bs[i]=nb;last=i;}else{bs.push(nb);last=bs.length-1;}}sel=cbuf.length===1?{f:cur,i:last}:null;status(`${cbufF}프레임에서 복사한 박스 ${cbuf.length}개를 붙여 넣었습니다 (같은 번호는 바꿔 넣음).`);refresh();return;}
+  if(e.ctrlKey||e.metaKey||e.altKey)return;
+  if(k==='ArrowRight'){e.preventDefault();stepN(1,e.shiftKey?10:1);}else if(k==='ArrowLeft'){e.preventDefault();stepN(-1,e.shiftKey?10:1);}
+  else if('wasdWASD'.includes(k)&&k.length===1){const b=selBox();if(!b){status('먼저 움직일 박스를 클릭하세요.');return;}e.preventDefault();if(!e.repeat)snapshot();const st=e.shiftKey?10:1,kk=k.toLowerCase();
+    if(kk==='a')b.x-=st;else if(kk==='d')b.x+=st;else if(kk==='w')b.y-=st;else b.y+=st;
+    b.x=Math.max(0,Math.min(W0-b.w,b.x));b.y=Math.max(0,Math.min(H0-b.h,b.y));b.m=true;b.c=1;dirty=true;refresh();}
+  else if(k==='+'||k==='='){zoomBy(1.25);}else if(k==='-'||k==='_'){zoomBy(0.8);}else if(k==='0'){zoomReset();}
+  else if(k==='m'||k==='M'){$('multi').checked=!$('multi').checked;$('multi').onchange();}
+  else if(k===' '){e.preventDefault();togglePlay();}else if(k==='Delete'||k==='Backspace'){e.preventDefault();delBox();}
+  else if(k==='n'||k==='N')setDraw(!drawMode);else if(k==='c'||k==='C')copyPrev();else if(k==='r'||k==='R')markRev();else if(k==='i'||k==='I')igToggle();else if(k==='x'||k==='X')delFrames(cur,cur,!removed.has(cur));else if(k==='Escape'){setDraw(false);drag=null;render();}});
+addEventListener('resize',render);
+$('zin').onclick=()=>zoomBy(1.25);$('zout').onclick=()=>zoomBy(0.8);$('zfit').onclick=zoomReset;
+addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
+// ---------- save ----------
+async function save(){if(!nFrames)return;
+  const mot=toMot(),rv=JSON.stringify({reviewed:[...reviewed].sort((a,b)=>a-b),removed:[...removed].sort((a,b)=>a-b),frames:nFrames,saved:new Date().toISOString(),format:'MOT: frame,id,x,y,w,h,conf(manual boxes=1),class(0=person,1=ignore),-1,-1; 1-based frame = images/000001.png'},null,1);
+  try{
+    if(dirHandle){for(const [nm,txt] of [['tracks_edited_mot.txt',mot],['review_state.json',rv]]){const fh=await dirHandle.getFileHandle(nm,{create:true});const w=await fh.createWritable();await w.write(txt);await w.close();}
+      status('저장했습니다: tracks_edited_mot.txt, review_state.json (원드라이브가 올립니다). 원래 tracks_mot.txt는 그대로입니다.');}
+    else{for(const [nm,txt] of [['tracks_edited_mot.txt',mot],['review_state.json',rv]]){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'}));a.download=nm;a.click();}
+      status('파일로 내려받았습니다. 녹화 폴더에 넣어 두면 다음에 이어서 열 수 있습니다.');}
+    dirty=false;$('save').disabled=true;try{localStorage.removeItem('lwir_edit_'+srcName);}catch(e){}
+  }catch(e){status('저장하지 못했습니다: '+e.message);}}
+$('save').onclick=save;$('igapply').onclick=igApply;$('markall').onclick=markAll;$('delcur').onclick=()=>delFrames(cur,cur,!removed.has(cur));$('delset1').onclick=()=>{$('delfrom').value=cur;};$('delset2').onclick=()=>{$('delto').value=cur;};$('delrange').onclick=()=>delRange(true);$('undelrange').onclick=()=>delRange(false);$('showdel').onchange=refresh;$('igtoggle').onclick=igToggle;try{$('igarea').value=localStorage.getItem('lwir_igarea')||'';}catch(e){}
+// drag and drop a folder (Chrome/Edge)
+addEventListener('dragover',e=>{e.preventDefault();$('drop').style.display='flex';});
+addEventListener('dragleave',e=>{if(e.target===$('drop'))$('drop').style.display='none';});
+addEventListener('drop',async e=>{e.preventDefault();$('drop').style.display='none';const it=e.dataTransfer.items&&e.dataTransfer.items[0];
+  if(it&&it.getAsFileSystemHandle){const h=await it.getAsFileSystemHandle();if(h&&h.kind==='directory'){try{await h.requestPermission({mode:'readwrite'});}catch(_){}await loadFromDir(h);}}});
+// test hook: ?src=<url of the folder> loads over http (read only, saves download)
+(async()=>{const u=new URLSearchParams(location.search).get('src');if(!u)return;
+  const base=u.replace(/\/?$/,'/');const res=await (await fetch(base+'RESULT.json')).json();const n=res.frames;
+  files={};for(let i=1;i<=n;i++){const nm='images/'+String(i).padStart(6,'0')+'.png';files[nm]={getFile:async()=>await (await fetch(base+nm)).blob()};}
+  for(const nm of ['tracks_mot.txt','tracks_edited_mot.txt','review_state.json']){const r=await fetch(base+nm);if(r.ok){const t=await r.text();files[nm]={text:async()=>t};}}
+  srcName='http';await afterLoad(n);})();
+render();
+</script>
+</body></html>

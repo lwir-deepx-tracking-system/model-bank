@@ -1,0 +1,264 @@
+// Camera -> stdout pipe for the live tracker (DX-M1 host). Writes every received 16-bit frame (w*h*2 bytes, native endian) to stdout and prints stats to stderr.
+// Opens the camera like the team runtime (runtime/src/camera/camera.cpp). Optional frame-rate setting: ./cam_pipe [fps_code] [seconds]   fps_code: 0 = 30 fps, 1 = 25 fps, -1 = leave as is (default)
+// v2.5 (11-11): SHUTTER SETTING THAT CAN BE CHANGED WITHOUT RESTARTING THE TRACKER, AND EVIDENCE IN THE LOG. Today's stalls come at fixed moments after an open (about 1.4 s, 4.4 s and
+// every ~180 s), which points at shutter operations. The shutter setting is now read at every open from env CAM_SHUTTER or, when that is not set, from the first word of
+// cam_shutter.txt next to this program (no file = d, the old behaviour). Change the file, then end cam_pipe with SIGTERM: it closes the camera and exits 0, and the tracker starts
+// it again at once. New settings: m = MANUAL shutter mode (the engine never moves the shutter by itself; one calibration at the open), mN = MANUAL + our own calibration every
+// N*30 s (logged as SHUTTER_CAL, so a stall right after one is visible), a trailing x on any setting = no ShutterCalibrationOn() at the open (dx, T120x, mx). Every open logs a
+// SHUTTER line with what was asked and whether the engine accepted it, every stall gets a STALL_INFO line saying how long this open lived, and lines carry the board clock. An
+// optional second word "info" in cam_shutter.txt reads the engine's saved settings once (GetSetting) before the first frame. The repair logic (6 s, ResetMainBoard,
+// 20 s) is unchanged.
+// v2.2 (11-09): single-instance lock (~/.cam_pipe.lock, exit 7 when another cam_pipe runs); experiment switches CAM_SHUTTER / CAM_NO_RECOVER / CAM_TELEMETRY (telemetry OFF by default:
+// every SDK temperature getter blocks the stream for about 2 s, measured 11-09: 24.5 fps without, 0.5 fps with one getter pair per 2 s).
+// v2.1 (11-09): stdout is non-blocking and written with poll() in 100 ms steps, and SIGTERM/SIGINT are installed without SA_RESTART, so a stop signal ends the program
+// even while the tracker is not reading the pipe (a blocking fwrite of a 614 KB frame into a full 64 KB pipe could not be interrupted: the tracker then had to SIGKILL it with the camera open).
+// v2 (11-09): SELF-HEALING. The camera sometimes stops sending frames after a few minutes (RecvImage keeps returning 4/5 even after a clean reopen) and then only a board reboot
+// brought it back. The engine can be rebooted from software: when no frame arrives for STALL_S seconds (FIRST_STALL_S before the first frame after an open),
+// this program calls ResetMainBoard(), closes the handle, waits RESET_WAIT_S seconds, scans again and reopens (tested 11-09: frames came back about 25 s later, no board reboot).
+// After MAX_FAILED_RECOVERIES recoveries in a row without a single frame it ends with exit code 6 (the tracker may start a new process).
+// Build: g++ -O2 cam_pipe.cpp -o cam_pipe -D_LINUX -I/usr/local/include/i3system $(pkg-config --cflags --libs opencv4) -li3system_te_64 -li3system_usb_64 -li3system_imgproc_impl_64 -lpthread
+#include <algorithm>
+#include <cerrno>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <map>
+#include <string>
+#include <thread>
+#include <vector>
+#include <csignal>
+#include <cctype>
+#include <ctime>
+#include <sys/prctl.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/file.h>
+#include <unistd.h>
+
+#include <i3system_TE.h>
+#include <i3_types.h>
+
+static volatile std::sig_atomic_t g_stop = 0;
+static void on_sig(int) { g_stop = 1; }
+
+using clk = std::chrono::steady_clock;
+static double since(clk::time_point t) { return std::chrono::duration<double>(clk::now() - t).count(); }
+static void nap(double seconds)   // sleeps in 50 ms steps so that SIGTERM ends the wait at once
+{
+  auto t = clk::now();
+  while(!g_stop && since(t) < seconds) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+}
+
+static bool write_all(const void* data, size_t n)   // false: write error (reader gone) or stop requested
+{
+  const char* p = static_cast<const char*>(data); size_t left = n;
+  while(left > 0)
+  {
+    if(g_stop) return false;
+    pollfd pfd; pfd.fd = STDOUT_FILENO; pfd.events = POLLOUT; pfd.revents = 0;
+    const int pr = poll(&pfd, 1, 100);
+    if(pr < 0) { if(errno == EINTR) continue; return false; }
+    if(pr == 0) continue;
+    if(pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) return false;
+    const ssize_t w = write(STDOUT_FILENO, p, left);
+    if(w < 0) { if(errno == EINTR || errno == EAGAIN) continue; return false; }
+    p += w; left -= static_cast<size_t>(w);
+  }
+  return true;
+}
+
+static const double STALL_S = 6.0;          // no frame for this long while the stream was running: engine reset
+static const double FIRST_STALL_S = 30.0;   // no first frame this long after an open: engine reset (a healthy open gives its first frame within a few seconds)
+static const double RESET_WAIT_S = 20.0;    // time given to the engine to reboot before the next scan/open
+static const int MAX_FAILED_RECOVERIES = 4;
+
+static void diag(const char* where)
+{
+  i3::USB_DIAGNOSTIC d{};
+  if(i3::GetLastUsbDiagnostic(&d))
+    std::fprintf(stderr, "DIAG %s: op=%d(%s) result=%d(%s)\n", where, d.operation, i3::GetUsbOperationName(d.operation), d.result, i3::GetUsbResultName(d.result));
+}
+
+static std::string hms()   // board wall clock, to match this log with the tracker and kernel logs
+{
+  char b[16]; std::time_t t = std::time(nullptr); std::tm tmv; localtime_r(&t, &tmv); std::strftime(b, sizeof b, "%H:%M:%S", &tmv); return b;
+}
+
+static std::string exe_dir()
+{
+  char b[1024]; const ssize_t n = readlink("/proc/self/exe", b, sizeof b - 1);
+  if(n <= 0) return ".";
+  b[n] = 0; const std::string s(b); const size_t p = s.rfind('/'); return p == std::string::npos ? "." : s.substr(0, p);
+}
+
+static unsigned g_prod = 0, g_core = 0;   // from the last scan: product (1 Q1, 2 V1, 3 EQ1, 4 EV1, 9 M1, 12 EQ2, 13 EV2) and core id
+static int scan_device(int attempts)
+{
+  for(int attempt = 0; attempt < attempts && !g_stop; ++attempt)
+  {
+    i3::SCANINFO devs[MAX_USB_NUM];
+    if(ScanTE(devs) == 1) for(int i = 0; i < MAX_USB_NUM; ++i) if(devs[i].bDevCon == 1) { g_prod = devs[i].nProdVer; g_core = devs[i].nCoreID; return i; }
+    nap(1.0);
+  }
+  return -1;
+}
+
+// Shutter setting, read at every open: env CAM_SHUTTER, else the first word of cam_shutter.txt next to this program, else d.
+//   d = TEMP shutter limit 1 + calibration at the open (the team runtime's setting, the behaviour up to v2.2), tN = TEMP limit N (1..10), TN = TIME shutter every N*30 s (1..120),
+//   m = MANUAL mode (the engine never moves the shutter by itself), mN = MANUAL + our own ShutterCalibrationOn() every N*30 s (1..120), n = no shutter call at all (engine defaults).
+//   A trailing x (dx, t5x, T120x, mx, m20x) = no ShutterCalibrationOn() at the open. Anything not understood = d.
+struct ShutterSet { std::string text, source; int mode = I3_TEMP_SHUTTER, value = 1; bool cal_at_open = true, info = false; double own_period_s = 0; };
+static ShutterSet read_shutter_setting()
+{
+  ShutterSet r; std::string s = "d"; r.source = "default";
+  const char* env = std::getenv("CAM_SHUTTER");
+  if(env && *env) { s = env; r.source = "env"; }
+  else
+  {
+    FILE* f = std::fopen((exe_dir() + "/cam_shutter.txt").c_str(), "r");
+    if(f)
+    {
+      char a[64] = {0}, b[64] = {0}; const int n = std::fscanf(f, "%63s %63s", a, b); std::fclose(f);
+      if(n >= 1 && a[0] != '#') { s = a; r.source = "file"; r.info = n >= 2 && std::string(b) == "info"; }
+    }
+  }
+  r.text = s;
+  if(s.size() > 1 && s[s.size() - 1] == 'x') { r.cal_at_open = false; s.erase(s.size() - 1); }
+  bool digits = s.size() > 1; for(size_t i = 1; i < s.size(); ++i) if(!std::isdigit(static_cast<unsigned char>(s[i]))) digits = false;
+  const int v = digits ? std::atoi(s.c_str() + 1) : -1;
+  if(s == "n") { r.mode = -2; r.value = -1; r.cal_at_open = false; }
+  else if(s == "d") { r.mode = I3_TEMP_SHUTTER; r.value = 1; }
+  else if(s[0] == 't' && v >= I3_SHUTTER_TEMP_MIN && v <= I3_SHUTTER_TEMP_MAX) { r.mode = I3_TEMP_SHUTTER; r.value = v; }
+  else if(s[0] == 'T' && v >= I3_SHUTTER_TIME_MIN && v <= I3_SHUTTER_TIME_MAX) { r.mode = I3_TIME_SHUTTER; r.value = v; }
+  else if(s == "m") { r.mode = I3_MANUAL_SHUTTER; r.value = 0; }
+  else if(s[0] == 'm' && v >= 1 && v <= 120) { r.mode = I3_MANUAL_SHUTTER; r.value = v; r.own_period_s = v * 30.0; }
+  else { r.source += " (\"" + r.text + "\" not understood: using d)"; r.text = "d"; r.mode = I3_TEMP_SHUTTER; r.value = 1; r.cal_at_open = true; }
+  return r;
+}
+
+static ShutterSet g_shutter;                 // the setting used at the last open
+static clk::time_point g_t_cal = clk::now();  // last ShutterCalibrationOn() of ours (or the open, when none was done)
+static bool g_cal_done = false, g_info_done = false; static int g_own_cals = 0;
+
+static void apply_shutter(i3::TE_A* te)
+{
+  const ShutterSet& s = g_shutter; int rm = -1, rv = -1, rc = -1;   // -1 = not called, 1 = the engine accepted it, 0 = refused
+  if(s.mode != -2)
+  {
+    rm = te->SetShutterMode(static_cast<unsigned short>(s.mode)) ? 1 : 0;
+    if(s.mode == I3_TEMP_SHUTTER) rv = te->SetShutterTemperature(static_cast<unsigned short>(s.value)) ? 1 : 0;
+    else if(s.mode == I3_TIME_SHUTTER) rv = te->SetShutterTime(static_cast<unsigned short>(s.value)) ? 1 : 0;
+    if(s.cal_at_open) rc = te->ShutterCalibrationOn() ? 1 : 0;
+  }
+  g_t_cal = clk::now(); g_cal_done = rc >= 0;
+  std::fprintf(stderr, "SHUTTER setting=%s (%s) mode=%s value=%d set_mode=%d set_value=%d calibration_at_open=%d own_timer=%.0f s at %s\n", s.text.c_str(), s.source.c_str(),
+               s.mode == -2 ? "untouched" : s.mode == I3_TEMP_SHUTTER ? "TEMP" : s.mode == I3_TIME_SHUTTER ? "TIME" : "MANUAL", s.value, rm, rv, rc, s.own_period_s, hms().c_str());
+}
+
+static i3::TE_A* open_camera(int* w, int* h)
+{
+  const int idx = scan_device(10);
+  if(idx < 0) { std::fprintf(stderr, "NO_CAMERA_FOUND\n"); return nullptr; }
+  auto* te = i3::OpenTE_A(idx);
+  if(!te) { diag("open"); std::fprintf(stderr, "OPEN_FAILED\n"); return nullptr; }
+  *w = te->GetImageWidth(); *h = te->GetImageHeight();
+  std::fprintf(stderr, "CAMERA %d %d\n", *w, *h);
+  std::fprintf(stderr, "ENGINE product=%u core=%u at %s\n", g_prod, g_core, hms().c_str());
+  g_shutter = read_shutter_setting();
+  if(g_shutter.info && !g_info_done)   // asked for in cam_shutter.txt: what the engine itself has stored (once per process, before the first frame)
+  {
+    g_info_done = true; i3::TE_SETTING st{}; te->GetSetting(&st);
+    std::fprintf(stderr, "ENGINE_SETTING frameRate=%u exportable=%u shutterMode=%u shutterTime=%u shutterTemp=%u highTempMode=%u\n", st.frameRate, st.exportable, st.shutterMode, st.shutterTime, st.shutterTemp, st.highTempMode);
+  }
+  apply_shutter(te);
+  return te;
+}
+
+int main(int argc, char** argv)
+{
+  const int fps_code = argc > 1 ? std::atoi(argv[1]) : -1; (void)fps_code;   // kept for the old command line; SetFrameRate is not in our header
+  const double seconds = argc > 2 ? std::atof(argv[2]) : 1e9;
+  struct sigaction sa; sigemptyset(&sa.sa_mask); sa.sa_handler = on_sig; sa.sa_flags = 0;   // no SA_RESTART: blocking calls return EINTR
+  sigaction(SIGINT, &sa, nullptr); sigaction(SIGTERM, &sa, nullptr); std::signal(SIGPIPE, SIG_IGN);
+  fcntl(STDOUT_FILENO, F_SETFL, fcntl(STDOUT_FILENO, F_GETFL) | O_NONBLOCK);
+  prctl(PR_SET_PDEATHSIG, SIGTERM);   // the tracker ended in any way: release the camera, also when no frame is arriving and no write can fail
+  // v2.2: one camera reader per board. A second instance (old run script, manual test, orphan after a server crash) would scan/open/reset the camera under the first one's
+  // stream. The lock lives in the home directory (not /tmp: survives nothing it should not, and other users cannot block it). Exit code 7 = another cam_pipe holds the camera.
+  const std::string lock_path = std::string(std::getenv("HOME") ? std::getenv("HOME") : "/tmp") + "/.cam_pipe.lock";
+  const int lock_fd = open(lock_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
+  if(lock_fd >= 0 && flock(lock_fd, LOCK_EX | LOCK_NB) != 0)
+  {
+    std::fprintf(stderr, "CAMERA_BUSY another cam_pipe holds %s; not touching the camera (exit 7)\n", lock_path.c_str());
+    return 7;
+  }
+  int w = 0, h = 0;
+  auto* te = open_camera(&w, &h);
+  if(!te) return te == nullptr && g_stop ? 0 : 2;
+  std::vector<unsigned short> buf(static_cast<size_t>(w) * h);
+  std::map<int, long> codes; long ok = 0;
+  auto t0 = clk::now(), tl = t0; long okl = 0; double maxgap = 0; auto tprev = t0;
+  auto t_open = t0, t_frame = t0; bool frame_since_open = false; int failed_recoveries = 0, recoveries = 0; int exit_code = 0; long ok_open = 0;
+  const bool no_recover = std::getenv("CAM_NO_RECOVER") != nullptr, telemetry = std::getenv("CAM_TELEMETRY") != nullptr;   // experiment switches (11-09): no_recover = log the stall and exit with code 7; telemetry = FPA and shutter temperature in the CAMFPS line (read once per 2 s)
+  const double test_stall_at = std::getenv("CAM_PIPE_TEST_STALL_AT") ? std::atof(std::getenv("CAM_PIPE_TEST_STALL_AT")) : 0; bool test_done = false;   // test hook: pretend the stream stopped once at this time (tests ResetMainBoard + reopen on a healthy camera)
+  while(!g_stop && since(t0) < seconds)
+  {
+    int r = te->RecvImage(buf.data(), true);
+    if(test_stall_at > 0 && !test_done && since(t0) > test_stall_at) { test_done = true; std::fputs("TEST: simulated stall", stderr); std::fputc(10, stderr); nap(STALL_S + 1.0); r = 4; }
+    ++codes[r];
+    if(r == 1)
+    {
+      auto now = clk::now();
+      maxgap = std::max(maxgap, std::chrono::duration<double>(now - tprev).count()); tprev = now;
+      t_frame = now; frame_since_open = true; failed_recoveries = 0;
+      if(!write_all(buf.data(), buf.size() * sizeof(unsigned short))) break;
+      ++ok; ++okl;
+      if(g_shutter.own_period_s > 0 && since(g_t_cal) >= g_shutter.own_period_s)   // v2.5 (setting mN): the engine is in MANUAL mode, the calibration is ours and it is in the log
+      {
+        const auto tc = clk::now(); const bool okc = te->ShutterCalibrationOn(); g_t_cal = clk::now(); g_cal_done = true; ++g_own_cals;
+        std::fprintf(stderr, "SHUTTER_CAL own timer #%d ok=%d took %.2f s, %ld frames and %.1f s after this open, at %s\n", g_own_cals, (int)okc, since(tc), ok - ok_open, since(t_open), hms().c_str());
+      }
+      double dt = std::chrono::duration<double>(now - tl).count();
+      if(dt >= 2.0)
+      {
+        if(telemetry) std::fprintf(stderr, "CAMFPS %.1f t %.0f fpa %.2f shutter %.2f", okl / dt, since(t0), te->GetFpaTemp(), te->GetShutterPt100Temp());
+        else std::fprintf(stderr, "CAMFPS %.1f", okl / dt);
+        std::fputc(10, stderr); okl = 0; tl = now;
+      }
+      continue;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const double idle = since(frame_since_open ? t_frame : t_open);
+    if(idle < (frame_since_open ? STALL_S : FIRST_STALL_S)) continue;
+    if(no_recover)   // experiment: measure how long the camera lives, do not repair it
+    {
+      std::fprintf(stderr, "CAMERA_STALL_NO_RECOVER after %ld frames, no frame for %.1f s, run time %.1f s, shutter=%s", ok, idle, since(t0), std::getenv("CAM_SHUTTER") ? std::getenv("CAM_SHUTTER") : "d");
+      std::fputc(10, stderr); diag("stall"); exit_code = 7; break;
+    }
+    // stalled: reboot the camera engine from software, then reopen
+    ++recoveries;
+    if(++failed_recoveries > MAX_FAILED_RECOVERIES) { std::fprintf(stderr, "CAMERA_UNRECOVERABLE after %d resets without a frame: power-cycle the camera or reboot the board\n", MAX_FAILED_RECOVERIES); exit_code = 6; break; }
+    std::fprintf(stderr, "CAMERA_STALL no frame for %.1f s after %ld frames (%s): ResetMainBoard #%d (failed in a row: %d)\n", idle, ok, frame_since_open ? "stream stopped" : "no first frame", recoveries, failed_recoveries);
+    {   // v2.5: how long this open lived and where the last shutter call of ours was
+      const double lived = frame_since_open ? std::chrono::duration<double>(t_frame - t_open).count() : 0.0;
+      char calb[96] = "none"; const double cd = std::chrono::duration<double>(t_frame - g_t_cal).count();
+      if(g_cal_done) { if(cd >= 0) std::snprintf(calb, sizeof calb, "%.1f s before the last frame", cd); else std::snprintf(calb, sizeof calb, "%.1f s after the last frame (no frame since it)", -cd); }
+      std::fprintf(stderr, "STALL_INFO this open: %ld frames, last frame %.1f s after the open, shutter=%s, own calibrations %d, last shutter call of ours: %s, at %s\n", ok - ok_open, lived, g_shutter.text.c_str(), g_own_cals, frame_since_open ? calb : "n/a", hms().c_str());
+    }
+    diag("stall");
+    const bool sent = te->ResetMainBoard();
+    std::fprintf(stderr, "ResetMainBoard sent=%d\n", (int)sent);
+    te->CloseTE(); te = nullptr;
+    nap(RESET_WAIT_S);
+    if(g_stop) break;
+    te = open_camera(&w, &h);
+    if(!te) { std::fprintf(stderr, "REOPEN_FAILED\n"); exit_code = 3; break; }
+    if(static_cast<size_t>(w) * h != buf.size()) buf.assign(static_cast<size_t>(w) * h, 0);
+    t_open = clk::now(); frame_since_open = false; tprev = t_open; tl = t_open; okl = 0; ok_open = ok;
+  }
+  double secs = since(t0);
+  std::fprintf(stderr, "FRAMES %ld in %.2f s = %.2f fps, longest gap %.0f ms, resets %d, return codes:", ok, secs, ok / secs, maxgap * 1000, recoveries);
+  for(auto& kv : codes) std::fprintf(stderr, " %d x%ld", kv.first, kv.second);
+  std::fprintf(stderr, "\n");
+  if(te) te->CloseTE();
+  return exit_code;
+}

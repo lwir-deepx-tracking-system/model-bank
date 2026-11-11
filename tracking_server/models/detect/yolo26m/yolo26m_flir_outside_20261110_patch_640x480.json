@@ -1,0 +1,5 @@
+{
+ "display_name": "실외 fine-tuning patch 판 (11-10) · YOLO26m_(FLIR) 640x480",
+ "sha256": "2aa5576a70bd35f63e0e073569830e0a7340d243a9754720ac1d59a487591d48",
+ "note": "YOLO26m_fine-tuning_(실외)_20261110_patch. 실외 영상만 학습 + 사람 아닌 조각 붙이기, 3번째 epoch. 실외 검증(conf .25): 맞음 1465, 틀린 상자 61, 놓침 34 (기존 YOLO26m_(FLIR): 1461 / 81 / 38). 시험용. 장치 INT8 정확도 미측정, FLIR 검증 미실시."
+}

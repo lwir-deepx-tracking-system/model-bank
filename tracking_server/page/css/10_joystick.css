@@ -1,0 +1,7 @@
+/* v40: phone joystick. A finger pressed on the picture and dragged moves the gimbal; the ring is drawn where the finger went down. The picture no longer scrolls the page under a finger (touch-action). */
+#v{touch-action:none}
+.joy{position:absolute;display:none;width:112px;height:112px;margin:-56px 0 0 -56px;border-radius:50%;border:1px solid var(--line2);background:rgba(24,24,24,.45);pointer-events:none;z-index:3}
+.joy i{position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;background:var(--acc);opacity:.9}
+/* v40: no arrow keys on the page any more (phone = drag the picture, computer = keyboard); only the stop key stays, on phones */
+.pad{grid-template-columns:142px;grid-template-rows:64px}.pad .c{grid-column:1;grid-row:1}
+@media (max-width:900px) and (orientation:landscape){.pad{grid-template-columns:100px;grid-template-rows:60px}}

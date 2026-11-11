@@ -1,0 +1,43 @@
+{
+  "NEWMRW480": "1aa827cf11f55d470b979d73cdae248babd77a80577613fcfe98097a9fcc18b9",
+  "S480": "efc61942a538c736eeb51e5654b0043598b9baf3f7b99232d6a727ac796ad20a",
+  "M640": "b43d4e53a36ff7c0f29518f99244ea5947266b92faba18ba4a7c1373880909c3",
+  "S6": "c4f1f93431f0854ec495a4a91a510238224c03901de8e788625ba31317f496d8",
+  "RVGGA0_REID2C256": "dc19d7862a77ffa1d7c7f71f84283e86c33267d9e741b59070b839cb1921ff53",
+  "REPVGG_DISTILL_INSIDE_20261110": "1a757811ada3ae84d3533d87ce6b9c003a18e263c1e90a8d1b1761c76b7228c4",
+  "REPVGG_FT_INSIDE_20261110": "e52eda7d8a3354f6cab3f83b3b44397afddaba394c1092091b1598fd101b6137",
+  "VIT_LITE_DISTILL_INSIDE_20261111": "9c79e07bedefa097d36b4deb7716a72b404ba5f1f19366f448e5bd03b9a68199",
+  "VIT_LITE_FT_INSIDE_20261111": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2",
+  "_links": {
+    "NEWMRW480": "detect/yolo26m/yolo26m_flir_nms_640x480.dxnn",
+    "S480": "detect/yolo26s/yolo26s_nms_640x480.dxnn",
+    "M640": "detect/yolo26m/yolo26m_flir_nms_640x640.dxnn",
+    "S6": "detect/yolo26s/yolo26s_nms_640x640.dxnn",
+    "RVGGA0_REID2C256": "reid/repvgg_tmot_camel_reid.dxnn",
+    "REPVGG_DISTILL_INSIDE_20261110": "reid/repvgg_distill_inside_20261110_reid.dxnn",
+    "REPVGG_FT_INSIDE_20261110": "reid/repvgg_ft_inside_20261110_reid.dxnn",
+    "VIT_LITE_DISTILL_INSIDE_20261111": "reid/vit_lite_distill_inside_20261111_reid.dxnn",
+    "VIT_LITE_FT_INSIDE_20261111": "reid/vit_lite_ft_inside_20261111_reid.dxnn"
+  },
+  "_files": {
+    "detect/yolo26m/yolo26m_flir_inside_20261110_1742_640x480.dxnn": "d29ffca0618aef268ae98050a3def5a1df6d0acfd5dfd6e498be6ceb5bc756ff",
+    "detect/yolo26m/yolo26m_flir_inside_20261110_2020_640x480.dxnn": "7a2571e1caf313d34762660e57f735a17e355ac727df08f4c5862fb4ef7b35fc",
+    "detect/yolo26m/yolo26m_flir_inside_20261111_patch_640x480.dxnn": "ae29d607462cf5b790991ad244f54f1d08d762476502da1382ad4b3a7b9bdc07",
+    "detect/yolo26m/yolo26m_flir_nms_640x480.dxnn": "1aa827cf11f55d470b979d73cdae248babd77a80577613fcfe98097a9fcc18b9",
+    "detect/yolo26m/yolo26m_flir_nms_640x640.dxnn": "b43d4e53a36ff7c0f29518f99244ea5947266b92faba18ba4a7c1373880909c3",
+    "detect/yolo26m/yolo26m_flir_outside_20261110_patch_640x480.dxnn": "2aa5576a70bd35f63e0e073569830e0a7340d243a9754720ac1d59a487591d48",
+    "detect/yolo26s/yolo26s_nms_640x480.dxnn": "efc61942a538c736eeb51e5654b0043598b9baf3f7b99232d6a727ac796ad20a",
+    "detect/yolo26s/yolo26s_nms_640x640.dxnn": "c4f1f93431f0854ec495a4a91a510238224c03901de8e788625ba31317f496d8",
+    "detect/yolo26s/yolo26s_nmsfree_npu_640x640.dxnn": "0e7504aabd622868b36ff8b5cfdbedd7302516e4b34f78f37c5b934e2f99093f",
+    "detect/yolov8/yolov8n_nms_640x640.dxnn": "f11c80721fb88d7c4cb153b165d381e778e5bf8de1bc5302d32496baf70831d7",
+    "detect/yolov8/yolov8s_nms_640x640.dxnn": "c9783a3ce9765b35163bc876fab6a4b6332314dcab71c3fca282161a3ceaa79f",
+    "detect/yolox/yolox_nano_nms_640x640.dxnn": "9ab36237847c1e4a704af6677adf038d9f16fa03cb7b8cd3304c95b47c62fe46",
+    "detect/yolox/yolox_s_nms_640x640.dxnn": "e1349efb61ed4f229807a31517688c35c9d45a7b2ee474ccebe8aaf8871168f7",
+    "reid/repvgg_distill_inside_20261110_reid.dxnn": "1a757811ada3ae84d3533d87ce6b9c003a18e263c1e90a8d1b1761c76b7228c4",
+    "reid/repvgg_ft_inside_20261110_reid.dxnn": "e52eda7d8a3354f6cab3f83b3b44397afddaba394c1092091b1598fd101b6137",
+    "reid/repvgg_tmot_camel_reid.dxnn": "dc19d7862a77ffa1d7c7f71f84283e86c33267d9e741b59070b839cb1921ff53",
+    "reid/vit_lite_distill_inside_20261111_reid.dxnn": "9c79e07bedefa097d36b4deb7716a72b404ba5f1f19366f448e5bd03b9a68199",
+    "reid/vit_lite_ft_inside_20261111_reid.dxnn": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2"
+  },
+  "_note": "internal model name -> sha256 of the DXNN file. scripts/setup.sh links models/links/<name>.dxnn to the file given in \"_links\" and checks every sha256 here. The server checks the detector and the re-ID model it loads against these values and lists a model on the page only when its name is here and linked. \"_files\": sha256 of every DXNN under models/detect/*/ and models/reid/ (detectors without an internal name are found by the server itself in models/detect/*/). Keys that start with \"_\" are not model names."
+}

@@ -1,0 +1,19 @@
+# 서버를 켜면 이 폴더에 생기는 것들. 저장소에 올리지 않는다.
+# 접속 키
+access_key.txt
+# 보드마다 다른 값 (주소, 폴더). scripts/ 에 둔다
+label_server.env
+# 저장할 때마다 남는 백업과 기록, 휴지통
+backups/
+trash/
+# 기록
+server.log
+keepalive.log
+auto_add.log
+# auto_add_measure.py 가 이미 처리한 측정 목록
+auto_added.json
+auto_added.json.tmp
+# 일부러 꺼 둘 때 만드는 표시 파일
+KEEP_OFF
+__pycache__/
+*.pyc
