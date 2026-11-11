@@ -133,7 +133,7 @@ tracking_server/
 - 짐벌 제어값: PD 제어(Kp 30, Ki 0, Kd 6), 불감대 0.06, 손으로 움직일 때 속도 20. 이 값은 최고 속도 10 일 때 맞춘 것입니다(`src/gimbal/PID_TUNING_RECORD_20261110.md`). 최고 속도 100 에 맞춘 값은 아직 없습니다.
 - `gimbal_bridge_v27` 은 움직임을 부드럽게 하려는 **시험용 판**입니다. `src/gimbal/V27_CHANGES.md` 의 명령으로 먼저 빌드하고, 옵션 예는 `--deadband-exit 0.10 --axis-reversal 1` 입니다. 실제 짐벌에서 흔들림이 줄어드는지는 아직 재지 않았습니다.
 - `LWIR_GIMBAL_AIM_Y` 를 바꾸면 화면의 세로 오차 표시 기준(`page/js/04_ping_fps_aim.js` 의 `AIM_Y`)도 같이 바꿉니다.
-- `LWIR_CONFIRM_MS` 는 "새 사람 확인"을 장 수가 아니라 시간으로 적은 값입니다. 서버가 초당 장 수를 재서 장 수를 다시 계산합니다: 장 수 = 130 × 초당 장 수 ÷ 1000 을 반올림. 초당 22~27장이면 3장(전과 같음), 초당 28장을 넘으면 4장이 됩니다. 느려져도 3장보다 작아지지는 않습니다. 지금 값은 화면의 "지금 적용된 값"에 나옵니다. 코드는 `src/track/confirm_time.py`, PC 시험은 `python -m unittest src.track.test_confirm_time` 입니다. 장치에서는 아직 돌려 보지 않았습니다.
+- `LWIR_CONFIRM_MS` 는 "새 사람 확인"을 장 수가 아니라 시간으로 적은 값입니다. 서버가 초당 장 수를 재서 장 수를 다시 계산합니다: 장 수 = 130 × 초당 장 수 ÷ 1000 을 반올림. 초당 22~27장이면 3장(전과 같음), 초당 28장을 넘으면 4장이 됩니다. 느려져도 3장보다 작아지지는 않습니다. 지금 값은 화면의 "지금 적용된 값"에 나옵니다. 서버를 켠 채로 화면의 "Filter 값 → 새 사람 확인 시간"에서 바꿀 수 있고(`POST /rules/set?confirm_ms=160`), 화면에서 한 번 바꾼 값은 저장되어 다음에 켤 때 `LWIR_CONFIRM_MS` 보다 먼저 쓰입니다(다른 Filter 값과 같음). 코드는 `src/track/confirm_time.py`, PC 시험은 `python -m unittest src.track.test_confirm_time` 입니다. 장치에서는 아직 돌려 보지 않았습니다.
 
 ## 5. 거르는 곳
 
@@ -145,7 +145,7 @@ tracking_server/
 | ② | 온도 Filter | 사람 상자 안의 16비트 원본 값(상위 5% 지점)이 정한 범위 밖인 것 | 화면 "Filter 값" |
 | ③ | 종류 | 사람과 차를 서로 짝짓는 것 | `scripts/run_real_gui.sh` |
 | ④ | 가장자리 Filter | 화면 끝에 닿은 상자 중 점수가 낮은 것은 새 번호를 받지 못함 | 화면 "Filter 값" |
-| ⑤ | 새 사람 확인 (130 ms) | 130 ms 동안(초당 22~27장이면 3장) 이어서 잡히지 않은 것은 화면에 나오지 않음 | `scripts/live.env` 의 `LWIR_CONFIRM_MS` |
+| ⑤ | 새 사람 확인 (130 ms) | 130 ms 동안(초당 22~27장이면 3장) 이어서 잡히지 않은 것은 화면에 나오지 않음 | 화면 "Filter 값" 또는 `scripts/live.env` 의 `LWIR_CONFIRM_MS` |
 | ⑥ | 불감대 | 조준점이 가운데 가까이 있으면 짐벌이 움직이지 않음 | `scripts/live.env` |
 
 ## 6. 꺼지면 다시 켜기, 끄기
@@ -207,7 +207,7 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 | 주소 | 하는 일 |
 |---|---|
 | `/model/set?id=<번호>` | 검출 모델 바꾸기 |
-| `/rules/set?...` | 추적기, Filter 값, 외형 모델, 위치 기억 등 바꾸기 |
+| `/rules/set?...` | 추적기, Filter 값(새 사람 확인 시간 `confirm_ms` 포함), 외형 모델, 위치 기억 등 바꾸기 |
 | `/measure/start`, `/measure/stop`, `/measure/note` | 측정 시작, 끝, 메모 |
 | `/camera/reset` | 카메라 초기화 |
 | `/system/reboot?confirm=REBOOT` | 장치 재부팅 |

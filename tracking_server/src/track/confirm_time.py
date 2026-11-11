@@ -9,6 +9,7 @@
 - 경계에서 3 장과 4 장 사이를 오가지 않도록 여유(MARGIN)를 둔다: 장 수는 x = ms x fps / 1000 이 지금 값에서 0.5 + MARGIN 넘게 벗어나야 바뀐다.
 - 추적기마다 원래 장 수(--n-init 로 받은 값)보다 작아지지는 않는다(frames_for). 느려졌다고 확인을 느슨하게 하지 않기 위해서다.
 - 시작할 때는 NOMINAL_FPS(카메라 25 fps 모드) 기준의 장 수로 시작한다.
+- ms = 0 은 끔: 추적기는 원래 장 수(--n-init)로 돌아간다. 실행 중에 set_ms 로 바꿀 수 있다(화면의 Filter 값, /rules/set?confirm_ms=).
 """
 import statistics
 from collections import deque
@@ -17,14 +18,20 @@ NOMINAL_FPS = 25.0   # 카메라 25 fps 모드. 잰 값이 모이기 전의 시�
 WINDOW = 50          # 중간값을 내는 간격 개수 (약 2 초)
 MARGIN = 0.15        # 경계 여유 (장 수 단위)
 GAP_S = 1.0          # 이보다 긴 간격은 끊김으로 보고 세지 않음
+MS_MAX = 1000.0      # 받는 값의 위쪽 한계 (ms)
 
 
 class ConfirmByTime:
     def __init__(self, ms, nominal_fps=NOMINAL_FPS, window=WINDOW, margin=MARGIN):
-        if not ms > 0: raise ValueError('confirm ms must be > 0')
-        self.ms = float(ms); self.margin = float(margin); self.window = int(window)
-        self.iv = deque(maxlen=self.window); self.last = None; self.fps = None
-        self.n = max(1, int(self.ms * nominal_fps / 1000.0 + 0.5)); self.changes = 0
+        if ms < 0: raise ValueError('confirm ms must be >= 0')
+        self.margin = float(margin); self.window = int(window); self.nominal = float(nominal_fps)
+        self.iv = deque(maxlen=self.window); self.last = None; self.fps = None; self.changes = 0
+        self.set_ms(ms)
+
+    def set_ms(self, ms):
+        """실행 중에 값을 바꾼다. 0 = 끔 (장 수 0 -> frames_for 가 추적기의 원래 장 수를 돌려준다). 잰 속도가 있으면 그 속도로, 없으면 NOMINAL_FPS 로 바로 계산한다."""
+        self.ms = max(0.0, min(MS_MAX, float(ms)))
+        self.n = max(1, int(self.ms * (self.fps or self.nominal) / 1000.0 + 0.5)) if self.ms > 0 else 0
 
     def tick(self, t):
         """t = 이번 프레임의 도착 시각(초, 단조 증가 시계). 돌려주는 값 = 지금의 장 수."""
@@ -35,7 +42,7 @@ class ConfirmByTime:
         if len(self.iv) >= self.window:
             self.fps = 1.0 / statistics.median(self.iv)
             x = self.ms * self.fps / 1000.0
-            if x > self.n + 0.5 + self.margin or x < self.n - 0.5 - self.margin:
+            if self.ms > 0 and (x > self.n + 0.5 + self.margin or x < self.n - 0.5 - self.margin):
                 n = max(1, int(x + 0.5))
                 if n != self.n: self.n = n; self.changes += 1
         return self.n
@@ -46,7 +53,7 @@ class ConfirmByTime:
 
     def state(self, tracker=None):
         base = getattr(tracker, 'n_init_base', None) if tracker is not None else None
-        return dict(ms=self.ms, frames=(self.frames_for(base) if base is not None else self.n), fps=(round(self.fps, 1) if self.fps else None), changes=self.changes)
+        return dict(ms=self.ms, frames=(self.frames_for(base) if base is not None else (self.n or None)), fps=(round(self.fps, 1) if self.fps else None), changes=self.changes)
 
 
 def apply(rule, tracker, t):

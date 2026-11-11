@@ -75,16 +75,19 @@
       </details>
       <details class="sec" data-k="rules">
         <summary>Filter 값 (검출 뒤 · Warmth · Edge)</summary>
-        <!-- v40: only the numbers. Apply sends warm_min, warm_max and edge_birth, nothing else; on / off of the warmth check is the "온도 Filter" node of the tree. -->
+        <!-- v40: only the numbers. Apply sends warm_min, warm_max, edge_birth and (11-11, when the server knows it) confirm_ms, nothing else; on / off of the warmth check is the "온도 Filter" node of the tree. -->
         <div class="body stack">
           <div class="row"><label class="lbl" for="rwarm" style="flex:1">Warmth range</label><input id="rwarm" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최소 (원시값)"><span class="lbl" style="flex:none">~</span><input id="rwarmx" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최대 (원시값, 0 = 제한 없음)"></div>
           <div class="minfo" id="fhintw" style="margin-top:0">기본값 <b>45000 ~ 0</b> (위쪽 제한 없음). 이 카메라 측정(11-10): 천장 조명 43,397 이하 · 방 안 사람 47,749 이상 · 가까운 사람 60,170 이상 → 그 사이인 45000. 주의: 화면 끝에 잘린 사람은 40,387까지 내려가 버려질 수 있고, 따뜻한 벽 물체(49,155 이하)는 이 값으로 못 거릅니다.</div>
           <div class="row"><label class="lbl" for="redge" style="flex:1">Edge confidence (0 = 제한 없음)</label><input id="redge" type="number" min="0" max="1" step="0.05" style="width:104px;flex:none" aria-label="Edge confidence"></div>
           <div class="minfo" id="fhinte" style="margin-top:0">기본값 <b>0.5</b>. 측정으로 정한 값은 아닙니다(경험값, 검출 기본 점수 0.25의 두 배). 올리면 가장자리 오검출이 줄고, 화면에 들어오는 사람을 조금 늦게 잡습니다.</div>
+          <div class="row"><label class="lbl" for="rconf" style="flex:1">새 사람 확인 시간 ms (0 = 끔)</label><input id="rconf" type="number" min="0" max="1000" step="10" style="width:104px;flex:none" aria-label="새 사람 확인 시간 (ms)"></div>
+          <div class="minfo" id="fhintc" style="margin-top:0">기본값 <b>130</b>. 새 사람은 이 시간 동안 이어서 잡혀야 화면에 나옵니다. 장 수 = 값 × 초당 장 수 ÷ 1000 (반올림), 3장보다 작아지지 않습니다. 올리면 오검출이 줄고 새 사람이 조금 늦게 나옵니다. 측정으로 정한 값은 아닙니다(초당 25장의 3장에 맞춘 값).</div>
           <div class="row"><div class="minfo" id="fmsg" style="margin-top:0;flex:1"></div><button class="btn accent small" id="rapply2">Apply</button></div>
           <details class="fold" style="margin-top:0"><summary>Filter 설명</summary><dl class="legend">
             <dt>Warmth range</dt><dd>상자 안의 따뜻한 부분(원시값 상위 5% 지점)이 최소 ~ 최대 안에 있을 때만 사람으로 인정합니다. 최소보다 차갑거나 최대보다 뜨거우면 버립니다. 카메라 16비트 원시값(0~65535) 기준. 최소 0 = 아래쪽 검사 끔, 최대 0 = 위쪽 제한 없음.</dd>
             <dt>Edge confidence</dt><dd>화면 가장자리에 걸친 상자는 검출 점수가 이 값 이상일 때만 새 궤적으로 시작합니다. 이미 추적 중인 사람에게는 적용하지 않습니다. 0 이면 제한 없음.</dd>
+            <dt>새 사람 확인 시간</dt><dd>새로 나타난 상자는 이 시간만큼 연속으로 잡혀야 번호를 받고 화면에 나옵니다. 서버가 초당 장 수를 재서 장 수로 바꿉니다(130 ms = 초당 22~27장에서 3장, 28장을 넘으면 4장). 이미 화면에 나온 사람에게는 적용하지 않습니다. 0 이면 끄고 늘 3장으로 셉니다.</dd>
             <dt>온도 Filter 끄기</dt><dd>설정의 "검출 뒤 Filter" 줄에서 "온도 Filter"를 끄면 Warmth 검사만 꺼지고 숫자는 서버가 기억합니다. 다시 켜면 그 숫자로 돌아옵니다. Edge confidence 는 그대로 적용됩니다.</dd>
           </dl></details>
         </div>
