@@ -35,16 +35,27 @@ def live_publish(g_, rows_, row_):
         with APP.LIVE.dlock: APP.LIVE.perf.append((round(time.time(), 1), round(fps_, 1), round(float(APP.LIVE.cam_fps), 1), round(pa_[2] / pa_[1], 1), round(pa_[3], 1), round(pa_[4] / pa_[1], 1)))
         APP.LIVE.perf_acc = [now_, 0, 0.0, 0.0, 0.0]
     sc_ = APP.args.live_scale
-    img_ = APP.cv2.cvtColor(g_[16:496], APP.cv2.COLOR_GRAY2BGR)
-    if sc_ != 1: img_ = APP.cv2.resize(img_, None, fx=sc_, fy=sc_, interpolation=APP.cv2.INTER_LINEAR)
-    npers_ = 0; gb_people_ = []; gb_id_ = APP.GB.state['id'] if APP.GB is not None else 0
+    # 11-12: boxes are collected first and drawn after the gimbal line below has gone out (the page picture takes about 6 ms on the board)
+    npers_ = 0; gb_people_ = []; gb_id_ = APP.GB.state['id'] if APP.GB is not None else 0; draw_ = []
     for r_ in rows_:
         x1_, y1_, x2_, y2_ = [float(v_) for v_ in r_[:4]]; tid_, cls_ = int(r_[4]), int(r_[6]); y1_ -= 16; y2_ -= 16
         if cls_ != 0: continue   # v16: people only
         col_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else (60, 220, 60); npers_ += 1
         if APP.GB is not None and len(gb_people_) < 60: gb_people_.append((tid_, x1_, y1_, x2_, y2_, float(r_[5])))
         if gb_id_ and tid_ != gb_id_: continue   # v39 (user 11-10): while one person is followed only that person's box is drawn
-        p1_ = (int(x1_ * sc_), int(y1_ * sc_)); p2_ = (int(x2_ * sc_), int(y2_ * sc_))
+        draw_.append(((int(x1_ * sc_), int(y1_ * sc_)), (int(x2_ * sc_), int(y2_ * sc_)), col_, tid_))
+    if APP.GB is not None:
+        APP.GB.people = gb_people_; APP.GB.frame += 1
+        if sC_ is not None: gb_people_ = stab_people_real(gb_people_, sC_, float(APP.LIVE_W), float(APP.LIVE_H))   # stab: the F / G lines below carry real camera coordinates
+        if APP.CTL['lead']: gb_people_ = APP.lead_shift(gb_people_, APP.GB.people, gb_id_, t_in, float(APP.LIVE_W), float(APP.LIVE_H))   # v40 예측 제어: only the followed person's box in the F / G line moves ahead
+        elif APP.CTL['lv'] is not None or APP.CTL['lead_px']: APP.CTL['lv'] = None; APP.CTL['lead_px'] = 0.0
+        people_txt_ = ''.join(' %d %.1f %.1f %.1f %.1f %.3f' % (p_[0], p_[1], p_[2], p_[3] - p_[1], p_[4] - p_[2], p_[5]) for p_ in gb_people_)
+        if APP.GB.gui and raw16_ is not None and raw16_.shape == (APP.LIVE_H, APP.LIVE_W):   # v20: frame + picture to the gimbal executor and the PC GUI
+            APP.gb_send_frame('G %d %d %d %d %d' % (APP.GB.frame, int(t_in * 1e9), APP.LIVE_W, APP.LIVE_H, len(gb_people_)) + people_txt_, np.ascontiguousarray(raw16_, dtype=np.uint16).tobytes())
+        else: APP.gb_send('F %d %d %d' % (APP.GB.frame, int(t_in * 1e9), len(gb_people_)) + people_txt_)
+    img_ = APP.cv2.cvtColor(g_[16:496], APP.cv2.COLOR_GRAY2BGR)
+    if sc_ != 1: img_ = APP.cv2.resize(img_, None, fx=sc_, fy=sc_, interpolation=APP.cv2.INTER_LINEAR)
+    for p1_, p2_, col_, tid_ in draw_:
         APP.cv2.rectangle(img_, p1_, p2_, col_, 2); APP.cv2.putText(img_, str(tid_), (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, col_, 2)
     if POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
         try:
@@ -55,15 +66,6 @@ def live_publish(g_, rows_, row_):
                 p1_ = (int((b_[0] - b_[2] / 2) * sc_), int((b_[1] - b_[3] / 2 - 16) * sc_)); p2_ = (int((b_[0] + b_[2] / 2) * sc_), int((b_[1] + b_[3] / 2 - 16) * sc_))
                 dash_rect(img_, p1_, p2_, pc_, 2); APP.cv2.putText(img_, '%d predict' % tid_, (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, pc_, 2)   # v36: same colour as the track, dashed = estimate
         except Exception: pass
-    if APP.GB is not None:
-        APP.GB.people = gb_people_; APP.GB.frame += 1
-        if sC_ is not None: gb_people_ = stab_people_real(gb_people_, sC_, float(APP.LIVE_W), float(APP.LIVE_H))   # stab: the F / G lines below carry real camera coordinates
-        if APP.CTL['lead']: gb_people_ = APP.lead_shift(gb_people_, APP.GB.people, gb_id_, t_in, float(APP.LIVE_W), float(APP.LIVE_H))   # v40 예측 제어: only the followed person's box in the F / G line moves ahead
-        elif APP.CTL['lv'] is not None or APP.CTL['lead_px']: APP.CTL['lv'] = None; APP.CTL['lead_px'] = 0.0
-        people_txt_ = ''.join(' %d %.1f %.1f %.1f %.1f %.3f' % (p_[0], p_[1], p_[2], p_[3] - p_[1], p_[4] - p_[2], p_[5]) for p_ in gb_people_)
-        if APP.GB.gui and raw16_ is not None and raw16_.shape == (APP.LIVE_H, APP.LIVE_W):   # v20: frame + picture to the gimbal executor and the PC GUI
-            APP.gb_send_frame('G %d %d %d %d %d' % (APP.GB.frame, int(t_in * 1e9), APP.LIVE_W, APP.LIVE_H, len(gb_people_)) + people_txt_, np.ascontiguousarray(raw16_, dtype=np.uint16).tobytes())
-        else: APP.gb_send('F %d %d %d' % (APP.GB.frame, int(t_in * 1e9), len(gb_people_)) + people_txt_)
     txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
     APP.cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0), -1); APP.cv2.putText(img_, txt_, (8, 19), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
     if APP.GB is not None:

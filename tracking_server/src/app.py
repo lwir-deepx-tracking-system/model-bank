@@ -24,6 +24,7 @@ from .track.stabilizer import STAB_M, stab_shift, stab_margins
 from .track.trackers import Tracker, BotSortTracker, LostFirstTracker, crop_requests
 from .track.gate import GateTracker, NumpyGRUGate
 from .track.confirm_time import ConfirmByTime, apply as confirm_apply
+from .track.warm_p95 import p95 as warm_p95, MODE as WARM_P95_MODE   # 11-12: same number as np.percentile, lighter
 from .common.research_synth import load_synth_plan, apply_synth_plan
 from .detect.zoom_redetect import ZOOM_HW, zoom_candidates, zoom_windows, zoom_pack, zoom_merge
 from .reid.reid_models import reid_catalog, reid_swap
@@ -182,6 +183,7 @@ def main():
         raise SystemExit('--class-gate requires --no-vit (no --vit-budget): only the ViT-free trackers were verified')
     if APP.args.n_init < 1 or not APP.args.radius > 0: raise SystemExit('--n-init must be >= 1 and --radius > 0')
     if APP.args.confirm_ms < 0: raise SystemExit('--confirm-ms must be >= 0')
+    print('WARM p95: %s' % WARM_P95_MODE, flush=True)
     APP.CONFIRM = ConfirmByTime(APP.args.confirm_ms) if APP.args.confirm_ms > 0 else None   # 11-11: confirmation rule in ms; used by the live loop only (offline runs have no arrival clock)
     trk_extra = APP.args.n_init != 2 or APP.args.radius != 2.0             # False = every tracker code path below is the pre-idsw_fix one
     if trk_extra and (APP.args.tracker != 'rebind' or not APP.args.no_vit):
@@ -673,7 +675,7 @@ def main():
                     if int(arr[k_, 5]) != PERSON_CLS: continue
                     a_, b_, c_, d_ = int(max(0, arr[k_, 0])), int(max(0, arr[k_, 1] - 16)), int(min(640, arr[k_, 2])), int(min(480, arr[k_, 3] - 16))
                     if c_ - a_ < 4 or d_ - b_ < 4: continue
-                    p95_ = float(np.percentile(raw_i_[b_:d_:2, a_:c_:2], 95))
+                    p95_ = warm_p95(raw_i_[b_:d_:2, a_:c_:2])   # 11-12: was float(np.percentile(..., 95)); same value (src/track/warm_p95.py)
                     if p95_ < settings.WARM_MIN or (settings.WARM_MAX > 0 and p95_ > settings.WARM_MAX): keep_[k_] = False   # v33: range
                 if not keep_.all(): APP.LIVE.warm_dropped += int((~keep_).sum()); arr = arr[keep_]
             if APP.LIVE is not None and APP.LIVE.arr and APP.tracker is not None:   # v26b: first frame after an input gap of over 1 s: no track is continued by position alone (the tracker counts frames, not seconds, so it would not notice the gap).
