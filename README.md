@@ -87,6 +87,6 @@
 
 ## 전체 흐름 그림
 
-![전체 파이프라인](tracking_server/images/pipeline_20261111.png)
+![파이프라인과 실시간 처리](tracking_server/images/pipeline_realtime_20261111.png)
 
 자세한 설명과 CPU / NPU / 거르는 곳 그림은 [tracking_server/README.md](tracking_server/README.md) 에 있습니다.
