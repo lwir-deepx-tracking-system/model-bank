@@ -9,7 +9,7 @@
 
 ## 1. 고치는 순서
 
-1. 아래 3절 표에서 고칠 조각을 찾습니다.
+1. 아래 3절 목록에서 고칠 조각을 찾습니다.
 2. 그 조각 파일을 고칩니다.
 3. 다시 만듭니다.
 
@@ -33,7 +33,11 @@
 - 장치에서: 서버(`scripts/run_real_gui.sh` 로 켠 것)는 화면을 열 때마다 `live_page.html` 을 다시 읽습니다. 파일을 바꾸고 브라우저에서 새로 고치면 바뀐 화면이 나옵니다. 서버를 다시 켜지 않아도 됩니다.
 - `python3 build_page.py --list` 는 조각별 크기와 전체 md5 를 보여 줍니다. 장치의 파일과 같은지 볼 때는 `md5sum live_page.html` 과 비교합니다.
 
-`build_page.py` 가 끝나는 값: 0 = 됨(또는 같음), 1 = `--check` 에서 다름, 2 = 조각이 없거나 비었거나 목록이 잘못됨.
+`build_page.py` 가 끝나는 값:
+
+- 0 = 됨(또는 같음)
+- 1 = `--check` 에서 다름
+- 2 = 조각이 없거나 비었거나 목록이 잘못됨
 
 ## 2. 폴더 구조
 
@@ -54,62 +58,80 @@ page/
 
 ### 뼈대 (`html/`)
 
-| 조각 | 들어 있는 것 |
-| --- | --- |
-| `html/1_head.html` | 문서 머리: 글자 설정, 화면 폭 설정, 제목. `<style>` 로 끝납니다 |
-| `html/2_body.html` | 화면에 보이는 뼈대 전부. 위에서부터 맨 위 줄(제목, 상태 점) → 영상과 그래프 상자 → 상태 칸 → Filter 값 → 짐벌 제어기 → 설정 → System → 측정 → 단축키. 처음부터 화면에 적혀 있는 안내·설명 글(Filter 설명, 검출 모델 설명, 위치 기억 · 신뢰도 설명, System 설명)도 여기 있습니다. `</style>` 로 시작하고 `<script>` 로 끝납니다 |
-| `html/3_tail.html` | 문서 끝: `</script>` 와 닫는 표시 |
+- **`html/1_head.html`** — 문서 머리: 글자 설정, 화면 폭 설정, 제목. `<style>` 로 끝납니다.
+- **`html/2_body.html`** — 화면에 보이는 뼈대 전부.
+  - 위에서부터 맨 위 줄(제목, 상태 점) → 영상과 그래프 상자 → 상태 칸 → Filter 값 → 짐벌 제어기 → 설정 → System → 측정 → 단축키.
+  - 처음부터 화면에 적혀 있는 안내·설명 글(Filter 설명, 검출 모델 설명, 위치 기억 · 신뢰도 설명, System 설명)도 여기 있습니다.
+  - `</style>` 로 시작하고 `<script>` 로 끝납니다.
+- **`html/3_tail.html`** — 문서 끝: `</script>` 와 닫는 표시.
 
 ### 모양 (`css/`)
 
-| 조각 | 화면의 어디 |
-| --- | --- |
-| `css/01_base.css` | 바탕: 색 이름표(어두운 회색 + 주황), 글꼴, 글자 선택 막기, 숫자 글꼴 |
-| `css/02_top_bar.css` | 맨 위 줄: 제목, 상태 점(연결 · 짐벌 · 모델 · 측정), 깜빡임 |
-| `css/03_layout.css` | 큰 배치: 왼쪽 영상 칸, 오른쪽 패널 |
-| `css/04_status.css` | 상태 칸: 지금 상태 글자, 가로 · 세로 오차, 놓친 시간 |
-| `css/05_pad.css` | 방향 버튼 · 정지 키 모양. 이 버튼들은 지금 화면에 없고 모양 규칙만 남아 있습니다 |
-| `css/06_sections.css` | 오른쪽 패널의 접는 구역 안쪽: 버튼, 입력칸, 측정 결과 표, 접는 설명, 지난 측정 목록, 단축키 글자 |
-| `css/07_perf_graph.css` | 영상 왼쪽 위 속도 · 지연 그래프 상자 |
-| `css/08_phone.css` | 휴대폰 화면: 세로일 때와 가로일 때의 배치 |
-| `css/09_settings_tree.css` | 설정 구역: 줄, 칸, 선택됨 · 잠김 표시, 모델 폴더 상자 |
-| `css/10_joystick.css` | 휴대폰에서 영상을 끌 때 나오는 원(조이스틱), 정지 키 크기 (정지 키도 지금 화면에 없음) |
+각 조각이 맡는 화면의 자리입니다.
+
+- **`css/01_base.css`** — 바탕: 색 이름표(어두운 회색 + 주황), 글꼴, 글자 선택 막기, 숫자 글꼴
+- **`css/02_top_bar.css`** — 맨 위 줄: 제목, 상태 점(연결 · 짐벌 · 모델 · 측정), 깜빡임
+- **`css/03_layout.css`** — 큰 배치: 왼쪽 영상 칸, 오른쪽 패널
+- **`css/04_status.css`** — 상태 칸: 지금 상태 글자, 가로 · 세로 오차, 놓친 시간
+- **`css/05_pad.css`** — 방향 버튼 · 정지 키 모양. 이 버튼들은 지금 화면에 없고 모양 규칙만 남아 있습니다
+- **`css/06_sections.css`** — 오른쪽 패널의 접는 구역 안쪽: 버튼, 입력칸, 측정 결과 표, 접는 설명, 지난 측정 목록, 단축키 글자
+- **`css/07_perf_graph.css`** — 영상 왼쪽 위 속도 · 지연 그래프 상자
+- **`css/08_phone.css`** — 휴대폰 화면: 세로일 때와 가로일 때의 배치
+- **`css/09_settings_tree.css`** — 설정 구역: 줄, 칸, 선택됨 · 잠김 표시, 모델 폴더 상자
+- **`css/10_joystick.css`** — 휴대폰에서 영상을 끌 때 나오는 원(조이스틱), 정지 키 크기 (정지 키도 지금 화면에 없음)
 
 ### 동작 (`js/`)
 
-| 조각 | 화면에서 하는 일 | 안에 있는 이름 |
-| --- | --- | --- |
-| `js/01_helpers.js` | 공통 도우미, 접는 구역의 열림 · 닫힘을 브라우저에 기억 | `$`, `chip()`, `v`(영상), `S`(상태 글자), `MOB`, `openSaved` |
-| `js/02_connection_status.js` | 맨 위 연결 점, 끊긴 영상 다시 열기, 상태 글자("따라가는 중", "놓침", "대기 중") | `netChip()`, `openStream()`, `show()`, `ANS` |
-| `js/03_gimbal_control.js` | 짐벌 조작: 명령 보내기, 영상 누르기(사람 고르기 · 멈춤), 키보드(방향키 · W A S D · Space), 손을 떼거나 화면이 가려지면 정지, 휴대폰 끌기. 지금 화면에 없는 방향 버튼용 코드도 남아 있습니다 | `post()`, `K`(키 → 방향), `release()`, `JOY`, `joyDir()`, `joyEnd()` |
-| `js/04_ping_fps_aim.js` | 주기적으로 서버에 묻기: 0.4초마다 상태 받기, 화면이 다시 켜지면 영상 다시 열기, fps 숫자, 가로 · 세로 오차 | `ping()`, `wake()`, `hztick()`, `etick()` |
-| `js/05_measure.js` | 측정: 시작 · 끝 버튼, 진행 글자, 결과 표, 이름 · 메모 고치기, 지난 측정 목록 | `table()`, `render()`, `history()`, `mshow()`, `tick()`, `mpost()`, `LEGEND`, `esc`, `f1` |
-| `js/06_settings_state.js` | 설정 · Filter 값 · System 구역의 요소 잡기, 함께 쓰는 변수, 숫자 칸을 치는 동안 덮어쓰지 않기 | `MIN` ~ `RD`(요소), `rlast`, `mlast`, `rdirty`, `OTT` |
-| `js/07_tracker_texts.js` | "Tracker 설명"에 나오는 글 (추적기별 설명) | `TDC`, `BT`, `TD` |
-| `js/08_tree_names_folders.js` | 설정 칸에 보이는 이름과 한 줄 설명, 모델을 폴더(구조 → 크기)로 묶는 규칙, Tracker 설명 그리기 | `TN`, `PN`, `DN`, `AN`, `DNOTE`, `dfold`, `dsub`, `AFOLD`, `PFOLD`, `tname`, `pend`, `rdoc()` |
-| `js/09_tree_rows.js` | 설정 줄 만들기: 전처리 · 검출 모델 · Tracker · 외형 비교 · 위치 기억 · 신뢰도 · KeepID · 제어 줄에 어떤 칸이 있고, 누르면 무엇을 보내고, 언제 잠기는지 | `tiers()` |
-| `js/10_tree_draw_click.js` | 설정 줄 그리기(폴더 펼치기 포함), "지금 조합" 줄, 칸을 눌렀을 때 서버로 보내기 | `otdraw()` |
-| `js/11_model_change.js` | 검출 모델 바꾸기 상태: 맨 위 모델 점, "지금 적용된 값" 첫 줄, 1초마다 다시 읽기 | `mdl()`, `mtick()` |
-| `js/12_rules_filter_values.js` | 서버 설정을 읽어 보여 주기("지금 적용된 값"의 Filter · Tracker 줄), Filter 값 Apply 버튼 | `rshow()`, `rtick()` |
-| `js/13_system_buttons.js` | System 구역: 카메라 초기화, 재부팅 버튼 | `syspost()`, `CR`, `SR` |
-| `js/14_start_timers.js` | 설정과 측정을 1초마다 다시 읽기 시작 | (`rtick`, `tick` 을 부름) |
-| `js/15_perf_graph.js` | 속도 · 지연 그래프: 켜기 · 끄기, 시간 범위, 1초마다 값 받기, 그리기 | `PF`, `PFC`, `pfdraw()`, `pftick()`, `pfsave` |
+각 항목: 조각 — 화면에서 하는 일. 그 아래 "이름"은 조각 안에 있는 이름입니다.
+
+- **`js/01_helpers.js`** — 공통 도우미, 접는 구역의 열림 · 닫힘을 브라우저에 기억
+  - 이름: `$`, `chip()`, `v`(영상), `S`(상태 글자), `MOB`, `openSaved`
+- **`js/02_connection_status.js`** — 맨 위 연결 점, 끊긴 영상 다시 열기, 상태 글자("따라가는 중", "놓침", "대기 중")
+  - 이름: `netChip()`, `openStream()`, `show()`, `ANS`
+- **`js/03_gimbal_control.js`** — 짐벌 조작: 명령 보내기, 영상 누르기(사람 고르기 · 멈춤), 키보드(방향키 · W A S D · Space), 손을 떼거나 화면이 가려지면 정지, 휴대폰 끌기. 지금 화면에 없는 방향 버튼용 코드도 남아 있습니다
+  - 이름: `post()`, `K`(키 → 방향), `release()`, `JOY`, `joyDir()`, `joyEnd()`
+- **`js/04_ping_fps_aim.js`** — 주기적으로 서버에 묻기: 0.4초마다 상태 받기, 화면이 다시 켜지면 영상 다시 열기, fps 숫자, 가로 · 세로 오차
+  - 이름: `ping()`, `wake()`, `hztick()`, `etick()`
+- **`js/05_measure.js`** — 측정: 시작 · 끝 버튼, 진행 글자, 결과 표, 이름 · 메모 고치기, 지난 측정 목록
+  - 이름: `table()`, `render()`, `history()`, `mshow()`, `tick()`, `mpost()`, `LEGEND`, `esc`, `f1`
+- **`js/06_settings_state.js`** — 설정 · Filter 값 · System 구역의 요소 잡기, 함께 쓰는 변수, 숫자 칸을 치는 동안 덮어쓰지 않기
+  - 이름: `MIN` ~ `RD`(요소), `rlast`, `mlast`, `rdirty`, `OTT`
+- **`js/07_tracker_texts.js`** — "Tracker 설명"에 나오는 글 (추적기별 설명)
+  - 이름: `TDC`, `BT`, `TD`
+- **`js/08_tree_names_folders.js`** — 설정 칸에 보이는 이름과 한 줄 설명, 모델을 폴더(구조 → 크기)로 묶는 규칙, Tracker 설명 그리기
+  - 이름: `TN`, `PN`, `DN`, `AN`, `DNOTE`, `dfold`, `dsub`, `AFOLD`, `PFOLD`, `tname`, `pend`, `rdoc()`
+- **`js/09_tree_rows.js`** — 설정 줄 만들기: 전처리 · 검출 모델 · Tracker · 외형 비교 · 위치 기억 · 신뢰도 · KeepID · 제어 줄에 어떤 칸이 있고, 누르면 무엇을 보내고, 언제 잠기는지
+  - 이름: `tiers()`
+- **`js/10_tree_draw_click.js`** — 설정 줄 그리기(폴더 펼치기 포함), "지금 조합" 줄, 칸을 눌렀을 때 서버로 보내기
+  - 이름: `otdraw()`
+- **`js/11_model_change.js`** — 검출 모델 바꾸기 상태: 맨 위 모델 점, "지금 적용된 값" 첫 줄, 1초마다 다시 읽기
+  - 이름: `mdl()`, `mtick()`
+- **`js/12_rules_filter_values.js`** — 서버 설정을 읽어 보여 주기("지금 적용된 값"의 Filter · Tracker 줄), Filter 값 Apply 버튼
+  - 이름: `rshow()`, `rtick()`
+- **`js/13_system_buttons.js`** — System 구역: 카메라 초기화, 재부팅 버튼
+  - 이름: `syspost()`, `CR`, `SR`
+- **`js/14_start_timers.js`** — 설정과 측정을 1초마다 다시 읽기 시작
+  - 이름: (`rtick`, `tick` 을 부름)
+- **`js/15_perf_graph.js`** — 속도 · 지연 그래프: 켜기 · 끄기, 시간 범위, 1초마다 값 받기, 그리기
+  - 이름: `PF`, `PFC`, `pfdraw()`, `pftick()`, `pfsave`
 
 ### 자주 고치는 것
 
-| 바꾸고 싶은 것 | 볼 조각 |
-| --- | --- |
-| 화면에 적힌 안내 · 설명 글 | 대부분 `html/2_body.html` |
-| 상태 글자("따라가는 중" 등) | `js/02_connection_status.js` |
-| 색 | `css/01_base.css` 맨 위의 색 이름표 |
-| 휴대폰에서의 배치 | `css/08_phone.css` |
-| 키보드 키, 끌기 조작 | `js/03_gimbal_control.js` |
-| 설정 줄에 칸을 더하거나 잠그는 조건 | `js/09_tree_rows.js` |
-| 설정 칸에 보이는 모델 이름, 폴더로 묶는 규칙 | `js/08_tree_names_folders.js` |
-| Tracker 설명 글 | `js/07_tracker_texts.js` |
-| 측정 결과 표 | `js/05_measure.js`, 모양은 `css/06_sections.css` |
-| 그래프 | `js/15_perf_graph.js`, 모양은 `css/07_perf_graph.css` |
-| 짐벌 제어기 구역의 숫자(Kp 등) | 화면에 적어 두지 않습니다. 서버가 시작할 때 짐벌 프로그램에 넘긴 값을 `/rules` 의 `gimbal_cfg` 로 받아 `js/12_rules_filter_values.js` 의 `gshow` 가 그립니다. 값을 바꾸려면 `scripts/live.env` (거기 없는 값은 `scripts/run_real_gui.sh`) 를 고치고 서버를 다시 시작합니다 |
+각 항목: 바꾸고 싶은 것 — 볼 조각.
+
+- **화면에 적힌 안내 · 설명 글** — 대부분 `html/2_body.html`
+- **상태 글자("따라가는 중" 등)** — `js/02_connection_status.js`
+- **색** — `css/01_base.css` 맨 위의 색 이름표
+- **휴대폰에서의 배치** — `css/08_phone.css`
+- **키보드 키, 끌기 조작** — `js/03_gimbal_control.js`
+- **설정 줄에 칸을 더하거나 잠그는 조건** — `js/09_tree_rows.js`
+- **설정 칸에 보이는 모델 이름, 폴더로 묶는 규칙** — `js/08_tree_names_folders.js`
+- **Tracker 설명 글** — `js/07_tracker_texts.js`
+- **측정 결과 표** — `js/05_measure.js`, 모양은 `css/06_sections.css`
+- **그래프** — `js/15_perf_graph.js`, 모양은 `css/07_perf_graph.css`
+- **짐벌 제어기 구역의 숫자(Kp 등)** — 화면에 적어 두지 않습니다.
+  - 서버가 시작할 때 짐벌 프로그램에 넘긴 값을 `/rules` 의 `gimbal_cfg` 로 받아 `js/12_rules_filter_values.js` 의 `gshow` 가 그립니다.
+  - 값을 바꾸려면 `scripts/live.env` (거기 없는 값은 `scripts/run_real_gui.sh`) 를 고치고 서버를 다시 시작합니다.
 
 ## 4. 지켜야 할 것
 
