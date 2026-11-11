@@ -25,7 +25,17 @@ function rshow(r){rlast=r;
   RI.textContent=t;
   rdoc(trk);
   if(r.cam_reset&&r.cam_reset.text&&!sysbusy&&(r.cam_reset.busy||r.cam_reset.at+'|'+r.cam_reset.text!==sysat)){sysat=r.cam_reset.at+'|'+r.cam_reset.text;SM.textContent='카메라 초기화 '+r.cam_reset.at+' — '+r.cam_reset.text;}
+  gshow(r.gimbal_cfg);
   otdraw();}
+// 짐벌 제어기 구역: the options the server gave the gimbal program at start (GET /rules, key gimbal_cfg; read only). No key = older server, null = the server runs without a gimbal, a value that was not given = the program's own default.
+let glast=null;
+function gshow(g){const v=x=>x==null||x===''?'프로그램 기본값':'<b class="num">'+esc(isFinite(+x)?+x:x)+'</b>';let h;
+  if(g===undefined||(g&&g.error))h='서버에서 값을 받지 못함';
+  else if(g===null)h='짐벌 없이 실행 중입니다 (짐벌 프로그램을 띄우지 않음)';
+  else{const a=+g.aim_y,an={0.08:'머리',0.3:'가슴',0.5:'상자 가운데'}[a],ms=+g.reacquire_ms;
+    h='짐벌 프로그램 <b>'+esc(g.program||'–')+'</b> · 제어 방식 '+(g.controller?'<b>'+esc(String(g.controller).toUpperCase())+'</b>':'프로그램 기본값')+' · Kp '+v(g.kp)+' · Ki '+v(g.ki)+' · Kd '+v(g.kd)+' · 불감대 '+v(g.deadband)+' · 자동 속도 최대 '+v(g.speed_max)+' · 손으로 움직일 때 속도 '+v(g.manual_speed)
+      +' · 놓친 사람을 기다리는 시간 '+(g.reacquire_ms!=null&&isFinite(ms)?'<b class="num">'+ms/1000+'</b>초':v(g.reacquire_ms))+' · 겨누는 높이 '+v(g.aim_y)+(g.aim_y!=null?' (사람 상자 위에서부터의 비율'+(an?' · '+an:'')+')':'')+' · 그 밖의 옵션 '+(g.extra?'<b class="num">'+esc(g.extra)+'</b>':'없음');}
+  if(h!==glast){glast=h;$('gcfg').innerHTML=h;}}
 function rtick(){if(document.hidden)return Promise.resolve();return fetch('/rules',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(rshow).catch(()=>{});}
 // Filter numbers: Apply sends warm_min, warm_max, edge_birth only. While 온도 Filter is off and both boxes still say 0, the warmth numbers are left out, so the numbers the server remembers are not wiped.
 RA2.addEventListener('click',()=>{RA2.disabled=true;FM.textContent='보내는 중…';

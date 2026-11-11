@@ -10,6 +10,7 @@ from ..track.position_memory import POSP, pos_list
 from ..track.stabilizer import STAB
 from ..track.trackers import Tracker, BotSortTracker, AltTracker
 from ..reid.reid_models import reid_catalog
+from ..gimbal.gimbal_link import gb_cfg
 
 
 def sel_save(**over_):
@@ -19,6 +20,26 @@ def sel_save(**over_):
             APP.SEL.update(over_); t_ = APP.SEL_FILE.with_suffix('.json.tmp')
             t_.write_text(json.dumps(dict(APP.SEL, saved=time.strftime('%Y-%m-%d %H:%M:%S')), ensure_ascii=False, indent=1), encoding='utf-8'); os.replace(t_, APP.SEL_FILE)
     except Exception as e_: print('LAST selection not saved:', repr(e_)[:120], flush=True)
+
+
+def sel_det_late(dv_, tries_=30, gap_=2.0):
+    """fix 11-11: the saved detector is a file the scan lists by itself ('bank:<file name>'). At start it is not in the list yet, so this thread looks every 2 s
+    for up to 60 s (the scan itself still runs at most every 5 s) and asks for the model ONCE when it is listed. Any model choice made in the meantime wins
+    (page or PC GUI); a file that never gets listed = nothing happens, one line is printed."""
+    why_ = 'file not listed within %d s' % int(tries_ * gap_)
+    try:
+        for _ in range(tries_):
+            time.sleep(gap_)
+            if APP.MODEL['req'] is not None or APP.MODEL['busy'] or APP.MODEL['last'] is not None or 'det' in APP.SEL: why_ = 'another model choice came first'; break
+            APP.bank_refresh()
+            with APP.MODEL['lock']: c_ = next((x_ for x_ in APP.MODEL['catalog'] if x_['det'] == dv_), None)
+            if c_ is None: continue
+            g_ = getattr(APP, 'GB', None)   # review 11-11: a model change pauses the frames for a moment and that drops a running follow, so never do it while the gimbal follows or moves
+            if g_ is not None and (g_.state.get('auto') or g_.state.get('moving')): why_ = 'the gimbal is following or moving'; break
+            r_ = APP.model_request(c_['id'])
+            print('LAST selection model %s -> %s' % (dv_, 'queued (listed late as id %d)' % c_['id'] if r_ == -1 else 'not taken (%s)' % APP.MODEL_TEXT.get(r_, '?')), flush=True); return
+    except Exception as e_: why_ = repr(e_)[:120]
+    print('LAST selection model %s -> not taken (%s)' % (dv_, why_), flush=True)
 
 
 def mk_tracker_(kind_):
@@ -51,7 +72,7 @@ def rules_state():
 
 
 def rules_state_2():
-    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'])
+    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg())   # gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
 
 
 def rules_request(q_):

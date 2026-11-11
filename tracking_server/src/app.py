@@ -303,8 +303,11 @@ def main():
         APP.sel_save()   # the model name is written back only after the change worked: a model that breaks the start is not tried again
         if dv_ and dv_ != APP.args.det:
             c_ = next((x_ for x_ in APP.MODEL['catalog'] if x_['det'] == dv_), None)
-            r_ = APP.model_request(c_['id']) if c_ is not None else 1
-            print('LAST selection model %s -> %s' % (dv_, 'queued' if r_ == -1 else 'not taken (%s)' % APP.MODEL_TEXT.get(r_, '?')), flush=True)
+            if c_ is None and isinstance(dv_, str) and dv_.startswith('bank:') and APP.MODEL['catalog'] and not APP.args.no_bank_auto:   # fix 11-11: a model file the scan lists by itself is not in the list yet at this point (listed at the second scan): wait for it beside the frame loop
+                md_th.Thread(target=page_settings.sel_det_late, args=(dv_,), daemon=True).start(); print('LAST selection model %s -> waiting for the model scan' % dv_, flush=True)
+            else:
+                r_ = APP.model_request(c_['id']) if c_ is not None else 1
+                print('LAST selection model %s -> %s' % (dv_, 'queued' if r_ == -1 else 'not taken (%s)' % APP.MODEL_TEXT.get(r_, '?')), flush=True)
     APP.pending, APP.eng = {}, {}
     APP.Engine = npu_engine.Engine
     failed = False; APP.rows = []; APP.preds = []; util = []; APP.tracks_out = []; rebind_log = []

@@ -247,9 +247,9 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
       <details class="sec" data-k="ctl">
         <summary>짐벌 제어기</summary>
         <div class="body ctl">
-          <!-- v25: these are the values in run/run_real_gui.sh (--gimbal-opts), written here as fixed text; change both together. The bridge has no live gain command yet. -->
-          <b>PD</b> · Kp <b class="num">30</b> · Ki <b class="num">0</b> · Kd <b class="num">6</b> · 불감대 <b class="num">0.06</b> · 자동 속도 최대 <b class="num">100</b> · 손으로 움직일 때 속도 <b class="num">20</b>
-          <small>화면에서는 바꿀 수 없습니다 (run/run_real_gui.sh 에서 고침 · 2026-11-10 조정값 · 자동 속도 최대만 2026-11-11에 10 → 100, 장치 한계)</small>
+          <!-- The values come from GET /rules (key gimbal_cfg = the options the server gave the gimbal program at start), drawn by gshow in js/12_rules_filter_values.js. Read only: the bridge has no live gain command yet. -->
+          <span id="gcfg">불러오는 중…</span>
+          <small>서버가 시작할 때 짐벌 프로그램에 넘긴 값입니다. 화면에서는 바꿀 수 없습니다. 바꾸려면 scripts/live.env (거기 없는 값은 scripts/run_real_gui.sh) 를 고치고 서버를 다시 시작합니다.</small>
         </div>
       </details>
       <details class="sec" data-k="tree">
@@ -670,7 +670,17 @@ function rshow(r){rlast=r;
   RI.textContent=t;
   rdoc(trk);
   if(r.cam_reset&&r.cam_reset.text&&!sysbusy&&(r.cam_reset.busy||r.cam_reset.at+'|'+r.cam_reset.text!==sysat)){sysat=r.cam_reset.at+'|'+r.cam_reset.text;SM.textContent='카메라 초기화 '+r.cam_reset.at+' — '+r.cam_reset.text;}
+  gshow(r.gimbal_cfg);
   otdraw();}
+// 짐벌 제어기 구역: the options the server gave the gimbal program at start (GET /rules, key gimbal_cfg; read only). No key = older server, null = the server runs without a gimbal, a value that was not given = the program's own default.
+let glast=null;
+function gshow(g){const v=x=>x==null||x===''?'프로그램 기본값':'<b class="num">'+esc(isFinite(+x)?+x:x)+'</b>';let h;
+  if(g===undefined||(g&&g.error))h='서버에서 값을 받지 못함';
+  else if(g===null)h='짐벌 없이 실행 중입니다 (짐벌 프로그램을 띄우지 않음)';
+  else{const a=+g.aim_y,an={0.08:'머리',0.3:'가슴',0.5:'상자 가운데'}[a],ms=+g.reacquire_ms;
+    h='짐벌 프로그램 <b>'+esc(g.program||'–')+'</b> · 제어 방식 '+(g.controller?'<b>'+esc(String(g.controller).toUpperCase())+'</b>':'프로그램 기본값')+' · Kp '+v(g.kp)+' · Ki '+v(g.ki)+' · Kd '+v(g.kd)+' · 불감대 '+v(g.deadband)+' · 자동 속도 최대 '+v(g.speed_max)+' · 손으로 움직일 때 속도 '+v(g.manual_speed)
+      +' · 놓친 사람을 기다리는 시간 '+(g.reacquire_ms!=null&&isFinite(ms)?'<b class="num">'+ms/1000+'</b>초':v(g.reacquire_ms))+' · 겨누는 높이 '+v(g.aim_y)+(g.aim_y!=null?' (사람 상자 위에서부터의 비율'+(an?' · '+an:'')+')':'')+' · 그 밖의 옵션 '+(g.extra?'<b class="num">'+esc(g.extra)+'</b>':'없음');}
+  if(h!==glast){glast=h;$('gcfg').innerHTML=h;}}
 function rtick(){if(document.hidden)return Promise.resolve();return fetch('/rules',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(rshow).catch(()=>{});}
 // Filter numbers: Apply sends warm_min, warm_max, edge_birth only. While 온도 Filter is off and both boxes still say 0, the warmth numbers are left out, so the numbers the server remembers are not wiped.
 RA2.addEventListener('click',()=>{RA2.disabled=true;FM.textContent='보내는 중…';

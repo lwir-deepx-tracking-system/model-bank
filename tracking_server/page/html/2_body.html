@@ -35,9 +35,9 @@
       <details class="sec" data-k="ctl">
         <summary>짐벌 제어기</summary>
         <div class="body ctl">
-          <!-- v25: these are the values in run/run_real_gui.sh (--gimbal-opts), written here as fixed text; change both together. The bridge has no live gain command yet. -->
-          <b>PD</b> · Kp <b class="num">30</b> · Ki <b class="num">0</b> · Kd <b class="num">6</b> · 불감대 <b class="num">0.06</b> · 자동 속도 최대 <b class="num">100</b> · 손으로 움직일 때 속도 <b class="num">20</b>
-          <small>화면에서는 바꿀 수 없습니다 (run/run_real_gui.sh 에서 고침 · 2026-11-10 조정값 · 자동 속도 최대만 2026-11-11에 10 → 100, 장치 한계)</small>
+          <!-- The values come from GET /rules (key gimbal_cfg = the options the server gave the gimbal program at start), drawn by gshow in js/12_rules_filter_values.js. Read only: the bridge has no live gain command yet. -->
+          <span id="gcfg">불러오는 중…</span>
+          <small>서버가 시작할 때 짐벌 프로그램에 넘긴 값입니다. 화면에서는 바꿀 수 없습니다. 바꾸려면 scripts/live.env (거기 없는 값은 scripts/run_real_gui.sh) 를 고치고 서버를 다시 시작합니다.</small>
         </div>
       </details>
       <details class="sec" data-k="tree">

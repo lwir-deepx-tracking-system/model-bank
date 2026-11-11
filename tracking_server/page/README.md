@@ -109,7 +109,7 @@ page/
 | Tracker 설명 글 | `js/07_tracker_texts.js` |
 | 측정 결과 표 | `js/05_measure.js`, 모양은 `css/06_sections.css` |
 | 그래프 | `js/15_perf_graph.js`, 모양은 `css/07_perf_graph.css` |
-| 짐벌 제어기 구역의 숫자(Kp 등) | `html/2_body.html` 에 글자로 적혀 있습니다. `scripts/run_real_gui.sh` 의 값과 같이 고쳐야 합니다 |
+| 짐벌 제어기 구역의 숫자(Kp 등) | 화면에 적어 두지 않습니다. 서버가 시작할 때 짐벌 프로그램에 넘긴 값을 `/rules` 의 `gimbal_cfg` 로 받아 `js/12_rules_filter_values.js` 의 `gshow` 가 그립니다. 값을 바꾸려면 `scripts/live.env` (거기 없는 값은 `scripts/run_real_gui.sh`) 를 고치고 서버를 다시 시작합니다 |
 
 ## 4. 지켜야 할 것
 

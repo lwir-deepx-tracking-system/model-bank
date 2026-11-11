@@ -54,6 +54,26 @@ def gb_in_use(dev_):   # v26b: another program holds the gimbal device. Not fata
     except Exception: return ''
 
 
+def gb_cfg():
+    """읽기 전용 (GET /rules 의 gimbal_cfg, 화면의 '짐벌 제어기' 구역): 서버가 짐벌 프로그램에 넘기는 옵션을 gb_spawn 과 같은 순서로 다시 만들어 읽는다. 아무것도 바꾸지 않는다.
+        짐벌 프로그램처럼 "이름 값" 쌍으로 읽고, 같은 이름이 두 번 나오면 뒤의 것이 이긴다. 값은 넘긴 글자 그대로. 주지 않은 값은 None (짐벌 프로그램의 기본값).
+        program 은 파일 이름만. 장치 이름(--device)과 PC GUI 옵션(--gui-*)은 넣지 않는다. 그 밖의 옵션은 --gimbal-opts 에 준 그대로 extra 에 모은다. 짐벌 없이 실행하면 None."""
+    try:
+        if not APP.args.gimbal: return None
+        import shlex
+        names_ = {'--controller': 'controller', '--kp': 'kp', '--ki': 'ki', '--kd': 'kd', '--deadband': 'deadband', '--speed-max': 'speed_max', '--manual-speed': 'manual_speed', '--reacquire-ms': 'reacquire_ms', '--aim-y': 'aim_y'}
+        c_ = dict(program=str(APP.args.gimbal_bridge or 'gimbal_bridge_v25').replace('\\', '/').rsplit('/', 1)[-1], controller=None, kp=None, ki=None, kd=None, deadband=None, speed_max=None, manual_speed=None, reacquire_ms=None, aim_y=None, extra='')
+        a_ = ['--manual-speed', str(APP.args.gimbal_speed), '--speed-max', str(APP.args.gimbal_speed), '--kp', str(APP.args.gimbal_kp), '--aim-y', str(APP.args.gimbal_aim_y), *shlex.split(APP.args.gimbal_opts)]   # gb_spawn 과 같은 순서 (장치 · 축 방향 · 모델 수 · PC GUI 옵션은 뺌)
+        x_ = []
+        for i_ in range(0, len(a_), 2):
+            n_ = a_[i_]; v_ = a_[i_ + 1] if i_ + 1 < len(a_) else None
+            if n_ in names_ and v_ is not None: c_[names_[n_]] = v_
+            elif n_ != '--device' and not n_.startswith('--gui-'): x_ += [n_] if v_ is None else [n_, v_]
+        c_['extra'] = ' '.join(x_)
+        return c_
+    except Exception as e_: return dict(error=repr(e_)[:80])
+
+
 class _Gimbal: pass
 
 
