@@ -15,3 +15,6 @@ last_selection.json.tmp
 *.stderr.log
 /tmp/
 /upload_track*/
+src/gimbal/gimbal_bridge_v27
+src/gimbal/test_v27_control
+src/gimbal/sim_v27
