@@ -216,7 +216,7 @@
     "package": null,
     "args": null,
     "kwargs": null,
-    "dataset_path": "/mnt/c/Users/jsh11/AppData/Local/Temp/yolov8s_dxnn_20261020_v1/calibration_train_only",
+    "dataset_path": "<YOUR_PATH>",
     "file_extensions": [
       "png"
     ],
