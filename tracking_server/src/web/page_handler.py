@@ -71,28 +71,32 @@ def live_publish(g_, rows_, row_):
         if APP.GB.gui and raw16_ is not None and raw16_.shape == (APP.LIVE_H, APP.LIVE_W):   # v20: frame + picture to the gimbal executor and the PC GUI
             APP.gb_send_frame('G %d %d %d %d %d' % (APP.GB.frame, int(t_in * 1e9), APP.LIVE_W, APP.LIVE_H, len(gb_people_)) + people_txt_, np.ascontiguousarray(raw16_, dtype=np.uint16).tobytes())
         else: APP.gb_send('F %d %d %d' % (APP.GB.frame, int(t_in * 1e9), len(gb_people_)) + people_txt_)
-    img_ = APP.cv2.cvtColor(g_[16:496], APP.cv2.COLOR_GRAY2BGR)
-    if sc_ != 1: img_ = APP.cv2.resize(img_, None, fx=sc_, fy=sc_, interpolation=APP.cv2.INTER_LINEAR)
-    for p1_, p2_, col_, tid_ in draw_:
-        APP.cv2.rectangle(img_, p1_, p2_, col_, 2); APP.cv2.putText(img_, str(tid_), (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, col_, 2)
-    if POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
-        try:
-            seen_ = {int(r_[4]) for r_ in rows_}
-            for tid_, b_ in POSP['boxes']:
-                if tid_ in seen_ or (APP.GB is not None and tid_ != gb_id_): continue   # v36 (user 11-10): only the person being followed (no gimbal link: every lost person)
-                pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else (60, 220, 60)
-                p1_ = (int((b_[0] - b_[2] / 2) * sc_), int((b_[1] - b_[3] / 2 - 16) * sc_)); p2_ = (int((b_[0] + b_[2] / 2) * sc_), int((b_[1] + b_[3] / 2 - 16) * sc_))
-                dash_rect(img_, p1_, p2_, pc_, 2); APP.cv2.putText(img_, '%d predict' % tid_, (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, pc_, 2)   # v36: same colour as the track, dashed = estimate
-        except Exception: pass
-    txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
-    APP.cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0), -1); APP.cv2.putText(img_, txt_, (8, 19), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-    if APP.GB is not None:
-        st_ = APP.GB.state
-        gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else ('gimbal: lost %d, waiting' % st_['id'] if st_['lost'] else 'gimbal: following %d' % st_['id'] if st_['auto'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle, click a person')
-        if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s: sent %d, failed %d' % ('connected' if gu_['client'] else 'no client', gu_['sent'], gu_['failed'])   # v20
-        APP.cv2.rectangle(img_, (0, 26), (img_.shape[1], 50), (0, 0, 0), -1); APP.cv2.putText(img_, gtxt_, (8, 44), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255) if st_['auto'] else (255, 255, 255), 1)
-    ok_, jb_ = APP.cv2.imencode('.jpg', img_, [APP.cv2.IMWRITE_JPEG_QUALITY, 80])
-    with APP.LIVE.jcond: APP.LIVE.jpeg = jb_.tobytes(); APP.LIVE.seq += 1; APP.LIVE.jcond.notify_all()
+    # 11-12: the page picture only when somebody can see it: every frame while /stream has a viewer, otherwise once a second (/snap.jpg at most 1 s old)
+    # and every frame for 3 s after a /snap.jpg request. Nothing else reads this picture (tracking, gimbal, measurement and the PC GUI use the frame itself).
+    if APP.LIVE.viewers > 0 or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0:
+        APP.LIVE.pic_t = now_; APP.LIVE.pic_n += 1
+        img_ = APP.cv2.cvtColor(g_[16:496], APP.cv2.COLOR_GRAY2BGR)
+        if sc_ != 1: img_ = APP.cv2.resize(img_, None, fx=sc_, fy=sc_, interpolation=APP.cv2.INTER_LINEAR)
+        for p1_, p2_, col_, tid_ in draw_:
+            APP.cv2.rectangle(img_, p1_, p2_, col_, 2); APP.cv2.putText(img_, str(tid_), (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, col_, 2)
+        if POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
+            try:
+                seen_ = {int(r_[4]) for r_ in rows_}
+                for tid_, b_ in POSP['boxes']:
+                    if tid_ in seen_ or (APP.GB is not None and tid_ != gb_id_): continue   # v36 (user 11-10): only the person being followed (no gimbal link: every lost person)
+                    pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else (60, 220, 60)
+                    p1_ = (int((b_[0] - b_[2] / 2) * sc_), int((b_[1] - b_[3] / 2 - 16) * sc_)); p2_ = (int((b_[0] + b_[2] / 2) * sc_), int((b_[1] + b_[3] / 2 - 16) * sc_))
+                    dash_rect(img_, p1_, p2_, pc_, 2); APP.cv2.putText(img_, '%d predict' % tid_, (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, pc_, 2)   # v36: same colour as the track, dashed = estimate
+            except Exception: pass
+        txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
+        APP.cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0), -1); APP.cv2.putText(img_, txt_, (8, 19), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+        if APP.GB is not None:
+            st_ = APP.GB.state
+            gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else ('gimbal: lost %d, waiting' % st_['id'] if st_['lost'] else 'gimbal: following %d' % st_['id'] if st_['auto'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle, click a person')
+            if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s: sent %d, failed %d' % ('connected' if gu_['client'] else 'no client', gu_['sent'], gu_['failed'])   # v20
+            APP.cv2.rectangle(img_, (0, 26), (img_.shape[1], 50), (0, 0, 0), -1); APP.cv2.putText(img_, gtxt_, (8, 44), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255) if st_['auto'] else (255, 255, 255), 1)
+        ok_, jb_ = APP.cv2.imencode('.jpg', img_, [APP.cv2.IMWRITE_JPEG_QUALITY, 80])
+        with APP.LIVE.jcond: APP.LIVE.jpeg = jb_.tobytes(); APP.LIVE.seq += 1; APP.LIVE.jcond.notify_all()
     td_ = time.perf_counter()
     with APP.LIVE.dlock: APP.LIVE.delays.append((td_, (td_ - t_in) * 1000.0))   # v26b: camera frame arrival -> picture ready for the page, kept for /healthz
     if time.monotonic() - APP.LIVE.t0 > APP.args.live_seconds or (APP.LIVE.cam_lost and APP.args.live_wait): APP.LIVE.stopped = True
@@ -193,12 +197,16 @@ def make_lv_Handler():
                         self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.setsockopt(APP.lv_sock.SOL_SOCKET, APP.lv_sock.SO_SNDBUF, 65536); self.connection.settimeout(30)
                     except OSError: pass
                     last_ = 0
-                    while not APP.LIVE.stopped:
-                        with APP.LIVE.jcond:
-                            APP.LIVE.jcond.wait_for(lambda: APP.LIVE.seq != last_ or APP.LIVE.stopped, timeout=2)
-                            if APP.LIVE.seq == last_: continue
-                            last_ = APP.LIVE.seq; jb_ = APP.LIVE.jpeg
-                        self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n' % len(jb_) + jb_ + b'\r\n')
+                    with APP.LIVE.jcond: APP.LIVE.viewers += 1   # 11-12: pictures are made for every frame while this is above 0
+                    try:
+                     while not APP.LIVE.stopped:
+                         with APP.LIVE.jcond:
+                             APP.LIVE.jcond.wait_for(lambda: APP.LIVE.seq != last_ or APP.LIVE.stopped, timeout=2)
+                             if APP.LIVE.seq == last_: continue
+                             last_ = APP.LIVE.seq; jb_ = APP.LIVE.jpeg
+                         self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n' % len(jb_) + jb_ + b'\r\n')
+                    finally:
+                        with APP.LIVE.jcond: APP.LIVE.viewers -= 1
                 elif self.path.startswith('/gimbal/people') and APP.GB is not None:   # v19: read only
                     b_ = json.dumps(dict(state=APP.GB.state, people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
@@ -217,7 +225,7 @@ def make_lv_Handler():
                     try: rss_ = int(open('/proc/self/statm').read().split()[1]) * 4096 // 1048576
                     except Exception: rss_ = None
                     h_ = dict(up=round(now_ - APP.LIVE.t0, 1), cam_idle=round(now_ - APP.LIVE.last_frame_t, 1), out_idle=round(time.perf_counter() - last_out_ if last_out_ is not None else now_ - APP.LIVE.t0, 1), frames_in=APP.LIVE.frames_in,   # v26: before the first result out_idle is the time since the start (a tracker that hangs before its first result is seen too)
-                              cam_fail=APP.LIVE.cam_fail_n, warm_dropped=APP.LIVE.warm_dropped, frozen_frames=getattr(APP.LIVE, 'frozen_total', 0), cam_pipe_alive=APP.LIVE.proc.poll() is None, gimbal_alive=(APP.GB.proc is not None and APP.GB.proc.poll() is None) if APP.GB is not None else None,
+                              cam_fail=APP.LIVE.cam_fail_n, warm_dropped=APP.LIVE.warm_dropped, frozen_frames=getattr(APP.LIVE, 'frozen_total', 0), pictures=APP.LIVE.pic_n, viewers=APP.LIVE.viewers, cam_pipe_alive=APP.LIVE.proc.poll() is None, gimbal_alive=(APP.GB.proc is not None and APP.GB.proc.poll() is None) if APP.GB is not None else None,
                               gimbal_ready=bool(APP.GB.state['ready']) if APP.GB is not None else None, gimbal_error=int(APP.GB.state['error']) if APP.GB is not None else None, gimbal_starts=(APP.GB.restarts + 1) if APP.GB is not None else None,
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,
                               q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
@@ -234,6 +242,7 @@ def make_lv_Handler():
                     b_ = json.dumps(next((h_ for h_ in APP.LIVE.meas_hist if str(h_['n']) == q_n_), None) if q_n_ else APP.meas_state()).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/snap.jpg'):
+                    APP.LIVE.snap_t = time.perf_counter()   # 11-12: pictures for every frame during the next 3 s
                     with APP.LIVE.jcond: jb_ = APP.LIVE.jpeg
                     self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.send_header('Content-Length', str(len(jb_))); self.end_headers(); self.wfile.write(jb_)
                 else:
