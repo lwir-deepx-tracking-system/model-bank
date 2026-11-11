@@ -4,7 +4,7 @@
 
 ![파이프라인과 실시간 처리](images/pipeline_realtime_20261111.png)
 
-> 그림 읽는 법: 숫자는 2026-11-11 에 장치에서 짧게 읽은 값입니다. 가운데 막대의 길이는 이해를 돕기 위한 그림이고 단계별 시간은 아직 재지 않았습니다. 검출을 NPU 코어 0·1 에 번갈아 넣는 방식은 만들어 시험하는 중이며, 지금 기본은 코어 0 하나입니다. 사진의 상자와 번호는 검수한 라벨로 그린 예시입니다.
+> 그림 읽는 법: 숫자는 2026-11-11 에 장치에서 짧게 읽은 값입니다. 가운데 막대의 길이는 이해를 돕기 위한 그림이고 단계별 시간은 아직 재지 않았습니다. 검출을 NPU 코어 0·1 에 번갈아 넣는 방식은 장치 시험에서 기준을 넘지 못해 꺼 두었고(10절), 지금은 코어 0 하나로 돕니다. 그림의 코어 교대 막대는 그 시험 방식을 그린 것입니다. 사진의 상자와 번호는 검수한 라벨로 그린 예시입니다.
 
 ## 1. 한눈에 보기
 
@@ -104,7 +104,7 @@ tracking_server/
 | 폴더 | 파일 |
 |---|---|
 | `src/detect/` | `npu_engine.py` NPU 에 모델 올리기·돌리기, `detect_frame.py` 프레임 → 상자, `model_scan.py` 검출 모델 파일 스스로 찾기, `zoom_redetect.py` 작은 사람 확대 재검출, `native_post.py` + `post.cpp` 검출기 출력을 푸는 빠른 계산 |
-| `src/track/` | `trackers.py` 추적기, `kalman.py` Kalman filter, `camera_motion.py` 카메라 움직임 추정, `position_memory.py` 놓친 사람 위치 기억, `gate.py` 확인 판정기, `stitch.py` 끊긴 추적 잇기, `stabilizer.py` 화면 흔들림 보정 |
+| `src/track/` | `trackers.py` 추적기, `kalman.py` Kalman filter, `camera_motion.py` 카메라 움직임 추정, `position_memory.py` 놓친 사람 위치 기억, `gate.py` 확인 판정기, `confirm_time.py` 새 사람 확인을 시간(ms)으로 계산, `stitch.py` 끊긴 추적 잇기, `stabilizer.py` 화면 흔들림 보정 |
 | `src/reid/` | `reid_models.py` 외형 모델 목록과 실행 중 바꾸기, `reid_embed.py` 사람 조각에서 특징 뽑기, `relabel_online.py` KeepID 규칙, `relink_online_judge.py` 번호 잇기 판정기 |
 | `src/camera/` | `cam_pipe.cpp` 카메라 프로그램, `camera_link.py` 그 프로그램을 띄우고 읽기·카메라 초기화 |
 | `src/gimbal/` | `gimbal_bridge_v25.cpp` 짐벌 + PC GUI 프로그램, `team/` 팀 제어·GUI 코드 사본(출처 `team/SOURCE.txt`), `gimbal_link.py` 그 프로그램을 띄우고 명령 보내기, `test_*.py` 시험, `PID_TUNING_RECORD_20261110.md` 제어값 기록, `gimbal_bridge_v27.cpp` + `v27/` + `sim/` 시험용 판(4절) |
@@ -126,12 +126,14 @@ tracking_server/
 | `LWIR_GIMBAL_AIM_Y` | 사람 상자의 어느 높이를 화면 가운데에 둘지 (위에서부터의 비율) | 0.08 = 머리 (0.3 = 가슴) |
 | `LWIR_GIMBAL_SPEED_MAX` | 자동으로 따라갈 때의 최고 속도 | 100 |
 | `LWIR_GIMBAL_REACQUIRE_MS` | 놓친 사람을 기다리는 시간 (ms) | 10000 |
+| `LWIR_CONFIRM_MS` | 새 사람을 화면에 내기 전에 확인하는 시간 (ms). 0 = 끔 (늘 3장) | 130 |
 | `LWIR_GIMBAL_BRIDGE` | 짐벌 프로그램 | `src/gimbal/gimbal_bridge_v25` |
 | `LWIR_GIMBAL_EXTRA_OPTS` | 짐벌 프로그램에 더 줄 옵션 | 없음 |
 
 - 짐벌 제어값: PD 제어(Kp 30, Ki 0, Kd 6), 불감대 0.06, 손으로 움직일 때 속도 20. 이 값은 최고 속도 10 일 때 맞춘 것입니다(`src/gimbal/PID_TUNING_RECORD_20261110.md`). 최고 속도 100 에 맞춘 값은 아직 없습니다.
 - `gimbal_bridge_v27` 은 움직임을 부드럽게 하려는 **시험용 판**입니다. `src/gimbal/V27_CHANGES.md` 의 명령으로 먼저 빌드하고, 옵션 예는 `--deadband-exit 0.10 --axis-reversal 1` 입니다. 실제 짐벌에서 흔들림이 줄어드는지는 아직 재지 않았습니다.
 - `LWIR_GIMBAL_AIM_Y` 를 바꾸면 화면의 세로 오차 표시 기준(`page/js/04_ping_fps_aim.js` 의 `AIM_Y`)도 같이 바꿉니다.
+- `LWIR_CONFIRM_MS` 는 "새 사람 확인"을 장 수가 아니라 시간으로 적은 값입니다. 서버가 초당 장 수를 재서 장 수를 다시 계산합니다: 장 수 = 130 × 초당 장 수 ÷ 1000 을 반올림. 초당 22~27장이면 3장(전과 같음), 초당 28장을 넘으면 4장이 됩니다. 느려져도 3장보다 작아지지는 않습니다. 지금 값은 화면의 "지금 적용된 값"에 나옵니다. 서버를 켠 채로 화면의 "Filter 값 → 새 사람 확인 시간"에서 바꿀 수 있고(`POST /rules/set?confirm_ms=160`), 화면에서 한 번 바꾼 값은 저장되어 다음에 켤 때 `LWIR_CONFIRM_MS` 보다 먼저 쓰입니다(다른 Filter 값과 같음). 코드는 `src/track/confirm_time.py`, PC 시험은 `python -m unittest src.track.test_confirm_time` 입니다. 장치에서는 아직 돌려 보지 않았습니다.
 
 ## 5. 거르는 곳
 
@@ -143,7 +145,7 @@ tracking_server/
 | ② | 온도 Filter | 사람 상자 안의 16비트 원본 값(상위 5% 지점)이 정한 범위 밖인 것 | 화면 "Filter 값" |
 | ③ | 종류 | 사람과 차를 서로 짝짓는 것 | `scripts/run_real_gui.sh` |
 | ④ | 가장자리 Filter | 화면 끝에 닿은 상자 중 점수가 낮은 것은 새 번호를 받지 못함 | 화면 "Filter 값" |
-| ⑤ | 3장 확인 | 3장 이어서 잡히지 않은 것은 화면에 나오지 않음 | `scripts/run_real_gui.sh` |
+| ⑤ | 새 사람 확인 (130 ms) | 130 ms 동안(초당 22~27장이면 3장) 이어서 잡히지 않은 것은 화면에 나오지 않음 | 화면 "Filter 값" 또는 `scripts/live.env` 의 `LWIR_CONFIRM_MS` |
 | ⑥ | 불감대 | 조준점이 가운데 가까이 있으면 짐벌이 움직이지 않음 | `scripts/live.env` |
 
 ## 6. 꺼지면 다시 켜기, 끄기
@@ -205,7 +207,7 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 | 주소 | 하는 일 |
 |---|---|
 | `/model/set?id=<번호>` | 검출 모델 바꾸기 |
-| `/rules/set?...` | 추적기, Filter 값, 외형 모델, 위치 기억 등 바꾸기 |
+| `/rules/set?...` | 추적기, Filter 값(새 사람 확인 시간 `confirm_ms` 포함), 외형 모델, 위치 기억 등 바꾸기 |
 | `/measure/start`, `/measure/stop`, `/measure/note` | 측정 시작, 끝, 메모 |
 | `/camera/reset` | 카메라 초기화 |
 | `/system/reboot?confirm=REBOOT` | 장치 재부팅 |
@@ -241,7 +243,27 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 | 몇 시간 이상 연속 실행, 재부팅 뒤 자동 시작 |
 | 우리 카메라 영상에서의 검출·추적 점수 (정답이 없어 재지 않음) |
 | 시험용 모델(실내·실외 fine-tuning, 실내 외형 모델)의 장치 정확도 |
-| 단계별 처리 시간 |
+
+## 10. 시간 재는 도구와 장치에서 잰 값 (2026-11-12)
+
+모두 기본은 꺼짐이고, `scripts/live.env.example` 에 설명이 있습니다.
+
+| 도구 | 켜는 법 | 하는 일 |
+|---|---|---|
+| 단계별 시간 재기 | `LWIR_STAGE_TIMING=1` | 프레임마다 도착 → NPU 에 넣음 → 결과 → 상자 → 추적 → 번호 잇기 → 내보냄 시각을 기록 |
+| 재생 카메라 | `--live-cam` 에 `src/camera/replay_cam.py` 를 부르는 스크립트 | 저장된 PNG 녹화를 정한 속도로 카메라처럼 보냄 (카메라·짐벌 없이 시험) |
+| 번갈아 넣기 | `LWIR_NPU_FEED=arrival` | 영상이 도착하는 대로 NPU 코어 0·1 에 번갈아 넣음. **켜지 마세요** (아래 결과) |
+
+장치(DX-M1, 진짜 NPU)에서 실외 녹화를 재생해 180초씩 3번 잰 값입니다. 짐벌은 붙이지 않았습니다.
+
+| 속도 | 방식 | 도착 → 결과 중간값 | 늦을 때 (p95) | 버린 장 |
+|---|---|---|---|---|
+| 초당 25장 | 지금 방식 (코어 0) | 72 ms | 86 ms | 0 |
+| | 번갈아 넣기 | 66 ms | 85 ms | 0.5 % |
+| 초당 30장 | 지금 방식 (코어 0) | 63 ms | 87~90 ms | 0~3장 |
+| | 번갈아 넣기 | 75 ms | 100 ms | 5 % |
+
+단계별 (초당 25장, 지금 방식, 중간값): NPU 에 넣기까지 3 ms, NPU 검출 30 ms, 상자 풀기와 다음 장 읽기 12 ms, 추적 전 준비 8 ms(이 가운데 온도 Filter 7 ms), 추적 3 ms, 번호 잇기 2 ms, 내보내기 12 ms(화면용 색 그림 6 ms, JPEG 5 ms).
 
 알아 둘 것
 

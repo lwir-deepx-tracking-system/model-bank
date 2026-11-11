@@ -23,6 +23,7 @@ from .track.camera_motion import GMC
 from .track.stabilizer import STAB_M, stab_shift, stab_margins
 from .track.trackers import Tracker, BotSortTracker, LostFirstTracker, crop_requests
 from .track.gate import GateTracker, NumpyGRUGate
+from .track.confirm_time import ConfirmByTime, apply as confirm_apply
 from .common.research_synth import load_synth_plan, apply_synth_plan
 from .detect.zoom_redetect import ZOOM_HW, zoom_candidates, zoom_windows, zoom_pack, zoom_merge
 from .reid.reid_models import reid_catalog, reid_swap
@@ -89,6 +90,9 @@ def main():
     ap.add_argument('--n-init', type=int, default=2, help='matched frames, the birth frame included, before a NEW track is output (default 2 = unchanged: '
                     'birth frame + 1 hit; 1 behaves like 2; tracks born on a video\'s first frame are output at once). Offline choice: 3 '
                     '(idsw_fix/RESULT_KO.md, verified with --tracker rebind --no-vit only)')
+    ap.add_argument('--confirm-ms', type=float, default=0.0, help='11-11: the confirmation rule of a NEW track written as a time. 0 (default) = off: --n-init frames as before. '
+                    'N > 0, live server only: frames = round(N x measured frames per second / 1000), never below --n-init, re-computed while running '
+                    '(src/track/confirm_time.py). 130 = 3 frames at 22-27 fps, 4 frames at 30 fps')
     ap.add_argument('--radius', type=float, default=2.0, help='motion re-bind radius in lost-track heights (default 2.0 = unchanged). Offline choice: 1.5 '
                     '(with --n-init 3, idsw_fix/RESULT_KO.md, verified with --tracker rebind --no-vit only)')
     ap.add_argument('--gmc', action='store_true', help='BoT-SORT camera-motion compensation (Ultralytics GMC sparseOptFlow, downscale 2) on the full gray '
@@ -177,6 +181,8 @@ def main():
     if APP.args.class_gate and (not APP.args.no_vit or APP.args.vit_budget):
         raise SystemExit('--class-gate requires --no-vit (no --vit-budget): only the ViT-free trackers were verified')
     if APP.args.n_init < 1 or not APP.args.radius > 0: raise SystemExit('--n-init must be >= 1 and --radius > 0')
+    if APP.args.confirm_ms < 0: raise SystemExit('--confirm-ms must be >= 0')
+    APP.CONFIRM = ConfirmByTime(APP.args.confirm_ms) if APP.args.confirm_ms > 0 else None   # 11-11: confirmation rule in ms; used by the live loop only (offline runs have no arrival clock)
     trk_extra = APP.args.n_init != 2 or APP.args.radius != 2.0             # False = every tracker code path below is the pre-idsw_fix one
     if trk_extra and (APP.args.tracker != 'rebind' or not APP.args.no_vit):
         print('NOTE --n-init %d --radius %g: verified offline only with --tracker rebind --no-vit' % (APP.args.n_init, APP.args.radius), flush=True)
@@ -282,7 +288,7 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'relabel', 'predictor', 'pred_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead_ms', 'reid') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'relabel', 'predictor', 'pred_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead_ms', 'reid', 'confirm_ms') if k_ in sv_})
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass
@@ -293,6 +299,7 @@ def main():
         if 'pred_show' in APP.SEL: qs_.append({'pred_show': ['1' if APP.SEL['pred_show'] else '0']})
         if 'app' in APP.SEL: qs_.append({'app': [str(APP.SEL['app'])]})   # v40
         if 'lead_ms' in APP.SEL: qs_.append({'lead_ms': [str(APP.SEL['lead_ms'])]})   # v40
+        if 'confirm_ms' in APP.SEL: qs_.append({'confirm_ms': [str(APP.SEL['confirm_ms'])]})   # 11-11: a value set on the page wins over --confirm-ms, like the other Filter numbers
         if isinstance(sv_, dict) and 'stab' in sv_: APP.SEL['stab'] = bool(sv_['stab']); qs_.append({'stab': ['1' if APP.SEL['stab'] else '0']})   # stab
         for q_ in qs_:
             if not q_: continue
@@ -675,6 +682,9 @@ def main():
                     for t_ in APP.tracker.tracked + APP.tracker.lost: t_.state = REMOVED
                     print('LIVE input gap: %d tracks ended at frame %d' % (len(APP.tracker.tracked) + len(APP.tracker.lost), i), flush=True); APP.tracker.tracked = []; APP.tracker.lost = []
                 APP.LIVE.upd_t = ta_
+                if APP.CONFIRM is not None:   # 11-11 --confirm-ms: the tracker's confirmation count follows the measured frame rate (arrival times of the frames the tracker gets)
+                    ch_ = confirm_apply(APP.CONFIRM, APP.tracker, ta_)
+                    if ch_: print('CONFIRM %g ms at %.1f fps: %d -> %d frames (frame %d)' % (APP.CONFIRM.ms, APP.CONFIRM.fps or 0.0, ch_[0], ch_[1], i), flush=True)
             if APP.TIMING is not None: APP.TIMING.mark()
             n_sync0 = len(sync_lat)
             if budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association

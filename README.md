@@ -4,7 +4,7 @@
 
 ![파이프라인과 실시간 처리](tracking_server/images/pipeline_realtime_20261111.png)
 
-> 그림의 숫자는 2026-11-11 에 장치에서 짧게 읽은 값입니다. 검출을 NPU 코어 0·1 에 번갈아 넣는 방식은 시험 중이며, 지금 기본은 코어 0 하나입니다. 자세한 설명은 [tracking_server/README.md](tracking_server/README.md)에 있습니다.
+> 그림의 숫자는 2026-11-11 에 장치에서 짧게 읽은 값입니다. 검출을 NPU 코어 0·1 에 번갈아 넣는 방식은 장치 시험에서 기준을 넘지 못해 꺼 두었고, 지금은 코어 0 하나로 돕니다. 자세한 설명은 [tracking_server/README.md](tracking_server/README.md)에 있습니다.
 
 ## 1. 들어 있는 것
 

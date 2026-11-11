@@ -9,6 +9,7 @@ from ..detect.model_scan import BANK
 from ..track.position_memory import POSP, pos_list
 from ..track.stabilizer import STAB
 from ..track.trackers import Tracker, BotSortTracker, AltTracker
+from ..track.confirm_time import ConfirmByTime, MS_MAX
 from ..reid.reid_models import reid_catalog
 from ..gimbal.gimbal_link import gb_cfg
 
@@ -54,7 +55,9 @@ def ctl_state():
     try: gbs_ = dict(APP.GB.state) if APP.GB is not None else None
     except Exception: gbs_ = None
     rq_ = APP.REID['req']
-    return dict(reid=APP.REID['cur'], reid_hot=bool(rl_ok_), reid_pending=rq_['key'] if rq_ else None, reid_last=APP.REID['last'],   # v41
+    try: cf_ = APP.CONFIRM.state(APP.tracker) if APP.CONFIRM is not None else None   # 11-11 --confirm-ms: {ms, frames now, measured fps, changes}; None = off (frames counted as before)
+    except Exception: cf_ = None
+    return dict(confirm=cf_, reid=APP.REID['cur'], reid_hot=bool(rl_ok_), reid_pending=rq_['key'] if rq_ else None, reid_last=APP.REID['last'],   # v41
                 reids=reid_catalog(HERE / 'models' / 'links', APP.man, APP.args.relabel or '') if rl_ok_ else [],
                 app=APP.CTL['app'], apps=[dict(key='off', name='끔', available=True, note=''),
                                       dict(key='repvgg', name='RepVGG_(TMOT,CAMEL)', available=rl_ok_, note='' if rl_ok_ else 'KeepID 모델이 이 실행에 없습니다'),
@@ -115,6 +118,11 @@ def rules_request(q_):
         if wx_ > 0 and wx_ <= wn_: return False, 'Warmth 최대는 최소보다 커야 함 (0 = 위쪽 제한 없음)'
         for k_ in ('edge_birth', 'edge_px'):
             if k_ in q_: float(q_[k_][0])
+        cm_ = None   # 11-11 confirm_ms: the confirmation time of a new track (0 = off = the frame count of --n-init). Checked before anything changes
+        if 'confirm_ms' in q_:
+            cm_ = float(q_['confirm_ms'][0])
+            if not 0 <= cm_ <= MS_MAX: return False, '새 사람 확인 시간은 0 ~ %d ms (0 = 끔)' % MS_MAX
+            if not APP.args.live_port: return False, '실시간 서버에서만 바꿀 수 있음'   # (APP.LIVE is still None when the saved choice is taken again at start)
         settings.WARM_MIN, settings.WARM_MAX = wn_, wx_
         if 'edge_birth' in q_: settings.EDGE_BIRTH = max(0.0, min(1.0, float(q_['edge_birth'][0])))
         if 'edge_px' in q_: settings.EDGE_PX = max(0.0, min(100.0, float(q_['edge_px'][0])))
@@ -134,6 +142,10 @@ def rules_request(q_):
         if pk_ != 'kalman' and not any(p_['key'] == pk_ and p_['available'] for p_ in pos_list()): return False, '이 위치 예측기는 가중치 파일이 없음 (학습 전)'
         if pk_ != POSP['key']: pend_['predictor'] = pk_
     if 'pred_show' in q_: POSP['show'] = q_['pred_show'][0] in ('1', 'true', 'on')
+    if cm_ is not None:   # read once per frame by the frame loop (confirm_apply); the tracker itself is only touched there
+        if APP.CONFIRM is None: APP.CONFIRM = ConfirmByTime(cm_)
+        else: APP.CONFIRM.set_ms(cm_)
+        print('RULES set confirm_ms %g' % APP.CONFIRM.ms, flush=True)
     if 'app' in q_: APP.CTL['app'] = q_['app'][0]   # v40: read once per frame by the BoT-SORT feature step
     if rk_ is not None:
         with APP.REID['lock']: APP.REID['req'] = dict(key=rk_, t=time.time())
@@ -145,7 +157,7 @@ def rules_request(q_):
         if pend_: APP.RULES['pending'] = dict(APP.RULES['pending'] or {}, **pend_, t=time.time())
         APP.RULES['changes'] += 1; APP.RULES['last'] = dict(at=time.strftime('%H:%M:%S'), warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, queued=sorted(pend_.keys()))
     print('RULES set warm_min %d warm_max %d edge_birth %.2f pending %s' % (settings.WARM_MIN, settings.WARM_MAX, settings.EDGE_BIRTH, pend_), flush=True)
-    APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), app=APP.CTL['app'], lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **pend_)   # v36. v40: lead itself is not kept (comes back OFF)
+    APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), app=APP.CTL['app'], lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **(dict(confirm_ms=APP.CONFIRM.ms) if cm_ is not None else {}), **pend_)   # v36. v40: lead itself is not kept (comes back OFF)
     return True, '적용됨' if not (pend_ or rk_ is not None) else '다음 프레임에 적용'
 
 
