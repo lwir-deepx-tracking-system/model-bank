@@ -115,4 +115,4 @@ bash model-bank/tracking_server/scripts/run_real_gui.sh  # 켜기
 
 - 이 저장소는 **공개**입니다. 키, 장치 주소, 카메라 영상, 라벨 자료는 올리지 않습니다.
 - 추적 서버 화면에는 비밀번호가 없고 짐벌을 움직입니다. 믿을 수 있는 기기만 닿는 주소에서 쓰세요.
-- NPU 측정 프로그램을 돌리기 전에는 추적 서버를 먼저 꺼 주세요([끄는 법](tracking_server/README.md#6-꺼지면-다시-켜기-끄기)).
+- NPU 측정 프로그램을 돌리기 전에는 추적 서버를 먼저 꺼 주세요([끄는 법](tracking_server/README.md#8-꺼지면-다시-켜기-끄기)).
