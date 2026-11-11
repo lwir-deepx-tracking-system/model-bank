@@ -18,10 +18,27 @@ def dash_rect(img, p1, p2, col, th=2, dash=7):
         cv2.line(img, (x1, y), (x1, min(y + dash, y2)), col, th); cv2.line(img, (x2, y), (x2, min(y + dash, y2)), col, th)
 
 
+def frozen_check(raw_):
+    """11-12: True when this 16-bit frame is exactly the previous one (every 4th pixel in both directions). A working thermal camera never gives
+    two identical frames (sensor noise), so this only fires when the picture is frozen while frames still arrive. Logs the start and end of each frozen spell."""
+    L_ = APP.LIVE
+    if raw_ is None: return False
+    s_ = raw_[::4, ::4]; p_ = getattr(L_, 'frozen_prev', None)
+    same_ = p_ is not None and p_.shape == s_.shape and np.array_equal(p_, s_)
+    L_.frozen_prev = s_.copy(); n_ = getattr(L_, 'frozen_n', 0)
+    if same_:
+        if n_ == 0: print('FROZEN picture: this frame is the same as the previous one; the gimbal gets no people until the picture moves', flush=True)
+        L_.frozen_n = n_ + 1; L_.frozen_total = getattr(L_, 'frozen_total', 0) + 1
+    elif n_:
+        print('FROZEN picture ended after %d frames' % n_, flush=True); L_.frozen_n = 0
+    return same_
+
+
 def live_publish(g_, rows_, row_):
     now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if APP.LIVE.arr else now_
     raw16_ = APP.LIVE.raws.popleft() if APP.LIVE.raws else None   # v20
-    if APP.LIVE.rawq: APP.LIVE.rawq.popleft()   # v24f
+    rq_ = APP.LIVE.rawq.popleft() if APP.LIVE.rawq else None   # v24f
+    frozen_ = frozen_check(rq_)   # 11-12: the same picture as the previous frame -> the gimbal gets no people for this frame
     sC_ = APP.LIVE.stabq.popleft() if APP.LIVE.stabq else None; STAB['px'] = sC_ or (0.0, 0.0)   # stab: correction of the frame being shown
     APP.LIVE.done_ts.append(now_)
     if APP.LIVE.meas is not None:   # v22
@@ -47,6 +64,7 @@ def live_publish(g_, rows_, row_):
     if APP.GB is not None:
         APP.GB.people = gb_people_; APP.GB.frame += 1
         if sC_ is not None: gb_people_ = stab_people_real(gb_people_, sC_, float(APP.LIVE_W), float(APP.LIVE_H))   # stab: the F / G lines below carry real camera coordinates
+        if frozen_: gb_people_ = []   # 11-12 frozen picture: the gimbal program sees its person as lost and stops (selection kept for the reacquire time)
         if APP.CTL['lead']: gb_people_ = APP.lead_shift(gb_people_, APP.GB.people, gb_id_, t_in, float(APP.LIVE_W), float(APP.LIVE_H))   # v40 예측 제어: only the followed person's box in the F / G line moves ahead
         elif APP.CTL['lv'] is not None or APP.CTL['lead_px']: APP.CTL['lv'] = None; APP.CTL['lead_px'] = 0.0
         people_txt_ = ''.join(' %d %.1f %.1f %.1f %.1f %.3f' % (p_[0], p_[1], p_[2], p_[3] - p_[1], p_[4] - p_[2], p_[5]) for p_ in gb_people_)
@@ -199,7 +217,7 @@ def make_lv_Handler():
                     try: rss_ = int(open('/proc/self/statm').read().split()[1]) * 4096 // 1048576
                     except Exception: rss_ = None
                     h_ = dict(up=round(now_ - APP.LIVE.t0, 1), cam_idle=round(now_ - APP.LIVE.last_frame_t, 1), out_idle=round(time.perf_counter() - last_out_ if last_out_ is not None else now_ - APP.LIVE.t0, 1), frames_in=APP.LIVE.frames_in,   # v26: before the first result out_idle is the time since the start (a tracker that hangs before its first result is seen too)
-                              cam_fail=APP.LIVE.cam_fail_n, warm_dropped=APP.LIVE.warm_dropped, cam_pipe_alive=APP.LIVE.proc.poll() is None, gimbal_alive=(APP.GB.proc is not None and APP.GB.proc.poll() is None) if APP.GB is not None else None,
+                              cam_fail=APP.LIVE.cam_fail_n, warm_dropped=APP.LIVE.warm_dropped, frozen_frames=getattr(APP.LIVE, 'frozen_total', 0), cam_pipe_alive=APP.LIVE.proc.poll() is None, gimbal_alive=(APP.GB.proc is not None and APP.GB.proc.poll() is None) if APP.GB is not None else None,
                               gimbal_ready=bool(APP.GB.state['ready']) if APP.GB is not None else None, gimbal_error=int(APP.GB.state['error']) if APP.GB is not None else None, gimbal_starts=(APP.GB.restarts + 1) if APP.GB is not None else None,
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,
                               q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
