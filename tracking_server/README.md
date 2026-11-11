@@ -65,11 +65,11 @@ bash model-bank/tracking_server/scripts/setup.sh
 
 1. `src/detect/post.cpp` → `src/detect/post.so` 빌드.
 2. `models/links/<내부 이름>.dxnn` 링크 만들기(`models/MANIFEST.json` 의 `_links` 표대로, 9개).
-3. 확인값(sha256)으로 모델 파일 확인: 내부 이름 9개와 DXNN 17개. 없거나 다른 파일이 있으면 그 이름을 알려 주고 멈춥니다.
+3. 확인값(sha256)으로 모델 파일 확인: 내부 이름 9개와 DXNN 18개. 없거나 다른 파일이 있으면 그 이름을 알려 주고 멈춥니다.
 4. 카메라 SDK 가 있으면 `src/camera/cam_pipe.cpp` → `src/camera/cam_pipe` 빌드.
 5. OpenCV 와 GStreamer 가 있으면 `src/gimbal/gimbal_bridge_v25.cpp` + `src/gimbal/team/` → `src/gimbal/gimbal_bridge_v25` 빌드.
 
-끝에 `model files checked: 17 of 17 OK` 와 `setup done` 이 나오면 됩니다. 빌드한 파일과 `models/links/` 는 git 에 올라가지 않습니다(`.gitignore`).
+끝에 `model files checked: 18 of 18 OK` 와 `setup done` 이 나오면 됩니다. 빌드한 파일과 `models/links/` 는 git 에 올라가지 않습니다(`.gitignore`).
 
 ### 3-2. 켜기: `scripts/run_real_gui.sh`
 
@@ -216,3 +216,14 @@ kill -TERM $(pgrep -f 'python3 -B [s]tart_tracking_server.py')
 - `images/` 의 그림 네 장(`pipeline_m1.png`, `system_structure.png`, `code_structure.png`, `final_summary_m1.png`)은 2026-11-06 까지의 구성(검출 타일 2장, 한 파일짜리 코드의 줄 번호)을 그린 것이라 지금 배치와 다릅니다.
 
 지난 측정표 전체는 git 기록의 옛 README 에 있습니다.
+
+## 짐벌 프로그램과 조준 높이 (scripts/live.env)
+
+| 값 | 기본 | 뜻 |
+|---|---|---|
+| `LWIR_GIMBAL_BRIDGE` | `src/gimbal/gimbal_bridge_v25` | 짐벌 프로그램. `src/gimbal/gimbal_bridge_v27` 은 움직임을 부드럽게 하려는 시험용 판입니다(`src/gimbal/V27_CHANGES.md` 의 명령으로 먼저 빌드). 실제 짐벌에서 흔들림이 줄어드는지는 아직 재지 않았습니다. |
+| `LWIR_GIMBAL_EXTRA_OPTS` | 없음 | 짐벌 프로그램에 더 줄 옵션. v27 예: `--deadband-exit 0.10 --axis-reversal 1` |
+| `LWIR_GIMBAL_AIM_Y` | `0.08` | 사람 상자의 어느 높이를 화면 가운데에 둘지(위에서부터의 비율). 0.08 = 머리, 0.3 = 가슴. 화면의 세로 오차 표시 기준(`page/js/04_ping_fps_aim.js` 의 `AIM_Y`)과 같아야 합니다. |
+| `LWIR_GIMBAL_DEV` | 고정 이름을 먼저 찾고 없으면 `/dev/ttyUSB0` | 짐벌 직렬 장치 |
+
+화면(8090)은 장치에서 받아 온 것에서 두 군데를 고쳤습니다(2026-11-11): Filter 를 "검출 모델" 다음 줄로 옮겼고, 세로 오차 표시 기준을 머리로 바꿨습니다.

@@ -27,7 +27,9 @@ exec > real_gui_1.out 2>&1
 PORT="${LWIR_LIVE_PORT:-8090}"
 BIND="${LWIR_LIVE_BIND:-$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)}"
 GUI_HOST="${LWIR_GUI_HOST:-192.168.50.1}"
-GIMBAL_DEV="${LWIR_GIMBAL_DEV:-/dev/ttyUSB0}"
+GIMBAL_DEV="${LWIR_GIMBAL_DEV:-}"
+[ -n "$GIMBAL_DEV" ] || GIMBAL_DEV="$(ls /dev/serial/by-id/usb-Silicon_Labs_CP2102N_* 2>/dev/null | head -1)"   # 고정 이름 먼저: ttyUSB 번호는 USB 가 끊겼다 붙으면 바뀐다
+GIMBAL_DEV="${GIMBAL_DEV:-/dev/ttyUSB0}"
 SPEED_MAX="${LWIR_GIMBAL_SPEED_MAX:-100}"
 REACQUIRE_MS="${LWIR_GIMBAL_REACQUIRE_MS:-10000}"
 AIM_Y="${LWIR_GIMBAL_AIM_Y:-0.08}"   # 사람 상자의 어느 높이를 화면 가운데에 둘지 (위에서부터의 비율). 0.08 = 머리 (2026-11-11 부터, 그 전에는 0.3 = 가슴). 화면의 세로 오차 표시(page/js/04_ping_fps_aim.js 의 AIM_Y)와 같아야 한다.

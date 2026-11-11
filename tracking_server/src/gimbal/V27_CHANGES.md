@@ -11,8 +11,8 @@
 | `v27/include/control/smoothing_config.hpp` | 새 설정 구조체 (팀의 `app_config.hpp`를 고치지 않으려고 따로 둠) |
 | `v27/include/control/auto_tracking_controller.hpp`, `v27/src/control/auto_tracking_controller.cpp` | 팀 파일 사본, `v27` 표시된 곳만 수정 |
 | `v27/include/control/gimbal_command_executor.hpp`, `v27/src/control/gimbal_command_executor.cpp` | 팀 파일 사본, `v27` 표시된 곳만 수정 |
-| `tests/test_v27_control.cpp` | 제어 단위 시험 (짐벌·브리지 없이) |
-| `tests/test_v27_options.py` | 브리지 옵션 시험 (가상 단말, 기존 `test_gimbal_bridge.py` 옆에 둠) |
+| `test_v27_control.cpp` | 제어 단위 시험 (짐벌·브리지 없이) |
+| `test_v27_options.py` | 브리지 옵션 시험 (가상 단말, 기존 `test_gimbal_bridge.py` 옆에 둠) |
 | `sim/sim.cpp`, `sim/stub/opencv2/core.hpp` | 가상 짐벌 폐루프 시뮬레이터, OpenCV 없는 PC용 대체 헤더 |
 
 **`v27/` 폴더가 필요한 이유:** 고친 로직은 브리지가 아니라 팀의 `AutoTrackingController`, `GimbalCommandExecutor` 안에 있습니다. 팀의 `TrackingCommandHandler`, `GuiCommandHandler`가 `GimbalCommandExecutor`를 클래스 이름으로 직접 쓰기 때문에 브리지 파일 하나로는 옮길 수 없습니다. 그래서 v27 빌드에서만 고친 사본 4개를 팀 파일 **대신** 쓰도록 했습니다(include 경로에서 `v27/include`를 `team/include`보다 앞에 둠).
@@ -43,7 +43,7 @@ g++ -O2 -std=c++17 -pthread -Iv27/include -Iteam/include $(pkg-config --cflags o
 CORE="v27/src/control/auto_tracking_controller.cpp v27/src/control/gimbal_command_executor.cpp team/src/control/pid_controller.cpp team/src/common/logger.cpp team/src/pipeline/runtime_control.cpp"
 ```
 ```bash
-c++ -std=c++17 -O2 -pthread -Iv27/include -Iteam/include -Isim/stub tests/test_v27_control.cpp $CORE -o test_v27_control && ./test_v27_control
+c++ -std=c++17 -O2 -pthread -Iv27/include -Iteam/include -Isim/stub test_v27_control.cpp $CORE -o test_v27_control && ./test_v27_control
 ```
 ```bash
 c++ -std=c++17 -O2 -pthread -Iv27/include -Iteam/include -Isim/stub sim/sim.cpp $CORE -o sim_v27 && ./sim_v27 200 0.10 9 1
@@ -52,10 +52,10 @@ c++ -std=c++17 -O2 -pthread -Iv27/include -Iteam/include -Isim/stub sim/sim.cpp 
 브리지 시험 (장치에서, 빌드한 뒤):
 
 ```bash
-python3 tests/test_gimbal_bridge.py ./gimbal_bridge_v27
+python3 test_gimbal_bridge.py ./gimbal_bridge_v27
 ```
 ```bash
-python3 tests/test_v27_options.py ./gimbal_bridge_v27
+python3 test_v27_options.py ./gimbal_bridge_v27
 ```
 
 켤 때 예: `--gimbal-bridge <gimbal_bridge_v27 경로>` 와 `--gimbal-opts` 에 `--deadband-exit 0.10 --axis-reversal 1` 추가.

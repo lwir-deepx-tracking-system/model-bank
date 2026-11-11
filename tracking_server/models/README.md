@@ -31,9 +31,10 @@
 | `yolo26m/yolo26m_flir_inside_20261110_1742_640x480.dxnn` | 실내 fine-tuning 이전 판 (11-10 17:42) · YOLO26m_(FLIR) 640x480 | `[1,480,640,3]` | 분할 출력 6개 | YOLO26m_(FLIR) 에서 시작해 우리 카메라 실내 영상만으로 fine-tuning, 2번째 epoch | 16장 | 시험용, 실내 전용 |
 | `yolo26m/yolo26m_flir_inside_20261110_2020_640x480.dxnn` | 실내 fine-tuning 최신 판 (11-10 20:20) · YOLO26m_(FLIR) 640x480 | `[1,480,640,3]` | 분할 출력 6개 | YOLO26m_(FLIR) 에서 시작해 우리 카메라 실내 영상 5편으로 fine-tuning (학습 994장 / 상자 1,847개, 검증 163장, 시험 167장), 실내 검증으로 7번째 epoch 선택 | 16장 (FLIR 8 + 실내 8) | 시험용, 실내 전용 |
 | `yolo26m/yolo26m_flir_outside_20261110_patch_640x480.dxnn` | 실외 fine-tuning patch 판 (11-10) · YOLO26m_(FLIR) 640x480 | `[1,480,640,3]` | 분할 출력 6개 | YOLO26m_fine-tuning_(실외)_20261110_patch: 우리 카메라 실외 영상만 + 사람 아닌 조각 붙이기, 3번째 epoch | 16장 | 시험용. 실외 실시간 시험을 기다리는 중 |
+| `yolo26m/yolo26m_flir_inside_20261111_patch_640x480.dxnn` | 실내 fine-tuning patch 판 (11-11) · YOLO26m_(FLIR) 640x480 | `[1,480,640,3]` | 분할 출력 6개 | YOLO26m_fine-tuning_(실내)_20261111_patch: 우리 카메라 실내 영상 + 사람 아닌 조각을 "모름"으로 붙여 학습(20 epoch 중 11번째). 실내 시험 1회(conf .25): 찾음 221 · 잘못된 상자 48 · 놓침 84 (YOLO26m_fine-tuning_(실내)_20261110: 216 / 39 / 89). 11-10 실내 모델보다 좋다고 할 수 없음. 실내 전용 · 시험용 · 장치 INT8 정확도 미측정 | – | – |
 | `yolo26s/yolo26s_nmsfree_npu_640x640.dxnn` | yolo26s_nmsfree_npu_640x640 [NMS-free] | `[1,640,640,3]` | `output0` `[1,300,6]` = 상자 300개의 `x1,y1,x2,y2,점수,클래스` (NMS 필요 없음, 마지막 고르기 단계는 파일 안의 CPU 부분) | FLIR 학습 10,742장, 30 epoch (위 YOLO26s 와 다른 체크포인트) | 8장 | 고를 수 있음 |
 
-- 앞의 네 개는 `MANIFEST.json` 의 내부 이름(`NEWMRW480`, `S480`, `M640`, `S6`)으로 연결됩니다. 나머지 네 개는 서버가 폴더에서 스스로 찾아 이름 끝에 "(자동 등록)"을 붙여 목록에 올립니다. 화면 이름은 모델 파일 옆 이름표(`<파일 이름>.json` 의 `display_name`)에서 옵니다.
+- 앞의 네 개는 `MANIFEST.json` 의 내부 이름(`NEWMRW480`, `S480`, `M640`, `S6`)으로 연결됩니다. 나머지 다섯 개는 서버가 폴더에서 스스로 찾아 이름 끝에 "(자동 등록)"을 붙여 목록에 올립니다. 화면 이름은 모델 파일 옆 이름표(`<파일 이름>.json` 의 `display_name`)에서 옵니다.
 - 16장 보정의 구성은 20:20 판만 기록이 있습니다(옛 README). 17:42 판과 실외 판은 장 수만 파일에서 읽었습니다.
 
 ### 측정값
@@ -100,7 +101,7 @@ DXNN 이 아니라 가중치가 든 JSON / npz 이고, 서버가 장치 CPU 에�
 
 ## 4. 서버가 모델을 찾는 법
 
-1. `scripts/setup.sh` 가 `MANIFEST.json` 의 `_links` 표대로 `models/links/<내부 이름>.dxnn` 링크를 만들고(이 폴더는 git 에 올리지 않음), 내부 이름 9개와 `_files` 의 DXNN 17개를 sha256 으로 확인합니다. 하나라도 다르면 멈춥니다.
+1. `scripts/setup.sh` 가 `MANIFEST.json` 의 `_links` 표대로 `models/links/<내부 이름>.dxnn` 링크를 만들고(이 폴더는 git 에 올리지 않음), 내부 이름 9개와 `_files` 의 DXNN 18개를 sha256 으로 확인합니다. 하나라도 다르면 멈춥니다.
 2. 서버는 내부 이름이 있는 모델(검출 4개, 외형 5개)을 `models/links/` 에서 찾고, 올릴 때 `MANIFEST.json` 의 값과 다시 대조합니다.
 3. 내부 이름이 없는 검출 모델은 서버가 `models/detect/` 와 그 바로 아래 폴더를 훑어 스스로 찾습니다. 파일 안의 입력이 640×480 또는 640×640 uint8 이고 출력이 분할 출력 6개이거나 `[1,300,6]` 하나일 때만 목록에 올립니다. 그래서 **새 검출 모델은 `models/detect/<구조>/` 에 파일을 넣기만 하면** 목록에 나옵니다(옆에 `display_name` 이 든 `<파일 이름>.json` 을 두면 그 이름으로).
 4. 새 외형 모델은 파일을 넣는 것만으로는 나오지 않습니다. `MANIFEST.json` 에 내부 이름·확인값·`_links` 를 적고 `src/reid/reid_models.py` 의 목록에 이름을 더해야 합니다.

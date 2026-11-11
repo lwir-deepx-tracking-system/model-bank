@@ -40,6 +40,7 @@
 | 실내 fine-tuning 이전 판 (11-10 17:42) | `detect/yolo26m/yolo26m_flir_inside_20261110_1742_640x480.dxnn` | 640×480 | 분할 출력 6개 (60·30·15) | 우리 카메라 실내 | 시험용, 실내 전용. 장치 정확도 미측정 |
 | 실내 fine-tuning 최신 판 (11-10 20:20) | `detect/yolo26m/yolo26m_flir_inside_20261110_2020_640x480.dxnn` | 640×480 | 분할 출력 6개 (60·30·15) | 우리 카메라 실내 | 시험용, 실내 전용. 장치 정확도 미측정 |
 | 실외 fine-tuning patch 판 (11-10) | `detect/yolo26m/yolo26m_flir_outside_20261110_patch_640x480.dxnn` | 640×480 | 분할 출력 6개 (60·30·15) | 우리 카메라 실외 | 시험용. 실외 실시간 시험을 기다리는 중. 장치 정확도 미측정 |
+| 실내 fine-tuning patch 판 (11-11) | `detect/yolo26m/yolo26m_flir_inside_20261111_patch_640x480.dxnn` | 640×480 | 분할 출력 6개 (60·30·15) | 우리 카메라 실내 + 사람 아닌 조각("모름") | 시험용 · 실내 전용. 장치 정확도 미측정 |
 | yolo26s_nmsfree_npu_640x640 [NMS-free] | `detect/yolo26s/yolo26s_nmsfree_npu_640x640.dxnn` | 640×640 | `[1,300,6]` | FLIR 10,742장 | 고를 수 있음 |
 | RepVGG_distillation_(TMOT,CAMEL)_20261103 | `reid/repvgg_tmot_camel_reid.dxnn` | 128×64 | `[1,128]` | 공개 열화상 자료 | 켜기 스크립트의 시작 모델 |
 | RepVGG_distillation_(실내)_20261110 | `reid/repvgg_distill_inside_20261110_reid.dxnn` | 128×64 | `[1,128]` | 우리 카메라 실내 | 시험용. 장치 정확도 미측정 |
