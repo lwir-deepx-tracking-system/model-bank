@@ -12,6 +12,7 @@ function rshow(r){rlast=r;
   FI.textContent=f;
   const trk=pend(r,'tracker');
   let t='Tracker · '+tname(trk)+' · KeepID '+(pend(r,'relabel')?'켜짐':'꺼짐');
+  if(r.confirm)t+=' · 새 사람 확인 '+r.confirm.ms+' ms = '+r.confirm.frames+'장'+(r.confirm.fps?' (지금 초당 '+r.confirm.fps+'장)':' (속도 재는 중)');   // 11-11 --confirm-ms
   if(trk==='botsort')t+=' · 외형 비교 '+(r.reids&&r.reids.length?(r.app==='off'?'끔':'켜짐'):r.apps?(AN[r.app]||r.app||'끔'):AN.repvgg);
   if(r.reids&&r.reids.length){const rc=r.reids.find(a=>a.key===r.reid),rp=r.reid_pending&&r.reids.find(a=>a.key===r.reid_pending),L=r.reid_last;   // v41
     t+=' · 외형 모델 '+(rc?rc.name:(r.reid||'–'));

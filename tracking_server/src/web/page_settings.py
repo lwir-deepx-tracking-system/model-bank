@@ -54,7 +54,9 @@ def ctl_state():
     try: gbs_ = dict(APP.GB.state) if APP.GB is not None else None
     except Exception: gbs_ = None
     rq_ = APP.REID['req']
-    return dict(reid=APP.REID['cur'], reid_hot=bool(rl_ok_), reid_pending=rq_['key'] if rq_ else None, reid_last=APP.REID['last'],   # v41
+    try: cf_ = APP.CONFIRM.state(APP.tracker) if APP.CONFIRM is not None else None   # 11-11 --confirm-ms: {ms, frames now, measured fps, changes}; None = off (frames counted as before)
+    except Exception: cf_ = None
+    return dict(confirm=cf_, reid=APP.REID['cur'], reid_hot=bool(rl_ok_), reid_pending=rq_['key'] if rq_ else None, reid_last=APP.REID['last'],   # v41
                 reids=reid_catalog(HERE / 'models' / 'links', APP.man, APP.args.relabel or '') if rl_ok_ else [],
                 app=APP.CTL['app'], apps=[dict(key='off', name='끔', available=True, note=''),
                                       dict(key='repvgg', name='RepVGG_(TMOT,CAMEL)', available=rl_ok_, note='' if rl_ok_ else 'KeepID 모델이 이 실행에 없습니다'),
