@@ -44,6 +44,10 @@ addr_up() { local a; a=$(bind_addr); [ -n "$a" ] && { [ "$a" = "0.0.0.0" ] || ip
 # the server can only start when the NPU driver, the NPU daemon and the address the page binds to exist
 prereq_ok() { [ -e /dev/dxrt0 ] && pgrep -x dxrtd > /dev/null && addr_up; }
 experiment_running() { pgrep -x cam_pipe_exp > /dev/null || pgrep -x cam_diag > /dev/null; }
+# 2026-11-11: 카메라(i3system 0547:0080)가 USB 에 아예 안 보이면 재부팅해도 살아나지 않는다(두 번 확인). 그때는 재부팅하지 않는다: 선을 다시 꽂아야 한다.
+cam_on_usb() { grep -qs 0547 /sys/bus/usb/devices/*/idVendor; }
+# 2026-11-11: 팀의 NPU 측정 프로그램이 도는 동안에는 서버를 켜지 않고 기다린다 (같이 돌면 NPU 서비스가 죽는다).
+npu_busy_other() { pgrep -x lwir_benchmark > /dev/null; }
 
 stop_server() {
   local pid; pid=$(server_pid)
@@ -105,7 +109,7 @@ while true; do
           if [ "$gb" = "0" ]; then gbfails=$((gbfails + 1)); else gbfails=0; fi
           [ $gbfails -ge 3 ] && reason="gimbal_bridge missing"
         fi
-        if [ -z "$reason" ] && [ -e "$ALLOW_REBOOT" ] && [ -n "$cam_fail" ] && [ "$cam_fail" -ge 3 ] && [ -n "$cam_idle" ] && [ "$cam_idle" -gt 900 ] && [ "$(up)" -gt 1800 ] && ! experiment_running; then
+        if [ -z "$reason" ] && [ -e "$ALLOW_REBOOT" ] && [ -n "$cam_fail" ] && [ "$cam_fail" -ge 3 ] && [ -n "$cam_idle" ] && [ "$cam_idle" -gt 900 ] && [ "$(up)" -gt 1800 ] && ! experiment_running && cam_on_usb; then
           now_epoch=$(date +%s); n24=0; last=0
           if [ "$(date +%Y)" -ge 2026 ] && [ -f "$REBOOTS" ]; then
             while read -r t; do [ -n "$t" ] && [ $((now_epoch - t)) -lt 86400 ] && n24=$((n24 + 1)) && last=$t; done < "$REBOOTS"
@@ -119,6 +123,10 @@ while true; do
     fi
   fi
   [ -z "$reason" ] && continue
+  if [ $reboot = 0 ] && [ -n "$reason" ] && npu_busy_other; then   # 팀 NPU 측정이 끝날 때까지 기다림 (다시 켜기 횟수에 넣지 않음)
+    [ $(( $(up) % 60 )) -lt 5 ] && log "waiting: the team NPU benchmark is running ($reason)"
+    continue
+  fi
   if [ $reboot = 0 ] && ! prereq_ok; then   # right after a boot the NPU daemon or the page address may not be up yet: wait, do not count it as a restart
     [ $(( $(up) % 60 )) -lt 5 ] && log "waiting for the NPU driver / the page address before starting ($reason)"
     fails=0; continue
