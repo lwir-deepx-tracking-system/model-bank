@@ -12,6 +12,7 @@ real_gui_*
 /track_*/
 last_selection.json
 last_selection.json.tmp
+camera_events.log*
 *.stderr.log
 /tmp/
 /upload_track*/

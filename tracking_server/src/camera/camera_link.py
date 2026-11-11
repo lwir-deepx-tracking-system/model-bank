@@ -5,6 +5,7 @@ import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
 from ..track.stabilizer import STAB, stab_live, stab_off
+from . import camera_extra   # 2026-11-11: 지워지지 않는 카메라 기록(기본 켜짐), 프레임 시간표와 공유 메모리(환경 변수로만 켜짐)
 
 
 class LiveImages:   # endless list of camera frames; it ends (IndexError) when the live time is over
@@ -18,6 +19,7 @@ class _Live: pass
 
 
 def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a new reader
+    if camera_extra.stamped(p_): return camera_extra.reader(p_)   # only for a cam_pipe started with LWIR_CAM_STAMP=1 (off by default)
     n_ = APP.LIVE_W * APP.LIVE_H * 2; buf_ = bytearray(n_); cnt_ = 0; tl_ = time.monotonic()
     while True:   # v24c: never stop reading before EOF; after LIVE.stopped the frames are thrown away (cam_pipe must not block on a full pipe: it then cannot act on SIGTERM and was SIGKILLed with the camera open)
         mv_ = memoryview(buf_); got_ = 0
@@ -44,8 +46,10 @@ def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a ne
 
 
 def lv_spawn():   # v21: open (or reopen) the camera process and its reader
+    if camera_extra.wanted(): return camera_extra.spawn()   # LWIR_CAM_STAMP=1 (off by default): the same start with the setting passed on to cam_pipe
     APP.LIVE.proc = APP.lv_sp.Popen([APP.args.live_cam or str(HERE / 'src' / 'camera' / 'cam_pipe')], stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0); APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()   # v26: cam_lost is cleared after the new process is in place (the old reader's end-of-file could set it for the new one and start a second cam_pipe)
     APP.lv_th.Thread(target=APP.lv_reader, args=(APP.LIVE.proc,), daemon=True).start()
+    camera_extra.log_start()   # camera_events.log: cam_pipe's lines and the server's camera lines, kept over restarts (LWIR_CAM_LOG=0 turns it off)
 
 
 def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimbal link up. v24: cam_pipe repairs a stalled camera itself (ResetMainBoard + reopen, about 30 s), so the server only restarts it when it ended on its own or stayed silent for 240 s. (v21-v23 restarted a healthy cam_pipe after any 10 s gap once it was older than 180 s; the next open then often stayed dead.)
@@ -68,17 +72,17 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
                 # the picture then stayed off for 15 min after the camera was back). Code 2 (camera not found / open failed: USB cable out, no reset was sent), a signal death and code 7 (another cam_pipe still closing) are retried quickly.
                 wait_ = 0 if APP.LIVE.cam_fail_n == 0 else 5 if rc_ == 7 else (60, 300, 300)[min(APP.LIVE.cam_unrec_n - 1, 2)] if rc_ in (3, 6) else 15
                 APP.LIVE.cam_next_spawn = now_ + wait_
-                print('LIVE camera: cam_pipe ended with code %s after %.0f s without a frame (failures in a row: %d), next start in %d s' % (rc_, idle_, APP.LIVE.cam_fail_n, wait_), flush=True)
+                camera_extra.say('LIVE camera: cam_pipe ended with code %s after %.0f s without a frame (failures in a row: %d), next start in %d s' % (rc_, idle_, APP.LIVE.cam_fail_n, wait_))
             if now_ >= APP.LIVE.cam_next_spawn:
-                APP.LIVE.cam_next_spawn = None; print('LIVE camera: starting cam_pipe', flush=True); APP.lv_spawn()
+                APP.LIVE.cam_next_spawn = None; camera_extra.say('LIVE camera: starting cam_pipe'); APP.lv_spawn()
     elif idle_ > 330 and not APP.LIVE.cam_lost:   # cam_pipe alive but silent for 5.5 min: SIGTERM, wait up to 45 s (never kill while the camera may be open), start a new one. v26: was 240 s, which cut into cam_pipe's own last repair round (it gives up with code 6 after about 230 s)
         APP.LIVE.proc.terminate()
         try: APP.LIVE.proc.wait(45)
         except Exception:
-            print('LIVE camera: cam_pipe did not end on SIGTERM in 45 s, SIGKILL', flush=True); APP.LIVE.proc.kill()
+            camera_extra.say('LIVE camera: cam_pipe did not end on SIGTERM in 45 s, SIGKILL'); APP.LIVE.proc.kill()
             try: APP.LIVE.proc.wait(5)   # v26: the killed process must be gone (camera lock released) before the next one starts
             except Exception: pass
-        print('LIVE camera: no frame for %.0f s from a live cam_pipe, restarting it' % idle_, flush=True); APP.LIVE.cam_next_spawn = None; APP.lv_spawn()
+        camera_extra.say('LIVE camera: no frame for %.0f s from a live cam_pipe, restarting it' % idle_); APP.LIVE.cam_next_spawn = None; APP.lv_spawn()
     img_ = np.zeros((480, 640, 3), np.uint8)
     APP.cv2.putText(img_, 'NO CAMERA FRAME  %.0f s' % idle_, (90, 230), APP.cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
     if APP.LIVE.cam_fail_n: APP.cv2.putText(img_, 'CAMERA FAILED: %d restarts without a frame - check the USB cable / power' % APP.LIVE.cam_fail_n, (20, 275), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
@@ -117,7 +121,7 @@ def live_next():
                 if APP.LIVE.prev_t is not None and t_ - APP.LIVE.prev_t > 1.0:   # v26b: the camera gave no frame for over 1 s (repair, restart). The person at the old place may be someone else now:
                     APP.LIVE.gap_n += 1                                         # the gimbal selection is dropped here, before this frame goes to the bridge, and the tracker forgets its tracks at this frame (see the main loop). The person is clicked again.
                     if APP.GB is not None: APP.gb_send('H')
-                    print('LIVE input gap of %.1f s: selection dropped, tracks restart' % (t_ - APP.LIVE.prev_t), flush=True)
+                    camera_extra.say('LIVE input gap of %.1f s: selection dropped, tracks restart' % (t_ - APP.LIVE.prev_t))
                 APP.LIVE.prev_t = t_; break
             if APP.LIVE.stopped or APP.args.live_wait:
                 if APP.LIVE.last is None: raise RuntimeError('camera delivered no frame')
@@ -203,13 +207,13 @@ def cam_usb_power():   # v35: USB host 5 V off 3 s and on (root helper, same as 
         try: c_, o_ = run_()
         except Exception as e_: return 'no', 'USB 전원 껐다 켜기 실패(%s). 케이블을 뽑았다 꽂으세요. ' % type(e_).__name__
         if c_ == 7:   # power went off and did not come back: the helper only turns it on when it finds it off
-            print('CAMRESET usb power: code 7, turning on once more', flush=True); time.sleep(1)
+            camera_extra.say('CAMRESET usb power: code 7, turning on once more'); time.sleep(1)
             try: c_, o_ = run_(False)   # turning on needs no deadline
             except Exception: c_ = 7
             if c_ != 0: return 'off', 'USB 전원이 다시 켜지지 않음. 버튼을 다시 누르고, 그래도 안 되면 보드를 재부팅하세요. '
         if c_ is None: return 'off', 'USB 전원 단계가 30초 안에 끝나지 않음(전원이 꺼졌다 켜졌는지 알 수 없음. 늦게 시작돼도 전원은 끄지 않음). 다시 눌러 보세요. '
         if c_ != 0:
-            print('CAMRESET usb power (code %d): %s' % (c_, o_.decode('utf-8', 'replace').strip()[:200]), flush=True)
+            camera_extra.say('CAMRESET usb power (code %d): %s' % (c_, o_.decode('utf-8', 'replace').strip()[:200]))
             if c_ == 1: return 'no', 'USB 전원 껐다 켜기 실패(보드에 sudo 허용 설정 필요). 케이블을 뽑았다 꽂으세요. '
             if c_ in (2, 3, 4, 5, 6, 8): return 'no', 'USB 전원 껐다 켜기 실패(코드 %d, 전원은 건드리지 않음). 케이블을 뽑았다 꽂으세요. ' % c_
             return 'off', 'USB 전원 단계가 비정상 종료(코드 %d, 전원이 꺼져 있을 수 있음). 버튼을 다시 누르고(꺼져 있으면 켜기만 함), 그래도 안 되면 보드를 재부팅하세요. ' % c_
@@ -224,7 +228,7 @@ def cam_usb_power():   # v35: USB host 5 V off 3 s and on (root helper, same as 
 
 
 def cam_reset_work():   # v33: runs in its own thread. LIVE.cam_hold keeps lv_cam_wait from starting a second cam_pipe meanwhile.
-    say_ = lambda t_, busy_=True: (setattr(APP.LIVE, 'cam_reset', dict(busy=busy_, text=t_, at=time.strftime('%H:%M:%S'))), print('CAMRESET ' + t_, flush=True))
+    say_ = lambda t_, busy_=True: (setattr(APP.LIVE, 'cam_reset', dict(busy=busy_, text=t_, at=time.strftime('%H:%M:%S'))), camera_extra.say('CAMRESET ' + t_))
     try:
         dead_ = time.monotonic() - APP.LIVE.last_frame_t > 10
         t0_ = getattr(APP.LIVE, 'cam_reset_t', None)   # v35: when the last reset started cam_pipe again
@@ -256,7 +260,7 @@ def cam_reset_work():   # v33: runs in its own thread. LIVE.cam_hold keeps lv_ca
             if st_ == 'cut':   # the camera lost its power, so the blocked call has ended or never will
                 try: APP.LIVE.proc.wait(20)
                 except Exception:
-                    print('CAMRESET cam_pipe still there after the power cycle, SIGKILL', flush=True); APP.LIVE.proc.kill(); killed_ = True
+                    camera_extra.say('CAMRESET cam_pipe still there after the power cycle, SIGKILL'); APP.LIVE.proc.kill(); killed_ = True
                     try: APP.LIVE.proc.wait(5)
                     except Exception: pass
             if APP.LIVE.proc.poll() is None:

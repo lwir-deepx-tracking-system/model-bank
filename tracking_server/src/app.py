@@ -35,6 +35,8 @@ from .reid import reid_embed
 from .camera import camera_link
 from .gimbal import gimbal_link
 from .common import result_summary
+from .common import stage_timing   # 2026-11-11: 단계별 시간 재기 (LWIR_STAGE_TIMING=1 일 때만, 기본 꺼짐)
+from .detect import frame_feed     # 2026-11-11: 도착하는 대로 검출기에 넣기 (LWIR_NPU_FEED=arrival 일 때만, 기본 꺼짐)
 
 
 # ---------------------------------------------------------------------------------------------------------------- main
@@ -510,6 +512,9 @@ def main():
             print('PRELOAD %d frames %.1f s' % (len(APP.mem), time.perf_counter() - t_pl), flush=True)
         read_frame = detect_frame.read_frame
         submit_tiles = detect_frame.submit_tiles
+        APP.TIMING = stage_timing.start()   # None unless LWIR_STAGE_TIMING=1
+        APP.FEED = frame_feed.start()       # None unless LWIR_NPU_FEED=arrival: then a small thread submits every frame to the detector when it arrives (NPU cores 0 and 1) and the loop below takes the results in order
+        if APP.FEED is not None: read_frame, submit_tiles = APP.FEED.read_frame, APP.FEED.submit_time
         def sync_embed(idxs, g_cur, arr_cur, frame_no):
             """--vit-sync: embed the candidate detections (arr rows) now, batch 1, one after another; a pending asynchronous job is collected first."""
             nonlocal inflight, delivered, vit_wait_total
@@ -544,7 +549,9 @@ def main():
             if APP.MODEL['req'] is not None:   # v23: a model change was asked for; taken here, between two frames
                 rq_ = APP.MODEL['req']; APP.MODEL['busy'] = True
                 for _ in ahead: APP.a.wait()   # frames already submitted to the old model: collected and dropped, they go in again below
+                if APP.FEED is not None: APP.FEED.pause()
                 code_ = do_model_swap(rq_['det'])
+                if APP.FEED is not None: APP.FEED.resume(code_)
                 if APP.args.pipeline and code_ != 5: ahead[:] = [(g_, submit_tiles(g_, i + n_)) for n_, (g_, _) in enumerate(ahead)]
                 with APP.MODEL['lock']:
                     APP.MODEL['req'] = None; APP.MODEL['busy'] = False
@@ -668,6 +675,7 @@ def main():
                     for t_ in APP.tracker.tracked + APP.tracker.lost: t_.state = REMOVED
                     print('LIVE input gap: %d tracks ended at frame %d' % (len(APP.tracker.tracked) + len(APP.tracker.lost), i), flush=True); APP.tracker.tracked = []; APP.tracker.lost = []
                 APP.LIVE.upd_t = ta_
+            if APP.TIMING is not None: APP.TIMING.mark()
             n_sync0 = len(sync_lat)
             if budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association
                 lf_frame_ms[0] = 0.0
@@ -746,11 +754,14 @@ def main():
                 APP.tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
                                         tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (APP.FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in base_rows]))
             if APP.LIVE is not None: live_publish(g, tr_rows, row)
+            if APP.TIMING is not None: APP.TIMING.frame(i, t0, t1, t2, t4, rl_ms, t5)
             prev_gray = g
             if budget: prev_arr = arr
             if i % 50 == 0 and not APP.args.mock:
                 s_ = APP.dx.DeviceStatus.get_current_status(0); util.append(dict(frame=i, core_util=[s_.get_core_utilization(k) for k in range(3)], mem=s_.get_memory_used()))
             if (i + 1) % 500 == 0: print('FRAMES', i + 1, round(time.monotonic() - t_start, 1), 'vit delivered', delivered, flush=True)
+        if APP.FEED is not None: APP.FEED.close()
+        if APP.TIMING is not None: APP.TIMING.close()
         if APP.LIVE is not None: live_close()
         if vit is not None and inflight is not None: vit_sync(None, None, len(APP.images))
         if APP.relabeler is not None: APP.relabeler.reset()          # v7: drains an asynchronous refresh still in flight

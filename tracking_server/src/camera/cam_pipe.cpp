@@ -1,5 +1,16 @@
 // Camera -> stdout pipe for the live tracker (DX-M1 host). Writes every received 16-bit frame (w*h*2 bytes, native endian) to stdout and prints stats to stderr.
 // Opens the camera like the team runtime (runtime/src/camera/camera.cpp). Optional frame-rate setting: ./cam_pipe [fps_code] [seconds]   fps_code: 0 = 30 fps, 1 = 25 fps, -1 = leave as is (default)
+// v2.6 (11-11): TWO OPTIONAL THINGS, BOTH OFF UNLESS THE ENVIRONMENT TURNS THEM ON. With neither variable set, the bytes on stdout and the lines on stderr are exactly those of v2.5.
+//   LWIR_CAM_STAMP=1 (exactly "1"): a 48-byte header goes before every frame: magic "LWF1", version, flags, frame number (from 1), CLOCK_MONOTONIC time in ns of the moment
+//     RecvImage returned, microseconds since the previous frame, ring slot, payload bytes, ring id, width, height, check word (xor of the 11 words before it and 0x5A17C0DE).
+//     Native byte order (little endian on the board). The tracker (src/camera/camera_extra.py) reads the same variable and passes it on when it starts this program,
+//     so the two always agree; a tracker that does not find the header starts this program again with LWIR_CAM_STAMP=0.
+//   LWIR_CAM_SHM=1 (needs LWIR_CAM_STAMP=1): the picture is not sent through the 64 KB pipe (one 614 KB frame = about ten writes, and a busy reader made this program wait).
+//     It is copied into a ring of 4 slots in shared memory, the file /dev/shm/lwir_cam_ring_<uid> (opened directly, so no extra library is needed at link time), and only the
+//     48-byte header (flags bit 0 set, slot number, ring id) goes through the pipe. Each slot starts with the frame number: it is set to 0 before the copy and to the frame
+//     number after it, so a reader that sees another number before or after its own copy knows the slot was overwritten and drops that frame. A ring left by a killed cam_pipe
+//     is replaced at the start; the ring is unlinked on a normal end. When the ring cannot be made (no /dev/shm, no room), a SHM_RING failed line is printed and the pictures go
+//     through the pipe behind the header, as with LWIR_CAM_STAMP=1 alone.
 // v2.5 (11-11): SHUTTER SETTING THAT CAN BE CHANGED WITHOUT RESTARTING THE TRACKER, AND EVIDENCE IN THE LOG. Today's stalls come at fixed moments after an open (about 1.4 s, 4.4 s and
 // every ~180 s), which points at shutter operations. The shutter setting is now read at every open from env CAM_SHUTTER or, when that is not set, from the first word of
 // cam_shutter.txt next to this program (no file = d, the old behaviour). Change the file, then end cam_pipe with SIGTERM: it closes the camera and exits 0, and the tracker starts
@@ -28,11 +39,15 @@
 #include <vector>
 #include <csignal>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
 #include <ctime>
 #include <sys/prctl.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/file.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <i3system_TE.h>
@@ -65,6 +80,69 @@ static bool write_all(const void* data, size_t n)   // false: write error (reade
     p += w; left -= static_cast<size_t>(w);
   }
   return true;
+}
+
+// v2.6: optional frame header (LWIR_CAM_STAMP=1) and shared-memory ring (LWIR_CAM_SHM=1). Nothing below runs unless g_stamp is true. The layouts are repeated in src/camera/camera_extra.py.
+static bool g_stamp = false;
+struct FrameHead { char magic[4]; uint16_t version, flags; uint64_t seq, t_mono_ns; uint32_t dt_us, slot, payload, ring_id; uint16_t width, height; uint32_t check; };
+static_assert(sizeof(FrameHead) == 48, "frame header must be 48 bytes");
+struct RingHead { char magic[4]; uint32_t version, ring_id, nslots, stride, payload, width, height; uint64_t pid; unsigned char pad[24]; };
+static_assert(sizeof(RingHead) == 64, "ring header must be 64 bytes");
+static const uint32_t RING_SLOTS = 4, SLOT_HEAD = 16;   // a slot = 8 bytes frame number (0 while it is being written), 8 bytes unused, then the picture
+struct Ring { unsigned char* base = nullptr; size_t bytes = 0; uint32_t id = 0, stride = 0, payload = 0, next = 0; std::string path; };
+static Ring g_ring;
+
+static bool env_is_1(const char* name) { const char* v = std::getenv(name); return v && v[0] == '1' && v[1] == 0; }
+static uint64_t mono_ns() { timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return static_cast<uint64_t>(ts.tv_sec) * 1000000000ull + static_cast<uint64_t>(ts.tv_nsec); }   // the clock of Python's time.monotonic()
+
+static void ring_close()   // unmaps and unlinks our ring (normal end)
+{
+  if(g_ring.base) { munmap(g_ring.base, g_ring.bytes); g_ring.base = nullptr; }
+  if(!g_ring.path.empty()) { unlink(g_ring.path.c_str()); g_ring.path.clear(); }
+}
+
+static bool ring_open(int w, int h)   // false = no ring: the pictures go through the pipe behind the header
+{
+  const uint32_t payload = static_cast<uint32_t>(w) * static_cast<uint32_t>(h) * 2u, stride = (SLOT_HEAD + payload + 63u) & ~63u;
+  const size_t bytes = sizeof(RingHead) + static_cast<size_t>(RING_SLOTS) * stride;
+  char name[64]; std::snprintf(name, sizeof name, "/dev/shm/lwir_cam_ring_%u", static_cast<unsigned>(getuid()));
+  unlink(name);   // a ring left by a cam_pipe that was killed (only one cam_pipe runs: the lock in main)
+  const int fd = open(name, O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
+  if(fd < 0) { std::fprintf(stderr, "SHM_RING failed (open %s: %s): pictures go through the pipe\n", name, std::strerror(errno)); return false; }
+  const int fe = posix_fallocate(fd, 0, static_cast<off_t>(bytes));   // takes the memory now: a full /dev/shm fails here and not later in the middle of a copy
+  if(fe != 0) { std::fprintf(stderr, "SHM_RING failed (no room for %zu bytes in %s: %s): pictures go through the pipe\n", bytes, name, std::strerror(fe)); close(fd); unlink(name); return false; }
+  void* m = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  close(fd);
+  if(m == MAP_FAILED) { std::fprintf(stderr, "SHM_RING failed (mmap %s: %s): pictures go through the pipe\n", name, std::strerror(errno)); unlink(name); return false; }
+  std::memset(m, 0, bytes);
+  g_ring.base = static_cast<unsigned char*>(m); g_ring.bytes = bytes; g_ring.stride = stride; g_ring.payload = payload; g_ring.next = 0; g_ring.path = name;
+  g_ring.id = static_cast<uint32_t>(mono_ns() / 1000u) ^ (static_cast<uint32_t>(getpid()) << 16); if(g_ring.id == 0) g_ring.id = 1;
+  RingHead rh; std::memset(&rh, 0, sizeof rh); std::memcpy(rh.magic, "LWR1", 4); rh.version = 1; rh.ring_id = g_ring.id; rh.nslots = RING_SLOTS; rh.stride = stride; rh.payload = payload;
+  rh.width = static_cast<uint32_t>(w); rh.height = static_cast<uint32_t>(h); rh.pid = static_cast<uint64_t>(getpid());
+  std::memcpy(g_ring.base, &rh, sizeof rh);
+  std::fprintf(stderr, "SHM_RING on %s slots=%u picture=%u bytes id=%u\n", name, RING_SLOTS, payload, g_ring.id);
+  return true;
+}
+
+static bool send_stamped(const unsigned short* px, int w, int h, uint64_t t_ns)   // header (+ picture, when it is not in the ring). false: write error or stop requested
+{
+  static uint64_t seq = 0, t_prev = 0;
+  FrameHead hd; std::memset(&hd, 0, sizeof hd); std::memcpy(hd.magic, "LWF1", 4); hd.version = 1; hd.seq = ++seq; hd.t_mono_ns = t_ns;
+  const uint64_t d = t_prev ? (t_ns - t_prev) / 1000u : 0; hd.dt_us = d > 0xFFFFFFFFull ? 0xFFFFFFFFu : static_cast<uint32_t>(d); t_prev = t_ns;
+  hd.payload = static_cast<uint32_t>(w) * static_cast<uint32_t>(h) * 2u; hd.width = static_cast<uint16_t>(w); hd.height = static_cast<uint16_t>(h); hd.slot = 0xFFFFFFFFu;
+  const bool in_ring = g_ring.base != nullptr && g_ring.payload == hd.payload;
+  if(in_ring)
+  {
+    unsigned char* s = g_ring.base + sizeof(RingHead) + static_cast<size_t>(g_ring.next) * g_ring.stride;
+    uint64_t* sq = reinterpret_cast<uint64_t*>(s);
+    __atomic_store_n(sq, static_cast<uint64_t>(0), __ATOMIC_SEQ_CST);   // "being written": a reader in the middle of this slot sees its number gone
+    std::memcpy(s + SLOT_HEAD, px, hd.payload);
+    __atomic_store_n(sq, hd.seq, __ATOMIC_SEQ_CST);
+    hd.flags = 1; hd.slot = g_ring.next; hd.ring_id = g_ring.id; g_ring.next = (g_ring.next + 1) % RING_SLOTS;
+  }
+  uint32_t wd[11]; std::memcpy(wd, &hd, sizeof wd); uint32_t x = 0x5A17C0DEu; for(const uint32_t v : wd) x ^= v; hd.check = x;
+  if(!write_all(&hd, sizeof hd)) return false;
+  return in_ring || write_all(px, hd.payload);
 }
 
 static const double STALL_S = 6.0;          // no frame for this long while the stream was running: engine reset
@@ -195,6 +273,10 @@ int main(int argc, char** argv)
   auto* te = open_camera(&w, &h);
   if(!te) return te == nullptr && g_stop ? 0 : 2;
   std::vector<unsigned short> buf(static_cast<size_t>(w) * h);
+  g_stamp = env_is_1("LWIR_CAM_STAMP");   // v2.6: off unless set to exactly 1 (see the top of this file)
+  if(g_stamp) { std::fprintf(stderr, "STAMP on: a 48-byte header goes before every frame\n"); if(env_is_1("LWIR_CAM_SHM")) ring_open(w, h); }
+  else if(env_is_1("LWIR_CAM_SHM")) std::fprintf(stderr, "SHM_RING not used: LWIR_CAM_SHM=1 needs LWIR_CAM_STAMP=1\n");
+  uint64_t t_rx = 0;
   std::map<int, long> codes; long ok = 0;
   auto t0 = clk::now(), tl = t0; long okl = 0; double maxgap = 0; auto tprev = t0;
   auto t_open = t0, t_frame = t0; bool frame_since_open = false; int failed_recoveries = 0, recoveries = 0; int exit_code = 0; long ok_open = 0;
@@ -203,6 +285,7 @@ int main(int argc, char** argv)
   while(!g_stop && since(t0) < seconds)
   {
     int r = te->RecvImage(buf.data(), true);
+    if(g_stamp) t_rx = mono_ns();
     if(test_stall_at > 0 && !test_done && since(t0) > test_stall_at) { test_done = true; std::fputs("TEST: simulated stall", stderr); std::fputc(10, stderr); nap(STALL_S + 1.0); r = 4; }
     ++codes[r];
     if(r == 1)
@@ -210,6 +293,8 @@ int main(int argc, char** argv)
       auto now = clk::now();
       maxgap = std::max(maxgap, std::chrono::duration<double>(now - tprev).count()); tprev = now;
       t_frame = now; frame_since_open = true; failed_recoveries = 0;
+      if(g_stamp) { if(!send_stamped(buf.data(), w, h, t_rx)) break; }
+      else
       if(!write_all(buf.data(), buf.size() * sizeof(unsigned short))) break;
       ++ok; ++okl;
       if(g_shutter.own_period_s > 0 && since(g_t_cal) >= g_shutter.own_period_s)   // v2.5 (setting mN): the engine is in MANUAL mode, the calibration is ours and it is in the log
@@ -259,6 +344,7 @@ int main(int argc, char** argv)
   std::fprintf(stderr, "FRAMES %ld in %.2f s = %.2f fps, longest gap %.0f ms, resets %d, return codes:", ok, secs, ok / secs, maxgap * 1000, recoveries);
   for(auto& kv : codes) std::fprintf(stderr, " %d x%ld", kv.first, kv.second);
   std::fprintf(stderr, "\n");
+  ring_close();
   if(te) te->CloseTE();
   return exit_code;
 }
