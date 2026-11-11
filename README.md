@@ -84,3 +84,9 @@
 | `final_tracker/tracker/test300/`, `post.so`, `models/*.dxnn` 3개, `models/profiler.json` (실행하다 생긴 파일) | 없앰. `post.so` 는 `scripts/setup.sh` 가 장치에서 빌드합니다 |
 
 없앤 파일과 옛 README 의 긴 기록(지난 측정표, 지운 모델의 기록)은 **git 기록에 남아 있습니다.** 옛 커밋을 checkout 하면 그대로 받을 수 있습니다.
+
+## 전체 흐름 그림
+
+![전체 파이프라인](tracking_server/images/pipeline_20261111.png)
+
+자세한 설명과 CPU / NPU / 거르는 곳 그림은 [tracking_server/README.md](tracking_server/README.md) 에 있습니다.
