@@ -47,3 +47,4 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .lbl{color:var(--mut);font-size:12px;white-space:nowrap}
 .row input[type=number]{width:84px;min-width:0}
 .rpnote{color:var(--warn)}.rpnote:empty{display:none}
+.rpev{margin-top:2px;border-top:1px solid var(--line);padding-top:8px}.rpev table{margin:4px 0 8px}.rpev th{text-align:right}.rpev tr.fp td{color:var(--warn);font-weight:700;font-size:14px}.rpev td.sub{padding-left:14px;color:var(--mut)}.rpev .rtitle{margin:0}

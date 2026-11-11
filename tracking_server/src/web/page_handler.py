@@ -7,6 +7,7 @@ from ..common.shared_values import HERE
 from ..track.position_memory import POSP
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
+from ..camera import replay_eval   # 11-12: ground-truth comparison while a labelled recording is replayed
 
 
 def dash_rect(img, p1, p2, col, th=2, dash=7):
@@ -73,6 +74,7 @@ def live_publish(g_, rows_, row_):
         if APP.GB.gui and raw16_ is not None and raw16_.shape == (APP.LIVE_H, APP.LIVE_W):   # v20: frame + picture to the gimbal executor and the PC GUI
             APP.gb_send_frame('G %d %d %d %d %d' % (APP.GB.frame, int(t_in * 1e9), APP.LIVE_W, APP.LIVE_H, len(gb_people_)) + people_txt_, np.ascontiguousarray(raw16_, dtype=np.uint16).tobytes())
         else: APP.gb_send('F %d %d %d' % (APP.GB.frame, int(t_in * 1e9), len(gb_people_)) + people_txt_)
+    gtd_ = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id')) if replay_eval.EV is not None else None   # 11-12: score this frame against the labels (replay only; after the gimbal line)
     # 11-12: the page picture only when somebody can see it: every frame while /stream has a viewer, otherwise once a second (/snap.jpg at most 1 s old)
     # and every frame for 3 s after a /snap.jpg request. Nothing else reads this picture (tracking, gimbal, measurement and the PC GUI use the frame itself).
     if APP.LIVE.viewers > 0 or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0:
@@ -81,6 +83,11 @@ def live_publish(g_, rows_, row_):
         if sc_ != 1: img_ = APP.cv2.resize(img_, None, fx=sc_, fy=sc_, interpolation=APP.cv2.INTER_LINEAR)
         for p1_, p2_, col_, tid_ in draw_:
             APP.cv2.rectangle(img_, p1_, p2_, col_, 2); APP.cv2.putText(img_, str(tid_), (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, col_, 2)
+        if gtd_ is not None and replay_eval.DRAW[0]:   # 11-12: ground-truth boxes, thin and dashed, over the track boxes, on the page picture only (white = person, pink = ignore region)
+            hh_, ww_ = img_.shape[:2]
+            for x1_, y1_, x2_, y2_, k_ in replay_eval.draw_boxes(t_in, gtd_, sC_):
+                a_, b_ = (min(max(int(x1_ * sc_), 0), ww_ - 1), min(max(int(y1_ * sc_), 0), hh_ - 1)), (min(max(int(x2_ * sc_), 0), ww_ - 1), min(max(int(y2_ * sc_), 0), hh_ - 1))
+                if a_[0] < b_[0] and a_[1] < b_[1]: dash_rect(img_, a_, b_, (255, 255, 255) if k_ == 0 else (200, 90, 255), 1, 4)
         if POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
             try:
                 seen_ = {int(r_[4]) for r_ in rows_}
@@ -175,8 +182,10 @@ def make_lv_Handler():
                 u4_ = us4_(self.path)
                 if u4_.path == '/replay/start': code_, text_ = replay_link.start_request(pq4_(u4_.query))
                 elif u4_.path == '/replay/stop': code_, text_ = replay_link.stop_request()
+                elif u4_.path == '/replay/eval/reset': code_, text_ = replay_eval.reset_request()   # 11-12: count again from now
+                elif u4_.path == '/replay/eval/draw': code_, text_ = replay_eval.draw_request(pq4_(u4_.query))   # 11-12: ground-truth boxes on the page picture
                 else: self.send_error(404); return
-                b_ = json.dumps(dict(ok=code_ == 200, text=text_, state=replay_link.state()), ensure_ascii=False).encode()
+                b_ = json.dumps(dict(ok=code_ == 200, text=text_, state=replay_link.state(), eval=replay_eval.state()), ensure_ascii=False).encode()
                 try: self.send_response(code_); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 except (BrokenPipeError, ConnectionResetError, OSError): pass
                 return
@@ -261,7 +270,8 @@ def make_lv_Handler():
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/replay'):   # 11-12: recordings that can be played, and the replay state
                     from urllib.parse import urlsplit as us5_, parse_qs as pq5_
-                    b_ = json.dumps(replay_link.get_info(pq5_(us5_(self.path).query)), ensure_ascii=False).encode()
+                    u5_ = us5_(self.path)
+                    b_ = json.dumps(replay_eval.state() if u5_.path == '/replay/eval' else replay_link.get_info(pq5_(u5_.query)), ensure_ascii=False).encode()   # 11-12: /replay/eval = the comparison alone
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/snap.jpg'):
                     APP.LIVE.snap_t = time.perf_counter()   # 11-12: pictures for every frame during the next 3 s
@@ -289,6 +299,8 @@ def live_close():
     APP.LIVE.stopped = True
     try: APP.meas_stop()   # v22: keep a measurement that is still running
     except Exception as e_: print('MEASURE save failed', e_, flush=True)
+    try: replay_eval.finish('server stopped')   # 11-12: a replay still running: its comparison is written
+    except Exception as e_: print('REPLAY EVAL save failed', e_, flush=True)
     with APP.LIVE.jcond: APP.LIVE.jcond.notify_all()
     APP.lv_srv.shutdown()
     if APP.lv_srv_local is not None: APP.lv_srv_local.shutdown()

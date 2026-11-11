@@ -47,6 +47,7 @@ def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a ne
 
 
 def lv_spawn():   # v21: open (or reopen) the camera process and its reader
+    if getattr(APP.LIVE, 'replay', None) is not None: return replay_link.spawn()   # 11-12: the replay program, always with frame headers and png numbers (the camera start below is unchanged)
     if camera_extra.wanted(): return camera_extra.spawn()   # LWIR_CAM_STAMP=1 (off by default): the same start with the setting passed on to cam_pipe
     APP.LIVE.proc = APP.lv_sp.Popen(replay_link.cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0); APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()   # v26: cam_lost is cleared after the new process is in place (the old reader's end-of-file could set it for the new one and start a second cam_pipe)
     APP.lv_th.Thread(target=APP.lv_reader, args=(APP.LIVE.proc,), daemon=True).start()

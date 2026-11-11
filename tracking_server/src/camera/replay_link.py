@@ -8,6 +8,8 @@
   재생을 멈춘 뒤에도, 멈추기 전에 도착한 프레임(처리 중이던 몇 장)은 사람 없이 보낸다 (도착 시각 < src_t). 멈출 때도 H 를 보낸다.
   옛 영상의 마지막 프레임과 새 영상의 첫 프레임 사이는 언제나 1.5 초보다 길어서, 전부터 있던 "1초 넘는 입력 끊김" 규칙이 추적을 새로 시작하고 고른 사람을 놓는다.
 - 재생을 한 번도 쓰지 않으면 이 파일은 아무것도 바꾸지 않는다 (cam_argv() 는 전과 같은 명령을 돌려준다, LIVE.replay 는 None).
+- 정답과 비교 (11-12, replay_eval.py): 재생 카메라는 늘 프레임 머리(LWIR_CAM_STAMP=1)와 PNG 번호(--tag)를 붙여 띄운다 (spawn).
+  카메라 쪽 설정(LWIR_CAM_STAMP)과 상관없이 재생 프로그램에만 그렇게 하고, 진짜 카메라를 띄우는 길은 바꾸지 않는다.
 """
 import os
 import re
@@ -17,6 +19,7 @@ import time
 from ..common.state import APP
 from ..common.shared_values import HERE
 from . import camera_extra
+from . import replay_eval
 
 FPS_MIN, FPS_MAX, FPS_DEF = 5.0, 30.0, 25.0
 LIST_TTL = 60.0
@@ -99,7 +102,16 @@ def frame_blocked(t_in_):   # live_publish: 이 프레임은 짐벌에 사람 �
 def cam_argv():   # 카메라 자리에 띄울 명령. 재생이 없으면 전과 똑같다
     r_ = getattr(APP.LIVE, 'replay', None)
     if r_ is None: return [APP.args.live_cam or str(HERE / 'src' / 'camera' / 'cam_pipe')]
-    return [sys.executable, '-B', str(HERE / 'src' / 'camera' / 'replay_cam.py'), '--dir', r_['dir'], '--fps', '%g' % r_['fps'], '--loops', '0' if r_['loop'] else '1']
+    return [sys.executable, '-B', str(HERE / 'src' / 'camera' / 'replay_cam.py'), '--dir', r_['dir'], '--fps', '%g' % r_['fps'], '--loops', '0' if r_['loop'] else '1', '--tag']
+
+
+def spawn():   # lv_spawn 의 재생 판 (LIVE.replay 가 있을 때만): 머리와 PNG 번호를 늘 붙인다. 머리는 camera_extra 의 읽기(reader)가 읽는다
+    env_ = dict(os.environ); env_['LWIR_CAM_STAMP'] = '1'; env_['LWIR_CAM_SHM'] = '0'
+    p_ = APP.lv_sp.Popen(cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0, env=env_)
+    p_.lwir_stamp = True; p_.lwir_eval = replay_eval.EV   # 이 프로그램의 프레임은 이 재생의 채점에만 들어간다
+    APP.LIVE.proc = p_; APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()
+    camera_extra.log_start()
+    APP.lv_th.Thread(target=APP.lv_reader, args=(p_,), daemon=True).start()
 
 
 def top_text(r_):   # 화면 그림 맨 윗줄 앞에 붙는 글 (cv2 는 한글을 못 그려서 ASCII 만)
@@ -130,7 +142,7 @@ def get_info(q_):
     r_ = root(); refresh_ = q_.get('refresh', ['0'])[0] == '1'
     why_ = None if r_ else ('녹화 폴더가 정해지지 않음 (--replay-root)' if not getattr(APP.args, 'replay_root', '') else '녹화 폴더가 없음')
     if r_ and APP.args.live_wait: why_ = '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
-    return dict(available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state())
+    return dict(available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state(), eval=replay_eval.state())
 
 
 def _used(frames_):   # replay_cam 이 메모리에 올리는 장 수 (--max-mb, 기본 400 MB)
@@ -183,6 +195,7 @@ def _end_old(p_, replay_):   # 지금 카메라 자리의 프로그램을 끝낸
 
 def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (카메라로)
     L_ = APP.LIVE
+    ev_ = replay_eval.prepare(tgt_) if tgt_ is not None else None   # 11-12: 정답 라벨을 미리 읽는다
     try:
         old_ = getattr(L_, 'replay', None)
         if not _end_old(L_.proc, old_ is not None):
@@ -196,6 +209,7 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
             with L_.cond: L_.q.clear()
             if tgt_ is not None: tgt_['fin0'] = L_.frames_in
             L_.replay = tgt_
+            replay_eval.activate(ev_, L_.replay_src_t, 'switched' if tgt_ is not None else 'stopped')   # 옛 재생의 채점은 파일로 쓰고 끝낸다
             _gimbal_stop()
             APP.lv_spawn()
         if tgt_ is not None:
@@ -219,6 +233,7 @@ def on_cam_lost(now_):   # lv_cam_wait (cam_lock 안, 주 스레드): 재생 프
             if now_ - L_.proc_t0 > 30: L_.proc.kill()
             return True
     L_.replay_src_t = time.perf_counter(); L_.replay = None
+    replay_eval.activate(None, None, 'ended' if rc_ == 0 else 'replay program ended with code %s' % rc_)
     with L_.cond: L_.q.clear()
     L_.cam_fail_n = 0; L_.cam_unrec_n = 0; L_.cam_next_spawn = None
     _gimbal_stop()

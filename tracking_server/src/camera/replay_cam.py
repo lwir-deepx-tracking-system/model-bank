@@ -30,6 +30,10 @@
   --loops <횟수>                        LWIR_REPLAY_LOOPS (기본 0 = 끝없이)
   --max-mb <MB>                         LWIR_REPLAY_MAX_MB (기본 400)
   --delay <초>                          LWIR_REPLAY_DELAY (기본 0)  첫 프레임을 보내기 전에 기다리는 시간 (서버가 준비를 마친 뒤 첫 프레임부터 받게 할 때)
+  --tag                                 LWIR_REPLAY_TAG=1  (11-12, 정답 비교용) 머리를 붙일 때(LWIR_CAM_STAMP=1) 어느 PNG 인지 적는다:
+                                        flags 2 번 비트를 켜고, ring_id = PNG 번호(파일 이름의 숫자, 아래 20 비트) + 바퀴 번호(0 부터, 위 12 비트),
+                                        slot = 시간표 칸 번호(0 부터, 건너뛴 칸도 센다). 이름에 숫자가 없거나 .raw 파일이면 PNG 번호 0 (모름).
+                                        머리가 꺼져 있으면 아무것도 하지 않는다. 서버(src/camera/replay_eval.py)가 읽는다.
 표준 오류에는 시작 줄(CAMERA, REPLAY ...)과 끝 줄(FRAMES ...)만 쓴다. Python 3.10, numpy, cv2 만 쓴다 (.raw 파일만 틀 때는 둘 다 없어도 된다).
 """
 import argparse
@@ -55,9 +59,9 @@ def _on_signal(signum, frame):
     raise _Stop()
 
 
-def header(seq, t_ns, dt_us):
+def header(seq, t_ns, dt_us, flags=0, slot=0xFFFFFFFF, ring_id=0):
     """48 바이트 머리. 확인값 = 앞의 32 비트 낱말 11 개와 0x5A17C0DE 의 xor."""
-    b = HDR.pack(b'LWF1', 1, 0, seq, t_ns, min(dt_us, 0xFFFFFFFF), 0xFFFFFFFF, FRAME_BYTES, 0, W, H, 0)
+    b = HDR.pack(b'LWF1', 1, flags, seq, t_ns, min(dt_us, 0xFFFFFFFF), slot & 0xFFFFFFFF, FRAME_BYTES, ring_id & 0xFFFFFFFF, W, H, 0)
     x = 0x5A17C0DE
     for v in _W11.unpack(b[:44]):
         x ^= v
@@ -81,8 +85,14 @@ def to16(img):
     return None
 
 
+def png_number(name):
+    """000123.png -> 123. 숫자가 아니거나 20 비트를 넘으면 0 (모름)"""
+    s = os.path.splitext(name)[0]
+    return int(s) if s.isdigit() and 0 < int(s) <= 0xFFFFF else 0
+
+
 def load(src, max_mb, say):
-    """-> 프레임 목록 (각각 614,400 바이트의 bytes)"""
+    """-> (프레임 목록 (각각 614,400 바이트의 bytes), 종류, 건너뛴 파일 수, 프레임마다 PNG 번호)"""
     limit = max(1, int(max_mb * 1024 * 1024 // FRAME_BYTES))
     frames = []
     if os.path.isfile(src) and src.lower().endswith(('.raw', '.raw.gz')):
@@ -96,13 +106,14 @@ def load(src, max_mb, say):
             more = len(frames) == limit and bool(f.read(1))
         if more:
             say('REPLAY note: only the first %d frames are used (--max-mb %g)' % (limit, max_mb))
-        return frames, 'raw 16-bit', 0
+        return frames, 'raw 16-bit', 0, [0] * len(frames)
     if not os.path.isdir(src):
         raise SystemExit('replay_cam: no such folder or .raw/.raw.gz file: %s' % os.path.basename(src))
     import cv2
     names = sorted(n for n in os.listdir(src) if n.lower().endswith('.png'))
     bad = 0
     kinds = set()
+    nums = []
     for n in names:
         if len(frames) >= limit:
             say('REPLAY note: only the first %d of %d png files are used (--max-mb %g)' % (limit, len(names), max_mb))
@@ -114,7 +125,8 @@ def load(src, max_mb, say):
             continue
         kinds.add('8-bit x257' if raw.dtype.itemsize == 1 else '16-bit')
         frames.append(img.astype('<u2', copy=False).tobytes())
-    return frames, ' + '.join(sorted(kinds)) or 'none', bad
+        nums.append(png_number(n))
+    return frames, ' + '.join(sorted(kinds)) or 'none', bad, nums
 
 
 def write_all(fd, data):
@@ -131,6 +143,7 @@ def main():
     ap.add_argument('--loops', type=int, default=int(os.environ.get('LWIR_REPLAY_LOOPS', '0') or 0))
     ap.add_argument('--max-mb', type=float, default=float(os.environ.get('LWIR_REPLAY_MAX_MB', '400') or 400))
     ap.add_argument('--delay', type=float, default=float(os.environ.get('LWIR_REPLAY_DELAY', '0') or 0))
+    ap.add_argument('--tag', action='store_true', default=os.environ.get('LWIR_REPLAY_TAG') == '1')
     a = ap.parse_args()
     err = sys.stderr
 
@@ -151,12 +164,13 @@ def main():
     t_begin = None
     code = 0
     try:
-        frames, kind, bad = load(a.dir, a.max_mb, say)
+        frames, kind, bad, nums = load(a.dir, a.max_mb, say)
         if not frames:
             say('REPLAY no usable frame (640x480 png, 8-bit or 16-bit) in the given folder; %d files skipped' % bad)
             return 2
         say('CAMERA %d %d' % (W, H))
-        say('REPLAY %d frames (%s), %d skipped files, %g fps, loops %s, time stamps %s' % (len(frames), kind, bad, a.fps, a.loops or 'endless', 'on' if stamp else 'off'))
+        tag = stamp and a.tag
+        say('REPLAY %d frames (%s), %d skipped files, %g fps, loops %s, time stamps %s, png numbers %s' % (len(frames), kind, bad, a.fps, a.loops or 'endless', 'on' if stamp else 'off', 'on' if tag else 'off'))
         if stamp and os.environ.get('LWIR_CAM_SHM') == '1':
             say('SHM_RING not used by replay_cam: pictures go through the pipe')
         fd = sys.stdout.fileno()
@@ -188,7 +202,11 @@ def main():
             if stamp:
                 seq += 1
                 t_ns = time.monotonic_ns()
-                b = header(seq, t_ns, (t_ns - t_prev_ns) // 1000 if t_prev_ns else 0) + b
+                dt = (t_ns - t_prev_ns) // 1000 if t_prev_ns else 0
+                if tag:   # 11-12: which png (low 20 bits) and which pass (high 12 bits), and the schedule cell (counts skipped cells)
+                    b = header(seq, t_ns, dt, 2, k, nums[k % len(frames)] | (min(k // len(frames), 0xFFF) << 20)) + b
+                else:
+                    b = header(seq, t_ns, dt) + b
                 t_prev_ns = t_ns
             write_all(fd, b)
             sent += 1
