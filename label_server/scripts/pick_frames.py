@@ -142,7 +142,7 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument('--budget', type=int, help='뽑을 장 수')
     g.add_argument('--ratio', type=float, help='뽑을 비율 (0~1)')
-    ap.add_argument('--keep-uncertain', default='', help='LO:HI — 검출 점수가 이 범위인 상자가 있는 장은 전부 남김 (예: 0.25:0.5)')
+    ap.add_argument('--keep-uncertain', default='', help='LO:HI: 검출 점수가 이 범위인 상자가 있는 장은 전부 남김 (예: 0.25:0.5)')
     ap.add_argument('--uncertain-max', type=int, default=0, help='--keep-uncertain 으로 남기는 장 수의 한도 (0 = 한도 없음). 넘으면 일정 간격으로 줄임')
     ap.add_argument('--det-file', default='tracks_mot.txt', help='녹화 폴더 안의 검출 결과 파일 이름')
     ap.add_argument('--seed', type=int, default=0)
