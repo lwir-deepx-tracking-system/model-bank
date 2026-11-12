@@ -73,6 +73,51 @@ python -m tracking_server.src.track.check_bytetrack tracking_server/models/links
 
 Windows에서는 출력 확장자를 `.dll`로 바꾸고 필요하면 `--cxx`로 MinGW `g++` 경로를 지정합니다. 시험용 캐시에는 프레임마다 `tracker_input_xyxy_conf_class`와 `tracker_reset`이 있어야 합니다. 두 구현 모두 같은 검출을 프레임 순서대로 받고, 빈 프레임도 업데이트하며, 시퀀스 경계에서만 ID를 초기화합니다.
 
+### 하건님 원본 입출력 수정 전후
+
+기준은 팀 runtime의 `0fe016f7edd069900457a746dc4cc787569c5ae6`입니다. 아래에서 `+`는 추가한 줄입니다. 원본의 `track(const std::vector<Detection>&) → std::vector<Track>` 호출은 그대로 사용합니다.
+
+```diff
+--- a/include/common/detection.hpp
++++ b/include/common/detection.hpp
+@@ -19,2 +19,3 @@
+     std::string class_name;
++    int source_index = -1;
+ };
+--- a/include/tracking/bytetrack_tracker.hpp
++++ b/include/tracking/bytetrack_tracker.hpp
+@@ -34 +34,2 @@
+     int class_id = -1;
++    int source_index = -1;
+--- a/include/common/track.hpp
++++ b/include/common/track.hpp
+@@ -30,2 +30,3 @@
+     bool predicted = false;
++    int source_index = -1;
+ };
+--- a/src/tracking/bytetrack_tracker.cpp
++++ b/src/tracking/bytetrack_tracker.cpp
+@@ -481,2 +481,3 @@
+     t.class_id = det.class_id;
++    t.source_index = det.source_index;
+     t.frame_id = frame_id_;
+@@ -505 +506,2 @@
+         det->class_id = d.class_id;
++        det->source_index = d.source_index;
+@@ -772,2 +774,3 @@
+         out.confidence = t->score;
++        out.source_index = t->frame_id == frame_id_ ? t->source_index : -1;
+         tracks.push_back(out);
+```
+
+**입력**은 8090의 `[x1, y1, x2, y2, conf, cls]`를 원본의 `Detection`으로 옮깁니다. `x=x1`, `y=y1`, `width=x2-x1`, `height=y2-y1`로 계산하고, `source_index=i`에는 **필터를 거친 이번 프레임 검출 배열**에서의 0부터 시작하는 행 번호를 넣습니다. 입력 배열의 열은 6개 그대로입니다.
+
+**출력**은 원본이 계산한 `Track` 박스를 `[x, y, x+width, y+height, track_id, confidence, class_id, source_index]` 순서로 돌려줍니다. 예를 들어 검출 배열의 세 번째 박스가 트랙 17과 매칭되면 `track_id=17`이고 출력의 마지막 열은 `source_index=2`입니다. 트래커가 추정한 박스를 사용하므로 입력 박스와 출력 박스의 좌표는 달라질 수 있습니다. 현재 프레임에 대응하는 검출이 없는 행은 `source_index=-1`이며, 이 서버 연결에서는 예측 행이나 유효한 검출 번호가 없는 행을 오류로 처리합니다. [좌표 변환과 행 검사](bytetrack.cpp#L41)
+
+위 diff는 팀 원본에 들어가는 입출력 변경입니다. 좌표 변환은 모델뱅크의 `bytetrack.cpp`에서 처리합니다. 위쪽의 빌드 명령을 실행하면 [빌드 스크립트](build_bytetrack.py#L21)가 고정된 원본 커밋의 임시 사본에 이 변경을 적용하므로, 팀 runtime 파일에 수동으로 붙여 넣을 필요가 없습니다. 빌드 뒤에는 위의 `check_bytetrack`으로 같은 검출 행이 출력과 맞는지 확인합니다.
+
+### 라이브러리 연결과 재생
+
 소스 파일은 [`bytetrack.py`](bytetrack.py)와 [`bytetrack.cpp`](bytetrack.cpp)입니다. 이 C++ 소스는 위의 CPython 확장과 다른 C ABI를 사용하므로 전용 명령으로 빌드합니다.
 
 1. Orange Pi용 ARM64 **`bytetrack.so`**를 `tracking_server/models/links/`에 넣습니다. 완성된 파일을 임시 이름으로 복사한 뒤 그 자리에서 이름을 바꾸면 복사 도중 읽히지 않습니다. 구버전 설치의 `team_bytetrack.so`도 인식합니다.
