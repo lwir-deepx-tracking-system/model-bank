@@ -156,6 +156,16 @@ def main():
     ap.add_argument('--confirm-gate', default='', help='v11: path of GATE_GRU32_FROZEN.json = the learned confirmation gate replaces 3FrameConfirm (GateTracker); requires --tracker bytetrack --class-gate --no-vit; default off = unchanged')
     ap.add_argument('--judge-crops', type=int, default=2, help='v10: with --judge, crops per frame on NPU_2 (new IDs first, then refresh); 0 = every eligible crop')
     APP.args = ap.parse_args()
+    ready_prefetch_supported = (
+        APP.args.live_port and APP.args.pipeline and APP.args.no_vit and APP.args.npu_depth == 1
+        and APP.args.live_wait == 0 and not APP.args.zoom
+        and os.environ.get('LWIR_NPU_FEED') != 'arrival'
+    )
+    ready_prefetch_setting = os.environ.get('LWIR_LIVE_READY_PREFETCH', '')
+    if ready_prefetch_setting == '1' and not ready_prefetch_supported:
+        ap.error('LWIR_LIVE_READY_PREFETCH=1 needs --live-port --pipeline --no-vit '
+                 '--npu-depth 1 --live-wait 0 without --zoom or LWIR_NPU_FEED=arrival')
+    ready_prefetch = ready_prefetch_supported and ready_prefetch_setting != '0'
     settings.WARM_MIN, settings.EDGE_BIRTH, settings.EDGE_PX = int(APP.args.warm_min), float(APP.args.edge_birth), float(APP.args.edge_px)   # v24f
     settings.WARM_MAX = max(0, int(APP.args.warm_max))   # v33
     if APP.args.prepare: return prepare(APP.args)
@@ -550,7 +560,9 @@ def main():
                 if not APP.args.mock: lf_npu.append(vit.b.get_npu_inference_time() / 1000)
             return got
         g_next = None; t_sub_next = None; t_prev_emit = None; ahead = []     # v7: frames read + submitted ahead [(gray, submit ns)], --npu-depth of them
-        if APP.args.pipeline and APP.images:
+        if ready_prefetch:
+            print('LIVE camera prefetch: only take the next frame before publication if it is queued', flush=True)
+        if APP.args.pipeline and APP.images and not ready_prefetch:
             for k_ in range(min(APP.args.npu_depth, len(APP.images))):
                 g_k, _ = read_frame(k_); ahead.append((g_k, submit_tiles(g_k, k_))); gmc_submit(k_, g_k)
         do_model_swap = page_settings.do_model_swap
@@ -619,12 +631,27 @@ def main():
                     else: gmc_fail += gmc.n_fail if gmc is not None else 0; gmc = GMC(APP.args.gmc_ds); gmc.fp = dict(gmc.fp, maxCorners=APP.args.gmc_corners, minDistance=APP.args.gmc_mindist)
             async_vit = vit is not None and not budget                  # --vit-budget: every crop is synchronous inside / right after update()
             if APP.args.pipeline:
-                # frame i's tiles were submitted before this iteration (t0); wait, then read + submit frame i+1 BEFORE post-processing i
-                g, t0 = ahead.pop(0)
+                if ready_prefetch and not ahead:
+                    # The last result was already published before we waited here.
+                    g = APP.live_next(fresh_only=True)
+                    if g is None:
+                        break
+                    t0 = submit_tiles(g, i)
+                    gmc_submit(i, g)
+                else:
+                    g, t0 = ahead.pop(0)
                 ra = APP.a.wait(); rb = APP.b.wait() if APP.b is not None else None; t1 = time.perf_counter_ns()
                 read_ms = 0.0
-                if i + APP.args.npu_depth < len(APP.images):
-                    g_n, read_ms = read_frame(i + APP.args.npu_depth); ahead.append((g_n, submit_tiles(g_n, i + APP.args.npu_depth))); gmc_submit(i + APP.args.npu_depth, g_n)
+                next_i = i + APP.args.npu_depth
+                if next_i < len(APP.images):
+                    if ready_prefetch:
+                        # An empty queue must never delay this result, including during replay transitions.
+                        g_n = APP.live_next(wait=False, fresh_only=True)
+                    else:
+                        g_n, read_ms = read_frame(next_i)
+                    if g_n is not None:
+                        ahead.append((g_n, submit_tiles(g_n, next_i)))
+                        gmc_submit(next_i, g_n)
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                       # one sync per frame; the ViT job overlaps detection of i+1
                 t_nms0 = time.perf_counter_ns(); p = detect(ra, rb); t2 = time.perf_counter_ns(); t3 = t2
             else:

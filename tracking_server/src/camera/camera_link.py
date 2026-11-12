@@ -114,15 +114,20 @@ def lv_to8(raw_):
     return np.clip((raw_.astype(np.float32) - APP.LIVE.lo) * (255.0 / (APP.LIVE.hi - APP.LIVE.lo)), 0, 255).astype(np.uint8)
 
 
-def live_next():
+def live_next(*, wait=True, fresh_only=False):
+    """Read one camera frame. A nonblocking read does not enter camera recovery."""
     while True:
         with APP.LIVE.cond:
+            if not wait and not APP.LIVE.q:
+                return None
             while not APP.LIVE.q:
                 if APP.LIVE.stopped or (APP.LIVE.cam_lost and APP.args.live_wait): break
                 wait_s_ = (APP.args.live_wait or 10) if APP.LIVE.last is None else 10   # v20: the real camera takes >10 s to start (scan, open, shutter calibration)
                 if APP.LIVE.cond.wait(timeout=wait_s_): continue
                 if APP.args.live_wait: raise RuntimeError('no camera frame for %d s' % wait_s_)
                 break   # v21: --live-wait 0: no frame yet
+            if fresh_only and APP.LIVE.stopped:
+                return None
             if APP.LIVE.q:
                 if not APP.args.pipeline:
                     while len(APP.LIVE.q) > 1: APP.LIVE.q.popleft()
@@ -133,6 +138,8 @@ def live_next():
                     camera_extra.say('LIVE input gap of %.1f s: selection dropped, tracks restart' % (t_ - APP.LIVE.prev_t))
                 APP.LIVE.prev_t = t_; break
             if APP.LIVE.stopped or APP.args.live_wait:
+                if fresh_only:
+                    return None
                 if APP.LIVE.last is None: raise RuntimeError('camera delivered no frame')
                 return APP.LIVE.last
         with APP.LIVE.cam_lock: APP.lv_cam_wait()   # v33: cam_lock. v21: outside the lock: may reopen the camera process
