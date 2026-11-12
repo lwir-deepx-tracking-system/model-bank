@@ -82,7 +82,6 @@ F5 radius): N = matched frames, the birth frame included, before a NEW track is 
 the same; tracks born on a video's first frame are still output at once); R = motion re-bind radius in lost-track heights. The offline
 choice --n-init 3 --radius 1.5 (idsw_fix/RESULT_KO.md, C_F4_n3+F5_r1.5) was verified only with --tracker rebind --no-vit."""
 import os
-import sys
 from pathlib import Path
 from tempfile import mkdtemp
 
@@ -109,4 +108,4 @@ if __name__ == '__main__':
     from src.web.system_buttons import RESTART_REQUESTED
 
     if main() is RESTART_REQUESTED:
-        os.execv(sys.executable, ['python3', '-B', *sys.argv])
+        raise SystemExit(75)  # The launcher owns the next start.

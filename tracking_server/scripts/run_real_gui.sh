@@ -48,9 +48,50 @@ pgrep -f 'python3 -B ([s]tart_tracking_server|[l]wir_tracker_m1)\.py' > /dev/nul
 fuser "$GIMBAL_DEV" > /dev/null 2>&1 && { echo "gimbal busy"; exit 5; }
 echo "START $(date +%T) page=$BIND:$PORT gui=$GUI_HOST gimbal=$GIMBAL_DEV speed_max=$SPEED_MAX reacquire_ms=$REACQUIRE_MS confirm_ms=$CONFIRM_MS"
 export LWIR_REAL_GUI_LAUNCH=1
-exec python3 -B start_tracking_server.py --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 3 --confirm-ms "$CONFIRM_MS" --warm-min 45000 --edge-birth 0.5 \
-  --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 1 --confirm-gate models/track/gate_gru32_frozen.json --judge models/track/relink_judge_frozen.json --judge-crops 2 \
-  --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 --replay-root "$REPLAY_ROOT" \
-  --replay-bytetrack-library "${LWIR_REPLAY_BYTETRACK_LIBRARY:-}" \
-  --gimbal "$GIMBAL_DEV" --gimbal-speed 10 --gimbal-aim-y "$AIM_Y" --gimbal-bridge "$BRIDGE" --gimbal-opts "--controller pid --ki 0 --kd 6 --integral-limit 3 --deadband 0.06 --manual-speed 20 --speed-max $SPEED_MAX --reacquire-ms $REACQUIRE_MS $EXTRA_OPTS" \
+tracker_args=(
+  --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 3 --confirm-ms "$CONFIRM_MS" --warm-min 45000 --edge-birth 0.5
+  --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 1 --confirm-gate models/track/gate_gru32_frozen.json --judge models/track/relink_judge_frozen.json --judge-crops 2
+  --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 --replay-root "$REPLAY_ROOT"
+  --replay-bytetrack-library "${LWIR_REPLAY_BYTETRACK_LIBRARY:-}"
+  --gimbal "$GIMBAL_DEV" --gimbal-speed 10 --gimbal-aim-y "$AIM_Y" --gimbal-bridge "$BRIDGE" --gimbal-opts "--controller pid --ki 0 --kd 6 --integral-limit 3 --deadband 0.06 --manual-speed 20 --speed-max $SPEED_MAX --reacquire-ms $REACQUIRE_MS $EXTRA_OPTS"
   --gui-host "$GUI_HOST" --gui-bind 0.0.0.0
+)
+
+# A fresh process releases all of the previous DXRT client's resources.
+# Only a graceful restart requested from the web page returns 75.
+stop_launcher() {
+  if [ -n "${tracker_pid:-}" ]; then
+    kill -TERM "$tracker_pid" 2>/dev/null
+    wait "$tracker_pid" 2>/dev/null
+  fi
+  exit 143
+}
+trap stop_launcher TERM INT
+while :; do
+  python3 -B start_tracking_server.py "${tracker_args[@]}" &
+  tracker_pid=$!
+  wait "$tracker_pid"
+  status=$?
+  tracker_pid=
+  [ "$status" -eq 75 ] || exit "$status"
+  if pgrep -x lwir_benchmark >/dev/null || fuser "$GIMBAL_DEV" >/dev/null 2>&1; then
+    echo "restart stopped: device in use" >> real_gui_1.out
+    exit 5
+  fi
+  if ! timeout 30s python3 -B - <<'PYTHON'
+import time
+import dx_engine
+
+deadline = time.monotonic() + 25
+while time.monotonic() < deadline:
+    status = dx_engine.DeviceStatus.get_current_status(0)
+    if status.get_memory_used() < 1024**2 and all(status.get_core_utilization(core) < 1 for core in range(3)):
+        raise SystemExit(0)
+    time.sleep(0.5)
+raise SystemExit("DXRT did not become idle")
+PYTHON
+  then
+    echo "restart stopped: DXRT did not release the device" >> real_gui_1.out
+    exit 6
+  fi
+done

@@ -94,6 +94,8 @@ while true; do
   reason=""; reboot=0
   pid=$(server_pid)
   if [ -z "$pid" ]; then
+    # The launcher retains its lock while it waits for DXRT between children.
+    if ! flock -n "$T/real_gui_launch.lock" true; then continue; fi
     reason="server process missing"
   else
     h=$(health)
