@@ -108,7 +108,7 @@ git clone https://github.com/lwir-deepx-tracking-system/model-bank.git "$HOME/mo
    ss -ltn 'sport = :8090'
    ```
 
-   `LISTEN`이 보이면 브라우저로 추적 화면을 확인합니다. 로그에 `NPU busy`가 있으면 기존 서버 프로세스부터 확인합니다. 다른 종료 이유는 [추적 서버 빠른 시작](tracking_server/README.md#2-빠른-시작)에 정리했습니다.
+   `LISTEN`이 보이면 브라우저로 추적 화면을 확인합니다. 로그에 `NPU busy`가 있으면 기존 서버 프로세스부터 확인합니다. 로그에 `gimbal busy`가 있으면 [짐벌 포트 점유 확인과 서버 재시작](tracking_server/README.md#gimbal-busy-해결)을 참고하세요. 다른 종료 이유는 [추적 서버 빠른 시작](tracking_server/README.md#2-빠른-시작)에 정리했습니다.
 
 ## 2. 라벨 서버 (`label_server/`)
 

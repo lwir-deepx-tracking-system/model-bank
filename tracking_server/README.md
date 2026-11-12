@@ -101,12 +101,61 @@
 | 끝나는 값 | 뜻 |
 |---|---|
 | 4 | 서버가 이미 떠 있음 |
-| 5 | 짐벌 장치를 다른 프로그램이 씀 |
+| 5 | 짐벌 시리얼 포트를 다른 프로그램이 사용 중. [점유 확인과 재시작](#gimbal-busy-해결) |
 | 7 | 짐벌 프로그램이 없음 (`setup.sh` 다시) |
 | 8 | 페이지 주소 없음 (`LWIR_LIVE_BIND`) |
 | 9 | 폴더 이동 실패 |
 
 </details>
+
+### `gimbal busy` 해결
+
+빌드가 끝났고 `real_gui_1.out`에 `gimbal busy`가 있으면 짐벌 시리얼 포트를 쓰는 프로세스부터 확인합니다. 선택한 저장소의 최상위 폴더에서 시작합니다.
+
+```bash
+cd tracking_server
+gimbal_dev="$(
+  [ ! -f scripts/live.env ] || . ./scripts/live.env
+  dev="${LWIR_GIMBAL_DEV:-}"
+  if [ -z "$dev" ]; then
+    dev="$(ls /dev/serial/by-id/usb-Silicon_Labs_CP2102N_* 2>/dev/null | head -n 1)"
+  fi
+  printf '%s\n' "${dev:-/dev/ttyUSB0}"
+)"
+printf '짐벌 포트 %s\n' "$gimbal_dev"
+sudo fuser -v "$gimbal_dev"
+```
+
+`fuser`에서 `lwir_runtime`이 확인되면 해당 PID로 실행 상태와 서비스 관리 여부를 확인합니다.
+
+```bash
+read -r -p 'fuser에 표시된 lwir_runtime의 PID를 입력하세요: ' runtime_pid
+ps -o pid,ppid,etime,comm -p "$runtime_pid"
+systemctl status "$runtime_pid" --no-pager
+```
+
+직접 실행한 테스트라면 원래 터미널에서 `Ctrl+C`로 정상 종료할 수 있습니다. 서비스에서 실행했다면 해당 서비스의 정상 종료 절차를 사용합니다. 직접 실행한 테스트를 현재 터미널에서 종료할 때는 아래 명령을 사용합니다. 입력한 PID의 이름이 여전히 `lwir_runtime`이면 해당 프로세스에만 `TERM`을 보냅니다.
+
+```bash
+if [[ "$runtime_pid" =~ ^[1-9][0-9]*$ ]] &&
+   [[ "$(ps -p "$runtime_pid" -o comm=)" == lwir_runtime ]]; then
+  kill -TERM -- "$runtime_pid"
+fi
+```
+
+같은 터미널에서 포트 점유를 다시 확인합니다.
+
+```bash
+sudo fuser -v "$gimbal_dev"
+```
+
+점유 프로세스가 표시되지 않으면 서버를 실행합니다.
+
+```bash
+bash scripts/run_real_gui.sh
+```
+
+다른 터미널에서 `ss -ltn 'sport = :8090'`으로 기본 포트의 `LISTEN`을 확인하고 브라우저에서 추적 화면을 엽니다. 시작 명령이 바로 끝났다면 실행한 저장소의 `tracking_server/real_gui_1.out`에서 이유를 확인합니다.
 
 ## 3. 폴더
 
