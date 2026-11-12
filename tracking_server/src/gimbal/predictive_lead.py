@@ -23,24 +23,33 @@ class Sample:
     y: float
     vx: float = 0.0
     vy: float = 0.0
+    aim_y: float = 0.5
+    correction: tuple = (0.0, 0.0)
 
 
-def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms, *, space="scene"):
+def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms, *,
+             space="scene", aim_y=0.5, correction=None):
     """Return the next sample and a control offset, without changing any box.
 
-    ``observed`` uses picture coordinates. The GMC affine uses the padded
-    detector canvas. ``motion_pair`` carries its exact previous/current times.
+    ``observed`` uses raw camera coordinates; ``correction`` shifts raw to the
+    stabilized picture. GMC maps padded, stabilized canvas coordinates between
+    the two frames whose timestamps are in ``motion_pair``.
     """
     if space not in ("scene", "image"):
         raise ValueError("lead space must be scene or image")
-    if track_id <= 0 or observed is None or not math.isfinite(frame_time):
+    if (track_id <= 0 or observed is None or not math.isfinite(frame_time)
+            or aim_y is None or not 0.0 <= aim_y <= 1.0):
         return None, NO_LEAD
-    x = (observed[1] + observed[3]) / 2.0
-    y = (observed[2] + observed[4]) / 2.0
-    if not math.isfinite(x) or not math.isfinite(y):
+    x1, y1, x2, y2 = observed[1:5]
+    if not x1 < x2 or not y1 < y2:
         return None, NO_LEAD
-    seed = Sample(track_id, frame_time, x, y)
-    if previous is None or previous.track_id != track_id:
+    x = x1 + (x2 - x1) / 2.0
+    y = y1 + aim_y * (y2 - y1)
+    cx, cy = (0.0, 0.0) if correction is None else correction
+    if not all(map(math.isfinite, (x, y, cx, cy))):
+        return None, NO_LEAD
+    seed = Sample(track_id, frame_time, x, y, aim_y=aim_y, correction=(cx, cy))
+    if previous is None or previous.track_id != track_id or previous.aim_y != aim_y:
         return seed, NO_LEAD
 
     if (not previous.time + MIN_INTERVAL <= frame_time < previous.time + MAX_INTERVAL
@@ -54,19 +63,25 @@ def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms, *, 
         return seed, NO_LEAD
 
     dt = frame_time - previous.time
-    px, py = map(float, warp @ (previous.x, previous.y + CANVAS_Y_OFFSET, 1.0))
-    if space == "image":
+    if space == "scene":
+        # Express the previous raw anchor on its stabilized canvas, then
+        # map the result back to the current raw frame before differencing.
+        prev_cx, prev_cy = previous.correction
+        px, py = map(float, warp @ (previous.x + prev_cx,
+                                    previous.y + prev_cy + CANVAS_Y_OFFSET, 1.0))
+        px -= cx
+        py -= cy + CANVAS_Y_OFFSET
+    else:
         # Experimental delay compensation: predict where the observation moves
-        # in the image, including camera motion. Keep exact GMC-pair validity
-        # gates in both comparisons; no change to the deployed scene default.
-        px, py = previous.x, previous.y + CANVAS_Y_OFFSET
+        # in the raw image, including camera motion. Still require valid GMC.
+        px, py = previous.x, previous.y
     alpha = -math.expm1(-dt / TIME_CONSTANT)
     vx = (1.0 - alpha) * previous.vx + alpha * (x - px) / dt
-    vy = (1.0 - alpha) * previous.vy + alpha * (y + CANVAS_Y_OFFSET - py) / dt
+    vy = (1.0 - alpha) * previous.vy + alpha * (y - py) / dt
     speed = math.hypot(vx, vy)
     if not math.isfinite(speed):
         return seed, NO_LEAD
-    sample = Sample(track_id, frame_time, x, y, vx, vy)
+    sample = Sample(track_id, frame_time, x, y, vx, vy, aim_y, (cx, cy))
     if speed < MIN_SPEED:
         return sample, NO_LEAD
     seconds = max(0.0, min(400.0, lead_ms)) / 1000.0

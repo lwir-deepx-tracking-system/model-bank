@@ -2,6 +2,7 @@
 from collections import deque
 from threading import Condition, Lock
 from types import SimpleNamespace as NS
+import math
 import time
 import unittest
 from unittest.mock import patch
@@ -11,6 +12,7 @@ import numpy as np
 from ..common.state import APP
 from ..track import bytetrack
 from . import live_tracks, gimbal_link
+from .predictive_lead import TIME_CONSTANT
 
 
 class LiveTracksTests(unittest.TestCase):
@@ -78,6 +80,7 @@ class LiveTracksTests(unittest.TestCase):
         start = time.perf_counter() - .12
         APP.GB.lead_control_supported = True
         APP.GB.control_epoch = 3
+        APP.GB.proc = NS(args=['bridge', '--aim-y', '.08'])
         APP.GB.gui = raw16 is not None
         self.publish(frame_t=start, raw16=raw16)
         APP.GB.state.update(id=17, auto=1)
@@ -108,6 +111,55 @@ class LiveTracksTests(unittest.TestCase):
         self.assertEqual(APP.CTL['lead_px'], 0.)
         self.assertTrue(live_tracks.click(133, 100)[0])
         self.assertEqual(APP.GB.wq[-1], b'A 17\n')
+
+    def test_prediction_uses_the_transmitted_anchor_and_raw_affine(self):
+        start = time.perf_counter() - .16
+        gb = APP.GB
+        gb.lead_control_supported = gb.observation_status_supported = gb.gui = True
+        gb.control_epoch = 3
+        gb.proc = NS(args=['bridge', '--aim-y', '.3', '--aim-y', '.08'])
+        APP.args = NS(gimbal_aim_y=.5)
+        raw = np.zeros((480, 640), np.uint16)
+        self.publish(frame_t=start, raw16=raw)
+        gb.state.update(id=17, auto=1)
+        APP.CTL['lead'] = True
+
+        self.people = [(17, 114., 50., 154., 150., .9)]
+        self.publish(frame_t=start + .04, raw16=raw, correction=(14., -6.),
+                     healthy_live=True, acknowledge=False)
+        self.assertEqual((APP.CTL['lv'].x, APP.CTL['lv'].y), (120., 64.))
+        # The previous raw anchor (120,64) is (134,74) on the padded,
+        # stabilized canvas. The affine and current correction map it to
+        # (138.25,60.75) in raw coordinates before adding target motion.
+        warp = np.array([[1., -.125, 7.5], [.125, 1., -4.]])
+        APP.CTL['lead_motion'] = (start + .04, start + .08, warp)
+        self.people = [(17, 110.33, 53.74, 170.33, 203.74, .9)]
+        self.publish(frame_t=start + .08, raw16=raw, correction=(-6., 10.),
+                     healthy_live=True, acknowledge=False)
+        header, body = gb.wframe.split(b'\n', 1)
+        observed, _, lead = header.partition(b' LEAD ')
+        self.assertEqual(observed.split()[6:], b'17 116.3 43.7 60.0 150.0 0.900 OBS 1'.split())
+        self.assertEqual(body, raw.tobytes())
+        self.assertEqual(gb.people, self.people)
+        track_id, dx, dy, epoch = lead.split()
+        scale = -math.expm1(-.04 / TIME_CONSTANT) * .15 / .04
+        self.assertEqual((track_id, epoch), (b'17', b'3'))
+        self.assertAlmostEqual(float(dx), 8.05 * scale)
+        self.assertAlmostEqual(float(dy), -5.05 * scale)
+
+    def test_missing_or_invalid_bridge_aim_keeps_observations_without_lead(self):
+        last = self.publish_moving_lead()
+        gb = APP.GB
+        for index, argv in enumerate((None, ['bridge', '--aim-y'], ['bridge', '--aim-y', 'nan'],
+                                      ['bridge', '--aim-y', '1.1'], ['bridge', '--kp', '30']), 1):
+            with self.subTest(argv=argv):
+                gb.proc.args = argv
+                before, now = last + (index - 1) * .005, last + index * .005
+                APP.CTL['lead_motion'] = (before, now, np.eye(2, 3))
+                self.publish(frame_t=now, acknowledge=False)
+                self.assertEqual(gb.wframe.split()[4:], b'17 132.0 50.0 50.0 150.0 0.900'.split())
+                self.assertIsNone(APP.CTL['lv'])
+                self.assertEqual(APP.CTL['lead_px'], 0.)
 
     def test_same_id_selection_clears_sample_and_queued_suffix(self):
         last = self.publish_moving_lead()

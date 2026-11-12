@@ -55,6 +55,22 @@ def halted(ticket):
             gb.selection_reset = False
 
 
+def _bridge_aim_y(gb):
+    # v27 advertises LEAD only after parsing its launch options. Use that
+    # process's actual argv, not the web display or mutable server settings.
+    argv = getattr(getattr(gb, 'proc', None), 'args', None)
+    if not isinstance(argv, (list, tuple)) or len(argv) % 2 != 1:
+        return None
+    value = None
+    for flag, arg in zip(argv[1::2], argv[2::2]):
+        if flag == '--aim-y':
+            try:
+                value = float(arg)
+            except (TypeError, ValueError):
+                return None
+    return value if value is not None and 0.0 <= value <= 1.0 else None
+
+
 def publish(people, correction, frame_t, raw16, source, blocked=False, *, healthy_live=False):
     """Publish the same IDs as the drawn boxes, with existing coordinate rules."""
     gb = APP.GB
@@ -95,19 +111,25 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                 gb.observation_barrier = f'F {gb.frame} {captured_ns} 0 OBS 0\n'.encode()
         selected = 0 if gb.selection_reset else int(gb.state.get('id', 0))
         real = stab_people_real(gb.people, correction, float(APP.LIVE_W), float(APP.LIVE_H))
-        text = ''.join(' %d %.1f %.1f %.1f %.1f %.3f' %
-                       (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real)
+        rows = [' %d %.1f %.1f %.1f %.1f %.3f' %
+                (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real]
+        text = ''.join(rows)
         if marked:
             text += ' OBS %d' % bool(healthy)  # Before LEAD: without_lead must preserve this.
         epoch = getattr(gb, 'control_epoch', None)
         if (APP.CTL['lead'] and getattr(gb, 'lead_control_supported', False) and epoch is not None
                 and not getattr(gb, 'lead_pending', 0) and gb.state.get('auto')
                 and not gb.state.get('lost') and not gb.state.get('error')):
-            matches = [person for person in gb.people if person[0] == selected]
-            observed = matches[0] if len(matches) == 1 else None
+            matches = [row for person, row in zip(real, rows) if person[0] == selected]
+            observed = None
+            if len(matches) == 1:
+                # Use the clipped, rounded observation that the controller reads.
+                x, y, w, h = map(float, matches[0].split()[1:5])
+                observed = (selected, x, y, x + w, y + h)
             previous = APP.CTL['lv']
             sample, (dx, dy) = predictive_lead.estimate(
-                previous, selected, observed, frame_t, APP.CTL.get('lead_motion'), APP.CTL['lead_ms'])
+                previous, selected, observed, frame_t, APP.CTL.get('lead_motion'), APP.CTL['lead_ms'],
+                aim_y=_bridge_aim_y(gb), correction=correction)
             # A settings request can reset the sample while NumPy is running.
             if APP.CTL['lead'] and APP.CTL['lv'] is previous:
                 APP.CTL['lv'] = sample

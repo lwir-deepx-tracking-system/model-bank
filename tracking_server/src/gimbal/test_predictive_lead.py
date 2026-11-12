@@ -44,6 +44,42 @@ class LeadTests(unittest.TestCase):
         self.assertAlmostEqual(sample.vx, 0.)
         self.assertAlmostEqual(sample.vy, 0.)
 
+    def test_height_change_tracks_the_configured_anchor_not_the_box_center(self):
+        before = (7, 100., 60., 140., 160., .9)
+        taller = (7, 100., 56., 140., 206., .9)
+        for space in ("scene", "image"):
+            with self.subTest(space=space):
+                seed, _ = estimate(None, 7, before, 1., None, 150, aim_y=.08, space=space)
+                sample, offset = estimate(seed, 7, taller, 1.04, (1., 1.04, IDENTITY),
+                                          150, aim_y=.08, space=space)
+                self.assertEqual((seed.x, seed.y), (120., 68.))
+                self.assertEqual((sample.x, sample.y, sample.vy), (120., 68., 0.))
+                self.assertEqual(offset, NO_LEAD)
+
+    def test_aim_change_reseeds_without_using_the_previous_velocity(self):
+        row = (7, 100., 60., 140., 260., .9)
+        seed, _ = estimate(None, 7, person(100, 100), 1., None, 150, aim_y=.08)
+        moving, offset = estimate(seed, 7, row, 1.04, (1., 1.04, IDENTITY), 150, aim_y=.08)
+        self.assertNotEqual(offset, NO_LEAD)
+        changed, offset = estimate(moving, 7, row, 1.08, (1.04, 1.08, IDENTITY), 150, aim_y=.3)
+        self.assertEqual((changed.y, changed.vx, changed.vy, offset), (120., 0., 0., NO_LEAD))
+        _, offset = estimate(changed, 7, row, 1.12, (1.08, 1.12, IDENTITY), 150, aim_y=.3)
+        self.assertEqual(offset, NO_LEAD)
+
+    def test_invalid_anchor_observation_or_correction_drops_the_sample(self):
+        row = person(100., 100.)
+        seed, _ = estimate(None, 7, row, 1., None, 150, aim_y=.08)
+        for observed, timestamp, aim_y, correction in (
+            *((row, 1.04, value, None) for value in (None, float('nan'), float('inf'), -.01, 1.01)),
+            ((7, 90., 90., 110., 90., .9), 1.04, .08, None),
+            ((7, 90., 90., 110., float('inf'), .9), 1.04, .08, None),
+            (row, float('nan'), .08, None),
+            (row, 1.04, .08, (0., float('inf'))),
+        ):
+            with self.subTest(observed=observed, timestamp=timestamp, aim_y=aim_y, correction=correction):
+                self.assertEqual(estimate(seed, 7, observed, timestamp, (1., 1.04, IDENTITY),
+                                          150, aim_y=aim_y, correction=correction), (None, NO_LEAD))
+
     def test_invalid_motion_burst_gap_repeat_and_reversal_restart_filter(self):
         seed, _ = estimate(None, 7, person(100, 100), 1., None, 150)
         sample, lead = estimate(seed, 7, person(125, 100), 1.04, (1., 1.04, IDENTITY), 150)
