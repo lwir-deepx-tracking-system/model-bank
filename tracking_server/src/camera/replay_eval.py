@@ -24,19 +24,21 @@ import time
 from ..common.state import APP
 from ..track import gt_score, replay_metrics
 from ..track.stabilizer import stab_off, stab_people_real
-from ..track.team_tracker import TeamTracker
+from ..track.team_bytetrack import TeamByteTrack
 
 LABEL = 'tracks_edited_mot.txt'
 AUTO = 'tracks_mot.txt'
 REVIEW = 'review_state.json'
 REP_KEEP = 512           # 되풀이 프레임 표의 크기
 TAG_KEEP = 4096          # 도착 시각 -> PNG 번호 표의 크기 (화면에 나가지 않은 프레임의 줄은 오래되면 빠진다)
+PREFIX_CACHE_MAX = 8
 LOG_MAX = 200000         # 결과 파일에 남길 프레임 목록의 최대 길이
 
 _LK = threading.Lock()
 _RL = threading.Lock()
 _RT = collections.OrderedDict()   # 되풀이 프레임의 도착 시각 (재생이 끝난 뒤에 나오는 것도 알아보려고 재생과 따로 둔다)
 EV = None                # 지금 재생의 채점 (None = 재생 안 함)
+FINAL = collections.OrderedDict()   # last completed summary per recording and backend
 LAST = None              # 끝난 재생의 마지막 결과 (화면에 보여 줌)
 DRAW = [False]           # 화면 그림에 정답 상자 그리기 (모든 보는 사람이 같은 그림)
 
@@ -49,7 +51,8 @@ def load_labels(rec_dir, name):
         out['why'] = '정답 라벨(%s)이 없어 채점하지 않음%s' % (LABEL, ' (자동 라벨 %s 는 검수 전이라 쓰지 않음)' % AUTO if os.path.isfile(os.path.join(rec_dir, AUTO)) else '')
         return out
     try:
-        raw = open(lp, 'rb').read()
+        with open(lp, 'rb') as labels:
+            raw = labels.read()
     except OSError as e:
         out['why'] = '정답 라벨을 읽지 못함 (%s)' % type(e).__name__; return out
     out['label_file'] = name + '/' + LABEL; out['label_sha256'] = hashlib.sha256(raw).hexdigest()
@@ -71,7 +74,8 @@ def load_labels(rec_dir, name):
         out['frames'] = set(gt); out['review'] = '검수 상태 없음 (review_state.json 이 없어 라벨이 있는 모든 프레임을 채점)'
     else:
         try:
-            st = json.loads(open(rp, 'rb').read().decode('utf-8'))
+            with open(rp, encoding='utf-8') as review:
+                st = json.load(review)
             rv = {int(v) for v in st.get('reviewed', [])}; rm = {int(v) for v in st.get('removed', [])} | {int(v) for v in st.get('purged', [])}
         except (OSError, ValueError, TypeError, AttributeError) as e:
             out['why'] = '검수 상태(review_state.json)를 읽지 못해 채점하지 않음 (%s)' % type(e).__name__; return out
@@ -98,7 +102,12 @@ class Eval:
         self.gap = None
         self.metric_status = 'unavailable'
         self.metrics = dict(hota=None, ap50=None, map=None)
-        self.metric_frames = []
+        self.history = []  # one entry per accepted frame: (PNG, tracking boxes, metric input), or None if unreviewed
+        self.prefix_cache = collections.OrderedDict()
+        self.prefix_request = None
+        self.prefix_busy = None
+        self.prefix_worker = None
+        self.run_id = str(time.time_ns())
         self.metric_worker = None
         self.id_switches = []
         self.lock = threading.Lock(); self.tags = collections.OrderedDict(); self.rep = collections.OrderedDict()
@@ -108,7 +117,7 @@ class Eval:
         self.zero()
         self.backend = tgt.get('backend', 'python')
         self.backend_error = None
-        self.native_tracker = TeamTracker(tgt['tracker_library'], 'bytetrack') if self.backend == 'cpp_bytetrack' else None
+        self.native_tracker = TeamByteTrack(tgt['tracker_library']) if self.backend == 'cpp_bytetrack' else None
         self.native_tag = None
         self.native_rows = []
         self.native_frames = 0
@@ -139,7 +148,6 @@ class Eval:
                 self.native_rows = []
                 if self.phase == 'scoring':
                     self.phase = 'incomplete'
-                    self.metric_frames.clear()
                 self._sum = None
                 print('REPLAY C++ ByteTrack failed:', self.backend_error, flush=True)
                 return []
@@ -177,7 +185,6 @@ class Eval:
             self.seek_to = pos; self.seek_t = t; self.seeks += 1
             if self.phase == 'scoring':
                 self.phase = 'interrupted'
-                self.metric_frames.clear()
             self._sum = None
 
     def position(self):
@@ -200,12 +207,21 @@ class Eval:
             self.metrics = metrics
             self.metric_status = status
             self._sum = None
+            snapshot = dict(self._summary_locked(), on=False)
+        with _LK:
+            key = (self.name, self.backend)
+            previous = FINAL.get(key)
+            if previous is None or previous['run_id'] < self.run_id:
+                FINAL[key] = snapshot
+                FINAL.move_to_end(key)
+                if len(FINAL) > PREFIX_CACHE_MAX:
+                    FINAL.popitem(last=False)
 
     def _complete(self):
         self.phase = 'complete'
-        if not self.lab['ok'] or not self.metric_frames:
+        frames = [entry[2] for entry in self.history if entry is not None]
+        if not frames:
             return
-        frames, self.metric_frames = self.metric_frames, []
         self.metric_status = 'pending'
         self.metric_worker = threading.Thread(target=self._compute, args=(frames,), name='replay-metrics')
         self.metric_worker.start()
@@ -247,11 +263,11 @@ class Eval:
                 self.phase = 'incomplete'
                 self.gap = dict(expected_slot=self.pass_frames, got_slot=k, pass_no=pss, png=png)
                 print('REPLAY EVAL incomplete:', self.gap, flush=True)
-                self.metric_frames.clear()
                 self._sum = None
                 return gt
             if gt is None:
                 self.n['not_reviewed' if png in self.lab['gt'] else 'not_labelled'] += 1
+                self.history.append(None)
                 self.pass_frames += 1
                 if self.pass_frames == self.sequence_frames:
                     self._complete()
@@ -265,7 +281,7 @@ class Eval:
             fo = self.old.frame(gt, out, pss)
             self.new_h.frame(gt, out, pss); self.old_h.frame(gt, out, pss)
             self.id_switches.extend(dict(frame=k + 1, png=png, gt_id=g, from_id=old, to_id=new) for g, old, new in switches)
-            self.metric_frames.append(self._metric_input(gt, out, kept, detections, sc))
+            self.history.append((png, out, self._metric_input(gt, out, kept, detections, sc)))
             self.n['scored'] += 1; self.uniq.add(png); self.ver += 1; self._sum = None
             self.pass_frames += 1
             if self.pass_frames == self.sequence_frames:
@@ -277,7 +293,7 @@ class Eval:
     def _summary_locked(self, with_rules=True):
         if self._sum is not None and with_rules: return self._sum
         lab = self.lab
-        s = dict(name=self.name, fps=self.fps, loop=self.loop, started=self.started, since=self.since, ended=self.ended, end_reason=self.end_reason, file=self.file,
+        s = dict(run_id=self.run_id, name=self.name, fps=self.fps, loop=self.loop, started=self.started, since=self.since, ended=self.ended, end_reason=self.end_reason, file=self.file,
                  backend=self.backend, backend_error=self.backend_error, native_frames=self.native_frames,
                  scoring=lab['ok'], why=lab['why'] or None, review=lab['review'] or None, label_file=lab['label_file'], label_sha256=lab['label_sha256'],
                  label_bad_lines=lab['bad_lines'], labelled_frames=lab['labelled'], scorable_frames=len(lab['frames']), passes=self.passes, scored_unique=len(self.uniq), seeks=self.seeks,
@@ -294,6 +310,65 @@ class Eval:
     def summary(self):
         with self.lock: return self._summary_locked()
 
+    def _compute_prefix(self):
+        while True:
+            with self.lock:
+                pos = self.prefix_request
+                self.prefix_request = None
+                self.prefix_busy = pos
+                if pos is None:
+                    self.prefix_worker = None
+                    return
+                frames = self.history[:pos + 1]
+            try:
+                new, old = gt_score.Score(True), gt_score.Score(False)
+                metric_inputs = []
+                for entry in frames:
+                    if entry is None:
+                        continue
+                    png, rows, metric_input = entry
+                    gt = self.lab['gt'].get(png, ())
+                    new.frame(gt, rows, 1)
+                    old.frame(gt, rows, 1)
+                    metric_inputs.append(metric_input)
+                metrics = replay_metrics.compute(metric_inputs) if metric_inputs else dict(hota=None, ap50=None, map=None)
+                result = dict(new=dict(new.result(), **metrics), old=old.result(), metric_status='ready' if metric_inputs else 'unavailable')
+            except Exception as exc:
+                print('REPLAY PREFIX failed', type(exc).__name__, str(exc)[:120], flush=True)
+                result = dict(new=None, old=None, metric_status='error', why='이 위치의 점수를 계산하지 못했습니다.')
+            with self.lock:
+                self.prefix_cache[pos] = result
+                self.prefix_cache.move_to_end(pos)
+                if len(self.prefix_cache) > PREFIX_CACHE_MAX:
+                    self.prefix_cache.popitem(last=False)
+
+    def prefix(self, pos):
+        with self.lock:
+            state = dict(self._summary_locked(), prefix_pos=pos, prefix_pending=False, prefix_unavailable=False)
+            if not self.lab['ok'] or not 0 <= pos < len(self.history):
+                state.update(prefix_unavailable=True, scoring=False, new=None, old=None, metric_status='unavailable',
+                             pass_frames=0, counts={}, id_switches=[], per_frame_hungarian=None,
+                             why=self.lab['why'] or '이 위치까지 계산한 결과가 없습니다. 처음부터 끝까지 다시 계산해 주세요.')
+                return state
+            if self.phase == 'complete' and pos == self.sequence_frames - 1:
+                state['prefix_pending'] = self.metric_status == 'pending'
+                return state
+            scored = sum(entry is not None for entry in self.history[:pos + 1])
+            state.update(phase='prefix', pass_frames=pos + 1, counts=dict(scored=scored), scored_unique=scored,
+                         id_switches=[event for event in self.id_switches if event['frame'] <= pos + 1][-30:],
+                         per_frame_hungarian=None)
+            if pos in self.prefix_cache:
+                self.prefix_cache.move_to_end(pos)
+                state.update(self.prefix_cache[pos])
+                return state
+            if self.prefix_busy != pos:
+                self.prefix_request = pos
+            if self.prefix_worker is None:
+                self.prefix_worker = threading.Thread(target=self._compute_prefix, name='replay-prefix', daemon=True)
+                self.prefix_worker.start()
+            state.update(prefix_pending=True, new=None, old=None, metric_status='pending')
+            return state
+
     def close(self, reason):   # 재생이 끝났다: 끝난 때와 이유를 적는다 (라벨이 없어 채점하지 않은 녹화도). 파일은 write() 가 쓴다
         with self.lock:
             if self.ended is None:
@@ -302,7 +377,6 @@ class Eval:
                 self.ended = time.strftime('%Y-%m-%d %H:%M:%S'); self.end_reason = reason; self._sum = None
                 if self.phase == 'scoring':
                     self.phase = 'incomplete' if reason == 'ended' else 'interrupted'
-                    self.metric_frames.clear()
 
     def write(self, reason):
         self.close(reason)
@@ -401,10 +475,33 @@ def draw_boxes(t_in, gt, sc):   # 화면 그림에만 그릴 정답 상자: [(x1
 
 
 def state():
-    ev = EV
-    if ev is not None: return dict(ev.summary(), on=True)
-    if LAST is not None: return dict(LAST.summary(), on=False)
-    return dict(on=False, scoring=False, why=None, draw=DRAW[0])
+    ev = EV or LAST
+    if ev is None:
+        return dict(on=False, scoring=False, why=None, draw=DRAW[0], final_ready=False)
+    current = ev.summary()
+    with _LK:
+        has_saved_final = (ev.name, ev.backend) in FINAL
+    return dict(current, on=ev is EV, final_ready=has_saved_final or (current['scoring'] and current['phase'] == 'complete'))
+
+
+def results(q):
+    ev = EV or LAST
+    if q.get('view', [''])[0] == 'final':
+        result = ev.summary() if ev is not None else None
+        if result and result['phase'] == 'complete' and result['scoring']:
+            result = dict(result, on=ev is EV, final_previous=False)
+        elif ev is not None:
+            with _LK:
+                previous = FINAL.get((ev.name, ev.backend))
+            result = dict(previous, final_previous=True) if previous is not None else None
+        return dict(eval=result, eval_last=last())
+    if 'pos' in q:
+        try:
+            pos = int(q['pos'][0])
+        except (IndexError, TypeError, ValueError):
+            return dict(eval=None, eval_last=last())
+        return dict(eval=dict(ev.prefix(pos), on=ev is EV) if ev is not None else None, eval_last=last())
+    return dict(state(), eval_last=last())
 
 
 def is_repeat(t_in):   # live_publish: 이 프레임은 재생 프로그램이 되풀이로 보낸 것인가 (멈춘 동안, 끝날 때). 멈춘 그림 규칙이 로그를 쏟지 않게. 재생을 안 썼으면 바로 False

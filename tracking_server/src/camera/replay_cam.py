@@ -27,7 +27,7 @@
   - 끝까지 가면 처음부터 다시 돈다 (--loops 0 = 끝없이, 기본). SIGTERM / SIGINT 를 받으면 바로 깨끗이 끝난다 (종료 코드 0). 받는 쪽이 닫혀도 0 으로 끝난다.
 
 조종 (11-12, --control 또는 LWIR_REPLAY_CONTROL=1 일 때만 표준 입력을 읽는다. 서버가 줄 단위로 쓴다)
-  SEEK <번호>    0 부터 센 프레임 번호로 건너뜀. 새 "바퀴"(pass)를 시작하고, 첫 프레임을 보내기 전에 --gap (기본 1.2 초) 동안 아무것도 보내지 않는다
+  SEEK <번호> [PAUSE]    PAUSE가 붙으면 이동한 장에서 멈춘다. 0 부터 센 프레임 번호로 건너뜀. 새 "바퀴"(pass)를 시작하고, 첫 프레임을 보내기 전에 --gap (기본 1.2 초) 동안 아무것도 보내지 않는다
                  (서버의 "입력이 1 초 넘게 끊기면 추적을 새로 시작" 규칙이 그 틈으로 추적을 비운다). 그 프레임은 멈춘 중이어도 한 번은 새 프레임으로 나간다.
   PAUSE          지금 프레임에서 멈춤. 멈춘 동안 같은 프레임을 "되풀이" 표시를 달아 초당 --rep-fps (기본 5) 장 보낸다 (서버가 카메라가 죽었다고 보지 않게, 그림도 계속 갱신되게. 서버는 되풀이를 채점하지 않는다).
   PLAY           이어서 재생 (멈춘 프레임의 다음 프레임부터)
@@ -262,8 +262,10 @@ class Control:
                 k = f[0].upper()
                 try:
                     with self.lk:
-                        if k == 'SEEK' and len(f) == 2:
+                        if k == 'SEEK' and (len(f) == 2 or (len(f) == 3 and f[2].upper() == 'PAUSE')):
                             self.seek = int(f[1])
+                            if len(f) == 3:
+                                self.paused = True
                         elif k == 'SPEED' and len(f) == 2:
                             self.speed = float(f[1])
                         elif k in ('PAUSE', 'PLAY') and len(f) == 1:

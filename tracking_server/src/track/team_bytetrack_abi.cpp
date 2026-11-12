@@ -1,10 +1,7 @@
 // Tracker-only ABI for offline playback. No camera, control, or deployment interfaces.
 #include "tracking/bytetrack_tracker.hpp"
-#include "tracking/ocsort_tracker.hpp"
 #include "common/logger.hpp"
 
-#include <algorithm>
-#include <memory>
 #include <mutex>
 
 #ifdef _WIN32
@@ -16,30 +13,19 @@
 struct DetRow { float x1, y1, x2, y2, score; int cls; };
 struct TrackRow { float x1, y1, x2, y2, score; int id, cls, source_index; };
 
-EXPORT int lwirtk_abi() { return 1; }
+EXPORT int lwirtk_abi() { return 2; }
 
-EXPORT Tracker* lwirtk_create(int kind)
+EXPORT Tracker* lwirtk_create()
 {
     try {
         static std::once_flag logger_init;
         std::call_once(logger_init, [] { Logger::set_level(LogLevel::WARN); });
-        if (kind == 0) {
-            TrackingConfig cfg;
-            // Align score and Kalman settings with the Python ByteTrack comparison.
-            cfg.track_threshold = 0.25F;
-            cfg.new_track_threshold = 0.25F;
-            cfg.fuse_score = true;
-            cfg.kalman_format = "xywh";
-            return new ByteTrackTracker(cfg);
-        }
-        if (kind == 1) {
-            OCSortConfig cfg;
-            // Align the high-score cutoff while keeping the team's native lifecycle.
-            cfg.det_threshold = 0.25F;
-            cfg.use_byte = true;
-            return new OCSortTracker(cfg);
-        }
-        return nullptr;
+        TrackingConfig cfg;
+        cfg.track_threshold = 0.25F;
+        cfg.new_track_threshold = 0.25F;
+        cfg.fuse_score = true;
+        cfg.kalman_format = "xywh";
+        return new ByteTrackTracker(cfg);
     } catch (...) { return nullptr; }
 }
 

@@ -304,7 +304,7 @@ def make_lv_Handler():
                 elif self.path.startswith('/replay'):   # 11-12: recordings that can be played, and the replay state
                     from urllib.parse import urlsplit as us5_, parse_qs as pq5_
                     u5_ = us5_(self.path)
-                    b_ = json.dumps(dict(replay_eval.state(), eval_last=replay_eval.last()) if u5_.path == '/replay/eval' else replay_link.get_info(pq5_(u5_.query)), ensure_ascii=False).encode()   # 11-12: /replay/eval = the comparison alone (+ eval_last = the numbers of the last finished replay)
+                    b_ = json.dumps(replay_eval.results(pq5_(u5_.query)) if u5_.path == '/replay/eval' else replay_link.get_info(pq5_(u5_.query)), ensure_ascii=False).encode()   # 11-12: /replay/eval = the comparison alone (+ eval_last = the numbers of the last finished replay)
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/snap.jpg'):
                     APP.LIVE.snap_t = time.perf_counter()   # 11-12: pictures for every frame during the next 3 s

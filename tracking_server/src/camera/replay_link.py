@@ -188,7 +188,9 @@ class Ctl:
                     take_ = dict(self.pend); self.pend.clear()
                 lines_ = []
                 if 'speed' in take_: lines_.append('SPEED %g' % take_['speed'])
-                if 'seek' in take_: lines_.append('SEEK %d' % take_['seek'])
+                if 'seek' in take_:
+                    pos, pause = take_['seek']
+                    lines_.append('SEEK %d%s' % (pos, ' PAUSE' if pause else ''))
                 if 'paused' in take_: lines_.append('PAUSE' if take_['paused'] else 'PLAY')
                 try: self.p.stdin.write(('\n'.join(lines_) + '\n').encode('ascii')); self.p.stdin.flush(); self.sent += len(lines_)
                 except (BrokenPipeError, OSError, ValueError) as e_: self.err = type(e_).__name__; return
@@ -244,7 +246,7 @@ def get_info(q_):
     library = getattr(APP.args, 'replay_bytetrack_library', '')
     if library and os.path.isfile(library):
         backends.append(dict(id='cpp_bytetrack', label='C++ ByteTrack'))
-    return dict(backends=backends, available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
+    return dict(backends=backends, result_views=True, available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
 
 
 def start_request(q_):   # -> (http 코드, 글)
@@ -288,9 +290,12 @@ def seek_request(q_):   # POST /replay/seek?pos=<0 부터 센 프레임 번호>
     r_, ctl_, e_ = _ctl_target()
     if r_ is None: return e_
     if not 0 <= pos_ < (r_['frames'] or 0): return 400, 'pos 는 0 ~ %d (0 부터 센 프레임 번호)' % ((r_['frames'] or 1) - 1)
+    pause_ = q_.get('pause', ['0'])[0] == '1'
     ev_ = replay_eval.EV
     if ev_ is not None: ev_.want_seek(pos_, time.perf_counter())
-    ctl_.send('seek', pos_)
+    if pause_:
+        r_['paused'] = True
+    ctl_.send('seek', (pos_, pause_))
     return 200, '%d 번 프레임으로 건너뜀 (%.1f 초 뒤 새 영상, 추적은 새로 시작)' % (pos_, SEEK_GAP_S)
 
 
@@ -319,10 +324,11 @@ def speed_request(q_):   # POST /replay/speed?fps=<5~30>
 
 
 def restart_request():
-    r_ = getattr(APP.LIVE, 'replay', None)
-    if r_ is None:
-        return 409, '재생 중이 아님'
-    return start_request({'seq': [r_['name']], 'fps': [str(r_['fps'])], 'loop': ['1' if r_['loop'] else '0'], 'backend': [r_.get('backend', 'python')]})
+    target = getattr(APP.LIVE, 'replay', None) or replay_eval.last()
+    if target is None:
+        return 409, '다시 계산할 녹화가 없습니다'
+    return start_request({'seq': [target['name']], 'fps': [str(target['fps'])], 'loop': ['0'],
+                          'backend': [target.get('backend', 'python')]})
 
 
 def stop_request():

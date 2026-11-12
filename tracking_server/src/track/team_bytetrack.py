@@ -1,4 +1,4 @@
-"""Model Bank row format bridge for the team's offline C++ tracker presets."""
+"""Model Bank row format bridge for the team C++ ByteTrack."""
 import ctypes as C
 from pathlib import Path
 
@@ -14,24 +14,23 @@ class _Track(C.Structure):
         (name, C.c_int) for name in ("id", "cls", "source_index")]
 
 
-class TeamTracker:
+class TeamByteTrack:
     """Explicit offline selection; no implicit Python fallback or server lifecycle emulation."""
 
-    def __init__(self, library, kind):
-        code = {"bytetrack": 0, "ocsort": 1}[kind]
+    def __init__(self, library):
         lib = C.CDLL(str(Path(library).resolve(strict=True)))
         lib.lwirtk_abi.argtypes, lib.lwirtk_abi.restype = [], C.c_int
-        if lib.lwirtk_abi() != 1:
+        if lib.lwirtk_abi() != 2:
             raise RuntimeError("Unsupported team tracker ABI")
-        lib.lwirtk_create.argtypes, lib.lwirtk_create.restype = [C.c_int], C.c_void_p
+        lib.lwirtk_create.argtypes, lib.lwirtk_create.restype = [], C.c_void_p
         lib.lwirtk_close.argtypes, lib.lwirtk_close.restype = [C.c_void_p], None
         lib.lwirtk_reset.argtypes, lib.lwirtk_reset.restype = [C.c_void_p], C.c_int
         lib.lwirtk_step.argtypes = [C.c_void_p, C.POINTER(_Det), C.c_int, C.POINTER(_Track), C.c_int]
         lib.lwirtk_step.restype = C.c_int
         self._lib = lib
-        self._handle = lib.lwirtk_create(code)
+        self._handle = lib.lwirtk_create()
         if not self._handle:
-            raise RuntimeError(f"Could not create team {kind}")
+            raise RuntimeError("Could not create team ByteTrack")
 
     def __enter__(self):
         return self
