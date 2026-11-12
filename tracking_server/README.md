@@ -127,9 +127,12 @@
        team/src/gui/gui_sender.cpp team/src/gui/gui_receiver.cpp \
        team/src/gui/gui_command_handler.cpp team/src/common/logger.cpp \
        $(pkg-config --libs gstreamer-1.0 gstreamer-app-1.0) \
-       -lopencv_core -lopencv_imgproc -o gimbal_bridge_v27
+       -lopencv_core -lopencv_imgproc -o gimbal_bridge_v27.next &&
+     mv -f gimbal_bridge_v27.next gimbal_bridge_v27
    )
    ```
+
+   웹 화면·Python 코드와 브리지 실행 파일을 함께 갱신합니다. 새 연결 규약(`TRACK_CONTROL 1`, `HALTED`)이 없는 예전 바이너리에서는 따라가기 클릭을 막고 재빌드를 안내합니다. 빌드는 실행 중 파일을 직접 덮어쓰지 않으며, 새 실행 파일은 서버를 다시 시작할 때 적용됩니다.
 
 2. `tracking_server/scripts/live.env`에 아래 값을 설정합니다. 기존 파일에 같은 항목이 있으면 그 줄만 바꾸고, 파일이 없으면 만들어 이 줄을 넣습니다.
 

@@ -328,6 +328,13 @@ class NativeByteTrack:
 
 
 _BYTETRACK_LINKS = Path(__file__).resolve().parents[2] / 'models' / 'links'
+_LOADED_LIBRARY_SIGNATURES = {}
+_LIBRARY_LOCK = Lock()
+
+
+def _library_signature(path):
+    s = path.stat()
+    return s.st_dev, s.st_ino, s.st_mtime_ns, s.st_ctime_ns, s.st_size
 
 
 @lru_cache(maxsize=8)
@@ -340,11 +347,20 @@ def _bind_bytetrack_library(path, signature):
 
 def load_bytetrack_library(path):
     path = path.resolve(strict=True)
-    stat = path.stat()
-    lib = _bind_bytetrack_library(path, (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size))
-    if lib is None:
-        raise RuntimeError("C++ ByteTrack library has an incompatible ABI")
-    return lib
+    with _LIBRARY_LOCK:
+        signature = _library_signature(path)
+        previous = _LOADED_LIBRARY_SIGNATURES.get(path)
+        if previous is not None and previous != signature:
+            raise RuntimeError("C++ ByteTrack library changed; server restart required")
+        lib = _bind_bytetrack_library(path, signature)
+        # A dynamic loader may keep a failed/old library mapped. Do not reload
+        # a new file at that same path and report it as the new implementation.
+        _LOADED_LIBRARY_SIGNATURES[path] = signature
+        if lib is None:
+            raise RuntimeError("C++ ByteTrack library has an incompatible ABI")
+        if _library_signature(path) != signature:
+            raise RuntimeError("C++ ByteTrack library changed while loading; server restart required")
+        return lib
 
 
 def available_bytetrack_library(args):
@@ -363,7 +379,7 @@ def available_bytetrack_library(args):
 
 
 class CameraByteTrack:
-    """Independent preview tracker. Its IDs never enter the control or ReID pipeline."""
+    """Native live tracks shared by the picture and camera control, not KeepID."""
 
     def __init__(self, args):
         self.args = args
@@ -371,11 +387,18 @@ class CameraByteTrack:
         self.requested = self.active = False
         self.error = None
         self.tracker = self.last_t = None
+        self.generation = 0
 
     def state(self):
         available = available_bytetrack_library(self.args) is not None
+        restart = False
+        for path, signature in tuple(_LOADED_LIBRARY_SIGNATURES.items()):
+            try: restart |= _library_signature(path) != signature
+            except OSError: restart = True
         with self.lock:
-            return dict(available=available, requested=self.requested, active=self.active, error=self.error)
+            return dict(available=available, requested=self.requested, active=self.active,
+                        error=self.error, control_supported=True, generation=self.generation,
+                        restart_required=restart)
 
     def select(self, enabled):
         with self.lock:
@@ -386,7 +409,14 @@ class CameraByteTrack:
 
     def blocks_selection(self):
         with self.lock:
-            return self.requested or self.active
+            return self.requested != self.active
+
+    def control_source(self):
+        """None means a requested switch has not reached the frame boundary."""
+        with self.lock:
+            if self.requested != self.active:
+                return None
+            return ('cpp', self.generation) if self.active else ('python',)
 
     def _close(self):
         if self.tracker is not None:
@@ -412,6 +442,7 @@ class CameraByteTrack:
                     if library is None:
                         raise RuntimeError("C++ ByteTrack library is no longer available")
                     self.tracker = NativeByteTrack(library)
+                    self.generation += 1
                 tracked = self.tracker.update(rows)
                 self.last_t = frame_t
                 self.active = True

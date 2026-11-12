@@ -1,6 +1,11 @@
+from contextlib import ExitStack
+import os
+from pathlib import Path
+import sys
+from tempfile import TemporaryDirectory
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from . import native_backend as backend
 
@@ -27,6 +32,24 @@ class FakeTracker:
 class NativeBackendTests(unittest.TestCase):
     def setUp(self):
         backend._WARNED.clear()
+        self.contexts = ExitStack()
+        self.addCleanup(self.contexts.close)
+        self.contexts.enter_context(patch.dict(backend._IMPORTS, clear=True))
+
+    def extension_files(self, stem):
+        source_dir = Path(self.contexts.enter_context(TemporaryDirectory()))
+        native_dir = source_dir / "_native"
+        native_dir.mkdir()
+        source = source_dir / f"{stem}.cpp"
+        source.write_text("// test source", encoding="utf-8")
+        binary = native_dir / f"_native_{stem}.so"
+        binary.write_bytes(b"old build")
+        self.contexts.enter_context(patch.object(backend, "_SOURCE_DIR", source_dir))
+        self.contexts.enter_context(patch.object(backend, "_NATIVE_DIR", native_dir))
+        self.contexts.enter_context(patch.object(backend.importlib.machinery, "EXTENSION_SUFFIXES", [".so"]))
+        self.contexts.enter_context(patch.dict(sys.modules))
+        sys.modules.pop(f"_native_{stem}", None)
+        return source, binary
 
     @staticmethod
     def install(stem, modes=None, factory=None, api_version=1):
@@ -68,6 +91,8 @@ class NativeBackendTests(unittest.TestCase):
         self.assertEqual(label, "Python")
 
     def test_missing_extension_uses_python(self):
+        _, binary = self.extension_files("sort")
+        binary.unlink()
         obj = backend.create("sort", "sort", {}, FakeTracker)
         self.assertEqual(backend.backend_label("sort"), "Python")
         self.assertEqual(backend.backend_of(obj), "Python")
@@ -107,6 +132,84 @@ class NativeBackendTests(unittest.TestCase):
         with patch.object(backend, "_load_module", return_value=(module, None)):
             obj = backend.create("sort", "sort", {}, FakeTracker)
         self.assertEqual(backend.backend_of(obj), "Python")
+
+    def test_supported_kinds_select_matching_native_module(self):
+        modes = {"bytetrack": "bytetrack", "confirm3": "bytetrack", "rebind": "rebind",
+                 "botsort": "botsort", "ocsort": "ocsort", "sort": "sort"}
+        for kind, native_mode in modes.items():
+            with self.subTest(kind=kind):
+                stem = "bytetrack" if kind in {"confirm3", "rebind"} else kind
+                self.assertEqual(backend._module_stem(kind), stem)
+                factory = Mock(return_value=FakeTracker())
+                module = self.install(stem, {native_mode}, factory)
+                with patch.object(backend, "_load_module", return_value=(module, None)):
+                    tracker = backend.create(kind, kind, {"n_init": 3}, FakeTracker)
+                    self.assertEqual(backend.backend_label(kind), "C++")
+                factory.assert_called_once_with(native_mode, {"n_init": 3})
+                self.assertEqual(backend.backend_of(tracker), "C++")
+
+    def test_same_path_replacement_keeps_active_tracker_and_requires_restart(self):
+        _, binary = self.extension_files("bytetrack")
+        factory = Mock(side_effect=lambda mode, kwargs: FakeTracker())
+        old_module = self.install("bytetrack", {"bytetrack", "rebind"}, factory)
+        loader = Mock()
+        spec = types.SimpleNamespace(loader=loader)
+        with patch.object(backend.importlib.util, "spec_from_file_location", return_value=spec), \
+                patch.object(backend.importlib.util, "module_from_spec", return_value=old_module) as load:
+            active = backend.create("confirm3", "confirm3", {}, FakeTracker)
+            self.assertEqual(backend.backend_label("rebind"), "C++")
+            active.update(None)
+            original = binary.stat()
+            staged = binary.with_suffix(".tmp")
+            staged.write_bytes(b"new build")
+            os.utime(staged, ns=(original.st_atime_ns, original.st_mtime_ns))
+            staged.replace(binary)
+
+            status = backend.backend_status("rebind")
+            self.assertEqual(status["backend"], "Python")
+            self.assertTrue(status["restart_required"])
+            next_tracker = backend.create("rebind", "rebind", {}, FakeTracker)
+
+            self.assertEqual(backend.backend_of(next_tracker), "Python")
+            self.assertEqual(backend.backend_of(active), "C++")
+            self.assertEqual(active.frame_id, 1)
+            self.assertIs(sys.modules["_native_bytetrack"], old_module)
+            load.assert_called_once_with(spec)
+            loader.exec_module.assert_called_once_with(old_module)
+            factory.assert_called_once_with("bytetrack", {})
+
+    def test_replacement_during_first_import_is_never_selected(self):
+        _, binary = self.extension_files("sort")
+        module = self.install("sort")
+        loader = Mock()
+
+        def replace_during_load(_):
+            staged = binary.with_suffix(".tmp")
+            staged.write_bytes(b"replacement build")
+            staged.replace(binary)
+
+        loader.exec_module.side_effect = replace_during_load
+        spec = types.SimpleNamespace(loader=loader)
+        with patch.object(backend.importlib.util, "spec_from_file_location", return_value=spec), \
+                patch.object(backend.importlib.util, "module_from_spec", return_value=module) as load:
+            self.assertTrue(backend.backend_status("sort")["restart_required"])
+            self.assertEqual(backend.backend_of(backend.create("sort", "sort", {}, FakeTracker)), "Python")
+            load.assert_called_once_with(spec)
+
+    def test_new_binary_is_available_without_restart_before_first_import(self):
+        _, binary = self.extension_files("botsort")
+        binary.unlink()
+        self.assertFalse(backend.backend_status("botsort")["restart_required"])
+        self.assertEqual(backend.backend_label("botsort"), "Python")
+
+        binary.write_bytes(b"first build")
+        module = self.install("botsort")
+        spec = types.SimpleNamespace(loader=Mock())
+        with patch.object(backend.importlib.util, "spec_from_file_location", return_value=spec), \
+                patch.object(backend.importlib.util, "module_from_spec", return_value=module):
+            tracker = backend.create("botsort", "botsort", {}, FakeTracker)
+            self.assertEqual(backend.backend_of(tracker), "C++")
+            self.assertFalse(backend.backend_status("botsort")["restart_required"])
 
 
 if __name__ == "__main__":

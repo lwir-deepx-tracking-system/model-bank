@@ -25,8 +25,12 @@ function rshow(r){rlast=r;
   if(r.lead)t+=' · 예측 제어 켜짐'+(r.lead_ms!=null?' ('+r.lead_ms+' ms 앞을 겨눔'+(r.lead_px?', 지금 '+r.lead_px+' px':'')+')':'');
   if(r.pending)t+=' · 다음 프레임에 적용';
   const cam=r.camera_bytetrack;
-  if(cam&&cam.active)t='카메라 화면 · ByteTrack · C++ · 박스와 ID 표시 전용 · 원래 추적기: '+tname(trk);
-  else if(cam&&cam.error)t+=' · C++ 화면 추적 실패, 기존 엔진으로 돌아옴';
+  if(!rpLast?.state?.on){
+    if(!!cam?.requested!==!!cam?.active)t+=' · 카메라 추적기 전환 중 · 다음 프레임 대기';
+    else if(cam?.active){
+      t=cam.control_supported===true?'카메라 · ByteTrack C++ · 화면과 짐벌에서 같은 ID 사용':'카메라 · ByteTrack C++ · 박스와 ID 표시 전용 · 원래 추적기: '+tname(trk);
+    }else if(cam?.error)t+=' · C++ 추적 실패, 기존 엔진으로 돌아옴';
+  }
   RI.textContent=t;
   rdoc(trk);
   if(r.cam_reset&&r.cam_reset.text&&!sysbusy&&(r.cam_reset.busy||r.cam_reset.at+'|'+r.cam_reset.text!==sysat)){sysat=r.cam_reset.at+'|'+r.cam_reset.text;SM.textContent='카메라 초기화 '+r.cam_reset.at+' — '+r.cam_reset.text;}

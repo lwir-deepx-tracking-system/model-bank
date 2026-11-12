@@ -146,6 +146,12 @@ def gb_reader(p_):
         if not f_: continue
         if p_ is not APP.GB.proc: continue   # v26: lines of a bridge that was replaced
         if f_[0] == 'READY': APP.GB.state['ready'] = True; print('GIMBAL ready', APP.GB.dev, flush=True)
+        elif f_[0] == 'TRACK_CONTROL' and f_[1:] == ['1']:
+            APP.GB.track_control_supported = True
+        elif f_[0] == 'HALTED' and len(f_) == 2:
+            from .live_tracks import halted
+            try: halted(int(f_[1]))
+            except ValueError: pass
         elif f_[0] == 'R':
             APP.GB.state['answer'] = {'OK': '', 'INVALID': 'that person is not available', 'NOT_READY': 'the gimbal is not ready'}.get(f_[2], f_[2]); print('GIMBAL', line_.strip(), flush=True)
         elif f_[0] == 'S':
@@ -188,6 +194,8 @@ def gb_spawn():   # v26: start (or start again) the bridge. A new bridge sends S
                           '--x-sign', str(APP.args.gimbal_x_sign), '--y-sign', str(APP.args.gimbal_y_sign), '--model-count', str(len(APP.MODEL['catalog'])), *APP.shlex.split(APP.args.gimbal_opts), *APP.gui_opts_], stdin=APP.lv_sp.PIPE, stdout=APP.lv_sp.PIPE, stderr=APP.GB.log)
         APP.GB.dev = dev_; APP.GB.dev_sig = sig_; APP.GB.spawn_t = time.monotonic(); APP.GB.restarts += 1
         APP.GB.state.update(running=True, ready=False, auto=0, lost=0, moving=0, error=0, id=0); APP.GB.state['gui'].update(client=0)
+        APP.GB.track_control_supported = False
+        APP.GB.people_source = object()  # a replacement bridge needs a fresh STOP acknowledgement
         with APP.GB.wcond: APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.proc = p_; APP.GB.wopen = True; APP.GB.wcond.notify_all()
         APP.lv_th.Thread(target=APP.gb_writer, args=(p_,), daemon=True).start(); APP.lv_th.Thread(target=APP.gb_reader, args=(p_,), daemon=True).start()
         print('GIMBAL bridge started on %s (start number %d)' % (dev_, APP.GB.restarts + 1), flush=True)

@@ -99,7 +99,8 @@ if pkg-config --exists opencv4 gstreamer-1.0 gstreamer-app-1.0; then
   g++ -O2 -std=c++17 -pthread -I$G/team/include $(pkg-config --cflags opencv4 gstreamer-1.0 gstreamer-app-1.0) $G/gimbal_bridge_v25.cpp \
     $G/team/src/control/auto_tracking_controller.cpp $G/team/src/control/gimbal_command_executor.cpp $G/team/src/control/gimbal_device.cpp $G/team/src/control/pid_controller.cpp \
     $G/team/src/control/tracking_command_handler.cpp $G/team/src/gui/gui_protocol.cpp $G/team/src/gui/gui_sender.cpp $G/team/src/gui/gui_receiver.cpp $G/team/src/gui/gui_command_handler.cpp \
-    $G/team/src/common/logger.cpp $(pkg-config --libs gstreamer-1.0 gstreamer-app-1.0) -lopencv_core -lopencv_imgproc -o $G/gimbal_bridge_v25
+    $G/team/src/common/logger.cpp $(pkg-config --libs gstreamer-1.0 gstreamer-app-1.0) -lopencv_core -lopencv_imgproc -o $G/gimbal_bridge_v25.next
+  mv -f "$G/gimbal_bridge_v25.next" "$G/gimbal_bridge_v25"
   echo "gimbal_bridge_v25 built"
 else
   echo "OpenCV (opencv4) or GStreamer not found: gimbal_bridge_v25 not built, --gimbal and --gui-host will not start"

@@ -1,4 +1,4 @@
-// v26d: small speed / delay graphs on the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
+// v26d: small speed / delay graphs below the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
 const PF={rows:[],span:60,off:0,busy:false,on:true};
 try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if(s_.on===false)PF.on=false;if([60,300,900].includes(s_.span))PF.span=s_.span;}catch(_){}
 const PF_LATENCY_LIMIT=100;

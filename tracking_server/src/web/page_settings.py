@@ -82,12 +82,14 @@ def ctl_state():
 def rules_state():
     cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
     camera_backend = cam_tracker.state() if cam_tracker is not None else None
+    if camera_backend is not None:
+        camera_backend['control_supported'] = bool(APP.GB is not None and getattr(APP.GB, 'track_control_supported', False))
     with APP.RULES['lock']:
         return dict(camera_bytetrack=camera_backend,
                     server_restart=bool(getattr(APP.LIVE, 'restart_supported', False)),
                     restart_pending=bool(getattr(APP.LIVE, 'restart_pending', False)), warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
                     gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker),
-                    presets=[dict(key=k_, name=n_, backend=native_backend.backend_label(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
+                    presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
                     predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state())   # v32. v40: app / lead / gimbal / warm_on
 

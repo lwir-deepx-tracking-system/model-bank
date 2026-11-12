@@ -18,11 +18,14 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const replayCpp=!!(recording&&recording.backend==='cpp_bytetrack');
   const replayErr=replayCpp&&!!(rpLast.eval&&rpLast.eval.backend_error);
   const camCpp=!!(!recording&&camNative&&camNative.active);
-  const cpp=camCpp||replayCpp, btSelected=BT_KEYS.includes(trk)||cpp;
+  const camTransition=!recording&&(!!camNative?.requested!==!!camNative?.active);
+  const camCppControl=camCpp&&camNative.control_supported===true;
+  const cpp=camCpp||replayCpp, btSelected=BT_KEYS.includes(trk)||cpp||camTransition;
   const engine=replayCpp?(replayErr?'C++ 오류 (녹화)':'C++ (녹화)'):r.tracker_backend||'미보고';
-  const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(p.backend||'백엔드 미보고'),note:TN[p.key]?TN[p.key][1]:'',sel:!cpp&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
+  const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(p.backend||'백엔드 미보고'),note:p.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':TN[p.key]?TN[p.key][1]:'',sel:!cpp&&!camTransition&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
   if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack',sel:btSelected,u:Q('tracker='+encodeURIComponent(bt.key))});
-  T.push({lab:'Tracker',sub:camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine,n:tn});
+  const trackerSummary=camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
+  T.push({lab:'Tracker',sub:trackerSummary,n:tn});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
   const hot=!!(r.reid_hot&&r.reids&&r.reids.length),rk=hot?(r.reid_pending||r.reid):'',fol=!!(r.gimbal&&r.gimbal.auto);
@@ -34,8 +37,8 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const pl=r.predictors||[{key:'kalman',available:true}];
   T.push({lab:'위치 기억 · 신뢰도',sub:'놓친 사람 위치',f:['Kalman filter','GRU','Mamba'],fe:{GRU:'장치에 GRU 가중치 파일이 없습니다',Mamba:'장치에 Mamba 가중치 파일이 없습니다'},n:pl.map(p=>({g:PFOLD[p.key]||'',name:PN[p.key]?PN[p.key][0]:p.name,note:PN[p.key]?PN[p.key][1]:(p.note||''),sel:p.key===prd,lock:p.available===false?(p.note||'가중치 파일이 없습니다'):'',u:Q('predictor='+encodeURIComponent(p.key))}))});
   const RST='장치에 파일은 있습니다. 쓰려면 추적 프로그램을 이 모델로 다시 켜야 합니다',VWAIT='PC에서 학습 중입니다. 끝나면 장치에 올립니다';
-  if(hot)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[{name:'끔',sel:!rel,u:Q('relabel=0')}].concat(r.reids.map(a=>rn(a,rel,'relabel=1',true)),[NOVIT])});
-  else T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[
+  if(hot&&!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[{name:'끔',sel:!rel,u:Q('relabel=0')}].concat(r.reids.map(a=>rn(a,rel,'relabel=1',true)),[NOVIT])});
+  else if(!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[
     {name:'끔',sel:!rel,u:Q('relabel=0')},
     {g:'RepVGG',name:'RepVGG_distillation_(TMOT,CAMEL)_20261103',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',sel:rel,lock:!rel&&!r.relabel_available?'재식별 모델이 이 실행에 없습니다':'',u:Q('relabel=1')},
     {g:'RepVGG',name:'RepVGG_distillation_(실내)_20261110',note:'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
@@ -48,17 +51,18 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {name:'예측 제어',note:'시험 안 함 · 따라갈 때만 작동 · 재시작하면 꺼짐',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1)),ask:lead?'':'예측 제어는 아직 시험하지 않은 기능입니다.\n따라가는 동안 짐벌이 사람이 움직이는 쪽으로 조금 앞서 움직입니다.\n켤까요?'},
     {name:'예측 상자 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.predictors?'':OLDSRV,u:Q('pred_show='+(r.pred_show?0:1))}]});
   if(bt){
-    const switching=!!(recording&&recording.busy)||!!(rpLast&&rpLast.state&&rpLast.state.busy);
+    const switching=!!rpLast?.state?.busy;
+    const camCppNote=camNative?.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':camNative?.error?'실행 실패 · 기존 추적기로 복귀':camTransition?'다음 카메라 프레임 대기':camNative?.control_supported===true?'화면과 짐벌에서 같은 ID 사용':'카메라 화면에서 박스·ID 표시';
     const hasCpp=recording?rpLast.backends?.some(b=>b.id==='cpp_bytetrack'):camNative?.available;
     const pythonPreset=BT_KEYS.includes(trk)?trk:bt.key;
-    const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
+    const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':camTransition?'추적기 전환이 끝난 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
     T.push({lab:'ByteTrack 옵션',kidOf:3,kidKey:'bytetrack',show:btSelected,multi:1,n:[
-      {name:'Python',sel:!cpp&&!(camNative&&camNative.requested),lock:switching?'영상 전환 중입니다':'',
+      {name:'Python',sel:!cpp&&!camTransition,lock:switching?'영상 전환 중입니다':'',
        replayBackend:recording?'python':null,u:Q('tracker='+encodeURIComponent(pythonPreset))},
-      {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?'C++ 라이브러리를 사용할 수 없습니다':'',
-       note:recording?'녹화 재생':camNative?.error?'실행 실패 · Python으로 복귀':camNative?.requested&&!camCpp?'다음 카메라 프레임 대기':'카메라 화면에서 박스·ID 표시',
+      {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?(camNative?.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 라이브러리를 사용할 수 없습니다'):'',
+       note:recording?'녹화 재생':camCppNote,
        replayBackend:recording?'cpp_bytetrack':null,u:'/tracker/camera?backend=cpp_bytetrack'},
-      {name:'위치 재결합',note:trk==='rebind'?'켜짐':'꺼짐',sel:trk==='rebind',lock:optionLock,
+      {name:'위치 재결합',note:cpp?'C++에서 사용하지 않음':trk==='rebind'?'켜짐':'꺼짐',sel:!cpp&&!camTransition&&trk==='rebind',lock:optionLock,
        u:Q('tracker='+encodeURIComponent(trk==='rebind'?bt.key:'rebind'))}
     ]});
   }

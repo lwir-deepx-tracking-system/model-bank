@@ -8,21 +8,27 @@ Native extension ABI v1:
 
 No compilation occurs at runtime. A missing, incompatible, import-failing, or
 mode-incompatible extension falls back to the supplied zero-argument Python
-factory. Use ``backend_of(active_tracker)`` to label the actual instance.
+factory. Loaded extensions stay pinned to their file identity for the life of
+the process. Use ``backend_status(kind)`` for the next tracker and
+``backend_of(active_tracker)`` to label the actual instance.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import importlib.machinery
 import importlib.util
 import logging
 from pathlib import Path
 import sys
+from threading import RLock
+from types import ModuleType
 from typing import Callable
 
 
 _LOG = logging.getLogger(__name__)
-_NATIVE_DIR = Path(__file__).resolve().parent / "_native"
+_SOURCE_DIR = Path(__file__).resolve().parent
+_NATIVE_DIR = _SOURCE_DIR / "_native"
 _KIND_MODULE = {
     "bytetrack": "bytetrack",
     "confirm3": "bytetrack",
@@ -32,11 +38,24 @@ _KIND_MODULE = {
     "sort": "sort",
 }
 _WARNED: set[tuple[str, str]] = set()
+_IMPORT_LOCK = RLock()
+_RESTART_REQUIRED = "C++ extension changed after loading; server restart required"
 _REQUIRED_TRACKER_ATTRIBUTES = (
     "update", "tracked", "lost", "frame_id", "next_id", "n_init", "kf",
     "new_this_frame", "lost_this_frame", "rebinds_motion", "rebinds_app",
     "rebinds_fallback",
 )
+
+
+@dataclass(frozen=True)
+class _ExtensionImport:
+    path: Path
+    fingerprint: tuple[int, int, int, int, int]
+    module: ModuleType | None
+    error: str | None
+
+
+_IMPORTS: dict[str, _ExtensionImport] = {}
 
 
 def _module_stem(kind: str) -> str | None:
@@ -48,48 +67,81 @@ def _native_mode(kind: str, mode: str) -> str:
     return "bytetrack" if str(kind).strip().lower() == "confirm3" else mode
 
 
+def _fingerprint(stat_result) -> tuple[int, int, int, int, int]:
+    return (stat_result.st_dev, stat_result.st_ino, stat_result.st_size,
+            stat_result.st_mtime_ns, stat_result.st_ctime_ns)
+
+
 def _load_module(kind: str):
     stem = _module_stem(kind)
     if stem is None:
         return None, f"unknown tracker kind: {kind}"
     module_name = f"_native_{stem}"
-    source = Path(__file__).resolve().parent / f"{stem}.cpp"
-    if not source.is_file():
-        return None, f"{source.name} not present"
-    binary = next(
-        (candidate for suffix in importlib.machinery.EXTENSION_SUFFIXES
-         if (candidate := _NATIVE_DIR / f"{module_name}{suffix}").is_file()),
-        None,
-    )
-    if binary is None:
-        return None, f"matching extension not built"
+    source = _SOURCE_DIR / f"{stem}.cpp"
+    with _IMPORT_LOCK:
+        return _load_extension(module_name, source)
+
+
+def _load_extension(module_name: str, source: Path):
+    previous = _IMPORTS.get(module_name)
     try:
-        if binary.stat().st_mtime_ns < source.stat().st_mtime_ns:
-            return None, 'C++ source is newer than the extension; rebuild needed'
+        if not source.is_file():
+            return None, f"{source.name} not present"
+        binary = next(
+            (candidate for suffix in importlib.machinery.EXTENSION_SUFFIXES
+             if (candidate := _NATIVE_DIR / f"{module_name}{suffix}").is_file()),
+            None,
+        )
+        if binary is None:
+            return None, "matching extension not built"
         resolved_binary = binary.resolve()
         if resolved_binary.parent != _NATIVE_DIR.resolve():
-            return None, 'extension is outside _native'
-        cached = sys.modules.get(module_name)
-        if cached is not None and Path(getattr(cached, "__file__", "")).resolve() == resolved_binary:
-            module = cached
-        else:
-            spec = importlib.util.spec_from_file_location(module_name, resolved_binary)
-            if spec is None or spec.loader is None:
-                return None, f"{module_name} has no extension loader"
-            module = importlib.util.module_from_spec(spec)
-            sys.modules[module_name] = module
-            try:
-                spec.loader.exec_module(module)
-            except Exception:
-                sys.modules.pop(module_name, None)
-                raise
+            return None, "extension is outside _native"
+        binary_stat = resolved_binary.stat()
+        fingerprint = _fingerprint(binary_stat)
+        if previous and (previous.path != resolved_binary or previous.fingerprint != fingerprint):
+            return None, _RESTART_REQUIRED
+        if binary_stat.st_mtime_ns < source.stat().st_mtime_ns:
+            return None, "C++ source is newer than the extension; rebuild needed"
     except Exception as exc:
         return None, f"{module_name} unavailable ({type(exc).__name__})"
+    if previous:
+        return previous.module, previous.error
+    if module_name in sys.modules:
+        # A module loaded outside this loader has no known on-disk identity.
+        return None, _RESTART_REQUIRED
+    module = None
+    reason = None
+    try:
+        spec = importlib.util.spec_from_file_location(module_name, resolved_binary)
+        if spec is None or spec.loader is None:
+            return None, f"{module_name} has no extension loader"
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        if _fingerprint(resolved_binary.stat()) != fingerprint:
+            reason = _RESTART_REQUIRED
+        else:
+            reason = _validate_module(module, module_name)
+    except FileNotFoundError:
+        reason = _RESTART_REQUIRED
+    except Exception as exc:
+        reason = f"{module_name} unavailable ({type(exc).__name__})"
+    if reason is not None:
+        if module is not None and sys.modules.get(module_name) is module:
+            del sys.modules[module_name]
+        module = None
+    # CPython can keep an extension mapped even when initialization fails.
+    _IMPORTS[module_name] = _ExtensionImport(resolved_binary, fingerprint, module, reason)
+    return module, reason
+
+
+def _validate_module(module, module_name: str) -> str | None:
     if getattr(module, "API_VERSION", None) != 1:
-        return None, f"{module_name} API_VERSION is not 1"
+        return f"{module_name} API_VERSION is not 1"
     if not callable(getattr(module, "create_tracker", None)):
-        return None, f"{module_name} has no create_tracker(mode, kwargs)"
-    return module, None
+        return f"{module_name} has no create_tracker(mode, kwargs)"
+    return None
 
 
 def _supports(module, kind: str, mode: str) -> bool:
@@ -99,14 +151,21 @@ def _supports(module, kind: str, mode: str) -> bool:
     return isinstance(supported, (tuple, list, set, frozenset)) and mode in supported
 
 
-def backend_label(kind: str, mode: str | None = None) -> str:
-    """Return the available backend for a kind/mode: ``C++`` or ``Python``."""
-    module, _ = _load_module(kind)
+def backend_status(kind: str, mode: str | None = None) -> dict:
+    """Describe the available backend for the next tracker instance."""
+    module, reason = _load_module(kind)
     if module is not None:
         native_mode = _native_mode(kind, mode or _default_mode(kind))
         if not _supports(module, kind, native_mode):
             module = None
-    return "C++" if module is not None else "Python"
+            reason = f"mode {native_mode!r} not supported"
+    return dict(backend="C++" if module is not None else "Python",
+                restart_required=reason == _RESTART_REQUIRED, reason=reason)
+
+
+def backend_label(kind: str, mode: str | None = None) -> str:
+    """Return the available backend for a kind/mode: ``C++`` or ``Python``."""
+    return backend_status(kind, mode)["backend"]
 
 
 def _default_mode(kind: str) -> str:

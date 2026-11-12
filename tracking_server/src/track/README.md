@@ -42,10 +42,19 @@
 
 ## C++ 자동 선택 규약
 
-- 실시간 GUI는 `bytetrack.cpp`, `botsort.cpp`, `ocsort.cpp`, `sort.cpp`를 찾습니다. `confirm3`와 `rebind`는 `bytetrack.cpp`를 공유합니다.
-- 소스를 이 폴더에 넣고 저장소 최상위에서 `bash tracking_server/scripts/setup.sh`를 실행합니다. 추적기만 빌드할 때는 `bash tracking_server/scripts/build_native_trackers.sh`를 사용합니다. Orange Pi의 `g++`, 서버 Python 버전에 맞는 개발 헤더와 `python3-config`가 필요합니다. 재시작하면 빌드된 C++를 우선 사용합니다.
-- C++ 소스는 CPython 확장 모듈 `_native_<이름>`을 제공해야 합니다. 예를 들어 `bytetrack.cpp`의 초기화 함수는 `PyInit__native_bytetrack`입니다. `API_VERSION = 1`과 `create_tracker(mode, kwargs)`를 내보냅니다. 여러 모드는 `SUPPORTED_MODES`에 선언합니다. `confirm3`는 `mode='bytetrack'`과 `n_init` 설정을, `rebind`는 `mode='rebind'`를 받습니다. 나머지 모드는 파일 이름과 같습니다.
-- 팩토리는 `update(arr, det_feats, feat_fn)`와 위의 상태 필드를 갖는 객체를 반환합니다. 서버가 `n_init`, `kf`, `tracked`, `lost`를 변경하는 경로도 지원해야 합니다. 빌드나 로드가 실패하면 Python을 사용합니다. 메뉴는 사용 가능 구현을, 현재 값은 실제 실행 중인 구현을 보여 줍니다.
+실시간 서버의 공통 추적기 팩토리는 아래 CPython 확장을 찾습니다. 저장소 최상위에서 `bash tracking_server/scripts/build_native_trackers.sh`로 추적기만 빌드하거나 `bash tracking_server/scripts/setup.sh`로 장치용 구성 요소와 함께 빌드합니다. Orange Pi의 `g++`, 서버 Python에 맞는 개발 헤더와 `python3-config`가 필요합니다. 빌드 결과는 이 폴더의 `_native/`에 Python 버전과 운영체제에 맞는 확장자로 설치합니다.
+
+| C++ 소스 | CPython 모듈 | 서버가 넘기는 `mode` |
+|---|---|---|
+| `bytetrack.cpp`의 CPython 구현 | `_native_bytetrack` | `bytetrack` (`confirm3` 포함), `rebind` |
+| `botsort.cpp` | `_native_botsort` | `botsort` |
+| `ocsort.cpp` | `_native_ocsort` | `ocsort` |
+| `sort.cpp` | `_native_sort` | `sort` |
+
+- 모듈 초기화 함수 이름은 `PyInit__native_<이름>`입니다. `API_VERSION = 1`과 `create_tracker(mode, kwargs)`를 내보냅니다. `SUPPORTED_MODES`를 생략하면 파일 이름과 같은 모드만 선택합니다. `confirm3`는 `bytetrack` 모드와 기존 `n_init` 설정을 받으므로 위치 재결합을 지원하려면 `rebind`도 따로 선언합니다. 현재 저장소의 `bytetrack.cpp`는 아래 절의 팀 C ABI 구현입니다. 이 파일은 공통 빌드에서 건너뛰며 별도 빌드와 어댑터를 사용합니다.
+- 팩토리가 반환하는 추적기는 `update(arr, det_feats=None, feat_fn=None)`와 위에 적힌 상태 필드를 제공합니다. 서버가 `n_init`, `kf`, `tracked`, `lost`를 읽고 바꾸는 경로도 지원합니다. 각 출력 행은 `[x1, y1, x2, y2, id, conf, cls, det_idx]` 형식이며 최종 검출 배열의 행 번호, 좌표 기준, 출력 순서를 보존합니다. 빈 입력도 프레임 진행에 포함합니다.
+- 빌드 후 처음 불러오는 확장은 다음 추적기 생성 때 우선 사용합니다. 소스보다 오래됐거나 규약에 맞지 않는 확장은 Python으로 돌아갑니다. 한번 불러온 확장 파일을 같은 이름으로 교체하면 현재 객체는 계속 기존 코드로 동작합니다. 공통 로더는 파일의 경로와 디스크 식별값을 비교해 재시작이 필요하다고 표시하고, 새 객체에는 재시작 전까지 Python을 사용합니다. 빌드 스크립트처럼 임시 파일을 만든 뒤 완성본으로 교체합니다.
+- `backend_status()`는 다음 객체에 사용 가능한 구현과 재시작 필요 여부를 제공합니다. `backend_of()`는 현재 객체가 실제 쓰는 구현을 반환합니다. 둘은 실행 중 확장을 교체했을 때 서로 다를 수 있습니다.
 - 일부 계산만 옮길 때는 Python 추적기 내부에서 `ctypes`로 별도 공유 라이브러리를 호출할 수도 있습니다. [후처리 어댑터 예](../detect/native_post.py). 전체 추적기를 메뉴에 C++로 표시하려면 위 모듈 규약을 따릅니다.
 - 8090은 기존 [`live_publish()`](../web/page_handler.py)를 사용합니다. 팀 PC GUI도 캡처 프레임 번호와 영상 타임스탬프를 유지한 기존 전송 경로를 씁니다. [팀 PC 통신 형식](../gimbal/team/docs/pc_communication.md)
 
@@ -122,10 +131,18 @@ Windows에서는 출력 확장자를 `.dll`로 바꾸고 필요하면 `--cxx`로
 
 1. Orange Pi용 ARM64 **`bytetrack.so`**를 `tracking_server/models/links/`에 넣습니다. 완성된 파일을 임시 이름으로 복사한 뒤 그 자리에서 이름을 바꾸면 복사 도중 읽히지 않습니다. 구버전 설치의 `team_bytetrack.so`도 인식합니다.
 2. 이 버전 서버에서는 새로 넣은 라이브러리의 ABI를 확인해 메뉴를 자동으로 엽니다. `.cpp` 소스만 복사해서는 실행되지 않습니다. 라이브러리 경로를 따로 지정할 때만 `--replay-bytetrack-library` 또는 `LWIR_REPLAY_BYTETRACK_LIBRARY`를 씁니다.
-3. 카메라 화면에서는 **Tracker → ByteTrack → C++**을 고르면 박스와 ID에 적용됩니다. 화면 비교용이며 사람 클릭으로 따라가는 기능은 이 선택에서 꺼집니다. **Python**을 고르면 원래 추적 경로로 돌아갑니다.
+3. 카메라 화면에서는 **Tracker → ByteTrack → C++**을 고르면 화면, 클릭 선택, 짐벌에 같은 C++ 박스와 ID를 전달합니다. 함께 제공한 v25/v27 브리지를 다시 빌드하고 서버를 다시 시작해야 합니다. 브리지가 새 연결 규약을 보고하지 않으면 화면 비교만 허용하고 클릭을 막습니다. **Python**을 고르면 원래 추적 경로로 돌아갑니다.
 4. 녹화 재생 중에 **Tracker → ByteTrack → C++**을 고르고 확인하면 해당 녹화를 처음부터 다시 재생합니다. 시작 전에는 **녹화 재생 → 추적기**에서 엔진을 지정할 수 있습니다. 카메라와 녹화의 엔진 선택은 서로 독립입니다.
 5. 카메라에서 Python ByteTrack을 쓸 때 **위치 재결합**과 **새 ID 확인 시간(ms)**을 따로 바꿀 수 있습니다. `0 ms`는 추가 확인을 끕니다. 재생 중에는 평가 조건을 유지하기 위해 이 옵션을 잠급니다.
 
 C++ 경로는 최종 필터를 거친 검출 행을 받아 독립 추적 상태를 유지합니다. 녹화 전환이나 새 반복 회차에서 상태를 초기화하고, 일시정지 중에는 마지막 결과를 사용합니다. 카메라 비교에서는 기존 추적도 별도로 계속 실행되므로, 이 화면의 전체 지연으로 C++ 단독 교체의 속도를 평가할 수 없습니다. 비교용 ByteTrack의 점수 문턱과 XYWH Kalman은 Python 쪽에 맞췄지만, 확인·매칭 규칙과 출력은 완전히 같지 않습니다. 출력 수가 늘거나 줄어도 정답을 대조하지 않으면 정확도가 개선됐는지 판단할 수 없습니다.
+
+### 화면·클릭·짐벌이 공유하는 출력
+
+- [`live_publish()`](../web/page_handler.py)는 현재 선택한 엔진의 출력 행 하나를 화면과 [`live_tracks.py`](../gimbal/live_tracks.py)에 넘깁니다. 일반 추적기 팩토리를 통해 교체한 BoT-SORT·OC-SORT·SORT도 같은 경로를 사용합니다. 별도의 C++ 짐벌 로직을 추적기마다 작성하지 않습니다.
+- 웹 클릭은 [`03_gimbal_control.js`](../../page/js/03_gimbal_control.js) → `/gimbal/click` → `live_tracks.click()` 순서입니다. 클릭한 상자의 ID를 골라 해당 프레임의 `F`/`G` 명령을 먼저 전달하고 `A ID`를 보냅니다. 기존 좌표 변환, 속도와 제어법은 유지합니다.
+- 엔진·추적 상태가 바뀌면 기존 선택을 해제합니다. 브리지가 `H 번호`를 받아 정지를 처리한 뒤 `HALTED 번호`를 응답해야 새 선택을 허용합니다. 오래된 결과, 전환 중, 녹화 재생에서는 클릭으로 짐벌을 움직이지 않습니다. 서버가 처음 켜지거나 브리지가 재시작될 때도 같은 확인을 합니다.
+- C++ ByteTrack 전용 경로에 Python의 KeepID·추가 확인 시간·위치 재결합이 적용되는 것은 아닙니다. 화면은 해당 옵션을 구분합니다. 공유 출력 연결만으로 추적기의 ID 변경이나 오매칭이 없어지는 것은 아닙니다.
+- 이미 읽은 `bytetrack.so`를 교체하면 실행 중 객체는 예전 코드를 유지합니다. GUI의 **서버 재시작 필요** 안내를 따라 다시 시작해야 새 파일을 읽습니다. 새 공유 라이브러리는 임시 파일로 완전히 복사한 뒤 이름을 바꿔 교체합니다. 실행 중 파일을 직접 덮어쓰지 않습니다.
 
 재생 화면에서 **끝까지 다시 계산**을 누르면 선택한 추적기로 첫 장부터 한 번 재생합니다. 슬라이더로 이동하면 해당 장에서 멈추고 첫 장부터 그 장까지 채점한 누적값을 표시합니다. 아직 그 위치까지 채점하지 않았다면 다시 계산해 결과를 만들 수 있습니다. **최종 보기**는 재생 위치를 유지한 채 같은 녹화와 추적기의 완주 결과를 표시합니다.

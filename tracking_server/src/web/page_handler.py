@@ -7,8 +7,9 @@ import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
 from ..gimbal.gimbal_link import gb_sample
+from ..gimbal import live_tracks
 from ..track.position_memory import POSP
-from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
+from ..track.stabilizer import STAB, stab_rows_real
 from ..camera import replay_link
 from . import system_buttons
 from ..camera import replay_eval   # 11-12: ground-truth comparison while a labelled recording is replayed
@@ -82,7 +83,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     sc_ = APP.args.live_scale
     # 11-12: boxes are collected first and drawn after the gimbal line below has gone out (the page picture takes about 6 ms on the board)
     npers_ = 0; gb_people_ = []; gb_id_ = APP.GB.state['id'] if APP.GB is not None else 0; draw_ = []
-    for r_ in rows_:
+    for r_ in display_rows:
         x1_, y1_, x2_, y2_ = [float(v_) for v_ in r_[:4]]; tid_, cls_ = int(r_[4]), int(r_[6]); y1_ -= 16; y2_ -= 16
         if cls_ != 0: continue   # v16: people only
         col_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_); npers_ += 1
@@ -90,18 +91,16 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         if gb_id_ and tid_ != gb_id_: continue   # v39 (user 11-10): while one person is followed only that person's box is drawn
         draw_.append(((int(x1_ * sc_), int(y1_ * sc_)), (int(x2_ * sc_), int(y2_ * sc_)), col_, tid_))
     if APP.GB is not None:
-        APP.GB.people = gb_people_; APP.GB.frame += 1
-        if sC_ is not None: gb_people_ = stab_people_real(gb_people_, sC_, float(APP.LIVE_W), float(APP.LIVE_H))   # stab: the F / G lines below carry real camera coordinates
-        if frozen_: gb_people_ = []   # 11-12 frozen picture: the gimbal program sees its person as lost and stops (selection kept for the reacquire time)
-        if replay_link.frame_blocked(t_in): gb_people_ = []; APP.GB.people = []   # 11-12 recording replay: the gimbal never gets the replayed people (and a click cannot pick one)
-        if APP.CTL['lead']: gb_people_ = APP.lead_shift(gb_people_, APP.GB.people, gb_id_, t_in, float(APP.LIVE_W), float(APP.LIVE_H))   # v40 예측 제어: only the followed person's box in the F / G line moves ahead
-        elif APP.CTL['lv'] is not None or APP.CTL['lead_px']: APP.CTL['lv'] = None; APP.CTL['lead_px'] = 0.0
-        people_txt_ = ''.join(' %d %.1f %.1f %.1f %.1f %.3f' % (p_[0], p_[1], p_[2], p_[3] - p_[1], p_[4] - p_[2], p_[5]) for p_ in gb_people_)
-        if APP.GB.gui and raw16_ is not None and raw16_.shape == (APP.LIVE_H, APP.LIVE_W):   # v20: frame + picture to the gimbal executor and the PC GUI
-            APP.gb_send_frame('G %d %d %d %d %d' % (APP.GB.frame, int(t_in * 1e9), APP.LIVE_W, APP.LIVE_H, len(gb_people_)) + people_txt_, np.ascontiguousarray(raw16_, dtype=np.uint16).tobytes())
-        else: APP.gb_send('F %d %d %d' % (APP.GB.frame, int(t_in * 1e9), len(gb_people_)) + people_txt_)
+        source_ = ('replay',) if replay_link.frame_blocked(t_in) else live_tracks.current_source()
+        gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
+                                    frozen_ or replay_link.frame_blocked(t_in))
+        # The same live rows now drive the picture, click list and PTZ input.
+        draw_ = [((int(r[0] * sc_), int((r[1] - 16) * sc_)),
+                  (int(r[2] * sc_), int((r[3] - 16) * sc_)),
+                  (0, 220, 255) if gb_id_ and int(r[4]) == gb_id_ else track_color(int(r[4])), int(r[4]))
+                 for r in display_rows if int(r[6]) == 0 and (not gb_id_ or int(r[4]) == gb_id_)]
     gtd_, replay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections, tracker_detections)
-    overlay_rows = replay_rows if replay_rows is not None else camera_rows
+    overlay_rows = replay_rows
     if overlay_rows is not None:
         rows_ = overlay_rows
         draw_ = [((int(r[0] * sc_), int((r[1] - 16) * sc_)),
@@ -121,7 +120,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
             for x1_, y1_, x2_, y2_, k_ in replay_eval.draw_boxes(t_in, gtd_, sC_):
                 a_, b_ = (min(max(int(x1_ * sc_), 0), ww_ - 1), min(max(int(y1_ * sc_), 0), hh_ - 1)), (min(max(int(x2_ * sc_), 0), ww_ - 1), min(max(int(y2_ * sc_), 0), hh_ - 1))
                 if a_[0] < b_[0] and a_[1] < b_[1]: dash_rect(img_, a_, b_, (255, 255, 255) if k_ == 0 else (200, 90, 255), 1, 4)
-        if overlay_rows is None and POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
+        if overlay_rows is None and camera_rows is None and POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
             try:
                 seen_ = {int(r_[4]) for r_ in rows_}
                 for tid_, b_ in POSP['boxes']:
@@ -136,7 +135,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
             txt_ = 'ByteTrack C++ | TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | persons %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, npers_)
         if rp_ is not None: txt_ = '%s | TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | persons %d' % (replay_link.top_text(rp_), fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, npers_)   # 11-12: shorter line so the name fits
         APP.cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0) if rp_ is None else (0, 0, 150), -1); APP.cv2.putText(img_, txt_, (8, 19), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-        if APP.GB is not None:
+        if APP.GB is not None and rp_ is None:
             st_ = APP.GB.state
             gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else ('gimbal: lost %d, waiting' % st_['id'] if st_['lost'] else 'gimbal: following %d' % st_['id'] if st_['auto'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle, click a person')
             if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s: sent %d, failed %d' % ('connected' if gu_['client'] else 'no client', gu_['sent'], gu_['failed'])   # v20
@@ -276,7 +275,7 @@ def make_lv_Handler():
             try:
                 cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
                 if u_.path == '/gimbal/click' and cam_tracker is not None and cam_tracker.blocks_selection():
-                    self.send_error(409, 'Camera C++ ByteTrack preview is display-only'); return
+                    self.send_error(409, 'Tracker switch is pending'); return
                 if getattr(APP.LIVE, 'restart_pending', False) and (
                     u_.path == '/gimbal/click' or
                     (u_.path == '/gimbal/move' and (int(q_['x'][0]) or int(q_['y'][0])))
@@ -294,10 +293,11 @@ def make_lv_Handler():
                 elif u_.path == '/gimbal/move': APP.GB.mover = ip_ if (int(q_['x'][0]) or int(q_['y'][0])) else None
                 if u_.path == '/gimbal/click':
                     x_, y_ = float(q_['x'][0]) * APP.LIVE_W, float(q_['y'][0]) * APP.LIVE_H
-                    inside_ = [p_ for p_ in APP.GB.people if p_[1] <= x_ <= p_[3] and p_[2] <= y_ <= p_[4]]
-                    if inside_:
-                        APP.GB.state['answer'] = ''; APP.gb_send('A %d' % min(inside_, key=lambda p_: (p_[3] - p_[1]) * (p_[4] - p_[2]))[0])
-                    else: APP.GB.state['answer'] = ''; APP.gb_send('H')   # v40: a tap / click on an empty place = stop (the page has no stop key any more)
+                    ok_, answer_ = live_tracks.click(x_, y_)
+                    APP.GB.state['answer'] = answer_
+                    if not ok_:
+                        b_ = json.dumps(dict(APP.GB.state, refused=True), ensure_ascii=False).encode()
+                        self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
                 elif u_.path == '/gimbal/stop': APP.GB.state['answer'] = ''; APP.gb_send('H')
                 elif u_.path == '/gimbal/move': APP.GB.state['answer'] = ''; APP.gb_send('V %d %d' % (int(q_['x'][0]), int(q_['y'][0])))
                 elif u_.path != '/gimbal/ping': self.send_error(404); return

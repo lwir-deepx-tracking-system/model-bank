@@ -10,6 +10,17 @@ function rpBackendLabel(id,r){const b=(r&&Array.isArray(r.backends)?r.backends:[
 function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state;RPNOTE.textContent=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';}
 function rpTrackerState(r){const st=r?.state;return JSON.stringify([st?.on,st?.busy,st?.backend,!!r?.eval?.backend_error,r?.backends?.map(b=>b.id)]);}
 function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLast=r;
+  const playback=r.state;
+  const replayMode=!!(playback?.on||playback?.busy);
+  const enteredReplay=replayMode&&!document.body.classList.contains('replay-mode');
+  document.body.classList.toggle('replay-mode',replayMode);
+  if(enteredReplay)document.querySelector('.view').scrollTop=0;
+  if(replayMode){
+    $('camera-center').hidden=true;
+    const status=playback.busy?'영상 전환 중':playback.seeking?'재생 위치 이동 중':rpEnded(playback)?'녹화 완주 · 마지막 장면':playback.paused?'녹화 일시정지':'녹화 재생 중';
+    $('rpstatus').textContent=status;
+  }
+  v.alt=replayMode?'녹화 영상':'실시간 영상';
   if(redraw){syncConfirmTime();otdraw();}
   const backends=Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}];
   const backendKeys=backends.map(x=>x.id+'|'+x.label).join('\n');
@@ -39,7 +50,12 @@ function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLas
 const EVMSG=$('rpevmsg'),EVT=$('rpevt'),EVSW=$('rpevids'),EVDR=$('rpevdraw');let evDrawT=0;
 function evN(v,p){return v==null?'–':p?Number(v).toFixed(1)+'%':String(v);}
 function evPhase(e){return ({scoring:'첫 재생 채점 중',interrupted:'중단됨 · 완주 결과 아님',complete:'한 번 완주함',incomplete:'불완전한 재생'})[e.phase]||'';}
-function evMetricStatus(e){return ({pending:'계산 중',ready:'계산 완료',unavailable:'계산할 수 없음',error:'계산 오류'})[e.metric_status]||'미제공';}
+function evUnavailableMetric(e){
+  if(e.scoring&&e.phase==='scoring')return '완주 후 계산';
+  if(e.scoring&&(e.phase==='interrupted'||e.phase==='incomplete'))return '처음부터 완주 필요';
+  return '계산 불가';
+}
+function evMetricStatus(e){return e.metric_status==='unavailable'?evUnavailableMetric(e):({pending:'계산 중',ready:'계산 완료',error:'계산 오류'})[e.metric_status]||'미제공';}
 function evCoverage(e){const total=e.sequence_frames,done=e.pass_frames;if(total==null||done==null)return '';return ' · 영상 진행 '+done+' / '+total+'장';}
 function evSwitches(e){const events=Array.isArray(e.id_switches)?e.id_switches:[];
   return events.length?'<b>ID 변경</b> · '+events.map(x=>'장 '+esc(x.frame)+': '+esc(x.from_id)+' → '+esc(x.to_id)+(x.gt_id!=null?' (정답 '+esc(x.gt_id)+')':'')).join('　'):'';
@@ -50,7 +66,7 @@ function evShow(e,emptyText){if(!e){EVSW.innerHTML='';EVMSG.textContent=emptyTex
   if(!e.name){EVMSG.textContent='재생을 시작하면, 검수한 정답 라벨이 있는 녹화는 여기에 1초마다 점수가 나옵니다.';EVT.innerHTML='';return;}
   const c=e.counts||{},head=(e.on?'':'끝난 재생: ')+e.name+(e.backend?' · 추적기 '+rpBackendLabel(e.backend,rpLast):'');
   if(!e.scoring){EVMSG.textContent=head+' · '+(evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음')+evCoverage(e);EVT.innerHTML='';return;}
-  let m=head+' · 정답 '+(e.label_file||'')+'\n'+(e.review||'')+'\n'+(evPhase(e)||'재생 상태 미상')+' · 이 회차 점수에 반영된 장 '+c.scored+evCoverage(e)+(e.scorable_frames!=null?' · 검수된 비교 가능 장 '+e.scorable_frames:'')+' · 건너뛴 카메라 장 '+(c.cam_skipped||0)+' · 서버 누락 '+(c.server_skipped||0)+(c.untagged?' · PNG 번호 모름 '+c.untagged:'')+'\nHOTA / mAP 계산 '+evMetricStatus(e)+'\n'+e.since+' 부터'+(e.file?'\n결과 파일: '+e.file:'');
+  let m=head+' · 정답 '+(e.label_file||'')+'\n'+(e.review||'')+'\n'+(evPhase(e)||'재생 상태 미상')+' · 이 회차 점수에 반영된 장 '+c.scored+evCoverage(e)+(e.scorable_frames!=null?' · 검수된 비교 가능 장 '+e.scorable_frames:'')+' · 건너뛴 카메라 장 '+(c.cam_skipped||0)+' · 서버 누락 '+(c.server_skipped||0)+(c.untagged?' · PNG 번호 모름 '+c.untagged:'')+'\nHOTA / mAP · '+evMetricStatus(e)+'\n'+e.since+' 부터'+(e.file?'\n결과 파일: '+e.file:'');
   EVMSG.style.whiteSpace='pre-line';EVMSG.textContent=m;
   const n=e.new||{},o=e.old||{};
   const rows=[['metric','HOTA','hota',1],['metric','사람 mAP50:95 (검출 후보)','map',1],['metric','사람 AP50 (검출 후보)','ap50',1],['fp','잘못 그린 상자','false',0],['','정답 사람','gt',0],['','찾음','found',0],['','놓침','missed',0],['sub','작은 사람 (<32px)','missed_small',0],['sub','그 밖','missed_other',0],
@@ -89,16 +105,16 @@ function rpLoadFinal(){rpEvalSetMode('final');rpEvalFinal=null;rpEvalPending=tru
   load();}
 EVDR.addEventListener('change',()=>{evDrawT=Date.now();fetch('/replay/eval/draw?on='+(EVDR.checked?1:0),{method:'POST',headers:{'X-Gimbal':'1'}}).catch(()=>{});});
 // ---- under the picture: seek bar (one copy) and the comparison strip (same data as the block above: GET /replay -> eval)
-const RB=$('rpbar'),RSK=$('rpseek'),RPL=$('rpplay'),RM10=$('rpm10'),RP10=$('rpp10'),RSL=$('rpslider'),RTM=$('rptime'),RJN=$('rpjn'),RGO=$('rpgo'),RCM=$('rpcm'),RNUM=$('rpnum'),RNHD=$('rpnhd'),RMAIN=$('rpmain'),ROLD=$('rpold'),RFOOT=$('rpfoot'),RIDS=$('rpids');
+const RB=$('rpbar'),RSK=$('rpseek'),RPL=$('rpplay'),RRETURN=$('rpreturn'),RM10=$('rpm10'),RP10=$('rpp10'),RSL=$('rpslider'),RTM=$('rptime'),RJN=$('rpjn'),RGO=$('rpgo'),RCM=$('rpcm'),RNUM=$('rpnum'),RNHD=$('rpnhd'),RMAIN=$('rpmain'),ROLD=$('rpold'),RFOOT=$('rpfoot'),RIDS=$('rpids');
 let rpDrag=false,rpHold=null,rpHoldT=0,rpCmT=0;
 function fmtT(s){s=Math.max(0,Math.round(s));const m=Math.floor(s/60),x=s%60;return (m<10?'0':'')+m+':'+(x<10?'0':'')+x;}
 function nchip(l,v,cls){return '<span class="rpc'+(cls?' '+cls:'')+'">'+l+' <b>'+v+'</b></span>';}
-function metricText(e,v){if(v!=null)return evN(v,1);return e.metric_status==='pending'?'계산 중':e.metric_status==='error'?'오류':e.metric_status==='unavailable'?'계산 불가':'–';}
+function metricText(e,v){if(v!=null)return evN(v,1);return e.metric_status==='pending'?'계산 중':e.metric_status==='error'?'오류':e.metric_status==='unavailable'?evUnavailableMetric(e):'–';}
 function barShow(r,viewEval){
   const st=r.state||{},e=viewEval===undefined?(r.eval||{}):(viewEval||{});
   // seek bar: only while a recording plays (one copy; the slider follows state.pos, which comes from the frame header)
   const on=!!(st.on&&st.total>0);RSK.hidden=!on;
-  if(st.on||st.busy)$('camera-center').hidden=true;
+  RRETURN.disabled=!on||!!st.busy||rpBusy;
   if(on){const tot=st.total,fps=st.fps||25,pos=st.pos;
     RSL.max=Math.max(0,tot-1);
     if(rpHold!=null&&(Date.now()-rpHoldT>5000||(!st.seeking&&st.pos!=null&&Date.now()-rpHoldT>1500)))rpHold=null;
@@ -124,7 +140,7 @@ function barShow(r,viewEval){
       RIDS.innerHTML=evSwitches(e);
     }
   }
-  RB.hidden=RSK.hidden&&RNUM.hidden&&EVBAR.hidden;
+  RB.hidden=RNUM.hidden&&EVBAR.hidden;
 }
 function rpMsgBar(t){RCM.textContent=t||'';rpCmT=t?Date.now()+6000:0;}
 function rpctl(url){return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:'서버 응답 '+r.status}))).then(r=>{if(!r.ok)rpMsgBar(r.text||'실패');return r;}).catch(()=>{rpMsgBar('서버 연결 끊김');return {ok:false};}).finally(()=>setTimeout(()=>rptick(true),250));}
@@ -143,10 +159,14 @@ RM10.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on&&s
 RP10.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on&&st.pos!=null)rpSeek((rpHold!=null?rpHold:st.pos)+10*(st.fps||25));});
 function rpGo(){const st=rpLast&&rpLast.state;if(!st||!st.on)return;const n=Math.round(Number(RJN.value));if(!(n>=1&&n<=st.total)){rpMsgBar('장 번호는 1 ~ '+st.total);return;}RJN.value='';rpSeek(n-1);}
 RGO.addEventListener('click',rpGo);RJN.addEventListener('keydown',e=>{if(e.key==='Enter')rpGo();});
-if(window.ResizeObserver)new ResizeObserver(()=>document.documentElement.style.setProperty('--rbh',(RB.hidden?0:Math.ceil(RB.getBoundingClientRect().height)+6)+'px')).observe(RB);
+if(window.ResizeObserver)new ResizeObserver(()=>{
+  const height=RSK.hidden?0:Math.ceil(RSK.getBoundingClientRect().height)+6;
+  if(height)document.documentElement.style.setProperty('--replay-controls-height',height+'px');
+  else document.documentElement.style.removeProperty('--replay-controls-height');
+}).observe(RSK);
 let rpTick=0;
 function rptick(force){if(!force){const on=rpLast&&rpLast.state&&rpLast.state.on;if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;}fetch('/replay'+(force==='refresh'?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()).then(rpShow).catch(()=>{});}
-function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=true;
+function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=RRETURN.disabled=true;
   return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:r.status===403||r.status===404?'서버 재시작 후 쓸 수 있습니다':'서버 응답 '+r.status}))).then(r=>{RPMSG.textContent=r.text||(r.ok?'완료':'실패');return r;}).catch(()=>{RPMSG.textContent='서버 연결 끊김';return {ok:false,text:RPMSG.textContent};}).finally(()=>{rpBusy=false;setTimeout(()=>rptick(true),300);});}
 async function rpUseTracker(backend){
   const st=rpLast?.state;
@@ -182,7 +202,7 @@ RPST.addEventListener('click',()=>{const n=RPSEL.value;if(!n)return;const f=Math
   if(!confirm('녹화 "'+n+'" 를 카메라 대신 재생할까요?\n카메라 영상은 멈추고, 재생 중에는 짐벌이 움직이지 않습니다.'))return;
   rppost('/replay/start?seq='+encodeURIComponent(n)+'&fps='+f+'&loop='+(RPLOOP.checked?1:0)+'&backend='+encodeURIComponent(RPBACK.value||'python'));});
 function rpBackToCamera(){const st=rpLast&&rpLast.state;if(st&&st.on&&!st.busy&&!rpBusy)rppost('/replay/stop');}
-RPSP.addEventListener('click',rpBackToCamera);
+for(const button of [RPSP,RRETURN])button.addEventListener('click',rpBackToCamera);
 addEventListener('keydown',e=>{if(e.key==='Escape'&&!e.repeat&&!e.isComposing&&rpLast&&rpLast.state&&rpLast.state.on){e.preventDefault();rpBackToCamera();}});
 RPSEC.addEventListener('toggle',()=>{if(RPSEC.open)rptick('refresh');});
 setInterval(rptick,500);rptick(true);

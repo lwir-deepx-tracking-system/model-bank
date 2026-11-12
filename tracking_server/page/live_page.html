@@ -22,12 +22,15 @@ header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.2px;margin-rig
 /* layout */
 main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--pan-w);gap:0;width:100%}
 .view{min-height:0;display:flex;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto}
-.vbox{width:min(100%,calc((100dvh - var(--bar-h) - 24px - 26px - var(--rbh,0px)) * 4 / 3))}
+.vbox{width:min(100%,calc(max(160px,100dvh - var(--bar-h) - 24px - var(--video-below,58px)) * 4 / 3))}
+.replay-mode .vbox{--video-below:var(--replay-controls-height,110px)}
+.replay-mode .frame img{cursor:default}
+.replay-only,.replay-mode .camera-only{display:none}
+.replay-mode .replay-only{display:block}
 .frame{position:relative;width:100%;aspect-ratio:4/3;background:#000;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .frame img{display:block;width:100%;height:100%;object-fit:contain;cursor:crosshair;background:#000}
 .hint{font-size:12px;color:var(--mut);margin-top:6px}
-.panel{min-height:0;background:var(--pan);border-left:1px solid var(--line);display:flex;flex-direction:column}
-.secs{flex:1;min-height:0;overflow-y:auto}
+.panel{min-height:0;background:var(--pan);border-left:1px solid var(--line);overflow-y:auto}
 /* status block */
 .st{padding:14px 16px 12px;border-bottom:1px solid var(--line)}
 .sthead{display:flex;align-items:center;gap:10px}
@@ -103,13 +106,14 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .rpev{margin-top:2px;border-top:1px solid var(--line);padding-top:8px}.rpev table{margin:4px 0 8px}.rpev th{text-align:right}.rpev tr.fp td{color:var(--warn);font-weight:700;font-size:14px}.rpev td.sub{padding-left:14px;color:var(--mut)}.rpev .rtitle{margin:0}
 /* 11-12: seek bar and comparison numbers under the picture (chips that wrap, no table) */
 .rpbar[hidden],.rpseek[hidden],.rpnum[hidden]{display:none}
-.rpbar{margin-top:6px;display:flex;flex-direction:column;gap:6px;max-height:min(28vh,220px);overflow-y:auto;overscroll-behavior:contain}
-.rpseek{border:1px solid var(--line);border-radius:var(--r);background:var(--pan);padding:6px 8px;display:flex;flex-direction:column;gap:5px}
+.rpbar{margin-top:8px;display:flex;flex-direction:column;gap:8px}
+.rpseek{margin-top:6px;border:1px solid var(--line);border-radius:var(--r);background:var(--pan);padding:6px 8px;display:flex;flex-direction:column;gap:5px}
 .rpr{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .rpr .btn.small{padding:5px 9px}
 .rpr input[type=range]{flex:1 1 140px;min-width:0;width:auto;padding:0;height:26px;accent-color:var(--acc);background:transparent;border:0}
 .rpt{justify-content:space-between;font-size:12.5px;color:var(--ink2)}
 .rpj{display:flex;align-items:center;gap:6px;color:var(--mut);font-size:12px}.rpj input{width:84px}
+.rpreturn-row{color:var(--mut);font-size:12px}
 .rpcm{margin:0;min-height:0;font-size:12px}.rpcm:empty{display:none}
 .rpnum{border:1px solid var(--line);border-radius:var(--r);background:var(--pan);padding:6px 8px}
 .rphd{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2)}.rphd b{font-weight:700;color:var(--ink)}.rphd .btn.small{padding:3px 8px;font-size:12px}
@@ -122,11 +126,11 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .rpids{margin-top:5px;padding-top:5px;border-top:1px solid var(--line);font-size:12px;line-height:1.55;color:var(--ink2);overflow-wrap:anywhere}
 .rpids:empty{display:none}.rpids b{color:var(--ink);font-weight:700}
 @media(max-width:560px){.rpc{font-size:12px;padding:2px 6px}.rpc.fp b{font-size:17px}.rpj input{width:70px}}
-/* The chart lets pointer events through to the video. Only its two buttons take clicks. */
+/* Performance graphs below the video and replay controls. */
 :root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--pf-grid:#465363;--pf-label:#e1e8f2}
-.pfo{position:absolute;left:6px;top:calc(5% + 6px);z-index:2;width:min(264px,calc(100% - 12px));pointer-events:none;font-size:12px;line-height:1.3;color:var(--pf-label)}
+.pfo{margin-top:8px;width:min(320px,100%);font-size:12px;line-height:1.3;color:var(--pf-label)}
 .pfo .pfb{display:flex;gap:4px}
-.pfo .pfb button{pointer-events:auto;font:inherit;font-weight:600;height:24px;padding:0 8px;border:1px solid #667385;border-radius:var(--r);background:#161b23;color:var(--pf-label);cursor:pointer}
+.pfo .pfb button{font:inherit;font-weight:600;height:24px;padding:0 8px;border:1px solid #667385;border-radius:var(--r);background:#161b23;color:var(--pf-label);cursor:pointer}
 .pfo .pfb button.on{color:#fff;border-color:var(--c1)}
 .pfo .pfx{margin-top:4px;padding:6px 8px;background:rgba(15,20,28,.96);border:1px solid #536174;border-radius:var(--r)}
 .pfo.off .pfx,.pfo.off #pfspan{display:none}
@@ -139,7 +143,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .pfo .pfx #pfc1{margin-bottom:0}
 .pfo .pf-overflow{margin:3px 0 0;color:var(--c3);font-weight:600;overflow-wrap:anywhere}
 @media (max-width:900px){
-  .pfo#pfo{width:min(220px,calc(100% - 8px));font-size:11px;left:4px}
+  .pfo{width:min(260px,100%);font-size:11px}
   .pfo .pfb button{height:26px;padding:0 9px}
   .pfo .pfx{padding:5px 6px}
   .pfo .pfh{column-gap:6px}
@@ -155,12 +159,13 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
   header{gap:14px;padding:0 14px}
   header .desk{display:none}
   main{display:flex;flex-direction:column}
-  .view{padding:0}
+  .view{padding:0;overflow:visible}
   .vbox{width:100%}
   .frame{border-left:0;border-right:0;border-radius:0}
   .hint{display:none}
   .mobhint{display:block}
-  .panel{border-left:0}
+  .panel{border-left:0;overflow:visible}
+  .rpreturn-key{display:none}
   .st{padding:12px 14px 10px}
   .kv{grid-template-columns:repeat(6,auto);justify-content:space-between;gap:2px 6px;margin-left:22px}
   .padsec{padding:14px 14px 10px;display:flex;flex-direction:column;align-items:center}
@@ -170,9 +175,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
   .pad .stop{display:block;font-size:18px}
   .padhint{display:block}
   .stopbar{display:none}
-  .pfo{width:200px;font-size:10px;left:4px}.pfh{gap:0 5px}
-  .pfo button{height:26px;padding:0 9px}
-  .pfo canvas{height:32px}
+  .pfo,.rpbar,.rpseek{margin-inline:8px}
 }
 /* phone, landscape: picture left, keys right */
 @media (max-width:900px) and (orientation:landscape){
@@ -182,12 +185,15 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
   .frame{border:0;border-radius:0}
   .panel{display:contents}
   .st{grid-column:2;grid-row:1;border-bottom:0;width:300px;padding-bottom:4px}
+  .replay-mode main{display:flex}
+  .replay-mode .view{padding:0 8px;align-items:flex-start}
+  .replay-mode .vbox{width:min(100%,calc(max(160px,100dvh - var(--bar-h) - var(--video-below)) * 4 / 3))}
   .kv{grid-template-columns:auto 1fr;gap:2px 14px}
   .mobhint{display:none}
   .padsec{grid-column:2;grid-row:2;align-self:end;padding-top:4px;border-bottom:0}
   .pad{grid-template-columns:72px 100px 72px;grid-template-rows:60px 72px 60px}
   .padhint{display:none}
-  .secs{grid-column:1/3;grid-row:3;overflow:visible;border-top:1px solid var(--line)}
+  .secs{grid-column:1/3;grid-row:3;border-top:1px solid var(--line)}
   .stopbar{display:none}
 }
 /* v40: settings tree. One row per step, top row first; a row whose nodes are all locked is drawn with a dashed line. Orange = selected (same meaning as elsewhere on the page). */
@@ -317,7 +323,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
   <h1>LWIR 추적</h1>
   <span class="chip"><span class="dot" id="cdot"></span><span id="ctext">연결 확인 중</span></span>
   <span class="chip desk num"><span id="fps">–</span><span>&nbsp;fps</span></span>
-  <span class="chip desk"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
+  <span class="chip desk camera-only"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
   <span class="chip desk"><span class="dot" id="mcdot"></span><span id="mctext">모델</span></span>
   <span class="chip"><span class="dot" id="mdot"></span><span id="mtext">측정 대기</span></span>
 </header>
@@ -331,24 +337,14 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
           <div class="pose-axis pose-tilt" id="pose-tilt" role="img" hidden><i data-marker></i></div>
         </div>
         <div class="joy" id="joyb" aria-hidden="true"><i id="joyk"></i></div>
-        <!-- v26d: the numbers of the top line of the picture (TRACK fps, CAM fps, delay, compute), one point per second from GET /perf (read only). fps and ms have different scales, so they are two graphs, not one with two axes. -->
-        <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
-          <div class="pfx">
-            <div class="pfh"><span class="pfl" title="추적 결과가 나오는 초당 횟수 (TRACK)"><i style="background:var(--c1)"></i>추적 <b class="num" id="pfv0">–</b></span><span class="pfl" title="카메라가 보낸 초당 프레임 수 (CAM)"><i style="background:var(--c2)"></i>카메라 <b class="num" id="pfv1">–</b></span><span>fps</span></div>
-            <canvas id="pfc0"></canvas>
-            <div class="pfh"><span class="pfl" title="프레임이 서버에 도착한 뒤 추적 결과가 나올 때까지, 1초 평균 (delay)"><i style="background:var(--c1)"></i>지연 <b class="num" id="pfv2">–</b></span><span class="pfl" title="그 1초 중 가장 느린 프레임"><i style="background:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 프레임의 서버 안 계산 시간, 1초 평균 (compute)"><i style="background:var(--c2)"></i>처리 <b class="num" id="pfv4">–</b></span><span>ms</span></div>
-            <canvas id="pfc1"></canvas>
-          </div></div>
       </div>
-      <!-- 11-12: under the picture while a recording plays and after it ended. One copy of the seek bar (GET /replay: state.pos / total / paused / fps, POST /replay/seek, /replay/pause, /replay/play)
-           and the numbers of the comparison with the labels (GET /replay: eval, the same source as the block in the side panel), kept after the end until the next replay or "닫기". -->
+      <div class="rpseek" id="rpseek" hidden>
+        <div class="rpr"><button class="btn small" id="rpplay" disabled>일시정지</button><button class="btn small" id="rpm10" disabled title="10초 뒤로 되감기">−10초</button><input type="range" id="rpslider" min="0" max="0" step="1" value="0" disabled aria-label="재생 위치"><button class="btn small" id="rpp10" disabled title="10초 앞으로 건너뛰기">+10초</button></div>
+        <div class="rpr rpt"><span class="num" id="rptime">–</span><span class="rpj">장 번호 <input type="number" id="rpjn" min="1" step="1" inputmode="numeric" aria-label="이동할 장 번호 (1부터)" disabled><button class="btn small" id="rpgo" disabled>이동</button></span></div>
+        <div class="rpr rpreturn-row"><button class="btn small" id="rpreturn" disabled>카메라로 돌아가기</button><span class="rpreturn-key"><kbd>Esc</kbd></span></div>
+        <div class="minfo rpcm" id="rpcm"></div>
+      </div>
       <div class="rpbar" id="rpbar" hidden>
-        <div class="rpseek" id="rpseek" hidden>
-          <div class="rpr"><button class="btn small" id="rpplay" disabled>일시정지</button><button class="btn small" id="rpm10" disabled title="10초 앞으로 되감기">−10초</button><input type="range" id="rpslider" min="0" max="0" step="1" value="0" disabled aria-label="재생 위치"><button class="btn small" id="rpp10" disabled title="10초 앞으로 건너뛰기">+10초</button></div>
-          <div class="rpr rpt"><span class="num" id="rptime">–</span><span class="rpj">장 번호 <input type="number" id="rpjn" min="1" step="1" inputmode="numeric" aria-label="이동할 장 번호 (1부터)" disabled><button class="btn small" id="rpgo" disabled>이동</button></span></div>
-          <div class="minfo"><kbd>Esc</kbd> 카메라로 돌아가기</div>
-          <div class="minfo rpcm" id="rpcm"></div>
-        </div>
         <div class="rpevbar" id="rpevbar" hidden>
           <div class="row"><button class="btn" id="rpevallive" aria-pressed="true">현재 진행</button><button class="btn" id="rpevalslider" aria-pressed="false">슬라이더 결과</button><button class="btn" id="rpevalfinal" aria-pressed="false">최종 보기</button></div>
           <div class="row"><button class="btn" id="rpevalreset">끝까지 다시 계산</button></div>
@@ -362,18 +358,26 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
           <div class="rpids" id="rpids"></div>
         </div>
       </div>
-      <div class="hint">Python ByteTrack에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
+      <div class="hint camera-only">실시간 카메라에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
+      <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
+        <div class="pfx">
+          <div class="pfh"><span class="pfl" title="추적 결과가 나오는 초당 횟수 (TRACK)"><i style="background:var(--c1)"></i>추적 <b class="num" id="pfv0">–</b></span><span class="pfl" title="카메라가 보낸 초당 프레임 수 (CAM)"><i style="background:var(--c2)"></i>카메라 <b class="num" id="pfv1">–</b></span><span>fps</span></div>
+          <canvas id="pfc0"></canvas>
+          <div class="pfh"><span class="pfl" title="프레임이 서버에 도착한 뒤 추적 결과가 나올 때까지, 1초 평균 (delay)"><i style="background:var(--c1)"></i>지연 <b class="num" id="pfv2">–</b></span><span class="pfl" title="그 1초 중 가장 느린 프레임"><i style="background:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 프레임의 서버 안 계산 시간, 1초 평균 (compute)"><i style="background:var(--c2)"></i>처리 <b class="num" id="pfv4">–</b></span><span>ms</span></div>
+          <canvas id="pfc1"></canvas>
+        </div></div>
     </div>
   </section>
   <aside class="panel">
-    <section class="st">
+    <section class="st camera-only">
       <div class="sthead"><span class="sq" id="sq"></span><div class="status" id="s">대기 중</div></div>
       <div class="ans" id="ans"></div>
       <dl class="kv num"><dt>가로 오차</dt><dd id="ex">–</dd><dt>세로 오차</dt><dd id="ey">–</dd><dt>놓친 시간</dt><dd id="lt">–</dd></dl>
-      <div class="mobhint">Python ByteTrack에서 사람을 누르면 따라갑니다 · 빈 곳을 톡 누르면 멈춥니다 · 누른 채 끌면 그 방향으로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
+      <div class="mobhint">실시간 카메라에서 사람을 누르면 따라갑니다 · 빈 곳을 톡 누르면 멈춥니다 · 누른 채 끌면 그 방향으로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
     </section>
+    <section class="st replay-only"><div class="status" id="rpstatus" role="status">녹화 재생</div></section>
     <div class="secs">
-      <details class="sec" data-k="ctl">
+      <details class="sec camera-only" data-k="ctl">
         <summary>짐벌 제어기</summary>
         <div class="body ctl">
           <!-- The values come from GET /rules (key gimbal_cfg = the options the server gave the gimbal program at start), drawn by gshow in js/12_rules_filter_values.js. Read only: the bridge has no live gain command yet. -->
@@ -499,7 +503,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
           <details class="fold" style="margin-top:0"><summary>녹화 재생 설명</summary><dl class="legend">
             <dt>하는 일</dt><dd>라벨 사이트의 녹화 폴더 하나를 카메라 대신 서버에 넣습니다. 검출·추적은 카메라 영상과 똑같이 돌고, 영상 맨 위 줄에 REPLAY 와 녹화 이름이 나옵니다.</dd>
             <dt>짐벌</dt><dd>재생을 시작하면 짐벌을 멈추고, 재생 중에는 사람을 눌러도 손으로 움직여도 짐벌이 움직이지 않습니다. 재생을 멈춘 뒤에는 사람을 다시 누를 때까지 따라가지 않습니다.</dd>
-            <dt>카메라로</dt><dd>Esc 또는 재생 멈춤을 누르면 카메라 프로그램을 다시 시작합니다. 영상은 10~60초 뒤에 나옵니다. "반복"을 끄면 한 번 끝까지 튼 뒤 저절로 카메라로 돌아갑니다.</dd>
+            <dt>카메라로</dt><dd>영상 아래의 카메라로 돌아가기 또는 Esc를 누르세요. 반복을 끄면 한 번 끝까지 재생한 뒤 마지막 장면에서 멈춥니다.</dd>
             <dt>8비트 녹화</dt><dd>값이 0~255 를 늘린 것이라 온도 Filter(16비트 값)가 맞지 않아 사람이 걸러질 수 있습니다. 볼 때만 설정의 "온도 Filter"를 잠시 끄세요. 서버가 Filter 를 스스로 바꾸지는 않습니다.</dd>
             <dt>측정</dt><dd>재생 중에도 측정할 수 있습니다. 측정 결과(summary.json, README_KO.txt)에 재생한 녹화 이름이 적힙니다.</dd>
             <dt>길이</dt><dd>길이 제한이 없습니다. 장면은 필요할 때 하나씩 읽습니다.</dd>
@@ -524,7 +528,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
           <div id="mh"></div>
         </div>
       </details>
-      <details class="sec" data-k="keys">
+      <details class="sec camera-only" data-k="keys">
         <summary>단축키</summary>
         <div class="body keys">
           <kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> 짐벌 이동 (누르는 동안) &nbsp;·&nbsp; <kbd>Space</kbd> 정지<br>
@@ -608,7 +612,15 @@ v.addEventListener('error',()=>setTimeout(openStream,2000));
 // v25: the bridge answers in English; shown in Korean
 const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
 let lostSince=null,autoNow=false,hzPrev=null;
-function cameraCppPreview(){const camera=rlast?.camera_bytetrack;return !!(camera?.active||camera?.requested);}
+function cameraClickBlock(){
+  const replay=rpLast?.state;
+  if(rpBusy||replay?.busy)return '영상 전환 중입니다';
+  if(replay?.on)return '카메라 영상에서 사람을 선택할 수 있습니다';
+  const camera=rlast?.camera_bytetrack;
+  if(!!camera?.requested!==!!camera?.active)return '카메라 추적기 전환 중 · 다음 프레임 대기';
+  if(camera?.control_supported===false)return '짐벌 연결 프로그램을 새로 빌드하고 서버를 다시 시작하세요';
+  return '';
+}
 function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;netChip();
   renderGimbalPose(t.pose, t.position_estimate);
   let txt,cls='good',sq='';
@@ -618,15 +630,19 @@ function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;n
   else if(t.auto){txt=t.id+'번을 따라가는 중';sq='auto';}
   else if(t.moving){txt='수동으로 움직이는 중';sq='man';}
   else if(t.ready===false){txt='짐벌 준비 중';cls='';}
-  else{txt=cameraCppPreview()?'대기 중 · 짐벌로 따라가려면 ByteTrack에서 Python을 선택하세요':'대기 중 · 영상에서 사람을 클릭하세요';cls='';}
+  else{txt='대기 중 · '+(cameraClickBlock()||'영상에서 사람을 클릭하세요');cls='';}
   S.textContent=txt;$('sq').className='sq '+sq;$('ans').textContent=t.answer?(ANS[t.answer]||t.answer):'';
   chip('gdot','gtext',cls,t.running?(t.auto?'추종 '+t.id+'번':t.moving?'수동 이동':'짐벌 대기'):'짐벌 꺼짐');
   if(t.lost){if(lostSince==null)lostSince=Date.now();$('lt').textContent=((Date.now()-lostSince)/1000).toFixed(1)+' 초';}
   else{lostSince=null;$('lt').textContent='–';}
-  autoNow=!!(t.running&&t.auto&&!t.lost);$('camera-center').hidden=!autoNow;if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
+  autoNow=!!(t.running&&t.auto&&!t.lost);$('camera-center').hidden=!autoNow||document.body.classList.contains('replay-mode');if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
 }
 function post(u,ka){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',keepalive:!!ka}).then(r=>r.json()).then(show).catch(()=>{S.textContent='명령이 전달되지 않았습니다';netChip();});}
-v.addEventListener('click',e=>{if(cameraCppPreview()){ $('ans').textContent='짐벌로 따라가려면 ByteTrack에서 Python을 선택하세요';return;}if(Date.now()<joyClickBlock)return;const r=v.getBoundingClientRect();   // v40: the click that ends a joystick drag picks nobody
+v.addEventListener('click',e=>{
+  if(Date.now()<joyClickBlock)return;   // v40: the click that ends a joystick drag picks nobody
+  const blocked=cameraClickBlock();
+  if(blocked){$('ans').textContent=blocked;return;}
+  const r=v.getBoundingClientRect();
   // the image keeps 4:3 inside its box (object-fit: contain): map the click into the picture itself
   const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
   const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;
@@ -815,11 +831,14 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const replayCpp=!!(recording&&recording.backend==='cpp_bytetrack');
   const replayErr=replayCpp&&!!(rpLast.eval&&rpLast.eval.backend_error);
   const camCpp=!!(!recording&&camNative&&camNative.active);
-  const cpp=camCpp||replayCpp, btSelected=BT_KEYS.includes(trk)||cpp;
+  const camTransition=!recording&&(!!camNative?.requested!==!!camNative?.active);
+  const camCppControl=camCpp&&camNative.control_supported===true;
+  const cpp=camCpp||replayCpp, btSelected=BT_KEYS.includes(trk)||cpp||camTransition;
   const engine=replayCpp?(replayErr?'C++ 오류 (녹화)':'C++ (녹화)'):r.tracker_backend||'미보고';
-  const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(p.backend||'백엔드 미보고'),note:TN[p.key]?TN[p.key][1]:'',sel:!cpp&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
+  const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(p.backend||'백엔드 미보고'),note:p.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':TN[p.key]?TN[p.key][1]:'',sel:!cpp&&!camTransition&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
   if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack',sel:btSelected,u:Q('tracker='+encodeURIComponent(bt.key))});
-  T.push({lab:'Tracker',sub:camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine,n:tn});
+  const trackerSummary=camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
+  T.push({lab:'Tracker',sub:trackerSummary,n:tn});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
   const hot=!!(r.reid_hot&&r.reids&&r.reids.length),rk=hot?(r.reid_pending||r.reid):'',fol=!!(r.gimbal&&r.gimbal.auto);
@@ -831,8 +850,8 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const pl=r.predictors||[{key:'kalman',available:true}];
   T.push({lab:'위치 기억 · 신뢰도',sub:'놓친 사람 위치',f:['Kalman filter','GRU','Mamba'],fe:{GRU:'장치에 GRU 가중치 파일이 없습니다',Mamba:'장치에 Mamba 가중치 파일이 없습니다'},n:pl.map(p=>({g:PFOLD[p.key]||'',name:PN[p.key]?PN[p.key][0]:p.name,note:PN[p.key]?PN[p.key][1]:(p.note||''),sel:p.key===prd,lock:p.available===false?(p.note||'가중치 파일이 없습니다'):'',u:Q('predictor='+encodeURIComponent(p.key))}))});
   const RST='장치에 파일은 있습니다. 쓰려면 추적 프로그램을 이 모델로 다시 켜야 합니다',VWAIT='PC에서 학습 중입니다. 끝나면 장치에 올립니다';
-  if(hot)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[{name:'끔',sel:!rel,u:Q('relabel=0')}].concat(r.reids.map(a=>rn(a,rel,'relabel=1',true)),[NOVIT])});
-  else T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[
+  if(hot&&!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[{name:'끔',sel:!rel,u:Q('relabel=0')}].concat(r.reids.map(a=>rn(a,rel,'relabel=1',true)),[NOVIT])});
+  else if(!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[
     {name:'끔',sel:!rel,u:Q('relabel=0')},
     {g:'RepVGG',name:'RepVGG_distillation_(TMOT,CAMEL)_20261103',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',sel:rel,lock:!rel&&!r.relabel_available?'재식별 모델이 이 실행에 없습니다':'',u:Q('relabel=1')},
     {g:'RepVGG',name:'RepVGG_distillation_(실내)_20261110',note:'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
@@ -845,17 +864,18 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {name:'예측 제어',note:'시험 안 함 · 따라갈 때만 작동 · 재시작하면 꺼짐',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1)),ask:lead?'':'예측 제어는 아직 시험하지 않은 기능입니다.\n따라가는 동안 짐벌이 사람이 움직이는 쪽으로 조금 앞서 움직입니다.\n켤까요?'},
     {name:'예측 상자 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.predictors?'':OLDSRV,u:Q('pred_show='+(r.pred_show?0:1))}]});
   if(bt){
-    const switching=!!(recording&&recording.busy)||!!(rpLast&&rpLast.state&&rpLast.state.busy);
+    const switching=!!rpLast?.state?.busy;
+    const camCppNote=camNative?.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':camNative?.error?'실행 실패 · 기존 추적기로 복귀':camTransition?'다음 카메라 프레임 대기':camNative?.control_supported===true?'화면과 짐벌에서 같은 ID 사용':'카메라 화면에서 박스·ID 표시';
     const hasCpp=recording?rpLast.backends?.some(b=>b.id==='cpp_bytetrack'):camNative?.available;
     const pythonPreset=BT_KEYS.includes(trk)?trk:bt.key;
-    const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
+    const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':camTransition?'추적기 전환이 끝난 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
     T.push({lab:'ByteTrack 옵션',kidOf:3,kidKey:'bytetrack',show:btSelected,multi:1,n:[
-      {name:'Python',sel:!cpp&&!(camNative&&camNative.requested),lock:switching?'영상 전환 중입니다':'',
+      {name:'Python',sel:!cpp&&!camTransition,lock:switching?'영상 전환 중입니다':'',
        replayBackend:recording?'python':null,u:Q('tracker='+encodeURIComponent(pythonPreset))},
-      {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?'C++ 라이브러리를 사용할 수 없습니다':'',
-       note:recording?'녹화 재생':camNative?.error?'실행 실패 · Python으로 복귀':camNative?.requested&&!camCpp?'다음 카메라 프레임 대기':'카메라 화면에서 박스·ID 표시',
+      {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?(camNative?.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 라이브러리를 사용할 수 없습니다'):'',
+       note:recording?'녹화 재생':camCppNote,
        replayBackend:recording?'cpp_bytetrack':null,u:'/tracker/camera?backend=cpp_bytetrack'},
-      {name:'위치 재결합',note:trk==='rebind'?'켜짐':'꺼짐',sel:trk==='rebind',lock:optionLock,
+      {name:'위치 재결합',note:cpp?'C++에서 사용하지 않음':trk==='rebind'?'켜짐':'꺼짐',sel:!cpp&&!camTransition&&trk==='rebind',lock:optionLock,
        u:Q('tracker='+encodeURIComponent(trk==='rebind'?bt.key:'rebind'))}
     ]});
   }
@@ -945,8 +965,12 @@ function rshow(r){rlast=r;
   if(r.lead)t+=' · 예측 제어 켜짐'+(r.lead_ms!=null?' ('+r.lead_ms+' ms 앞을 겨눔'+(r.lead_px?', 지금 '+r.lead_px+' px':'')+')':'');
   if(r.pending)t+=' · 다음 프레임에 적용';
   const cam=r.camera_bytetrack;
-  if(cam&&cam.active)t='카메라 화면 · ByteTrack · C++ · 박스와 ID 표시 전용 · 원래 추적기: '+tname(trk);
-  else if(cam&&cam.error)t+=' · C++ 화면 추적 실패, 기존 엔진으로 돌아옴';
+  if(!rpLast?.state?.on){
+    if(!!cam?.requested!==!!cam?.active)t+=' · 카메라 추적기 전환 중 · 다음 프레임 대기';
+    else if(cam?.active){
+      t=cam.control_supported===true?'카메라 · ByteTrack C++ · 화면과 짐벌에서 같은 ID 사용':'카메라 · ByteTrack C++ · 박스와 ID 표시 전용 · 원래 추적기: '+tname(trk);
+    }else if(cam?.error)t+=' · C++ 추적 실패, 기존 엔진으로 돌아옴';
+  }
   RI.textContent=t;
   rdoc(trk);
   if(r.cam_reset&&r.cam_reset.text&&!sysbusy&&(r.cam_reset.busy||r.cam_reset.at+'|'+r.cam_reset.text!==sysat)){sysat=r.cam_reset.at+'|'+r.cam_reset.text;SM.textContent='카메라 초기화 '+r.cam_reset.at+' — '+r.cam_reset.text;}
@@ -1071,7 +1095,7 @@ SR.addEventListener('click',()=>{
 });
 setInterval(rtick,1000);rtick();   // v40: 1 s, so a choice made on another page shows up here within a second
 setInterval(tick,1000);tick();
-// v26d: small speed / delay graphs on the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
+// v26d: small speed / delay graphs below the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
 const PF={rows:[],span:60,off:0,busy:false,on:true};
 try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if(s_.on===false)PF.on=false;if([60,300,900].includes(s_.span))PF.span=s_.span;}catch(_){}
 const PF_LATENCY_LIMIT=100;
@@ -1159,6 +1183,17 @@ function rpBackendLabel(id,r){const b=(r&&Array.isArray(r.backends)?r.backends:[
 function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state;RPNOTE.textContent=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';}
 function rpTrackerState(r){const st=r?.state;return JSON.stringify([st?.on,st?.busy,st?.backend,!!r?.eval?.backend_error,r?.backends?.map(b=>b.id)]);}
 function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLast=r;
+  const playback=r.state;
+  const replayMode=!!(playback?.on||playback?.busy);
+  const enteredReplay=replayMode&&!document.body.classList.contains('replay-mode');
+  document.body.classList.toggle('replay-mode',replayMode);
+  if(enteredReplay)document.querySelector('.view').scrollTop=0;
+  if(replayMode){
+    $('camera-center').hidden=true;
+    const status=playback.busy?'영상 전환 중':playback.seeking?'재생 위치 이동 중':rpEnded(playback)?'녹화 완주 · 마지막 장면':playback.paused?'녹화 일시정지':'녹화 재생 중';
+    $('rpstatus').textContent=status;
+  }
+  v.alt=replayMode?'녹화 영상':'실시간 영상';
   if(redraw){syncConfirmTime();otdraw();}
   const backends=Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}];
   const backendKeys=backends.map(x=>x.id+'|'+x.label).join('\n');
@@ -1188,7 +1223,12 @@ function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLas
 const EVMSG=$('rpevmsg'),EVT=$('rpevt'),EVSW=$('rpevids'),EVDR=$('rpevdraw');let evDrawT=0;
 function evN(v,p){return v==null?'–':p?Number(v).toFixed(1)+'%':String(v);}
 function evPhase(e){return ({scoring:'첫 재생 채점 중',interrupted:'중단됨 · 완주 결과 아님',complete:'한 번 완주함',incomplete:'불완전한 재생'})[e.phase]||'';}
-function evMetricStatus(e){return ({pending:'계산 중',ready:'계산 완료',unavailable:'계산할 수 없음',error:'계산 오류'})[e.metric_status]||'미제공';}
+function evUnavailableMetric(e){
+  if(e.scoring&&e.phase==='scoring')return '완주 후 계산';
+  if(e.scoring&&(e.phase==='interrupted'||e.phase==='incomplete'))return '처음부터 완주 필요';
+  return '계산 불가';
+}
+function evMetricStatus(e){return e.metric_status==='unavailable'?evUnavailableMetric(e):({pending:'계산 중',ready:'계산 완료',error:'계산 오류'})[e.metric_status]||'미제공';}
 function evCoverage(e){const total=e.sequence_frames,done=e.pass_frames;if(total==null||done==null)return '';return ' · 영상 진행 '+done+' / '+total+'장';}
 function evSwitches(e){const events=Array.isArray(e.id_switches)?e.id_switches:[];
   return events.length?'<b>ID 변경</b> · '+events.map(x=>'장 '+esc(x.frame)+': '+esc(x.from_id)+' → '+esc(x.to_id)+(x.gt_id!=null?' (정답 '+esc(x.gt_id)+')':'')).join('　'):'';
@@ -1199,7 +1239,7 @@ function evShow(e,emptyText){if(!e){EVSW.innerHTML='';EVMSG.textContent=emptyTex
   if(!e.name){EVMSG.textContent='재생을 시작하면, 검수한 정답 라벨이 있는 녹화는 여기에 1초마다 점수가 나옵니다.';EVT.innerHTML='';return;}
   const c=e.counts||{},head=(e.on?'':'끝난 재생: ')+e.name+(e.backend?' · 추적기 '+rpBackendLabel(e.backend,rpLast):'');
   if(!e.scoring){EVMSG.textContent=head+' · '+(evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음')+evCoverage(e);EVT.innerHTML='';return;}
-  let m=head+' · 정답 '+(e.label_file||'')+'\n'+(e.review||'')+'\n'+(evPhase(e)||'재생 상태 미상')+' · 이 회차 점수에 반영된 장 '+c.scored+evCoverage(e)+(e.scorable_frames!=null?' · 검수된 비교 가능 장 '+e.scorable_frames:'')+' · 건너뛴 카메라 장 '+(c.cam_skipped||0)+' · 서버 누락 '+(c.server_skipped||0)+(c.untagged?' · PNG 번호 모름 '+c.untagged:'')+'\nHOTA / mAP 계산 '+evMetricStatus(e)+'\n'+e.since+' 부터'+(e.file?'\n결과 파일: '+e.file:'');
+  let m=head+' · 정답 '+(e.label_file||'')+'\n'+(e.review||'')+'\n'+(evPhase(e)||'재생 상태 미상')+' · 이 회차 점수에 반영된 장 '+c.scored+evCoverage(e)+(e.scorable_frames!=null?' · 검수된 비교 가능 장 '+e.scorable_frames:'')+' · 건너뛴 카메라 장 '+(c.cam_skipped||0)+' · 서버 누락 '+(c.server_skipped||0)+(c.untagged?' · PNG 번호 모름 '+c.untagged:'')+'\nHOTA / mAP · '+evMetricStatus(e)+'\n'+e.since+' 부터'+(e.file?'\n결과 파일: '+e.file:'');
   EVMSG.style.whiteSpace='pre-line';EVMSG.textContent=m;
   const n=e.new||{},o=e.old||{};
   const rows=[['metric','HOTA','hota',1],['metric','사람 mAP50:95 (검출 후보)','map',1],['metric','사람 AP50 (검출 후보)','ap50',1],['fp','잘못 그린 상자','false',0],['','정답 사람','gt',0],['','찾음','found',0],['','놓침','missed',0],['sub','작은 사람 (<32px)','missed_small',0],['sub','그 밖','missed_other',0],
@@ -1238,16 +1278,16 @@ function rpLoadFinal(){rpEvalSetMode('final');rpEvalFinal=null;rpEvalPending=tru
   load();}
 EVDR.addEventListener('change',()=>{evDrawT=Date.now();fetch('/replay/eval/draw?on='+(EVDR.checked?1:0),{method:'POST',headers:{'X-Gimbal':'1'}}).catch(()=>{});});
 // ---- under the picture: seek bar (one copy) and the comparison strip (same data as the block above: GET /replay -> eval)
-const RB=$('rpbar'),RSK=$('rpseek'),RPL=$('rpplay'),RM10=$('rpm10'),RP10=$('rpp10'),RSL=$('rpslider'),RTM=$('rptime'),RJN=$('rpjn'),RGO=$('rpgo'),RCM=$('rpcm'),RNUM=$('rpnum'),RNHD=$('rpnhd'),RMAIN=$('rpmain'),ROLD=$('rpold'),RFOOT=$('rpfoot'),RIDS=$('rpids');
+const RB=$('rpbar'),RSK=$('rpseek'),RPL=$('rpplay'),RRETURN=$('rpreturn'),RM10=$('rpm10'),RP10=$('rpp10'),RSL=$('rpslider'),RTM=$('rptime'),RJN=$('rpjn'),RGO=$('rpgo'),RCM=$('rpcm'),RNUM=$('rpnum'),RNHD=$('rpnhd'),RMAIN=$('rpmain'),ROLD=$('rpold'),RFOOT=$('rpfoot'),RIDS=$('rpids');
 let rpDrag=false,rpHold=null,rpHoldT=0,rpCmT=0;
 function fmtT(s){s=Math.max(0,Math.round(s));const m=Math.floor(s/60),x=s%60;return (m<10?'0':'')+m+':'+(x<10?'0':'')+x;}
 function nchip(l,v,cls){return '<span class="rpc'+(cls?' '+cls:'')+'">'+l+' <b>'+v+'</b></span>';}
-function metricText(e,v){if(v!=null)return evN(v,1);return e.metric_status==='pending'?'계산 중':e.metric_status==='error'?'오류':e.metric_status==='unavailable'?'계산 불가':'–';}
+function metricText(e,v){if(v!=null)return evN(v,1);return e.metric_status==='pending'?'계산 중':e.metric_status==='error'?'오류':e.metric_status==='unavailable'?evUnavailableMetric(e):'–';}
 function barShow(r,viewEval){
   const st=r.state||{},e=viewEval===undefined?(r.eval||{}):(viewEval||{});
   // seek bar: only while a recording plays (one copy; the slider follows state.pos, which comes from the frame header)
   const on=!!(st.on&&st.total>0);RSK.hidden=!on;
-  if(st.on||st.busy)$('camera-center').hidden=true;
+  RRETURN.disabled=!on||!!st.busy||rpBusy;
   if(on){const tot=st.total,fps=st.fps||25,pos=st.pos;
     RSL.max=Math.max(0,tot-1);
     if(rpHold!=null&&(Date.now()-rpHoldT>5000||(!st.seeking&&st.pos!=null&&Date.now()-rpHoldT>1500)))rpHold=null;
@@ -1273,7 +1313,7 @@ function barShow(r,viewEval){
       RIDS.innerHTML=evSwitches(e);
     }
   }
-  RB.hidden=RSK.hidden&&RNUM.hidden&&EVBAR.hidden;
+  RB.hidden=RNUM.hidden&&EVBAR.hidden;
 }
 function rpMsgBar(t){RCM.textContent=t||'';rpCmT=t?Date.now()+6000:0;}
 function rpctl(url){return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:'서버 응답 '+r.status}))).then(r=>{if(!r.ok)rpMsgBar(r.text||'실패');return r;}).catch(()=>{rpMsgBar('서버 연결 끊김');return {ok:false};}).finally(()=>setTimeout(()=>rptick(true),250));}
@@ -1292,10 +1332,14 @@ RM10.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on&&s
 RP10.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on&&st.pos!=null)rpSeek((rpHold!=null?rpHold:st.pos)+10*(st.fps||25));});
 function rpGo(){const st=rpLast&&rpLast.state;if(!st||!st.on)return;const n=Math.round(Number(RJN.value));if(!(n>=1&&n<=st.total)){rpMsgBar('장 번호는 1 ~ '+st.total);return;}RJN.value='';rpSeek(n-1);}
 RGO.addEventListener('click',rpGo);RJN.addEventListener('keydown',e=>{if(e.key==='Enter')rpGo();});
-if(window.ResizeObserver)new ResizeObserver(()=>document.documentElement.style.setProperty('--rbh',(RB.hidden?0:Math.ceil(RB.getBoundingClientRect().height)+6)+'px')).observe(RB);
+if(window.ResizeObserver)new ResizeObserver(()=>{
+  const height=RSK.hidden?0:Math.ceil(RSK.getBoundingClientRect().height)+6;
+  if(height)document.documentElement.style.setProperty('--replay-controls-height',height+'px');
+  else document.documentElement.style.removeProperty('--replay-controls-height');
+}).observe(RSK);
 let rpTick=0;
 function rptick(force){if(!force){const on=rpLast&&rpLast.state&&rpLast.state.on;if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;}fetch('/replay'+(force==='refresh'?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()).then(rpShow).catch(()=>{});}
-function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=true;
+function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=RRETURN.disabled=true;
   return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:r.status===403||r.status===404?'서버 재시작 후 쓸 수 있습니다':'서버 응답 '+r.status}))).then(r=>{RPMSG.textContent=r.text||(r.ok?'완료':'실패');return r;}).catch(()=>{RPMSG.textContent='서버 연결 끊김';return {ok:false,text:RPMSG.textContent};}).finally(()=>{rpBusy=false;setTimeout(()=>rptick(true),300);});}
 async function rpUseTracker(backend){
   const st=rpLast?.state;
@@ -1331,7 +1375,7 @@ RPST.addEventListener('click',()=>{const n=RPSEL.value;if(!n)return;const f=Math
   if(!confirm('녹화 "'+n+'" 를 카메라 대신 재생할까요?\n카메라 영상은 멈추고, 재생 중에는 짐벌이 움직이지 않습니다.'))return;
   rppost('/replay/start?seq='+encodeURIComponent(n)+'&fps='+f+'&loop='+(RPLOOP.checked?1:0)+'&backend='+encodeURIComponent(RPBACK.value||'python'));});
 function rpBackToCamera(){const st=rpLast&&rpLast.state;if(st&&st.on&&!st.busy&&!rpBusy)rppost('/replay/stop');}
-RPSP.addEventListener('click',rpBackToCamera);
+for(const button of [RPSP,RRETURN])button.addEventListener('click',rpBackToCamera);
 addEventListener('keydown',e=>{if(e.key==='Escape'&&!e.repeat&&!e.isComposing&&rpLast&&rpLast.state&&rpLast.state.on){e.preventDefault();rpBackToCamera();}});
 RPSEC.addEventListener('toggle',()=>{if(RPSEC.open)rptick('refresh');});
 setInterval(rptick,500);rptick(true);
