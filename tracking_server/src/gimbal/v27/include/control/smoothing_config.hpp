@@ -21,4 +21,6 @@ struct SmoothingConfig {
     bool axis_reversal = false;
     double reversal_join_speed = 5.0;
     int reversal_hold_ms = 500;
+    // Maximum hold for one validated live detector miss. Zero disables it.
+    int observation_grace_ms = 0;
 };

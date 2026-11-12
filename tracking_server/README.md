@@ -68,6 +68,7 @@
 - 실시간 카메라와 기본 PC GUI를 실행하려면 `setup.sh`에서 `cam_pipe built`, `gimbal_bridge_v25 built`, 마지막 `setup done`을 확인합니다.
 - 장치마다 다른 값은 `scripts/live.env.example` 을 `scripts/live.env` 로 복사해 고칩니다 (4절).
 - 서버를 다시 켜면 예측 제어는 꺼진 채로 켜집니다. 화면에서 다시 켭니다.
+- v27의 한 프레임 관측 누락 보완은 별도 옵션입니다. 정상 라이브 영상에서 선택한 사람이 잠깐 빠질 때만 기존 이동을 짧게 이어갑니다. 영상 동결·연속 누락에서는 정지합니다. [조건·설정·검증 범위](src/gimbal/V27_CHANGES.md#11-12-정상-영상의-한-프레임-관측-누락)
 
 <details>
 <summary>준비물</summary>

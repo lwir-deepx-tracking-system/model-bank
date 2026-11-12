@@ -2,6 +2,7 @@
 from colorsys import hsv_to_rgb
 from functools import lru_cache
 import json
+import math
 import time
 import numpy as np
 from ..common.state import APP
@@ -57,7 +58,12 @@ def track_color(track_id):
 
 
 def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
-    now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if APP.LIVE.arr else now_
+    paired_stamp_ = bool(APP.LIVE.arr)
+    now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if paired_stamp_ else now_
+    if not isinstance(t_in, (int, float)) or not math.isfinite(t_in) or not 0 < t_in <= now_:
+        # Keep UI timing arithmetic valid, but never turn fabricated time into OBS1.
+        paired_stamp_ = False
+        t_in = now_
     cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
     camera_rows = (cam_tracker.step(tracker_detections, t_in,
                    not replay_link.frame_blocked(t_in))
@@ -66,8 +72,10 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     now_ = time.perf_counter()
     raw16_ = APP.LIVE.raws.popleft() if APP.LIVE.raws else None   # v20
     rq_ = APP.LIVE.rawq.popleft() if APP.LIVE.rawq else None   # v24f
+    raw_valid_ = (isinstance(rq_, np.ndarray) and rq_.dtype == np.uint16
+                  and rq_.shape == (APP.LIVE_H, APP.LIVE_W))
     rep_ = replay_eval.is_repeat(t_in)   # 11-12: a frame the replay program repeats (while paused, and the few at the end) is not a camera fault
-    frozen_ = False if rep_ else frozen_check(rq_)   # 11-12: the same picture as the previous frame -> the gimbal gets no people for this frame (a paused replay repeats the same picture on purpose: no log lines)
+    frozen_ = False if rep_ or not raw_valid_ else frozen_check(rq_)   # Invalid/missing RAW is separately denied below.
     sC_ = APP.LIVE.stabq.popleft() if APP.LIVE.stabq else None; STAB['px'] = sC_ or (0.0, 0.0)   # stab: correction of the frame being shown
     APP.LIVE.done_ts.append(now_)
     if APP.LIVE.meas is not None:   # v22
@@ -92,8 +100,11 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         draw_.append(((int(x1_ * sc_), int(y1_ * sc_)), (int(x2_ * sc_), int(y2_ * sc_)), col_, tid_))
     if APP.GB is not None:
         source_ = ('replay',) if replay_link.frame_blocked(t_in) else live_tracks.current_source()
+        healthy_ = (paired_stamp_ and tracker_detections is not None and raw_valid_
+                    and not rep_ and not frozen_ and not replay_link.frame_blocked(t_in)
+                    and not any(getattr(APP.LIVE, flag, False) for flag in ('cam_lost', 'cam_hold', 'stopped', 'restart_stop', 'restart_pending')))
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
-                                    frozen_ or replay_link.frame_blocked(t_in))
+                                    frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_)
         # The same live rows now drive the picture, click list and PTZ input.
         draw_ = [((int(r[0] * sc_), int((r[1] - 16) * sc_)),
                   (int(r[2] * sc_), int((r[3] - 16) * sc_)),
@@ -344,6 +355,7 @@ def make_lv_Handler():
                     h_ = dict(instance=getattr(APP.LIVE, 'instance', None), up=round(now_ - APP.LIVE.t0, 1), cam_idle=round(now_ - APP.LIVE.last_frame_t, 1), out_idle=round(time.perf_counter() - last_out_ if last_out_ is not None else now_ - APP.LIVE.t0, 1), frames_in=APP.LIVE.frames_in,   # v26: before the first result out_idle is the time since the start (a tracker that hangs before its first result is seen too)
                               cam_fail=APP.LIVE.cam_fail_n, warm_dropped=APP.LIVE.warm_dropped, frozen_frames=getattr(APP.LIVE, 'frozen_total', 0), pictures=APP.LIVE.pic_n, viewers=APP.LIVE.viewers, cam_pipe_alive=APP.LIVE.proc.poll() is None, gimbal_alive=(APP.GB.proc is not None and APP.GB.proc.poll() is None) if APP.GB is not None else None,
                               gimbal_ready=bool(APP.GB.state['ready']) if APP.GB is not None else None, gimbal_error=int(APP.GB.state['error']) if APP.GB is not None else None, gimbal_starts=(APP.GB.restarts + 1) if APP.GB is not None else None,
+                              observation_status=bool(getattr(APP.GB, 'observation_status_supported', False)), observation_healthy=bool(getattr(APP.GB, 'observation_ok', False)), observation_good=getattr(APP.GB, 'observation_good', 0), observation_bad=getattr(APP.GB, 'observation_bad', 0),
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,
                               q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, replay=(getattr(APP.LIVE, 'replay', None) or {}).get('name'), track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
                     with APP.LIVE.dlock: dl_ = [d_ for t_, d_ in APP.LIVE.delays if time.perf_counter() - t_ <= 30.0]   # v26b: delay of the last 30 s (camera frame arrival -> picture ready), ms

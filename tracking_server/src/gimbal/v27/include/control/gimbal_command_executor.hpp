@@ -35,7 +35,16 @@ class GimbalCommandExecutor {
     std::mutex mutex_;
     std::condition_variable wake_;
     std::deque<std::packaged_task<void()>> requests_;
-    TrackingResultPtr pending_;
+    struct Observation {
+        TrackingResultPtr result;
+        Clock::time_point received{};
+        bool healthy_live = false;
+    };
+    Observation pending_;
+    bool pending_unsafe_ = false;
+    // Publication order is checked before the latest-only slot can discard a sample.
+    std::uint64_t published_model_ = 0, published_tracker_ = 0, published_frame_ = 0;
+    Clock::time_point published_capture_{};
     bool closing_ = false;
     std::thread worker_;
 
@@ -43,6 +52,9 @@ class GimbalCommandExecutor {
     ControlSnapshot state_;
     GimbalPositionEstimate position_estimate_;
     TrackingResultPtr latest_;
+    bool latest_healthy_ = false;
+    Clock::time_point last_observed_capture_{}, grace_deadline_{};
+    Clock::duration observation_cadence_{};
     std::uint64_t model_generation_ = 0, last_frame_id_ = 0;
     std::uint64_t lead_after_frame_ = 0; // A fresh selection cannot reuse the previous selection's forecast.
     std::uint64_t tracker_epoch_ = 0;
@@ -55,12 +67,13 @@ class GimbalCommandExecutor {
     Clock::time_point hold_x_since_{}, hold_y_since_{};
 
     void run();
-    void ingest(TrackingResultPtr);
+    bool ingest(Observation);
+    void mark_lost(Clock::time_point now);
     void tick();
     bool alive() const;
     bool ready() const;
     bool fresh() const;
-    const Track* target(std::uint32_t) const;
+    const Track* target(std::uint32_t, bool* present = nullptr) const;
     void invalidate(const char* reason);
     void stop(const char* reason);
     void failure(const std::exception&);
@@ -83,7 +96,8 @@ public:
     ~GimbalCommandExecutor();
     GimbalCommandExecutor(const GimbalCommandExecutor&) = delete;
     GimbalCommandExecutor& operator=(const GimbalCommandExecutor&) = delete;
-    void publish(TrackingResultPtr); // bounded latest-result mailbox
+    void publish(TrackingResultPtr, bool healthy_live = false); // bounded latest-result mailbox
+    void publish_unsafe_observation(); // malformed input without a usable frame
     void connected();
     void disconnected();
     void ping();

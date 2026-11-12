@@ -33,6 +33,8 @@ def _boundary_locked(gb, source):
     gb.wq = type(gb.wq)(c for c in gb.wq
                        if c.split(b' ', 1)[0].strip() not in (b'A', b'H', b'V', b'F', b'G'))
     gb.wframe = None
+    gb.observation_barrier = None  # H below already guarantees STOP for this generation.
+    gb.observation_ns = 0
     gb.tracks_ticket = getattr(gb, 'tracks_ticket', 0) + 1
     gb.wq.appendleft(('H %d\n' % gb.tracks_ticket).encode())
     gb.people = []
@@ -53,7 +55,7 @@ def halted(ticket):
             gb.selection_reset = False
 
 
-def publish(people, correction, frame_t, raw16, source, blocked=False):
+def publish(people, correction, frame_t, raw16, source, blocked=False, *, healthy_live=False):
     """Publish the same IDs as the drawn boxes, with existing coordinate rules."""
     gb = APP.GB
     if gb is None:
@@ -63,18 +65,40 @@ def publish(people, correction, frame_t, raw16, source, blocked=False):
             gb.people = []
             reset_lead()
             return 0
-        gap = frame_t - getattr(gb, 'people_t', 0.0)
+        # Validate before converting to signed int64 ns or advancing any watermark.
+        now = time.perf_counter()
+        stamp_ok = (isinstance(frame_t, (int, float)) and math.isfinite(frame_t)
+                    and 0 < frame_t <= now and 0 < frame_t * 1e9 < 2**63)
+        captured_ns = int(frame_t * 1e9) if stamp_ok else 0
+        gap = frame_t - getattr(gb, 'people_t', 0.0) if stamp_ok else -1
         if getattr(gb, 'people_t', 0.0) and not 0 < gap <= 1.0:
             gb.people_source = None
         _boundary_locked(gb, source)
+        marked = getattr(gb, 'observation_status_supported', False)
+        healthy = (healthy_live and stamp_ok and now - frame_t < .25 and not blocked
+                   and source is not None and source[0] in ('python', 'cpp')
+                   and source == current_source() and not gb.selection_reset
+                   and captured_ns > getattr(gb, 'observation_ns', 0))
         # Never offer frozen, replayed, or switch-pending rows for a new click.
-        gb.people = [] if blocked or source is None else list(people[:60])
-        gb.people_t = frame_t
+        gb.people = [] if blocked or source is None or not stamp_ok or (marked and not healthy) else list(people[:60])
+        gb.people_t = frame_t if stamp_ok and (not marked or healthy) else 0.0
+        if healthy:
+            gb.observation_ns = captured_ns
         gb.frame += 1
+        if marked:
+            gb.observation_ok = bool(healthy)
+            field = 'observation_good' if healthy else 'observation_bad'
+            setattr(gb, field, getattr(gb, field, 0) + 1)
+            if not healthy:
+                # A later good frame may replace wframe. This separate one-slot STOP
+                # barrier must reach the bridge first, without clearing the selected ID.
+                gb.observation_barrier = f'F {gb.frame} {captured_ns} 0 OBS 0\n'.encode()
         selected = 0 if gb.selection_reset else int(gb.state.get('id', 0))
         real = stab_people_real(gb.people, correction, float(APP.LIVE_W), float(APP.LIVE_H))
         text = ''.join(' %d %.1f %.1f %.1f %.1f %.3f' %
                        (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real)
+        if marked:
+            text += ' OBS %d' % bool(healthy)  # Before LEAD: without_lead must preserve this.
         epoch = getattr(gb, 'control_epoch', None)
         if (APP.CTL['lead'] and getattr(gb, 'lead_control_supported', False) and epoch is not None
                 and not getattr(gb, 'lead_pending', 0) and gb.state.get('auto')
@@ -94,12 +118,12 @@ def publish(people, correction, frame_t, raw16, source, blocked=False):
             reset_lead()
         if gb.gui and raw16 is not None and raw16.shape == (APP.LIVE_H, APP.LIVE_W):
             APP.gb_send_frame('G %d %d %d %d %d' %
-                              (gb.frame, int(frame_t*1e9), APP.LIVE_W, APP.LIVE_H, len(real)) + text,
+                              (gb.frame, captured_ns, APP.LIVE_W, APP.LIVE_H, len(real)) + text,
                               np.ascontiguousarray(raw16, dtype=np.uint16).tobytes())
         else:
             # Use the latest-frame slot for F too. A frame backlog must not
             # delay a new STOP or selection behind dozens of old positions.
-            APP.gb_send_frame('F %d %d %d' % (gb.frame, int(frame_t*1e9), len(real)) + text, b'')
+            APP.gb_send_frame('F %d %d %d' % (gb.frame, captured_ns, len(real)) + text, b'')
         return selected
 
 

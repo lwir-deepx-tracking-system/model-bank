@@ -14,6 +14,10 @@ GimbalCommandExecutor::GimbalCommandExecutor(ControlConfig config,
       tracker_epoch_(runtime.tracker_epoch.load())
 {
     if (!config.enabled || !device_) throw std::invalid_argument("Tracking control needs an enabled device");
+    if (smoothing_.observation_grace_ms < 0 || smoothing_.observation_grace_ms > 100 ||
+        (smoothing_.observation_grace_ms > 0 &&
+         smoothing_.observation_grace_ms >= config_.automatic.input_timeout_ms))
+        throw std::invalid_argument("--observation-grace-ms must be within 0..100 and below --input-timeout-ms when enabled");
     worker_ = std::thread([this] { run(); });
     const bool started = invoke([this] { stop("startup"); return !state_.error; });
     if (!started) {
@@ -34,41 +38,97 @@ void GimbalCommandExecutor::run()
     auto next = Clock::now();
     for (;;) {
         std::packaged_task<void()> request;
-        TrackingResultPtr input;
+        Observation input;
+        bool unsafe = false;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            wake_.wait_until(lock, next, [this] { return closing_ || !requests_.empty() || pending_; });
+            const auto wake_at = grace_deadline_ == Clock::time_point{} ? next : std::min(next, grace_deadline_);
+            wake_.wait_until(lock, wake_at, [this] {
+                return closing_ || !requests_.empty() || pending_.result || pending_unsafe_;
+            });
             if (closing_) break;
             input = std::move(pending_);
+            unsafe = pending_unsafe_;
+            pending_unsafe_ = false;
             if (!requests_.empty()) { request = std::move(requests_.front()); requests_.pop_front(); }
         }
-        if (input) ingest(std::move(input));
+        const auto now = Clock::now();
+        if (unsafe) {
+            latest_healthy_ = false;
+            if (state_.automatic) {
+                mark_lost(now);
+                if (state_.moving) stop("unsafe observation");
+            }
+        }
+        if (grace_deadline_ != Clock::time_point{}) {
+            if (!ready()) invalidate("control authority");
+            else if (now >= grace_deadline_) stop("observation grace deadline");
+        }
+        const bool resumed = input.result && ingest(std::move(input));
         if (request.valid()) request(); // mode/STOP requests precede any AUTO output
-        if (Clock::now() >= next) {
+        if (resumed || Clock::now() >= next) {
             tick();
             next = Clock::now() + std::chrono::milliseconds(
                 std::min(config_.automatic.period_ms, config_.poll_interval_ms));
         }
     }
 }
-void GimbalCommandExecutor::publish(TrackingResultPtr input)
+void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
 {
     if (!input || !input->frame) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (!pending_ || input->tracker_epoch > pending_->tracker_epoch ||
-            (input->tracker_epoch == pending_->tracker_epoch &&
-             (input->model_generation > pending_->model_generation ||
-              (input->model_generation == pending_->model_generation &&
-               input->frame->metadata.frame_id > pending_->frame->metadata.frame_id))))
-            pending_ = std::move(input);
+        const auto received = Clock::now();
+        if (smoothing_.observation_grace_ms > 0 &&
+            input->model_generation == runtime_.generation.load() &&
+            input->tracker_epoch == runtime_.tracker_epoch.load()) {
+            if (published_model_ != input->model_generation || published_tracker_ != input->tracker_epoch) {
+                published_model_ = input->model_generation;
+                published_tracker_ = input->tracker_epoch;
+                published_frame_ = 0;
+                published_capture_ = {};
+            }
+            const auto id = input->frame->metadata.frame_id;
+            const auto captured = input->frame->metadata.captured_at;
+            const bool timely = captured > Clock::time_point{} && captured <= received &&
+                received - captured < std::chrono::milliseconds(config_.automatic.input_timeout_ms);
+            const bool advances = id > published_frame_ && captured > published_capture_;
+            const bool repeated = id == published_frame_ && captured == published_capture_;
+            healthy_live = healthy_live && timely && (advances || repeated) && !input->bypass &&
+                input->frame->image.type() == CV_16UC1 && !input->frame->image.empty();
+            // An unsafe sample has to be visible even if a newer frame replaces it.
+            if (!healthy_live) {
+                pending_unsafe_ = true;
+                pending_ = {}; // A pre-barrier queued frame cannot restart AUTO.
+            }
+            if (id > published_frame_) published_frame_ = id;
+            if (timely && advances) published_capture_ = captured;
+        }
+        const auto& queued = pending_.result;
+        if (!queued || input->tracker_epoch > queued->tracker_epoch ||
+            (input->tracker_epoch == queued->tracker_epoch &&
+             (input->model_generation > queued->model_generation ||
+              (input->model_generation == queued->model_generation &&
+               input->frame->metadata.frame_id > queued->frame->metadata.frame_id))))
+            pending_ = {std::move(input), received, healthy_live};
     }
     wake_.notify_one();
 }
-void GimbalCommandExecutor::ingest(TrackingResultPtr input)
+void GimbalCommandExecutor::publish_unsafe_observation()
 {
+    if (smoothing_.observation_grace_ms == 0) return;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pending_ = {};
+        pending_unsafe_ = true;
+    }
+    wake_.notify_one();
+}
+bool GimbalCommandExecutor::ingest(Observation observation)
+{
+    auto input = std::move(observation.result);
     if (input->model_generation != runtime_.generation.load() ||
-        input->tracker_epoch != runtime_.tracker_epoch.load()) return;
+        input->tracker_epoch != runtime_.tracker_epoch.load()) return false;
     if (input->tracker_epoch != tracker_epoch_) {
         invalidate("tracker generation"); latest_.reset(); last_frame_id_ = 0;
         tracker_epoch_ = input->tracker_epoch;
@@ -77,9 +137,63 @@ void GimbalCommandExecutor::ingest(TrackingResultPtr input)
         invalidate("model generation"); latest_.reset(); last_frame_id_ = 0;
         model_generation_ = input->model_generation;
     }
-    if (input->frame->metadata.frame_id <= last_frame_id_) return;
-    last_frame_id_ = input->frame->metadata.frame_id;
+    const auto id = input->frame->metadata.frame_id;
+    if (id <= last_frame_id_) return false; // Duplicate frames never renew grace.
+    const bool adjacent = last_frame_id_ != 0 && id - last_frame_id_ == 1;
+    last_frame_id_ = id;
     latest_ = std::move(input);
+    if (smoothing_.observation_grace_ms == 0) return false;
+
+    latest_healthy_ = observation.healthy_live;
+    if (!state_.automatic || !ready()) return false;
+    const auto now = Clock::now();
+    const auto captured = latest_->frame->metadata.captured_at;
+    const auto prior = last_observed_capture_;
+    const auto cadence = observation_cadence_;
+    bool present = false;
+    const bool observed = target(state_.selected_id, &present) != nullptr;
+    const bool holding = grace_deadline_ != Clock::time_point{};
+    if (observed) {
+        // A latest-slot or wire gap may have hidden multiple missing results.
+        if (!adjacent && state_.moving) {
+            mark_lost(now);
+            stop("observation sequence gap");
+        }
+        last_observed_capture_ = captured;
+        observation_cadence_ = adjacent && prior != Clock::time_point{} &&
+            now - prior < std::chrono::milliseconds(config_.automatic.input_timeout_ms) ?
+            captured - prior : Clock::duration{};
+        if (!holding || !adjacent) return false;
+        grace_deadline_ = {};
+        state_.lost = false; lost_since_ = {};
+        lead_after_frame_ = id;
+        next_auto_ = {};
+        return true; // Use this measured same-ID result without waiting for the next control period.
+    }
+
+    if (!present && !state_.lost && state_.moving && latest_healthy_ && fresh() && adjacent &&
+        cadence > Clock::duration::zero()) {
+        const auto budget = std::min<Clock::duration>(
+            std::chrono::milliseconds(smoothing_.observation_grace_ms), cadence + cadence / 2);
+        const auto input_deadline = prior + std::chrono::milliseconds(config_.automatic.input_timeout_ms);
+        const auto reacquire_deadline = now + std::chrono::milliseconds(config_.automatic.reacquire_timeout_ms);
+        const auto deadline = std::min({observation.received + budget, input_deadline, reacquire_deadline});
+        if (deadline > now) grace_deadline_ = deadline;
+    }
+    mark_lost(now);
+    if (state_.moving && (holding || grace_deadline_ == Clock::time_point{}))
+        stop("target lost/stale");
+    return false;
+}
+void GimbalCommandExecutor::mark_lost(Clock::time_point now)
+{
+    last_observed_capture_ = {};
+    observation_cadence_ = {};
+    if (state_.lost) return;
+    controller_.reset();
+    state_.lost = true;
+    lost_since_ = now;
+    ++state_.command_generation;
 }
 bool GimbalCommandExecutor::alive() const
 {
@@ -94,7 +208,8 @@ bool GimbalCommandExecutor::ready() const
 }
 bool GimbalCommandExecutor::fresh() const
 {
-    if (!latest_ || !latest_->frame || latest_->bypass ||
+    if ((smoothing_.observation_grace_ms > 0 && !latest_healthy_) ||
+        !latest_ || !latest_->frame || latest_->bypass ||
         latest_->model_generation != runtime_.generation.load() ||
         latest_->tracker_epoch != runtime_.tracker_epoch.load() ||
         latest_->frame->image.type() != CV_16UC1 || latest_->frame->image.empty()) return false;
@@ -103,14 +218,23 @@ bool GimbalCommandExecutor::fresh() const
     return captured != Clock::time_point{} && captured <= now &&
         now - captured < std::chrono::milliseconds(config_.automatic.input_timeout_ms);
 }
-const Track* GimbalCommandExecutor::target(std::uint32_t id) const
+const Track* GimbalCommandExecutor::target(std::uint32_t id, bool* present) const
 {
     if (!fresh() || id == 0 || id > std::uint32_t(std::numeric_limits<int>::max())) return nullptr;
-    for (const auto& t : latest_->tracks)
-        if (t.track_id == static_cast<int>(id) &&
-            controller_.valid(t, latest_->frame->image.cols, latest_->frame->image.rows,
-                              latest_->aim_y)) return &t;
-    return nullptr;
+    const Track* found = nullptr;
+    for (const auto& t : latest_->tracks) {
+        if (t.track_id != static_cast<int>(id)) continue;
+        if (present) *present = true;
+        const bool valid = controller_.valid(t, latest_->frame->image.cols,
+            latest_->frame->image.rows, latest_->aim_y);
+        if (smoothing_.observation_grace_ms == 0) {
+            if (valid) return &t;
+        } else {
+            if (!valid || found) return nullptr;
+            found = &t;
+        }
+    }
+    return found;
 }
 void GimbalCommandExecutor::failure(const std::exception& e)
 {
@@ -128,6 +252,7 @@ void GimbalCommandExecutor::failure(const std::exception& e)
 }
 void GimbalCommandExecutor::stop(const char* reason)
 {
+    grace_deadline_ = {};
     // No ramp: safety/Deadband STOP is immediate command submission.
     try {
         device_->stop();
@@ -145,6 +270,7 @@ void GimbalCommandExecutor::invalidate(const char* reason)
     ++state_.command_generation;
     state_.automatic = false; state_.selected_id = 0; state_.lost = false;
     lost_since_ = {}; next_auto_ = {};
+    grace_deadline_ = {}; last_observed_capture_ = {}; observation_cadence_ = {};
     if (state_.moving) stop(reason);
 }
 void GimbalCommandExecutor::send(int x, int y, int speed, bool automatic)
@@ -176,10 +302,12 @@ void GimbalCommandExecutor::tick()
         invalidate("reacquire timeout"); return;
     }
     if (!t) {
-        if (!state_.lost) { controller_.reset(); state_.lost = true; lost_since_ = now; ++state_.command_generation; }
-        if (state_.moving) stop("target lost/stale");
+        mark_lost(now);
+        if (state_.moving && grace_deadline_ == Clock::time_point{}) stop("target lost/stale");
         return;
     }
+    if (state_.lost && smoothing_.observation_grace_ms > 0)
+        lead_after_frame_ = latest_->frame->metadata.frame_id;
     state_.lost = false; lost_since_ = {};
     const auto lead = latest_->frame->metadata.frame_id > lead_after_frame_ &&
         latest_->lead.control_epoch == state_.command_generation ? latest_->lead : TrackLead{};
@@ -263,6 +391,8 @@ ControlResult GimbalCommandExecutor::select(std::uint32_t id)
         if (state_.error) return ControlResult::NotReady;
         lead_after_frame_ = last_frame_id_;
         state_.selected_id = id; state_.automatic = true;
+        if (smoothing_.observation_grace_ms > 0)
+            last_observed_capture_ = latest_->frame->metadata.captured_at;
         return ControlResult::Ok;
     });
 }

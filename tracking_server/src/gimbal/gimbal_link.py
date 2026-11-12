@@ -95,6 +95,10 @@ def _reset_bridge_lead(gb):
     gb.lead_control_supported = False
     gb.lead_pending = 0
     gb.control_epoch = None
+    gb.observation_status_supported = False
+    gb.observation_barrier = None
+    gb.observation_ns = 0
+    gb.observation_ok = False
     reset_lead()
 
 
@@ -120,10 +124,13 @@ def gb_writer(p_):
     try:
         while True:
             with APP.GB.wcond:
-                APP.GB.wcond.wait_for(lambda: APP.GB.wq or APP.GB.wframe is not None or not APP.GB.wopen or APP.GB.proc is not p_)
+                APP.GB.wcond.wait_for(lambda: APP.GB.wq or APP.GB.wframe is not None or getattr(APP.GB, 'observation_barrier', None) is not None or not APP.GB.wopen or APP.GB.proc is not p_)
                 if APP.GB.proc is not p_: return   # a newer bridge owns the queue now
-                if not APP.GB.wopen and not APP.GB.wq and APP.GB.wframe is None: break
-                chunks_ = list(APP.GB.wq); APP.GB.wq.clear()
+                if not APP.GB.wopen and not APP.GB.wq and APP.GB.wframe is None and getattr(APP.GB, 'observation_barrier', None) is None: break
+                barrier = getattr(APP.GB, 'observation_barrier', None)
+                chunks_ = [barrier] if barrier is not None else []
+                APP.GB.observation_barrier = None
+                chunks_.extend(APP.GB.wq); APP.GB.wq.clear()
                 if APP.GB.wframe is not None: chunks_.append(APP.GB.wframe); APP.GB.wframe = None
             for c_ in chunks_: p_.stdin.write(c_)
             p_.stdin.flush()
@@ -171,11 +178,12 @@ def gb_reader(p_):
         if not f_: continue
         if p_ is not APP.GB.proc: continue   # v26: lines of a bridge that was replaced
         if f_[0] == 'READY': APP.GB.state['ready'] = True; print('GIMBAL ready', APP.GB.dev, flush=True)
-        elif f_[0] in ('TRACK_CONTROL', 'LEAD_CONTROL') and f_[1:] == ['1']:
+        elif f_[0] in ('TRACK_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS') and f_[1:] == ['1']:
             with APP.GB.wcond:
                 if p_ is APP.GB.proc and APP.GB.wopen:
                     if f_[0] == 'TRACK_CONTROL': APP.GB.track_control_supported = True
-                    else: APP.GB.lead_control_supported = True
+                    elif f_[0] == 'LEAD_CONTROL': APP.GB.lead_control_supported = True
+                    else: APP.GB.observation_status_supported = True
         elif (f_[0] == 'CONTROL_EPOCH' and len(f_) == 2 and len(f_[1]) <= 20
               and f_[1].isascii() and f_[1].isdigit()):
             epoch = int(f_[1])

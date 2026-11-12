@@ -5,6 +5,7 @@
 //   --axis-reversal <0|1>       1: a reversing axis halts alone, the other keeps moving (0 = STOP both, as v25)
 //   --reversal-join-speed <SPD> the halted axis rejoins once the shared SPD is at or below this (default 5)
 //   --reversal-hold-ms <ms>     ... or after this long at the latest (default 500)
+//   --observation-grace-ms <ms> hold the last output for one validated live detector miss (0 = off, maximum 100)
 //
 // Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
 // All control decisions, safety stops and serial output stay in the team's GimbalCommandExecutor; the PC wire format stays in the team's
@@ -14,8 +15,9 @@
 //   F <frame id> <capture time, CLOCK_MONOTONIC ns> <n> then n times: <id> <x> <y> <w> <h> <confidence>     people in camera image pixels (640x480), x y = top left
 //   G <frame id> <capture time ns> <width> <height> <n> then n times: <id> <x> <y> <w> <h> <confidence>     same, followed (after the newline) by width*height*2 bytes:
 //                  the 16-bit camera frame, row major, native byte order. It goes to the gimbal executor AND to the PC GUI (video + metadata)
-//   F/G headers may end with LEAD <track id> <dx px> <dy px> <control epoch>. Malformed
-//   or out-of-range lead is ignored; the observed rows and G picture remain usable.
+//   F/G headers may carry optional LEAD <track id> <dx px> <dy px> <control epoch>
+//   and OBS <0|1> suffixes in either order. OBS 1 indicates a validated live observation.
+//   Malformed suffixes cannot enable observation grace.
 //   P              heartbeat of the web page. The first one opens the session. Without one for --heartbeat-ms the executor stops the gimbal and drops the selection
 //   A <id>         follow this ID
 //   M              stop following, keep an ongoing manual move
@@ -23,7 +25,8 @@
 //   H              stop following and stop moving
 // stdout, one line per message:
 //   READY
-//   LEAD_CONTROL 1   accepts the optional F/G header suffix above
+//   LEAD_CONTROL 1   accepts the optional LEAD suffix
+//   OBSERVATION_STATUS 1  accepts the optional OBS suffix
 //   CONTROL_EPOCH n  reset forecast history on a new selection, loss or control session
 //   R <A|M> <OK|INVALID|NOT_READY>            answer to A or M
 //   S <auto> <lost> <moving> <error> <id>     the executor's state, on every change
@@ -34,8 +37,10 @@
 // track metadata to UDP --gui-metadata-port (5001), the PC's commands on TCP --gui-bind:--gui-command-port (5002, 0 = no command listener).
 // The GUI's AUTO/MANUAL/MOVE/HOME reach the same executor as the web page, so both show the same state. A GUI connection or disconnection
 // drops the current selection (team behaviour); the web page re-opens its session with its next heartbeat.
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <future>
@@ -51,6 +56,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <unistd.h>
 #include <vector>
 
@@ -212,6 +218,11 @@ Options parse(int argc, char** argv)
         }
         else if (name == "--reversal-join-speed") { s.reversal_join_speed = std::stod(value); if (!(s.reversal_join_speed >= 0.0)) throw std::invalid_argument("--reversal-join-speed must be >= 0"); }
         else if (name == "--reversal-hold-ms") { s.reversal_hold_ms = std::stoi(value); if (s.reversal_hold_ms < 0) throw std::invalid_argument("--reversal-hold-ms must be >= 0"); }
+        else if (name == "--observation-grace-ms") {
+            std::size_t used = 0;
+            s.observation_grace_ms = std::stoi(value, &used);
+            if (used != value.size()) throw std::invalid_argument("--observation-grace-ms must be an integer");
+        }
         else if (name == "--gui-host") { g.enabled = true; g.video.host = value; g.metadata.host = value; }
         else if (name == "--gui-bind") g.command.bind_address = value;
         else if (name == "--gui-video-port") g.video.port = static_cast<std::uint16_t>(std::stoi(value));
@@ -238,6 +249,9 @@ Options parse(int argc, char** argv)
         else throw std::invalid_argument("unknown option " + name);
     }
     if (c.gimbal.device.empty()) throw std::invalid_argument("--device is required");
+    if (s.observation_grace_ms < 0 || s.observation_grace_ms > 100 ||
+        (s.observation_grace_ms > 0 && s.observation_grace_ms >= c.automatic.input_timeout_ms))
+        throw std::invalid_argument("--observation-grace-ms must be within 0..100 and below --input-timeout-ms when enabled");
     if (c.gimbal.speed < 1 || c.gimbal.speed > c.gimbal.speed_limit || c.automatic.speed_max < c.automatic.speed_min || c.automatic.speed_max > c.gimbal.speed_limit)
         throw std::invalid_argument("speed outside the device range");
     if ((c.gimbal.x_sign != 1 && c.gimbal.x_sign != -1) || (c.gimbal.y_sign != 1 && c.gimbal.y_sign != -1))
@@ -314,6 +328,16 @@ public:
     int poll_timeout_ms() const override { return inner_->poll_timeout_ms(); }
 };
 
+template<class T>
+bool parse_token(const std::string& token, T& field)
+{
+    if constexpr (std::is_unsigned_v<T>) {
+        if (!token.empty() && token.front() == '-') return false;
+    }
+    std::istringstream value(token);
+    return static_cast<bool>(value >> field) && value.eof();
+}
+
 class Bridge {
     GimbalCommandExecutor& executor_;
     GuiLink* gui_;
@@ -323,35 +347,64 @@ class Bridge {
     std::uint64_t seen_changes_ = 0;
     // a G line waits for its picture
     std::shared_ptr<TrackingResult> waiting_;
+    bool waiting_healthy_ = false;
     int wait_w_ = 0, wait_h_ = 0;
+    const bool observation_grace_enabled_;
 public:
-    Bridge(GimbalCommandExecutor& executor, GuiLink* gui, const std::atomic<std::uint64_t>& session_changes)
-        : executor_(executor), gui_(gui), session_changes_(session_changes), image_(cv::Mat::zeros(480, 640, CV_16UC1)) {}
+    Bridge(GimbalCommandExecutor& executor, GuiLink* gui, const std::atomic<std::uint64_t>& session_changes,
+           bool observation_grace_enabled)
+        : executor_(executor), gui_(gui), session_changes_(session_changes),
+          image_(cv::Mat::zeros(480, 640, CV_16UC1)), observation_grace_enabled_(observation_grace_enabled) {}
 
     std::size_t picture_bytes() const { return waiting_ ? static_cast<std::size_t>(wait_w_) * wait_h_ * 2 : 0; }
 
-    std::shared_ptr<TrackingResult> tracks(std::istringstream& in, std::uint64_t id, std::uint64_t captured_ns, std::size_t count)
+    std::shared_ptr<TrackingResult> tracks(std::istringstream& in, std::uint64_t id,
+        std::uint64_t captured_ns, std::size_t count, bool& healthy_live)
     {
         auto context = std::make_shared<FrameContext>();
         context->metadata.frame_id = id;
-        context->metadata.captured_at = std::chrono::steady_clock::time_point(std::chrono::nanoseconds(captured_ns));
+        if (captured_ns <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+            context->metadata.captured_at = std::chrono::steady_clock::time_point(std::chrono::nanoseconds(captured_ns));
         context->image = image_;
         auto result = std::make_shared<TrackingResult>();
-        result->tracks.reserve(count);
+        result->tracks.reserve(std::min<std::size_t>(count, 64));
         for (std::size_t i = 0; i < count; ++i) {
             Track t;
-            if (!(in >> t.track_id >> t.x >> t.y >> t.width >> t.height >> t.confidence)) return nullptr;   // a damaged line is dropped; a missing frame stops the gimbal by the input timeout
+            if (!(in >> t.track_id >> t.x >> t.y >> t.width >> t.height >> t.confidence)) {
+                executor_.publish_unsafe_observation();
+                return nullptr; // A damaged G header still consumes its complete picture.
+            }
             t.class_id = 0;
             result->tracks.push_back(t);
         }
         // Keep the measured rows intact for both target validation and the PC GUI.
-        std::string suffix, trailing;
+        std::string suffix;
         TrackLead lead;
-        if (in >> suffix && suffix == "LEAD" &&
-            in >> lead.track_id >> lead.dx_px >> lead.dy_px >> lead.control_epoch &&
-            lead.matches(lead.track_id) && !(in >> trailing)) {
-            result->lead = lead;
+        bool seen_observation = false, seen_lead = false;
+        const int separator = in.peek();
+        bool malformed = separator != std::char_traits<char>::eof() &&
+            !std::isspace(static_cast<unsigned char>(separator));
+        const auto read_token = [&in](auto& field) {
+            std::string token;
+            return static_cast<bool>(in >> token) && parse_token(token, field);
+        };
+        while (!malformed && in >> suffix) {
+            if (suffix == "OBS" && !seen_observation) {
+                seen_observation = true;
+                std::string quality;
+                if (!(in >> quality) || (quality != "0" && quality != "1")) { malformed = true; break; }
+                healthy_live = quality == "1";
+            } else if (suffix == "LEAD" && !seen_lead) {
+                seen_lead = true;
+                if (!read_token(lead.track_id) || !read_token(lead.dx_px) || !read_token(lead.dy_px) ||
+                    !read_token(lead.control_epoch)) { malformed = true; break; }
+            } else {
+                malformed = true;
+                break;
+            }
         }
+        if (malformed) healthy_live = false;
+        else if (lead.matches(lead.track_id)) result->lead = lead;
         result->frame = context;
         result->enqueued_at = std::chrono::steady_clock::now();
         result->aim_y = g_aim_y;
@@ -362,8 +415,22 @@ public:
     {
         std::uint64_t id = 0, captured_ns = 0;
         std::size_t count = 0;
-        if (!(in >> id >> captured_ns >> count) || id == 0) return;
-        if (auto result = tracks(in, id, captured_ns, count)) executor_.publish(result);
+        bool valid = false;
+        if (observation_grace_enabled_) {
+            std::string id_text, stamp_text, count_text;
+            in >> id_text >> stamp_text >> count_text;
+            valid = parse_token(id_text, id) && parse_token(stamp_text, captured_ns) &&
+                parse_token(count_text, count);
+        } else {
+            valid = static_cast<bool>(in >> id >> captured_ns >> count);
+        }
+        if (!valid || id == 0) {
+            executor_.publish_unsafe_observation();
+            return;
+        }
+        bool healthy_live = false;
+        if (auto result = tracks(in, id, captured_ns, count, healthy_live))
+            executor_.publish(result, healthy_live);
     }
 
     void frame_with_picture(std::istringstream& in)
@@ -371,10 +438,27 @@ public:
         std::uint64_t id = 0, captured_ns = 0;
         int w = 0, h = 0;
         std::size_t count = 0;
-        if (!(in >> id >> captured_ns >> w >> h >> count) || id == 0 || w <= 0 || h <= 0 || w > 4096 || h > 4096) return;
-        waiting_ = tracks(in, id, captured_ns, count);   // null: the picture bytes are still consumed, nothing is published
+        bool valid = false;
+        if (observation_grace_enabled_) {
+            std::string id_text, stamp_text, width_text, height_text, count_text;
+            in >> id_text >> stamp_text >> width_text >> height_text >> count_text;
+            if (!parse_token(width_text, w) || !parse_token(height_text, h) ||
+                w <= 0 || h <= 0 || w > 4096 || h > 4096) {
+                executor_.publish_unsafe_observation();
+                return; // The number of picture bytes is unknown.
+            }
+            valid = parse_token(id_text, id) && parse_token(stamp_text, captured_ns) &&
+                parse_token(count_text, count) && id != 0;
+        } else {
+            valid = static_cast<bool>(in >> id >> captured_ns >> w >> h >> count) &&
+                id != 0 && w > 0 && h > 0 && w <= 4096 && h <= 4096;
+            if (!valid) return;
+        }
         wait_w_ = w; wait_h_ = h;
-        if (!waiting_) { waiting_ = std::make_shared<TrackingResult>(); waiting_->frame = nullptr; }
+        waiting_healthy_ = false;
+        if (valid) waiting_ = tracks(in, id, captured_ns, count, waiting_healthy_);
+        else executor_.publish_unsafe_observation();
+        if (!waiting_) waiting_ = std::make_shared<TrackingResult>(); // Consume the picture without publishing it.
     }
 
     void picture(const char* bytes)
@@ -386,7 +470,7 @@ public:
         context->image = cv::Mat(wait_h_, wait_w_, CV_16UC1);
         std::memcpy(context->image.data, bytes, static_cast<std::size_t>(wait_w_) * wait_h_ * 2);
         result->frame = context;
-        executor_.publish(result);
+        executor_.publish(result, waiting_healthy_);
         if (gui_) gui_->publish(result);    // encodes only the observed rows
     }
 
@@ -460,10 +544,11 @@ int main(int argc, char** argv) try {
             });
         }
     }
-    Bridge bridge(executor, gui.get(), session_changes);
+    Bridge bridge(executor, gui.get(), session_changes, options.smoothing.observation_grace_ms > 0);
     say("READY");
     say("TRACK_CONTROL 1");
     say("LEAD_CONTROL 1");
+    say("OBSERVATION_STATUS 1");
     std::string pending, reported;
     std::uint64_t reported_epoch = std::numeric_limits<std::uint64_t>::max();
     std::vector<char> buffer(262144);
