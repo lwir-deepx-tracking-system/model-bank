@@ -31,6 +31,7 @@ class PreviewFrame:
     gimbal_color: tuple
     click_people: tuple | None = None
     click_ticket: int | None = None
+    replay_position: tuple | None = None
 
 
 def transition_jpeg(cv2):
@@ -84,12 +85,14 @@ def render_preview(cv2, frame):
     return buf.tobytes() if ok and buf is not None else None
 
 
-def publish_jpeg_locked(live, jpeg, frame_t, *, paired=True, click_people=None, click_ticket=None):
+def publish_jpeg_locked(live, jpeg, frame_t, *, paired=True, click_people=None, click_ticket=None,
+                        replay_position=None):
     """Commit one JPEG under jcond. Placeholders have no frame latency sample."""
     live.jpeg = jpeg
     live.jpeg_frame_t = frame_t
     live.jpeg_people = click_people
     live.jpeg_tracks_ticket = click_ticket
+    live.jpeg_replay_position = replay_position
     live.seq += 1
     if frame_t is not None:
         live.pic_n += 1
@@ -115,7 +118,7 @@ def replay_preview_source(live, frame_t):
 class PreviewWorker:
     """One renderer and a replaceable pending slot, under the JPEG condition."""
 
-    def __init__(self, live, cv2, *, transition_jpeg=None):
+    def __init__(self, live, cv2, *, transition_jpeg=None, async_live=True, async_replay=False):
         self._live = live
         self._cv2 = cv2
         self._cond = live.jcond
@@ -126,6 +129,10 @@ class PreviewWorker:
         self._before = float('-inf')
         self._transition_jpeg = bytes(transition_jpeg) if transition_jpeg else _FALLBACK_TRANSITION
         self._dropped = self._errors = 0
+        self.async_live = async_live
+        self.async_replay = async_replay
+        self._seek = None
+        self._seek_queued = False
 
     def _can_publish(self, frame_t, *, replay=False):
         live = self._live
@@ -137,13 +144,24 @@ class PreviewWorker:
         return (getattr(live, 'replay', None) is None and not getattr(live, 'cam_hold', False)
                 and not getattr(live, 'replay_busy', False))
 
-    def token(self, frame_t, *, replay=False):
+    def token(self, frame_t, *, replay=False, source=None):
         with self._cond:
+            if source is not None and getattr(self._live, 'replay', None) is not source:
+                return None
             return self._generation if self._can_publish(frame_t, replay=replay) else None
 
     def submit(self, token, frame, *, requested_at=None):
         with self._cond:
-            if frame.replay or token != self._generation or not self._can_publish(frame.frame_t):
+            if frame.replay and not self.async_replay:
+                self._dropped += 1
+                return False
+            if frame.replay:
+                # A live preview may be superseded. Replay keeps every accepted job in order.
+                self._cond.wait_for(lambda: self._pending is None or token != self._generation
+                                    or not self._can_publish(frame.frame_t, replay=True))
+            if (token != self._generation or not self._can_publish(frame.frame_t, replay=frame.replay)
+                    or (frame.replay and self._seek is not None and not self._seek_queued
+                        and not self._seek_matches(frame.replay_position))):
                 self._dropped += 1
                 return False
             if self._thread is None:
@@ -157,15 +175,43 @@ class PreviewWorker:
             if self._pending is not None:
                 self._dropped += 1
             self._pending = token, frame
+            if frame.replay and self._seek_matches(frame.replay_position):
+                self._seek_queued = True
             if requested_at is not None:
                 self._live.pic_t = requested_at
             self._wake.set()
             return True
 
-    def commit_replay(self, token, frame_t, jpeg, *, requested_at):
-        """Commit a JPEG rendered inline by the replay frame loop."""
+    def begin_replay_seek(self, run_id, slot, before, previous_pass, *, replay):
         with self._cond:
-            if token != self._generation or not self._can_publish(frame_t, replay=True):
+            if replay_preview_source(self._live, before) is None or self._live.replay is not replay:
+                return
+            self._seek = run_id, slot, before, previous_pass
+            self._invalidate_locked(before, keep_jpeg=True)
+
+    def replay_state(self, run_id):
+        with self._cond:
+            position = getattr(self._live, 'jpeg_replay_position', None)
+            current = position is not None and position[0] == run_id
+            seek_to = self._seek[1] if self._seek is not None and self._seek[0] == run_id else None
+            return dict(pos=position[1] if current else None, pass_=position[2] if current else None,
+                        seek_to=seek_to)
+
+    def replay_required(self, position, total):
+        if position is None:
+            return False
+        with self._cond:
+            return position[1] == total - 1 or self._seek_matches(position)
+
+    def _seek_matches(self, position):
+        return (self._seek is not None and position is not None
+                and position[:2] == self._seek[:2] and position[3] >= self._seek[2]
+                and position[2] > self._seek[3])
+
+    def commit_inline(self, token, frame_t, jpeg, *, requested_at, replay):
+        """Commit an inline render only while its source generation is current."""
+        with self._cond:
+            if token != self._generation or not self._can_publish(frame_t, replay=replay):
                 self._dropped += 1
                 return False
             self._live.pic_t = requested_at
@@ -175,7 +221,7 @@ class PreviewWorker:
             publish_jpeg_locked(self._live, jpeg, frame_t)
             return True
 
-    def _invalidate_locked(self, before):
+    def _invalidate_locked(self, before, *, keep_jpeg=False):
         self._generation += 1
         if before is not None:
             self._before = max(before, self._before)
@@ -183,8 +229,13 @@ class PreviewWorker:
             self._dropped += 1
             self._pending = None
         self._live.pic_t = float('-inf')
-        if not self._closed and not self._live.stopped and self._live.jpeg is not self._transition_jpeg:
+        if not keep_jpeg:
+            self._seek = None
+        self._seek_queued = False
+        if (not keep_jpeg and not self._closed and not self._live.stopped
+                and self._live.jpeg is not self._transition_jpeg):
             publish_jpeg_locked(self._live, self._transition_jpeg, None)
+        self._cond.notify_all()
         return self._generation
 
     def invalidate(self, *, before=None):
@@ -198,10 +249,14 @@ class PreviewWorker:
             self._live.jpeg_frame_t = None
             self._live.jpeg_people = None
             self._live.jpeg_tracks_ticket = None
+            self._live.jpeg_replay_position = None
+            self._seek = None
+            self._seek_queued = False
             if self._pending is not None:
                 self._dropped += 1
                 self._pending = None
             self._wake.set()
+            self._cond.notify_all()
 
     def publish_placeholder(self, token, jpeg):
         with self._cond:
@@ -227,18 +282,30 @@ class PreviewWorker:
                     continue
                 token, frame = self._pending
                 self._pending = None
+                self._cond.notify_all()
+                if frame.replay and self._seek is not None and not self._seek_matches(frame.replay_position):
+                    self._dropped += 1
+                    continue
             try:
                 jpeg = render_preview(self._cv2, frame)
             except Exception:
                 jpeg = None
             with self._cond:
-                if token != self._generation or not self._can_publish(frame.frame_t):
+                if token != self._generation or not self._can_publish(frame.frame_t, replay=frame.replay):
                     self._dropped += 1
                 elif not jpeg:
                     self._errors += 1
+                    if frame.replay and self._seek_matches(frame.replay_position):
+                        self._seek_queued = False
+                elif frame.replay and self._seek is not None and not self._seek_matches(frame.replay_position):
+                    self._dropped += 1
                 else:
+                    if frame.replay:
+                        self._seek = None
+                        self._seek_queued = False
                     publish_jpeg_locked(self._live, jpeg, frame.frame_t,
-                                        click_people=frame.click_people, click_ticket=frame.click_ticket)
+                                        click_people=frame.click_people, click_ticket=frame.click_ticket,
+                                        replay_position=frame.replay_position)
             # Release the completed image while waiting on the next request.
             del frame, jpeg
 

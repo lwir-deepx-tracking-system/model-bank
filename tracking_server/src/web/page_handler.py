@@ -20,15 +20,18 @@ from ..camera import replay_eval   # 11-12: ground-truth comparison while a labe
 
 
 def init_preview(live, *, transition_jpeg=None):
-    if os.environ.get('LWIR_ASYNC_PREVIEW') == '1':
+    async_live = os.environ.get('LWIR_ASYNC_PREVIEW') == '1'
+    async_replay = os.environ.get('LWIR_ASYNC_REPLAY_PREVIEW') == '1'
+    if async_live or async_replay:
         if transition_jpeg is None:
             transition_jpeg = preview_worker.transition_jpeg(APP.cv2)
-        live.preview_worker = preview_worker.PreviewWorker(live, APP.cv2, transition_jpeg=transition_jpeg)
+        live.preview_worker = preview_worker.PreviewWorker(live, APP.cv2, transition_jpeg=transition_jpeg,
+                                                           async_live=async_live, async_replay=async_replay)
 
 
 def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
                       rows_, row_, npers_, now_, fps_, gb_id_, *, owned, click_people=None,
-                      click_ticket=None):
+                      click_ticket=None, replay_position=None):
     gt_boxes = ()
     if gtd_ is not None and replay_eval.DRAW[0]:
         gt_boxes = tuple(tuple(b) for b in replay_eval.draw_boxes(t_in, gtd_, sC_))
@@ -59,12 +62,13 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
         gray_ = np.frombuffer(gray_.tobytes(), dtype=gray_.dtype).reshape(gray_.shape)
     return preview_worker.PreviewFrame(t_in, gray_, sc_, tuple(draw_), gt_boxes,
                                        tuple(predictions), txt_, rp_ is not None, gtxt_, gc_,
-                                       click_people, click_ticket)
+                                       click_people, click_ticket, replay_position)
 
 
 def _click_live(x, y):
     live = APP.LIVE
-    if getattr(live, 'preview_worker', None) is None:
+    worker = getattr(live, 'preview_worker', None)
+    if worker is None or not worker.async_live:
         return live_tracks.click(x, y)
     with live.jcond:
         frame_t = getattr(live, 'jpeg_frame_t', None)
@@ -139,8 +143,9 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         t_in = now_
     worker_ = getattr(APP.LIVE, 'preview_worker', None)
     replay_ = getattr(APP.LIVE, 'replay', None)
-    async_live_ = worker_ is not None and replay_ is None
-    token_ = (worker_.token(t_in, replay=replay_ is not None)
+    async_live_ = worker_ is not None and worker_.async_live and replay_ is None
+    async_replay_ = replay_ is not None and replay_link.async_preview(replay_, worker_)
+    token_ = (worker_.token(t_in, replay=replay_ is not None, source=replay_)
               if worker_ is not None and paired_stamp_ else None)
     replay_source_ = None
     if worker_ is None and replay_ is not None and paired_stamp_:
@@ -190,7 +195,11 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
                   (int(r[2] * sc_), int((r[3] - 16) * sc_)),
                   (0, 220, 255) if gb_id_ and int(r[4]) == gb_id_ else track_color(int(r[4])), int(r[4]))
                  for r in display_rows if int(r[6]) == 0 and (not gb_id_ or int(r[4]) == gb_id_)]
-    gtd_, replay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections, tracker_detections)
+    preview_receipt = []
+    receipt_args = {'preview_receipt': preview_receipt} if async_replay_ else {}
+    gtd_, replay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections,
+                                            tracker_detections, **receipt_args)
+    position = preview_receipt[0] if preview_receipt else None
     overlay_rows = replay_rows
     if overlay_rows is not None:
         rows_ = overlay_rows
@@ -202,15 +211,16 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     # and every frame for 3 s after a /snap.jpg request. Nothing else reads this picture (tracking, gimbal, measurement and the PC GUI use the frame itself).
     preview_allowed_ = (token_ is not None if worker_ is not None else
                         replay_ is None or replay_source_ is not None)
-    if preview_allowed_ and (
-            APP.LIVE.viewers > 0 or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0):
+    required = async_replay_ and worker_.replay_required(position, replay_.get('frames') or 0)
+    if preview_allowed_ and (required or APP.LIVE.viewers > 0
+            or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0):
         click_people, click_ticket = None, None
         if async_live_ and healthy_ and overlay_rows is None:
             click_people, click_ticket = live_tracks.preview_people(t_in, {d[3] for d in draw_})
         frame_ = _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
-                                   rows_, row_, npers_, now_, fps_, gb_id_, owned=async_live_,
-                                   click_people=click_people, click_ticket=click_ticket)
-        if async_live_:
+                                   rows_, row_, npers_, now_, fps_, gb_id_, owned=async_live_ or async_replay_,
+                                   click_people=click_people, click_ticket=click_ticket, replay_position=position)
+        if async_live_ or async_replay_:
             worker_.submit(token_, frame_, requested_at=now_)
         else:
             try:
@@ -218,7 +228,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
             except Exception:
                 jpeg_ = None
             if worker_ is not None:
-                worker_.commit_replay(token_, t_in, jpeg_, requested_at=now_)
+                worker_.commit_inline(token_, t_in, jpeg_, requested_at=now_, replay=replay_ is not None)
             else:
                 with APP.LIVE.jcond:
                     source_ok_ = (replay_ is None or (
@@ -444,7 +454,8 @@ def make_lv_Handler():
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,
                               q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, replay=(getattr(APP.LIVE, 'replay', None) or {}).get('name'), track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
                     worker_ = getattr(APP.LIVE, 'preview_worker', None)
-                    h_.update(delay_kind='jpeg_ready', async_preview=worker_ is not None,
+                    h_.update(delay_kind='jpeg_ready', async_preview=bool(worker_ and worker_.async_live),
+                              async_replay_preview=bool(worker_ and worker_.async_replay),
                               npu_feed=system_buttons.npu_feed_state())
                     h_.update(worker_.stats() if worker_ is not None else dict(preview_dropped=0, preview_errors=getattr(APP.LIVE, 'preview_errors', 0)))
                     cut_ = time.perf_counter() - 30.0

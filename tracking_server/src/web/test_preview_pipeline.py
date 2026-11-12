@@ -2,7 +2,7 @@
 from collections import deque
 from contextlib import ExitStack
 from dataclasses import replace
-from threading import Condition, Event, Lock
+from threading import Condition, Event, Lock, Thread
 from types import SimpleNamespace as NS
 import os
 import io
@@ -54,9 +54,11 @@ class SlowCV:
 
 
 class PreviewWorkerTests(unittest.TestCase):
-    def worker(self, encoder=cv2):
+    def worker(self, encoder=cv2, *, async_replay=False):
         live = make_live()
-        worker = PreviewWorker(live, encoder, transition_jpeg=b'transition placeholder')
+        worker = PreviewWorker(live, encoder, transition_jpeg=b'transition placeholder',
+                               async_replay=async_replay)
+        live.preview_worker = worker
         def close():
             if isinstance(encoder, SlowCV): encoder.release.set()
             worker.close()
@@ -77,6 +79,123 @@ class PreviewWorkerTests(unittest.TestCase):
         self.assertEqual(live.jpeg, expected)
         self.assertEqual(live.jpeg_frame_t, sample.frame_t)
         self.assertEqual((live.pic_n, len(live.delays)), (1, 1))
+
+    def test_replay_backpressure_publishes_exact_jpegs_in_order(self):
+        encoder = SlowCV()
+        live, worker = self.worker(encoder, async_replay=True)
+        live.replay, live.proc = {'name': 'test'}, object()
+        page.preview_worker.set_preview_producer(live, live.proc, before=time.perf_counter())
+        samples = []
+        for slot in range(3):
+            sample = frame(value=70 + slot)
+            samples.append(replace(sample, replay=True, replay_position=('run', slot, 1, sample.frame_t)))
+        commits = []
+        commit = page.preview_worker.publish_jpeg_locked
+
+        def capture(live, jpeg, stamp, **kwargs):
+            commit(live, jpeg, stamp, **kwargs)
+            commits.append((live.jpeg_replay_position[1], jpeg))
+
+        def submit(sample):
+            return worker.submit(worker.token(sample.frame_t, replay=True), sample)
+
+        submitted = Event()
+        def submit_last():
+            submit(samples[-1])
+            submitted.set()
+
+        with patch.object(page.preview_worker, 'publish_jpeg_locked', side_effect=capture):
+            self.assertTrue(submit(samples[0]))
+            self.assertTrue(encoder.entered.wait(2))
+            self.assertTrue(submit(samples[1]))
+            producer = Thread(target=submit_last)
+            producer.start()
+            try:
+                self.assertFalse(submitted.wait(.05))
+                self.assertIsNone(worker.replay_state('run')['pos'])
+                self.assertIs(worker._pending[1], samples[1])
+            finally:
+                encoder.release.set()
+                producer.join(3)
+            self.assertTrue(submitted.is_set())
+            self.wait_seq(live, 4)  # includes the transition placeholder
+        self.assertEqual(commits, [(slot, render_preview(cv2, sample))
+                                   for slot, sample in enumerate(samples)])
+        self.assertEqual(worker.replay_state('run'), dict(pos=2, pass_=1, seek_to=None))
+
+    def test_seek_invalidates_old_jobs_and_requires_target_commit(self):
+        encoder = SlowCV()
+        live, worker = self.worker(encoder, async_replay=True)
+        live.replay, live.proc = {'name': 'test'}, object()
+        page.preview_worker.set_preview_producer(live, live.proc, before=time.perf_counter())
+
+        def sample(slot, pass_no):
+            result = frame(value=100 + slot)
+            return replace(result, replay=True, replay_position=('run', slot, pass_no, result.frame_t))
+
+        def submit(result):
+            return worker.submit(worker.token(result.frame_t, replay=True), result)
+
+        self.assertTrue(submit(sample(3, 1)))
+        self.assertTrue(encoder.entered.wait(2))
+        self.assertTrue(submit(sample(4, 1)))
+        rejected = []
+        blocked = Thread(target=lambda: rejected.append(submit(sample(5, 1))))
+        blocked.start()
+        worker.begin_replay_seek('run', 3, time.perf_counter(), 1, replay=live.replay)
+        blocked.join(2)
+        self.assertEqual(rejected, [False])
+        self.assertFalse(submit(sample(3, 1)))  # buffered pre-seek pass
+        self.assertFalse(submit(sample(4, 2)))  # current pass, wrong slot
+        target = sample(3, 2)
+        self.assertTrue(submit(target))
+        following = sample(4, 2)
+        following_result = []
+        next_frame = Thread(target=lambda: following_result.append(submit(following)))
+        next_frame.start()
+        self.assertEqual(worker.replay_state('run'), dict(pos=None, pass_=None, seek_to=3))
+        encoder.release.set()
+        next_frame.join(2)
+        self.assertEqual(following_result, [True])
+        self.wait_seq(live, 3)
+        self.assertEqual(worker.replay_state('run'), dict(pos=4, pass_=2, seek_to=None))
+        self.assertEqual(live.jpeg, render_preview(cv2, following))
+
+    def test_replay_close_releases_blocked_submitter_and_rejects_late_jpeg(self):
+        encoder = SlowCV()
+        live, worker = self.worker(encoder, async_replay=True)
+        live.replay, live.proc = {'name': 'test'}, object()
+        page.preview_worker.set_preview_producer(live, live.proc, before=time.perf_counter())
+        sample = replace(frame(), replay=True)
+        token = worker.token(sample.frame_t, replay=True)
+        self.assertTrue(worker.submit(token, sample))
+        self.assertTrue(encoder.entered.wait(2))
+        self.assertTrue(worker.submit(token, sample))
+        result = []
+        producer = Thread(target=lambda: result.append(worker.submit(token, sample)))
+        producer.start()
+        worker.close()
+        producer.join(2)
+        self.assertEqual(result, [False])
+        encoder.release.set()
+        worker.join(2)
+        self.assertEqual((live.jpeg, live.pic_n, len(live.delays)), (b'transition placeholder', 0, 0))
+
+    def test_replay_failed_seek_encode_does_not_acknowledge_position(self):
+        live, worker = self.worker(async_replay=True)
+        live.replay, live.proc = {'name': 'test'}, object()
+        page.preview_worker.set_preview_producer(live, live.proc, before=time.perf_counter())
+        worker.begin_replay_seek('run', 0, time.perf_counter(), 1, replay=live.replay)
+        target = frame()
+        target = replace(target, replay=True, replay_position=('run', 0, 2, target.frame_t))
+        with patch.object(cv2, 'imencode', return_value=(False, None)):
+            self.assertTrue(worker.submit(worker.token(target.frame_t, replay=True), target))
+            deadline = time.monotonic() + 3
+            while worker.stats()['preview_errors'] == 0 and time.monotonic() < deadline:
+                time.sleep(.005)
+            self.assertEqual(worker.stats()['preview_errors'], 1)
+        self.assertEqual(worker.replay_state('run'), dict(pos=None, pass_=None, seek_to=0))
+        self.assertEqual((live.jpeg, live.pic_n, len(live.delays)), (b'transition placeholder', 0, 0))
 
     def test_pending_queue_keeps_only_latest_frame(self):
         encoder = SlowCV()
@@ -231,9 +350,10 @@ class PublishFixture(unittest.TestCase):
             self.stack.enter_context(patch.object(target, attr, value))
         self.stack.enter_context(patch.dict(page.POSP, show=False))
 
-    def enable(self, enabled, encoder=cv2):
+    def enable(self, enabled, encoder=cv2, *, async_replay=False):
         APP.cv2 = encoder
-        with patch.dict(os.environ, LWIR_ASYNC_PREVIEW='1' if enabled else '0'), \
+        with patch.dict(os.environ, LWIR_ASYNC_PREVIEW='1' if enabled else '0',
+                        LWIR_ASYNC_REPLAY_PREVIEW='1' if async_replay else '0'), \
              patch.object(page.preview_worker,'transition_jpeg',return_value=b'transition placeholder'):
             page.init_preview(self.live)
         worker = getattr(self.live, 'preview_worker', None)
@@ -288,6 +408,31 @@ class PublishTests(PublishFixture):
         self.assertEqual((self.live.seq - initial_seq, len(self.controls), len(self.evaluations)), (1, 1, 1))
         self.assertIsNone(worker._thread)
 
+    def test_replay_override_keeps_sync_and_forces_async_end_without_viewer(self):
+        worker = self.enable(False, async_replay=True)
+        self.install_replay()
+        self.live.replay.update(preview='sync', frames=3)
+        with patch.object(page.replay_link, 'top_text', return_value='REPLAY fixture'):
+            self.publish()
+        self.assertIsNone(worker._thread)
+        self.assertEqual((self.live.pic_n, len(self.controls), len(self.evaluations)), (1, 1, 1))
+
+        self.live.replay.update(preview='async')
+        self.live.viewers = 0
+        self.live.pic_t = time.perf_counter()
+        def final_frame(stamp, rows, *args, preview_receipt):
+            self.evaluations.append(np.array(rows, copy=True))
+            preview_receipt.append(('run', 2, 1, stamp))
+            return None, None
+
+        with patch.object(page.replay_link, 'top_text', return_value='REPLAY fixture'), \
+             patch.object(page.replay_eval, 'on_frame', side_effect=final_frame):
+            self.publish()
+        with self.live.jcond:
+            self.assertTrue(self.live.jcond.wait_for(lambda: self.live.pic_n == 2, timeout=3))
+        self.assertEqual(worker.replay_state('run'), dict(pos=2, pass_=1, seek_to=None))
+        self.assertEqual((len(self.controls), len(self.evaluations)), (2, 2))
+
     def test_replay_source_change_during_encoding_rejects_old_output(self):
         worker = self.enable(True)
         self.install_replay()
@@ -301,6 +446,25 @@ class PublishTests(PublishFixture):
             self.publish()
         self.assertEqual(self.live.jpeg, b'transition placeholder')
         self.assertEqual((self.live.pic_n, len(self.live.delays)), (0, 0))
+
+    def test_inline_live_encode_cannot_overwrite_replay_transition(self):
+        encoder = SlowCV()
+        worker = self.enable(False, encoder, async_replay=True)
+        publisher = Thread(target=self.publish)
+        publisher.start()
+        try:
+            self.assertTrue(encoder.entered.wait(2))
+            self.install_replay()
+            transition_sequence = self.live.seq
+            self.assertEqual(self.live.jpeg, b'transition placeholder')
+        finally:
+            encoder.release.set()
+            publisher.join(3)
+        self.assertFalse(publisher.is_alive())
+        self.assertEqual(self.live.jpeg, b'transition placeholder')
+        self.assertEqual((self.live.seq, self.live.pic_n, len(self.live.delays)),
+                         (transition_sequence, 0, 0))
+        self.assertEqual(worker.stats()['preview_dropped'], 1)
 
     def test_first_replay_frame_displays_while_transition_cleanup_is_busy(self):
         for enabled in (False, True):

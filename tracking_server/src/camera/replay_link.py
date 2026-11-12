@@ -226,17 +226,27 @@ def _gimbal_stop():
         APP.GB.mover = None; APP.GB.state['answer'] = ''; APP.gb_send('H')
 
 
+def async_preview(replay, worker):
+    return bool(worker is not None and worker.async_replay and replay.get('preview', 'async') == 'async')
+
+
 def state():
     L_ = APP.LIVE; r_ = getattr(L_, 'replay', None) if L_ is not None else None
     st_ = dict(on=r_ is not None, busy=bool(getattr(L_, 'replay_busy', False)), name=None, fps=None, loop=None, bits=None, frames=None, total=None, shown=None, pos=None, paused=False,
                seeking=False, seek_to=None, note=None, msg=getattr(L_, 'replay_msg', None)); st_['pass'] = None
     if r_ is not None:
         n_ = max(0, L_.frames_in - r_['fin0']) if r_.get('fin0') is not None else 0
-        ev_ = replay_eval.EV; ps_ = ev_.position() if ev_ is not None else {}
+        ev_ = replay_eval.EV
+        worker = getattr(L_, 'preview_worker', None)
+        if ev_ is not None and async_preview(r_, worker):
+            ps_ = worker.replay_state(ev_.run_id)
+        else:
+            ps_ = ev_.position() if ev_ is not None else {}
         st_.update(name=r_['name'], fps=r_['fps'], loop=r_['loop'], bits=r_['bits'], frames=r_['frames'], total=r_['frames'], shown=n_, note=NOTE_8BIT if r_['bits'] == 8 else None,
                    pos=ps_.get('pos'), paused=bool(r_.get('paused')), seeking=ps_.get('seek_to') is not None, seek_to=ps_.get('seek_to'))   # pos = 0-based index of the frame on screen, from the frame header
         st_['pass'] = ps_.get('pass_')
         st_['backend'] = r_.get('backend', 'python')
+        st_['preview'] = 'async' if async_preview(r_, worker) else 'sync'
     return st_
 
 
@@ -265,6 +275,14 @@ def start_request(q_):   # -> (http 코드, 글)
     it_, d_ = find(q_.get('seq', [''])[0])
     if it_ is None: return (409 if not on() else 400), d_
     L_ = APP.LIVE
+    worker = getattr(L_, 'preview_worker', None)
+    can_async = worker is not None and worker.async_replay
+    preview_modes = q_.get('preview', ['async' if can_async else 'sync'])
+    if len(preview_modes) != 1 or preview_modes[0] not in ('sync', 'async'):
+        return 400, 'preview 는 sync 또는 async'
+    preview_mode = preview_modes[0]
+    if preview_mode == 'async' and not can_async:
+        return 409, '이 서버에서 비동기 재생 미리보기를 사용할 수 없습니다'
     with L_.sys_lock, L_.cam_lock:
         if L_.stopped or APP.args.live_wait: return 409, '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
         if L_.cam_hold: return 409, '카메라 초기화나 다른 재생 바꾸기가 진행 중. 잠시 뒤 다시 누르세요'
@@ -272,7 +290,7 @@ def start_request(q_):   # -> (http 코드, 글)
         set_preview_producer(L_, None, before=time.perf_counter())
     _gimbal_stop()
     tgt_ = dict(name=it_['name'], dir=d_, fps=fps_, loop=lp_ == '1', bits=it_['bits'], frames=it_['frames'], fin0=None, paused=False,
-                backend=backend, tracker_library=library)
+                backend=backend, tracker_library=library, preview=preview_mode)
     APP.lv_th.Thread(target=_switch, args=(tgt_,), daemon=True).start()
     return 200, '재생 시작: %s' % it_['name']
 
@@ -294,7 +312,12 @@ def seek_request(q_):   # POST /replay/seek?pos=<0 부터 센 프레임 번호>
     if not 0 <= pos_ < (r_['frames'] or 0): return 400, 'pos 는 0 ~ %d (0 부터 센 프레임 번호)' % ((r_['frames'] or 1) - 1)
     pause_ = q_.get('pause', ['0'])[0] == '1'
     ev_ = replay_eval.EV
-    if ev_ is not None: ev_.want_seek(pos_, time.perf_counter())
+    if ev_ is not None:
+        before = time.perf_counter()
+        previous_pass = ev_.want_seek(pos_, before)
+        worker = getattr(APP.LIVE, 'preview_worker', None)
+        if async_preview(r_, worker):
+            worker.begin_replay_seek(ev_.run_id, pos_, before, previous_pass, replay=r_)
     if pause_:
         r_['paused'] = True
     ctl_.send('seek', (pos_, pause_))
@@ -329,8 +352,11 @@ def restart_request():
     target = getattr(APP.LIVE, 'replay', None) or replay_eval.last()
     if target is None:
         return 409, '다시 계산할 녹화가 없습니다'
-    return start_request({'seq': [target['name']], 'fps': [str(target['fps'])], 'loop': ['0'],
-                          'backend': [target.get('backend', 'python')]})
+    query = {'seq': [target['name']], 'fps': [str(target['fps'])], 'loop': ['0'],
+             'backend': [target.get('backend', 'python')]}
+    if 'preview' in target:
+        query['preview'] = [target['preview']]
+    return start_request(query)
 
 
 def stop_request():

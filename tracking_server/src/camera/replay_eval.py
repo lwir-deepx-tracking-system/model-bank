@@ -116,6 +116,7 @@ class Eval:
         self.pos_in = None; self.pos_shown = None; self.pass_shown = None; self.pos_t = None; self.seek_to = None; self.seek_t = None; self.seeks = 0
         self.zero()
         self.backend = tgt.get('backend', 'python')
+        self.preview = tgt.get('preview', 'sync')
         self.backend_error = None
         self.native_tracker = NativeByteTrack(tgt['tracker_library']) if self.backend == 'cpp_bytetrack' else None
         self.native_tag = None
@@ -186,6 +187,7 @@ class Eval:
             if self.phase == 'scoring':
                 self.phase = 'interrupted'
             self._sum = None
+            return self.last_pass or 1
 
     def position(self):
         with self.lock: return dict(pos=self.pos_shown, pass_=self.pass_shown, seek_to=self.seek_to, seeks=self.seeks)
@@ -242,18 +244,22 @@ class Eval:
                    or not any(gt_score.ioa(d[1:5], b) >= gt_score.IOA_MIN for b in ignore)]
         return targets, kept_tracks, det_out
 
-    def frame(self, t_in, rows, sc, image_id, detections=None):
+    def frame(self, t_in, rows, sc, image_id, detections=None, *, preview_receipt=None):
         with self.lock:
             if self.src_t is not None and t_in < self.src_t: return None   # 이 재생보다 먼저 도착한 프레임 (옛 영상)
             rp = self.rep.pop(t_in, None)
             if rp is not None:   # 되풀이: 위치만 갱신하고, 채점도 '화면에 낸 프레임' 수도 늘리지 않는다 (정답 상자는 그림에 그리게 돌려준다)
                 self._shown(t_in, rp[2], rp[1])
+                if preview_receipt is not None:
+                    preview_receipt.append((self.run_id, rp[2], rp[1], t_in))
                 return self.lab['gt'].get(rp[0], ()) if self.lab['ok'] and rp[0] in self.lab['frames'] else None
             tg = self.tags.pop(t_in, None)
             self.n['published'] += 1
             if tg is None: self.n['untagged'] += 1; return None
             png, pss, k = tg
             self._shown(t_in, k, pss)
+            if preview_receipt is not None:
+                preview_receipt.append((self.run_id, k, pss, t_in))
             gt = self.lab['gt'].get(png, ()) if self.lab['ok'] and png in self.lab['frames'] else None
             if self.phase != 'scoring':
                 return gt
@@ -295,6 +301,7 @@ class Eval:
         lab = self.lab
         s = dict(run_id=self.run_id, name=self.name, fps=self.fps, loop=self.loop, started=self.started, since=self.since, ended=self.ended, end_reason=self.end_reason, file=self.file,
                  backend=self.backend, backend_error=self.backend_error, native_frames=self.native_frames,
+                 preview=self.preview,
                  scoring=lab['ok'], why=lab['why'] or None, review=lab['review'] or None, label_file=lab['label_file'], label_sha256=lab['label_sha256'],
                  label_bad_lines=lab['bad_lines'], labelled_frames=lab['labelled'], scorable_frames=len(lab['frames']), passes=self.passes, scored_unique=len(self.uniq), seeks=self.seeks,
                  counts=dict(self.n, server_skipped=max(0, self.n['received'] - self.n['published'] - len(self.tags))),
@@ -456,13 +463,14 @@ def reset_first_input(t_in):
     return True
 
 
-def on_frame(t_in, rows, sc, image_id, detections=None, tracker_detections=None):
+def on_frame(t_in, rows, sc, image_id, detections=None, tracker_detections=None, *, preview_receipt=None):
     ev = EV
     if ev is None:
         return None, None
     native_rows = ev.track_frame(t_in, tracker_detections)
     try:
-        return ev.frame(t_in, rows if native_rows is None else native_rows, sc, image_id, detections), native_rows
+        return ev.frame(t_in, rows if native_rows is None else native_rows, sc, image_id, detections,
+                        preview_receipt=preview_receipt), native_rows
     except Exception as e:
         print('REPLAY EVAL frame failed', type(e).__name__, str(e)[:120], flush=True)
         return None, native_rows
