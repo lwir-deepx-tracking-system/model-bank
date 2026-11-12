@@ -10,6 +10,7 @@ from ..gimbal.gimbal_link import gb_sample
 from ..track.position_memory import POSP
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
+from . import system_buttons
 from ..camera import replay_eval   # 11-12: ground-truth comparison while a labelled recording is replayed
 
 
@@ -179,6 +180,27 @@ def make_lv_Handler():
                 try: self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 except (BrokenPipeError, ConnectionResetError, OSError): pass
                 return
+            if self.path == '/system/restart':
+                host = self.headers.get('Host')
+                origin = self.headers.get('Origin')
+                if not host or self.headers.get('X-Gimbal') != '1' or origin not in (f'http://{host}', f'https://{host}'):
+                    self.send_error(403)
+                    return
+                ok, message = system_buttons.reserve_restart()
+                body = json.dumps(dict(ok=ok, text=message, instance=APP.LIVE.instance), ensure_ascii=False).encode()
+                try:
+                    self.send_response(202 if ok else 409)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    self.wfile.flush()
+                except OSError:
+                    pass
+                finally:
+                    if ok:
+                        system_buttons.stop_for_restart()
+                return
             if self.path.startswith('/system/reboot') and self.headers.get('X-Gimbal') == '1':   # v33: reboot button. The page sends confirm=REBOOT after a confirm dialog.
                 from urllib.parse import urlsplit as us3_, parse_qs as pq3_
                 ok_, text_ = (APP.sys_reboot() if pq3_(us3_(self.path).query).get('confirm', [''])[0] == 'REBOOT' else (False, '확인 값이 없음'))
@@ -255,6 +277,12 @@ def make_lv_Handler():
                 cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
                 if u_.path == '/gimbal/click' and cam_tracker is not None and cam_tracker.blocks_selection():
                     self.send_error(409, 'Camera C++ ByteTrack preview is display-only'); return
+                if getattr(APP.LIVE, 'restart_pending', False) and (
+                    u_.path == '/gimbal/click' or
+                    (u_.path == '/gimbal/move' and (int(q_['x'][0]) or int(q_['y'][0])))
+                ):
+                    self.send_error(409)
+                    return
                 ip_ = self.client_address[0]; APP.GB.mover_t[ip_] = time.monotonic()
                 APP.gb_send('P')
                 if u_.path in ('/gimbal/click', '/gimbal/move') and replay_link.blocking() and (u_.path == '/gimbal/click' or int(q_['x'][0]) or int(q_['y'][0])):   # 11-12: no gimbal move while a recording is played (a move of 0 0 = stop is let through)
@@ -313,7 +341,7 @@ def make_lv_Handler():
                     now_ = time.monotonic(); last_out_ = APP.LIVE.done_ts[-1] if APP.LIVE.done_ts else None
                     try: rss_ = int(open('/proc/self/statm').read().split()[1]) * 4096 // 1048576
                     except Exception: rss_ = None
-                    h_ = dict(up=round(now_ - APP.LIVE.t0, 1), cam_idle=round(now_ - APP.LIVE.last_frame_t, 1), out_idle=round(time.perf_counter() - last_out_ if last_out_ is not None else now_ - APP.LIVE.t0, 1), frames_in=APP.LIVE.frames_in,   # v26: before the first result out_idle is the time since the start (a tracker that hangs before its first result is seen too)
+                    h_ = dict(instance=getattr(APP.LIVE, 'instance', None), up=round(now_ - APP.LIVE.t0, 1), cam_idle=round(now_ - APP.LIVE.last_frame_t, 1), out_idle=round(time.perf_counter() - last_out_ if last_out_ is not None else now_ - APP.LIVE.t0, 1), frames_in=APP.LIVE.frames_in,   # v26: before the first result out_idle is the time since the start (a tracker that hangs before its first result is seen too)
                               cam_fail=APP.LIVE.cam_fail_n, warm_dropped=APP.LIVE.warm_dropped, frozen_frames=getattr(APP.LIVE, 'frozen_total', 0), pictures=APP.LIVE.pic_n, viewers=APP.LIVE.viewers, cam_pipe_alive=APP.LIVE.proc.poll() is None, gimbal_alive=(APP.GB.proc is not None and APP.GB.proc.poll() is None) if APP.GB is not None else None,
                               gimbal_ready=bool(APP.GB.state['ready']) if APP.GB is not None else None, gimbal_error=int(APP.GB.state['error']) if APP.GB is not None else None, gimbal_starts=(APP.GB.restarts + 1) if APP.GB is not None else None,
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,

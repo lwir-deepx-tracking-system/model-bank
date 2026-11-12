@@ -81,8 +81,32 @@ priorities together (P1 gated re-identification candidates > P2 at-risk > P3 jus
 F5 radius): N = matched frames, the birth frame included, before a NEW track is output (2 = birth frame + 1 hit = the current rule, 1 behaves
 the same; tracks born on a video's first frame are still output at once); R = motion re-bind radius in lost-track heights. The offline
 choice --n-init 3 --radius 1.5 (idsw_fix/RESULT_KO.md, C_F4_n3+F5_r1.5) was verified only with --tracker rebind --no-vit."""
-from src.app import main
+import os
+import sys
+from pathlib import Path
+from tempfile import mkdtemp
+
+
+def open_live_log():
+    root = Path(__file__).resolve().parent
+    output = root / 'real_gui_1'
+    log = root / 'real_gui_1.out'
+    previous = [path for path in (output, log) if path.exists() or path.is_symlink()]
+    if previous:
+        archive = Path(mkdtemp(prefix='real_gui_saved_', dir=root))
+        for path in previous:
+            path.rename(archive / path.name)
+    with log.open('x', encoding='utf-8') as stream:
+        os.dup2(stream.fileno(), 1)
+        os.dup2(stream.fileno(), 2)
+    print('TRACKING SERVER START', flush=True)
 
 
 if __name__ == '__main__':
-    main()
+    if os.environ.get('LWIR_REAL_GUI_LAUNCH') == '1':
+        open_live_log()
+    from src.app import main
+    from src.web.system_buttons import RESTART_REQUESTED
+
+    if main() is RESTART_REQUESTED:
+        os.execv(sys.executable, ['python3', '-B', *sys.argv])

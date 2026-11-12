@@ -433,6 +433,9 @@ def main():
             _Live = camera_link._Live
             APP.LIVE = _Live(); APP.LIVE.stopped = False; APP.LIVE.cam_lost = False; APP.LIVE.q = APP.lv_col.deque(maxlen=3); APP.LIVE.cond = APP.lv_th.Condition(); APP.LIVE.arr = APP.lv_col.deque()
             APP.LIVE.camera_bytetrack = CameraByteTrack(APP.args)
+            APP.LIVE.restart_supported = ready_prefetch and os.environ.get('LWIR_REAL_GUI_LAUNCH') == '1'
+            APP.LIVE.restart_pending = False
+            APP.LIVE.instance = str(time.monotonic_ns())
             APP.LIVE.jpeg = b''; APP.LIVE.seq = 0; APP.LIVE.viewers = 0; APP.LIVE.pic_t = -1e9; APP.LIVE.pic_n = 0; APP.LIVE.snap_t = -1e9; APP.LIVE.jcond = APP.lv_th.Condition(); APP.LIVE.t0 = time.monotonic(); APP.LIVE.cam_fps = 0.0; APP.LIVE.done_ts = APP.lv_col.deque(maxlen=40)
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
             APP.LIVE.lo = None; APP.LIVE.hi = None; APP.LIVE.last = None; APP.LIVE.log = open(APP.out / 'cam_pipe.log', 'w'); APP.LIVE.raws = APP.lv_col.deque(); APP.LIVE.rawq = APP.lv_col.deque(); APP.LIVE.warm_dropped = 0; APP.LIVE.last_frame_t = time.monotonic(); APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.cam_next_spawn = None; APP.LIVE.cam_hold = False; APP.LIVE.cam_reset = None; APP.LIVE.sys_lock = APP.lv_th.Lock(); APP.LIVE.cam_lock = APP.lv_th.Lock(); APP.LIVE.frames_in = 0; APP.LIVE.q_drop = 0; APP.LIVE.prev_t = None; APP.LIVE.upd_t = None; APP.LIVE.gap_n = 0; APP.LIVE.delays = APP.lv_col.deque(maxlen=2000); APP.LIVE.dlock = APP.lv_th.Lock(); APP.LIVE.perf = APP.lv_col.deque(maxlen=900); APP.LIVE.perf_acc = [time.perf_counter(), 0, 0.0, 0.0, 0.0]   # v26b: q_drop = camera frames thrown away because the tracker was 3 frames behind, gap_n = input gaps over 1 s, delays = (time, capture-to-picture ms) of the last frames. v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)
@@ -816,6 +819,11 @@ def main():
             if i % 50 == 0 and not APP.args.mock:
                 s_ = APP.dx.DeviceStatus.get_current_status(0); util.append(dict(frame=i, core_util=[s_.get_core_utilization(k) for k in range(3)], mem=s_.get_memory_used()))
             if (i + 1) % 500 == 0: print('FRAMES', i + 1, round(time.monotonic() - t_start, 1), 'vit delivered', delivered, flush=True)
+        if APP.LIVE is not None and APP.LIVE.restart_pending:
+            for _ in ahead:
+                APP.a.wait()
+                if APP.b is not None:
+                    APP.b.wait()
         if APP.FEED is not None: APP.FEED.close()
         if APP.TIMING is not None: APP.TIMING.close()
         if APP.LIVE is not None: live_close()
@@ -969,3 +977,6 @@ def main():
     finally:
         if not failed and not APP.pending:
             for e in list(APP.eng.values()) + ([vit] if (use_vit and 'vit' in dir()) and vit is not None else []) + ([APP.bench_eng] if APP.bench_eng is not None else []) + ([APP.rl_eng] if APP.rl_eng is not None else []) + ([APP.rl_async] if APP.rl_async is not None else []) + ([zoom_eng] if zoom_eng is not None else []): e.b.dispose()
+
+    if APP.LIVE is not None and APP.LIVE.restart_pending:
+        return system_buttons.RESTART_REQUESTED

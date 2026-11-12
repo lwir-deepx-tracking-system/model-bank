@@ -26,6 +26,8 @@ def meas_clean(t_, n_):   # v22b: user text, bounded
 
 def meas_start(name_='', memo_='', video_=True):
     with APP.LIVE.meas_lock:
+        if getattr(APP.LIVE, 'restart_pending', False):
+            return
         if APP.LIVE.meas is not None: return
         APP.LIVE.meas_n += 1; rp_ = getattr(APP.LIVE, 'replay', None); m_ = dict(n=APP.LIVE.meas_n, t0=time.perf_counter(), wall=time.strftime('%Y-%m-%d %H:%M:%S'), stamp=time.strftime('%Y%m%d_%H%M%S'), rows=[], boxes=[], name=APP.meas_clean(name_, 80), memo=APP.meas_clean(memo_, 2000), video=bool(video_), **(dict(replay=[rp_['name']]) if rp_ is not None else {}))   # 11-12: replay = recordings played during this measurement (src/camera/replay_link.py adds the later ones)
         safe_ = ''.join(c_ if (c_.isalnum() or c_ in '-_') else '_' for c_ in m_['name'])[:40].strip('_')

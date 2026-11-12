@@ -24,8 +24,6 @@
 #   초당 22~27 장에서는 전과 같은 3 장, 초당 28 장을 넘으면 4 장. 0 을 주면 꺼지고 전처럼 --n-init 3 만 쓴다. scripts/live.env 의 LWIR_CONFIRM_MS 로 바꾼다.
 T="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$T" || exit 9
-rm -rf real_gui_1
-exec > real_gui_1.out 2>&1
 [ -f scripts/live.env ] && . scripts/live.env
 PORT="${LWIR_LIVE_PORT:-8090}"
 BIND="${LWIR_LIVE_BIND:-$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)}"
@@ -42,10 +40,14 @@ REPLAY_ROOT="${LWIR_REPLAY_ROOT:-/mnt/lwir_data/label_web/LWIR_labels}"   # 녹�
 EXTRA_OPTS="${LWIR_GIMBAL_EXTRA_OPTS:-}"                     # 짐벌 프로그램에 더 줄 옵션 (예: --deadband-exit 0.10 --axis-reversal 1)
 [ -n "$BIND" ] || { echo "no page address: tailscale0 has no IPv4 address; set LWIR_LIVE_BIND in scripts/live.env"; exit 8; }
 [ -x "$BRIDGE" ] || { echo "$BRIDGE missing: run scripts/setup.sh (needs OpenCV and GStreamer)"; exit 7; }
+# 한 번에 한 실행만 시작한다. Python이 재시작할 때도 같은 파일 잠금을 유지한다.
+exec 9>real_gui_launch.lock
+flock -n 9 || { echo "tracker launcher busy"; exit 4; }
 # 서버가 이미 떠 있으면 시작하지 않는다. 옛 이름(lwir_tracker_m1.py)으로 떠 있는 서버도 같은 NPU·카메라·짐벌을 쓰므로 함께 본다.
 pgrep -f 'python3 -B ([s]tart_tracking_server|[l]wir_tracker_m1)\.py' > /dev/null && { echo "NPU busy"; exit 4; }
 fuser "$GIMBAL_DEV" > /dev/null 2>&1 && { echo "gimbal busy"; exit 5; }
 echo "START $(date +%T) page=$BIND:$PORT gui=$GUI_HOST gimbal=$GIMBAL_DEV speed_max=$SPEED_MAX reacquire_ms=$REACQUIRE_MS confirm_ms=$CONFIRM_MS"
+export LWIR_REAL_GUI_LAUNCH=1
 exec python3 -B start_tracking_server.py --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 3 --confirm-ms "$CONFIRM_MS" --warm-min 45000 --edge-birth 0.5 \
   --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 1 --confirm-gate models/track/gate_gru32_frozen.json --judge models/track/relink_judge_frozen.json --judge-crops 2 \
   --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 --replay-root "$REPLAY_ROOT" \
