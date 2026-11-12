@@ -48,8 +48,8 @@ EXPORT int lwirtk_step(Tracker* t, const DetRow* inputs, int n, TrackRow* out, i
             const auto& d = inputs[i];
             Detection row;
             row.x = d.x1; row.y = d.y1;
-            row.width = d.x2 - d.x1; row.height = d.y2 - d.y1;
-            row.confidence = d.score; row.class_id = d.cls; row.source_index = i;
+            row.width = d.x2 - d.x1; row.height = d.y2 - d.y1; // LWIR I/O: server XYXY to runtime XYWH
+            row.confidence = d.score; row.class_id = d.cls; row.source_index = i; // LWIR I/O: number the input rows
             detections.push_back(row);
         }
         auto tracks = t->track(detections);
@@ -58,8 +58,8 @@ EXPORT int lwirtk_step(Tracker* t, const DetRow* inputs, int n, TrackRow* out, i
         for (std::size_t j = 0; j < tracks.size(); ++j) {
             const auto& r = tracks[j];
             if (r.predicted || r.source_index < 0 || r.source_index >= n) return -4;
-            out[j] = {r.x, r.y, r.x + r.width, r.y + r.height, r.confidence,
-                      r.track_id, r.class_id, r.source_index};
+            out[j] = {r.x, r.y, r.x + r.width, r.y + r.height, r.confidence, // LWIR I/O: runtime XYWH to server XYXY
+                      r.track_id, r.class_id, r.source_index}; // LWIR I/O: return the matched input row
         }
         return static_cast<int>(tracks.size());
     } catch (...) { return -2; }

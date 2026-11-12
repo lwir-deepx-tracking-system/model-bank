@@ -29,16 +29,29 @@ def adapt(path, data):
         replace('#include "common/frame.hpp"',
                 "#include <memory>\nstruct FrameContext;\nusing FrameContextPtr = std::shared_ptr<const FrameContext>;")
     if path == HEADERS[0]:
-        replace("    std::string class_name;", "    std::string class_name;\n    int source_index = -1;")
+        replace("    std::string class_name;",
+                "    std::string class_name;\n"
+                "    int source_index = -1; // LWIR I/O: input detection row")
     if path == HEADERS[1]:
-        replace("    bool predicted = false;", "    bool predicted = false;\n    int source_index = -1;")
+        replace("    bool predicted = false;",
+                "    bool predicted = false;\n"
+                "    int source_index = -1; // LWIR I/O: output detection row; -1 if unmatched")
     if path == "include/tracking/bytetrack_tracker.hpp":
-        replace("    int class_id = -1;", "    int class_id = -1;\n    int source_index = -1;")
+        replace("    int class_id = -1;",
+                "    int class_id = -1;\n"
+                "    int source_index = -1; // LWIR I/O: detection row stored on the track")
     if path == SOURCES[0]:
-        replace("    t.class_id = det.class_id;", "    t.class_id = det.class_id;\n    t.source_index = det.source_index;")
-        replace("        det->class_id = d.class_id;", "        det->class_id = d.class_id;\n        det->source_index = d.source_index;")
+        replace("    t.class_id = det.class_id;",
+                "    t.class_id = det.class_id;\n"
+                "    t.source_index = det.source_index; // LWIR I/O: store the matched detection row")
+        replace("        det->class_id = d.class_id;",
+                "        det->class_id = d.class_id;\n"
+                "        det->source_index = d.source_index; // LWIR I/O: copy the input detection row")
         replace("        out.confidence = t->score;\n        tracks.push_back(out);",
-                "        out.confidence = t->score;\n        out.source_index = t->frame_id == frame_id_ ? t->source_index : -1;\n        tracks.push_back(out);")
+                "        out.confidence = t->score;\n"
+                "        out.source_index = t->frame_id == frame_id_ ? t->source_index : -1;"
+                " // LWIR I/O: return the row only for a current-frame match\n"
+                "        tracks.push_back(out);")
     return data
 
 
