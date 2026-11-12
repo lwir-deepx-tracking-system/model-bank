@@ -4,6 +4,7 @@
 // config/app_config.hpp so that team/ stays unchanged. Every default reproduces the
 // team's original behaviour (= gimbal_bridge_v25).
 struct SmoothingConfig {
+    static constexpr int max_catchup_speed = 7;
     // Deadband hysteresis: once an axis is inside the deadband it stays held until
     // |error| exceeds this exit threshold (same unit as deadband_x / deadband_y).
     // 0 or <= deadband = no hysteresis.
@@ -23,4 +24,6 @@ struct SmoothingConfig {
     int reversal_hold_ms = 500;
     // Maximum hold for one validated live detector miss. Zero disables it.
     int observation_grace_ms = 0;
+    // Allow sustained measured motion to skip the slowest speed steps. Zero disables it.
+    int catchup_speed = 0;
 };

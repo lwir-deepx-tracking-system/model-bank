@@ -92,6 +92,21 @@ void AutoTrackingController::reset()
     hold_x_ = hold_y_ = false;   // v27
     track_id_ = -1; width_ = height_ = 0;
     generation_ = 0; previous_ = {}; cached_ = {};
+    reset_catchup();
+}
+
+void AutoTrackingController::reset_catchup()
+{
+    catchup_x_ = {}; catchup_y_ = {};
+    have_catchup_sample_ = false;
+}
+
+bool AutoTrackingController::take_catchup(int x, int y)
+{
+    // Each command uses the evidence from a new frame at most once.
+    const bool ready = (x || y) && (!x || catchup_x_.ready) && (!y || catchup_y_.ready);
+    catchup_x_.ready = catchup_y_.ready = false;
+    return ready;
 }
 
 void AutoTrackingController::set_applied_output(double image_x, double image_y)
@@ -101,7 +116,7 @@ void AutoTrackingController::set_applied_output(double image_x, double image_y)
 
 GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int height,
     const FrameMetadata& metadata, std::uint64_t model_generation, const TrackLead& lead,
-    double aim_y)
+    double aim_y, bool healthy_live)
 {
     if (!valid(t, width, height, aim_y) || metadata.frame_id == 0 ||
         metadata.captured_at == std::chrono::steady_clock::time_point{}) {
@@ -109,6 +124,7 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
     }
     if (initialized_ && (t.track_id != track_id_ || model_generation != generation_ ||
         width != width_ || height != height_)) reset();
+    if (!healthy_live || aim_y != catchup_aim_y_) reset_catchup();
     double dt = 0;
     if (initialized_) {
         if (metadata.frame_id == previous_.frame_id) return cached_;
@@ -116,6 +132,7 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
             // Retain the last accepted frame watermark: repeated ticks of the
             // rejected frame must not become a new first measurement after reset.
             x_.reset(); y_.reset(); cached_ = {};
+            reset_catchup();
             return cached_;
         }
         dt = std::chrono::duration<double>(metadata.captured_at - previous_.captured_at).count();
@@ -148,9 +165,11 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
         hold = hold ? std::abs(error) <= leave : std::abs(error) <= enter;
         return hold;
     };
-    const auto predicted_pid = [dt](PidController& pid, double predicted, double observed, bool& forecast_used) {
+    const auto predicted_pid = [dt](PidController& pid, double predicted, double observed,
+                                    bool& forecast_used, double& observed_pd) {
         auto measured_only = pid;
         const auto measured_output = measured_only.calculate(observed, dt, observed);
+        observed_pd = measured_output.p + measured_output.d;
         const auto forecast_output = pid.calculate(predicted, dt, observed);
         // A forecast may brake or accelerate an allowed direction, but must not
         // create a start/reversal that the measured PID would not request. Compare
@@ -164,10 +183,11 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
         return forecast_output;
     };
     bool forecast_x = false, forecast_y = false;
+    double observed_pd_x = 0, observed_pd_y = 0;
     if (held(hold_x_, measured_x, config_.deadband_x, smoothing_.deadband_exit_x)) x_.reset();
-    else d.pid_x = predicted_pid(x_, d.error_x, measured_x, forecast_x);
+    else d.pid_x = predicted_pid(x_, d.error_x, measured_x, forecast_x, observed_pd_x);
     if (held(hold_y_, measured_y, config_.deadband_y, smoothing_.deadband_exit_y)) y_.reset();
-    else d.pid_y = predicted_pid(y_, d.error_y, measured_y, forecast_y);
+    else d.pid_y = predicted_pid(y_, d.error_y, measured_y, forecast_y, observed_pd_y);
     const auto direction = [](double value) { return value > 0 ? 1 : value < 0 ? -1 : 0; };
     d.x = direction(d.pid_x.value);
     // Image Y grows downward; the shared GUI/device command contract is +Y up.
@@ -175,6 +195,29 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
     if (!d.stop())
         d.speed = std::clamp(std::max(std::abs(d.pid_x.value), std::abs(d.pid_y.value)),
                              double(config_.speed_min), double(config_.speed_max));
+    if (smoothing_.catchup_speed > 0 && healthy_live) {
+        const int knee = std::min(smoothing_.catchup_speed, config_.speed_max);
+        const bool consecutive = have_catchup_sample_ && dt > 0 &&
+            metadata.frame_id - previous_.frame_id == 1;
+        // 180 px/s at the reference size is just above the measured SPD 1–5 plateau.
+        // Use the observed box, not the forecast or an angular error, for this test.
+        constexpr double slow_range_px_per_second = 180.0;
+        const auto measure = [&](CatchupAxis& axis, double position, double observed_pd,
+                                 int output_direction, double scale) {
+            const int side = direction(position);
+            const double outward_delta = side * (position - axis.position);
+            const bool outward = consecutive && side && side * axis.position >= 0 &&
+                outward_delta > slow_range_px_per_second * scale * dt;
+            const double demand = side * observed_pd;
+            const bool ready = outward && axis.outward && output_direction == side &&
+                demand >= knee && demand >= axis.demand;
+            axis = {position, demand, outward, ready};
+        };
+        measure(catchup_x_, x, observed_pd_x, d.x, width / 640.0);
+        measure(catchup_y_, y, observed_pd_y, -d.y, height / 480.0);
+        have_catchup_sample_ = true;
+        catchup_aim_y_ = aim_y;
+    }
     initialized_ = true; track_id_ = t.track_id;
     width_ = width; height_ = height; generation_ = model_generation;
     previous_ = metadata; cached_ = d;

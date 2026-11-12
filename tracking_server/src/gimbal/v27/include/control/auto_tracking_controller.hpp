@@ -25,6 +25,13 @@ class AutoTrackingController {
     std::uint64_t generation_ = 0;
     FrameMetadata previous_{};
     GimbalDemand cached_{};
+    struct CatchupAxis {
+        double position = 0, demand = 0;
+        bool outward = false, ready = false;
+    };
+    CatchupAxis catchup_x_, catchup_y_;
+    bool have_catchup_sample_ = false;
+    double catchup_aim_y_ = 0.5;
 public:
     explicit AutoTrackingController(AutoControlConfig config, SmoothingConfig smoothing = {})
         : config_(config), smoothing_(smoothing), x_(config.pid_x, config.controller, config.speed_max),
@@ -32,7 +39,10 @@ public:
     bool valid(const Track&, int width, int height, double aim_y = 0.5) const;
     GimbalDemand calculate(const Track&, int width, int height,
                           const FrameMetadata&, std::uint64_t model_generation = 0,
-                          const TrackLead& lead = {}, double aim_y = 0.5);
+                          const TrackLead& lead = {}, double aim_y = 0.5,
+                          bool healthy_live = false);
     void set_applied_output(double image_x, double image_y);
+    bool take_catchup(int x, int y);
+    void reset_catchup();
     void reset();
 };

@@ -3,9 +3,42 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <iomanip>
 #include <limits>
+#include <locale>
+#include <sstream>
 #include <stdexcept>
 #include "common/logger.hpp"
+
+namespace {
+void trace_output(const FrameMetadata& frame, int track_id, bool catchup_eligible,
+                  bool catchup_applied, double previous_limited_speed, double slew_limited_speed,
+                  double wanted_speed, int final_speed, int x, int y, bool sent) noexcept try
+{
+    static const bool enabled = [] {
+        const char* value = std::getenv("LWIR_CONTROL_TRACE");
+        return value && value[0] == '1' && value[1] == '\0';
+    }();
+    if (!enabled) return;
+    const auto captured_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        frame.captured_at.time_since_epoch()).count();
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::boolalpha << std::setprecision(std::numeric_limits<double>::max_digits10)
+        << "{\"event\":\"control_output\",\"frame_id\":" << frame.frame_id
+        << ",\"captured_ns\":" << captured_ns << ",\"track_id\":" << track_id
+        << ",\"catchup_eligible\":" << catchup_eligible << ",\"catchup_applied\":" << catchup_applied
+        << ",\"previous_limited_speed\":" << previous_limited_speed
+        << ",\"slew_limited_speed\":" << slew_limited_speed << ",\"wanted_speed\":" << wanted_speed
+        << ",\"final_speed\":" << final_speed << ",\"x\":" << x << ",\"y\":" << y
+        << ",\"sent\":" << sent << "}\n";
+    std::fputs(out.str().c_str(), stderr);
+} catch (...) {
+    // A diagnostics formatting failure must not interrupt control.
+}
+}
 
 GimbalCommandExecutor::GimbalCommandExecutor(ControlConfig config,
     std::unique_ptr<IGimbalDevice> device, RuntimeControl& runtime, SmoothingConfig smoothing)
@@ -14,6 +47,8 @@ GimbalCommandExecutor::GimbalCommandExecutor(ControlConfig config,
       tracker_epoch_(runtime.tracker_epoch.load())
 {
     if (!config.enabled || !device_) throw std::invalid_argument("Tracking control needs an enabled device");
+    if (smoothing_.catchup_speed < 0 || smoothing_.catchup_speed > SmoothingConfig::max_catchup_speed)
+        throw std::invalid_argument("--catchup-speed must be within 0..7");
     if (smoothing_.observation_grace_ms < 0 || smoothing_.observation_grace_ms > 100 ||
         (smoothing_.observation_grace_ms > 0 &&
          smoothing_.observation_grace_ms >= config_.automatic.input_timeout_ms))
@@ -55,7 +90,8 @@ void GimbalCommandExecutor::run()
         const auto now = Clock::now();
         if (unsafe) {
             latest_healthy_ = false;
-            if (state_.automatic) {
+            controller_.reset_catchup();
+            if (smoothing_.observation_grace_ms > 0 && state_.automatic) {
                 mark_lost(now);
                 if (state_.moving) stop("unsafe observation");
             }
@@ -79,7 +115,7 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto received = Clock::now();
-        if (smoothing_.observation_grace_ms > 0 &&
+        if ((smoothing_.observation_grace_ms > 0 || smoothing_.catchup_speed > 0) &&
             input->model_generation == runtime_.generation.load() &&
             input->tracker_epoch == runtime_.tracker_epoch.load()) {
             if (published_model_ != input->model_generation || published_tracker_ != input->tracker_epoch) {
@@ -99,7 +135,8 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
             // An unsafe sample has to be visible even if a newer frame replaces it.
             if (!healthy_live) {
                 pending_unsafe_ = true;
-                pending_ = {}; // A pre-barrier queued frame cannot restart AUTO.
+                if (smoothing_.observation_grace_ms > 0)
+                    pending_ = {}; // A pre-barrier queued frame cannot restart AUTO.
             }
             if (id > published_frame_) published_frame_ = id;
             if (timely && advances) published_capture_ = captured;
@@ -116,10 +153,10 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
 }
 void GimbalCommandExecutor::publish_unsafe_observation()
 {
-    if (smoothing_.observation_grace_ms == 0) return;
+    if (smoothing_.observation_grace_ms == 0 && smoothing_.catchup_speed == 0) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        pending_ = {};
+        if (smoothing_.observation_grace_ms > 0) pending_ = {};
         pending_unsafe_ = true;
     }
     wake_.notify_one();
@@ -142,9 +179,10 @@ bool GimbalCommandExecutor::ingest(Observation observation)
     const bool adjacent = last_frame_id_ != 0 && id - last_frame_id_ == 1;
     last_frame_id_ = id;
     latest_ = std::move(input);
+    latest_healthy_ = observation.healthy_live;
+    if (smoothing_.catchup_speed > 0 && (!latest_healthy_ || !adjacent)) controller_.reset_catchup();
     if (smoothing_.observation_grace_ms == 0) return false;
 
-    latest_healthy_ = observation.healthy_live;
     if (!state_.automatic || !ready()) return false;
     const auto now = Clock::now();
     const auto captured = latest_->frame->metadata.captured_at;
@@ -253,6 +291,7 @@ void GimbalCommandExecutor::failure(const std::exception& e)
 void GimbalCommandExecutor::stop(const char* reason)
 {
     grace_deadline_ = {};
+    controller_.reset_catchup();
     // No ramp: safety/Deadband STOP is immediate command submission.
     try {
         device_->stop();
@@ -311,10 +350,16 @@ void GimbalCommandExecutor::tick()
     state_.lost = false; lost_since_ = {};
     const auto lead = latest_->frame->metadata.frame_id > lead_after_frame_ &&
         latest_->lead.control_epoch == state_.command_generation ? latest_->lead : TrackLead{};
+    const bool catchup_observed = smoothing_.catchup_speed > 0 && latest_healthy_ &&
+        (smoothing_.observation_grace_ms > 0 ||
+         std::count_if(latest_->tracks.begin(), latest_->tracks.end(), [t](const Track& row) {
+             return row.track_id == t->track_id;
+         }) == 1);
     const auto demand = controller_.calculate(*t, latest_->frame->image.cols, latest_->frame->image.rows,
-        latest_->frame->metadata, latest_->model_generation, lead, latest_->aim_y);
+        latest_->frame->metadata, latest_->model_generation, lead, latest_->aim_y, catchup_observed);
     if (demand.stop()) {
         if (!state_.moving) return;
+        controller_.reset_catchup();
         if (smoothing_.stop_rate <= 0) { stop("deadband"); return; }   // team original: immediate STOP
     }
     if (now < next_auto_) return;
@@ -365,10 +410,28 @@ void GimbalCommandExecutor::tick()
     limited_speed_ = state_.moving ?
         std::clamp(want_speed, std::max(double(config_.automatic.speed_min), baseline - step), baseline + step) :
         double(config_.automatic.speed_min);
+    const double slew_limited_speed = limited_speed_;
+    bool catchup_eligible = false, catchup_applied = false;
+    if (smoothing_.catchup_speed > 0) {
+        const int knee = std::min(smoothing_.catchup_speed, config_.automatic.speed_max);
+        const bool observed = controller_.take_catchup(want_x, want_y);
+        // Only horizontal catch-up was measured. The shared speed stays on the normal ramp
+        // during vertical motion, axis changes, braking, and reversal.
+        catchup_eligible = observed && state_.moving && want_x != 0 && want_y == 0 &&
+            want_x == x_ && want_y == y_ &&
+            !hold_x_ && !hold_y_ && want_speed >= knee && want_speed > baseline;
+        catchup_applied = catchup_eligible && std::lround(limited_speed_) < knee;
+        if (catchup_applied) limited_speed_ = knee;
+    }
     last_output_ = now;
     if (!ready()) { invalidate("control authority"); return; }
-    send(want_x, want_y, std::clamp(int(std::lround(limited_speed_)),
-         config_.automatic.speed_min, config_.automatic.speed_max), true);
+    const int speed = std::clamp(int(std::lround(limited_speed_)),
+         config_.automatic.speed_min, config_.automatic.speed_max);
+    const bool changed = want_x != x_ || want_y != y_ || speed != sent_speed_;
+    send(want_x, want_y, speed, true);
+    const bool sent = changed && !state_.error;
+    trace_output(latest_->frame->metadata, t->track_id, catchup_eligible, catchup_applied && sent,
+                 baseline, slew_limited_speed, want_speed, sent_speed_, x_, y_, sent);
     controller_.set_applied_output(x_ * sent_speed_, -y_ * sent_speed_);
     Logger::debug("[Control] frame=" + std::to_string(latest_->frame->metadata.frame_id) +
         " target=" + std::to_string(state_.selected_id) + " ex=" + std::to_string(demand.error_x) +

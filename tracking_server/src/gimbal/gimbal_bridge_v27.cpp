@@ -5,6 +5,7 @@
 //   --axis-reversal <0|1>       1: a reversing axis halts alone, the other keeps moving (0 = STOP both, as v25)
 //   --reversal-join-speed <SPD> the halted axis rejoins once the shared SPD is at or below this (default 5)
 //   --reversal-hold-ms <ms>     ... or after this long at the latest (default 500)
+//   --catchup-speed <0..7>      speed for confirmed outward motion (default 0 = off; requires OBS 1)
 //   --observation-grace-ms <ms> hold the last output for one validated live detector miss (0 = off, maximum 100)
 //
 // Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
@@ -223,6 +224,11 @@ Options parse(int argc, char** argv)
             s.observation_grace_ms = std::stoi(value, &used);
             if (used != value.size()) throw std::invalid_argument("--observation-grace-ms must be an integer");
         }
+        else if (name == "--catchup-speed") {
+            if (value.size() != 1 || value[0] < '0' || value[0] > '0' + SmoothingConfig::max_catchup_speed)
+                throw std::invalid_argument("--catchup-speed must be within 0..7");
+            s.catchup_speed = value[0] - '0';
+        }
         else if (name == "--gui-host") { g.enabled = true; g.video.host = value; g.metadata.host = value; }
         else if (name == "--gui-bind") g.command.bind_address = value;
         else if (name == "--gui-video-port") g.video.port = static_cast<std::uint16_t>(std::stoi(value));
@@ -349,12 +355,12 @@ class Bridge {
     std::shared_ptr<TrackingResult> waiting_;
     bool waiting_healthy_ = false;
     int wait_w_ = 0, wait_h_ = 0;
-    const bool observation_grace_enabled_;
+    const bool validate_observations_;
 public:
     Bridge(GimbalCommandExecutor& executor, GuiLink* gui, const std::atomic<std::uint64_t>& session_changes,
-           bool observation_grace_enabled)
+           bool validate_observations)
         : executor_(executor), gui_(gui), session_changes_(session_changes),
-          image_(cv::Mat::zeros(480, 640, CV_16UC1)), observation_grace_enabled_(observation_grace_enabled) {}
+          image_(cv::Mat::zeros(480, 640, CV_16UC1)), validate_observations_(validate_observations) {}
 
     std::size_t picture_bytes() const { return waiting_ ? static_cast<std::size_t>(wait_w_) * wait_h_ * 2 : 0; }
 
@@ -416,7 +422,7 @@ public:
         std::uint64_t id = 0, captured_ns = 0;
         std::size_t count = 0;
         bool valid = false;
-        if (observation_grace_enabled_) {
+        if (validate_observations_) {
             std::string id_text, stamp_text, count_text;
             in >> id_text >> stamp_text >> count_text;
             valid = parse_token(id_text, id) && parse_token(stamp_text, captured_ns) &&
@@ -439,7 +445,7 @@ public:
         int w = 0, h = 0;
         std::size_t count = 0;
         bool valid = false;
-        if (observation_grace_enabled_) {
+        if (validate_observations_) {
             std::string id_text, stamp_text, width_text, height_text, count_text;
             in >> id_text >> stamp_text >> width_text >> height_text >> count_text;
             if (!parse_token(width_text, w) || !parse_token(height_text, h) ||
@@ -544,7 +550,8 @@ int main(int argc, char** argv) try {
             });
         }
     }
-    Bridge bridge(executor, gui.get(), session_changes, options.smoothing.observation_grace_ms > 0);
+    Bridge bridge(executor, gui.get(), session_changes,
+                  options.smoothing.observation_grace_ms > 0 || options.smoothing.catchup_speed > 0);
     say("READY");
     say("TRACK_CONTROL 1");
     say("LEAD_CONTROL 1");
