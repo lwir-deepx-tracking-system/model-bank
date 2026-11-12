@@ -212,6 +212,27 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 /* v40: no arrow keys on the page any more (phone = drag the picture, computer = keyboard); only the stop key stays, on phones */
 .pad{grid-template-columns:142px;grid-template-rows:64px}.pad .c{grid-column:1;grid-row:1}
 @media (max-width:900px) and (orientation:landscape){.pad{grid-template-columns:100px;grid-template-rows:60px}}
+/* Actual gimbal position overlay. Leave image clicks and drags to the video. */
+.pose{position:absolute;inset:0;pointer-events:none;color:#fff;font:600 11px/1.2 system-ui,sans-serif;z-index:1}
+.pose [hidden]{display:none}
+.pose-status,.pose-axis{position:absolute;background:rgba(12,17,23,.85);border-radius:5px}
+.pose-status{right:5px;bottom:5px;padding:4px 6px}
+.pose-axis{padding:4px 6px}
+.pose-pan{top:4px;left:25%;right:18%;text-align:center}
+.pose-tilt{right:4px;top:20%;bottom:14%;min-width:48px;display:flex;flex-direction:column;align-items:center;gap:4px}
+.pose-value{white-space:nowrap;font-variant-numeric:tabular-nums}
+.pose-scale{position:relative;color:#e1e7ee;font-variant-numeric:tabular-nums}
+.pose-pan .pose-scale{height:17px;margin-top:5px;border-top:1px solid #c6d1db;background:repeating-linear-gradient(90deg,#c6d1db 0 1px,transparent 1px 25%) top left/100% 4px no-repeat}
+.pose-pan [data-low],.pose-pan [data-high]{position:absolute;top:5px}
+.pose-pan [data-low]{left:0}
+.pose-pan [data-high]{right:0}
+.pose-tilt .pose-scale{flex:1;width:100%;margin-left:6px;border-left:1px solid #c6d1db;background:repeating-linear-gradient(0deg,#c6d1db 0 1px,transparent 1px 25%) bottom left/4px 100% no-repeat}
+.pose-tilt [data-low],.pose-tilt [data-high]{position:absolute;left:8px}
+.pose-tilt [data-low]{bottom:0}
+.pose-tilt [data-high]{top:0}
+.pose [data-marker]{position:absolute;background:#ffc061;width:7px;height:7px;border:1px solid #14181e;box-sizing:border-box;border-radius:50%}
+.pose-pan [data-marker]{top:-4px;left:var(--pose-position);transform:translateX(-50%)}
+.pose-tilt [data-marker]{left:-4px;bottom:var(--pose-position);transform:translateY(50%)}
 </style></head><body>
 <header>
   <h1>LWIR 추적</h1>
@@ -225,6 +246,21 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
   <section class="view">
     <div class="vbox">
       <div class="frame"><img id="v" src="/stream" alt="실시간 영상" draggable="false">
+        <div class="pose" aria-label="짐벌 실측 각도">
+          <span id="pose-status" class="pose-status">짐벌 각도 데이터 없음</span>
+          <div class="pose-axis pose-pan" id="pose-pan" hidden>
+            <span class="pose-value" data-value></span>
+            <div class="pose-scale" data-scale hidden>
+              <span data-low></span><span data-high></span><i data-marker></i>
+            </div>
+          </div>
+          <div class="pose-axis pose-tilt" id="pose-tilt" hidden>
+            <span class="pose-value" data-value></span>
+            <div class="pose-scale" data-scale hidden>
+              <span data-low></span><span data-high></span><i data-marker></i>
+            </div>
+          </div>
+        </div>
         <div class="joy" id="joyb" aria-hidden="true"><i id="joyk"></i></div>
         <!-- v26d: the numbers of the top line of the picture (TRACK fps, CAM fps, delay, compute), one point per second from GET /perf (read only). fps and ms have different scales, so they are two graphs, not one with two axes. -->
         <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
@@ -394,6 +430,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
   </aside>
 </main>
 <script>
+
 const $=id=>document.getElementById(id);
 const v=$('v'),S=$('s');
 function chip(d,t,cls,txt){$(d).className='dot '+cls;$(t).textContent=txt;}
@@ -402,11 +439,51 @@ const MOB=matchMedia('(max-width:900px)');
 let openSaved={};try{openSaved=JSON.parse(localStorage.getItem('lwir_live_open')||'{}')||{};}catch(_){openSaved={};}
 for(const d of document.querySelectorAll('details.sec')){const k=d.dataset.k;d.open=(k in openSaved)?!!openSaved[k]:!MOB.matches;
   d.querySelector('summary').addEventListener('click',()=>setTimeout(()=>{openSaved[k]=d.open;try{localStorage.setItem('lwir_live_open',JSON.stringify(openSaved));}catch(_){}},0));}   // saved only on the user's click, never the default
+// The existing heartbeat carries actual angle data when the bridge supplies it.
+const poseStatus = $('pose-status');
+let poseReceivedAt = 0;
+const poseAxes = [['pan', '좌우'], ['tilt', '상하']].map(([key, label]) => {
+  const axis = $('pose-' + key);
+  return {key, label, axis, value: axis.querySelector('[data-value]'),
+    scale: axis.querySelector('[data-scale]'), low: axis.querySelector('[data-low]'),
+    high: axis.querySelector('[data-high]'), marker: axis.querySelector('[data-marker]')};
+});
+
+function poseDegrees(deg) {
+  return (deg > 0 ? '+' : '') + deg.toFixed(1).replace(/\.0$/, '') + '°';
+}
+
+function renderGimbalPose(pose) {
+  let any = false;
+  for (const {key, label, axis, value, scale, low, high, marker} of poseAxes) {
+    const data = pose && pose[key];
+    const valid = !!data && Number.isFinite(data.deg);
+    axis.hidden = !valid;
+    if (!valid) continue;
+    any = true;
+    const hasRange = Number.isFinite(data.min_deg) && Number.isFinite(data.max_deg) && data.max_deg > data.min_deg;
+    const inRange = hasRange && data.deg >= data.min_deg && data.deg <= data.max_deg;
+    value.textContent = label + ' ' + poseDegrees(data.deg) + (hasRange && !inRange ? ' · 범위 밖' : '');
+    scale.hidden = !hasRange;
+    marker.hidden = !inRange;
+    if (!hasRange) continue;
+    low.textContent = poseDegrees(data.min_deg);
+    high.textContent = poseDegrees(data.max_deg);
+    if (inRange) marker.style.setProperty('--pose-position', (100 * (data.deg - data.min_deg) / (data.max_deg - data.min_deg)) + '%');
+  }
+  poseStatus.hidden = any;
+  poseReceivedAt = any ? Date.now() : 0;
+}
+
+function expireGimbalPose() {
+  if (poseReceivedAt && Date.now() - poseReceivedAt >= 1500) renderGimbalPose(null);
+}
 // connection chip (v24): good = answers keep coming, yellow = nothing for 1.5 s, red = nothing for 4 s. One failed request never turns it red; time asleep (phone screen off) does not count (wake() restarts the clock).
 let lastOk=Date.now(),grace=Date.now(),camIdle=0,camFail=0,wasDown=false,sN=0;
 function openStream(){v.src='/stream?'+(++sN);}
 function netChip(){
   const idle=Date.now()-Math.max(lastOk,grace);
+  expireGimbalPose();
   if(idle>4000){wasDown=true;chip('cdot','ctext','bad','서버 연결 끊김');S.textContent='서버 연결 끊김';$('sq').className='sq bad';$('fps').textContent='–';hzPrev=null;return;}
   if(idle>1500){wasDown=true;chip('cdot','ctext','warn','연결 불안정');return;}   // a 1.5 s+ gap may have cut the picture stream too
   if(wasDown){wasDown=false;openStream();}   // the picture stream died with the connection: open it again
@@ -417,6 +494,7 @@ v.addEventListener('error',()=>setTimeout(openStream,2000));
 const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
 let lostSince=null,autoNow=false,hzPrev=null;
 function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;netChip();
+  renderGimbalPose(t.pose);
   let txt,cls='good',sq='';
   if(!t.running){txt='짐벌 프로그램이 꺼져 있습니다';cls='bad';sq='bad';}
   else if(t.error){txt='짐벌 오류: 서버를 다시 켜야 합니다';cls='bad';sq='bad';}

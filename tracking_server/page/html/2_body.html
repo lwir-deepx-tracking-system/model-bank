@@ -11,6 +11,21 @@
   <section class="view">
     <div class="vbox">
       <div class="frame"><img id="v" src="/stream" alt="실시간 영상" draggable="false">
+        <div class="pose" aria-label="짐벌 실측 각도">
+          <span id="pose-status" class="pose-status">짐벌 각도 데이터 없음</span>
+          <div class="pose-axis pose-pan" id="pose-pan" hidden>
+            <span class="pose-value" data-value></span>
+            <div class="pose-scale" data-scale hidden>
+              <span data-low></span><span data-high></span><i data-marker></i>
+            </div>
+          </div>
+          <div class="pose-axis pose-tilt" id="pose-tilt" hidden>
+            <span class="pose-value" data-value></span>
+            <div class="pose-scale" data-scale hidden>
+              <span data-low></span><span data-high></span><i data-marker></i>
+            </div>
+          </div>
+        </div>
         <div class="joy" id="joyb" aria-hidden="true"><i id="joyk"></i></div>
         <!-- v26d: the numbers of the top line of the picture (TRACK fps, CAM fps, delay, compute), one point per second from GET /perf (read only). fps and ms have different scales, so they are two graphs, not one with two axes. -->
         <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>

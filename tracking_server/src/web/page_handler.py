@@ -4,6 +4,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
+from ..gimbal.gimbal_link import gb_pose
 from ..track.position_memory import POSP
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
@@ -213,7 +214,7 @@ def make_lv_Handler():
                 elif u_.path != '/gimbal/ping': self.send_error(404); return
             except (KeyError, ValueError, IndexError): self.send_error(400); return
             try:
-                b_ = json.dumps(dict(APP.GB.state, cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n)).encode()   # v24: cam_idle = seconds since the last camera frame; v24d: cam_fail = cam_pipe failures in a row (0 = fine or repairing)
+                b_ = json.dumps(dict(APP.GB.state, pose=gb_pose(), cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n)).encode()   # v24: cam_idle = seconds since the last camera frame; v24d: cam_fail = cam_pipe failures in a row (0 = fine or repairing)
                 self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
             except (BrokenPipeError, ConnectionResetError, OSError): pass
         def do_GET(self):
@@ -235,7 +236,7 @@ def make_lv_Handler():
                     finally:
                         with APP.LIVE.jcond: APP.LIVE.viewers -= 1
                 elif self.path.startswith('/gimbal/people') and APP.GB is not None:   # v19: read only
-                    b_ = json.dumps(dict(state=APP.GB.state, people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()
+                    b_ = json.dumps(dict(state=APP.GB.state, pose=gb_pose(), people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/rules'):   # v24g
                     b_ = json.dumps(APP.rules_state(), ensure_ascii=False).encode()

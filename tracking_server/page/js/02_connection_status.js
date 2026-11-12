@@ -3,6 +3,7 @@ let lastOk=Date.now(),grace=Date.now(),camIdle=0,camFail=0,wasDown=false,sN=0;
 function openStream(){v.src='/stream?'+(++sN);}
 function netChip(){
   const idle=Date.now()-Math.max(lastOk,grace);
+  expireGimbalPose();
   if(idle>4000){wasDown=true;chip('cdot','ctext','bad','서버 연결 끊김');S.textContent='서버 연결 끊김';$('sq').className='sq bad';$('fps').textContent='–';hzPrev=null;return;}
   if(idle>1500){wasDown=true;chip('cdot','ctext','warn','연결 불안정');return;}   // a 1.5 s+ gap may have cut the picture stream too
   if(wasDown){wasDown=false;openStream();}   // the picture stream died with the connection: open it again
@@ -13,6 +14,7 @@ v.addEventListener('error',()=>setTimeout(openStream,2000));
 const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
 let lostSince=null,autoNow=false,hzPrev=null;
 function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;netChip();
+  renderGimbalPose(t.pose);
   let txt,cls='good',sq='';
   if(!t.running){txt='짐벌 프로그램이 꺼져 있습니다';cls='bad';sq='bad';}
   else if(t.error){txt='짐벌 오류: 서버를 다시 켜야 합니다';cls='bad';sq='bad';}
