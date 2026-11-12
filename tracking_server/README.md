@@ -149,7 +149,9 @@ tracking_server/
 - `frame_feed.py` 번갈아 넣기 (꺼짐)
 
 **`src/track/`**
-- `trackers.py` 추적기, `kalman.py` Kalman filter
+- `bytetrack.py` ByteTrack과 위치 재결합, `botsort.py` BoT-SORT, `ocsort.py` OC-SORT, `sort.py` SORT
+- `biou.py` C-BIoU와 `lostfirst.py` LostFirst는 별도 구현입니다. `trackers.py`는 기존 코드의 import 경로를 유지합니다.
+- `kalman.py`는 추적기가 공통으로 쓰는 Kalman filter입니다.
 - `camera_motion.py` 카메라 움직임 추정
 - `position_memory.py` 놓친 사람 위치 기억
 - `gate.py` 확인 판정기
@@ -207,6 +209,12 @@ tracking_server/
 - `gui_model_client.py` PC GUI 명령 시험
 
 </details>
+
+### 추적 계산을 C++로 옮길 때
+
+기존 검출 입력은 행마다 `[x1, y1, x2, y2, conf, cls]`, 추적기 출력은 `[x1, y1, x2, y2, id, conf, cls, det_idx]`입니다. C++ 계산은 Python 래퍼 뒤에 붙이고, 프레임 순서와 좌표계, ID의 수명과 초기화 규칙을 유지합니다. 같은 검출 캐시를 양쪽에 넣어 프레임별 박스와 ID를 비교할 수 있습니다.
+
+8090 웹 화면은 추적 행을 받는 `live_publish()`가 박스와 번호를 그린 뒤 `/stream`으로 보냅니다. 팀 PC GUI는 기존 브리지에서 H.264/RTP(UDP 5000)와 추적 데이터(UDP 5001)를 받습니다. 640×512 내부 좌표에서 640×480 원본 좌표로 되돌리는 처리는 현재 발행부에 있습니다. 추적 내부 계산만 교체할 때는 이 발행부가 계속 같은 형식의 결과를 받으면 됩니다.
 
 ## 4. 설정 (`scripts/live.env`)
 

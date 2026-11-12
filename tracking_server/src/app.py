@@ -21,7 +21,9 @@ from .track.kalman import gmc_warp, GKF
 from .track.position_memory import pos_select
 from .track.camera_motion import GMC
 from .track.stabilizer import STAB_M, stab_shift, stab_margins
-from .track.trackers import Tracker, BotSortTracker, LostFirstTracker, crop_requests
+from .track.bytetrack import ByteTrackTracker, crop_requests
+from .track.botsort import BotSortTracker
+from .track.lostfirst import LostFirstTracker
 from .track.gate import GateTracker, NumpyGRUGate
 from .track.confirm_time import ConfirmByTime, apply as confirm_apply
 from .track.warm_p95 import p95 as warm_p95, MODE as WARM_P95_MODE   # 11-12: same number as np.percentile, lighter
@@ -618,7 +620,7 @@ def main():
                     APP.tracker = LostFirstTracker(budget, sim=APP.args.sim, gate=APP.args.gate, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h,
                                                radius=APP.args.radius, n_init=APP.args.n_init); lf_trackers.append(APP.tracker)
                 else:
-                    APP.tracker = Tracker(APP.args.tracker, sim=APP.args.sim, app=use_vit, late_window=APP.args.late_window, app_first=APP.args.app_first, gate=APP.args.gate,
+                    APP.tracker = ByteTrackTracker(APP.args.tracker, sim=APP.args.sim, app=use_vit, late_window=APP.args.late_window, app_first=APP.args.app_first, gate=APP.args.gate,
                                       motion_fallback=not APP.args.no_motion_fallback, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h, hybrid=True, sync_k=APP.args.sync_k,
                                       hybrid_fallback=bool(use_vit and APP.args.app_first and APP.args.hybrid_fallback), radius=APP.args.radius, n_init=APP.args.n_init,
                                       class_gate=APP.args.class_gate)

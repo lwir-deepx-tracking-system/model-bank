@@ -8,7 +8,10 @@ from ..common.shared_values import HERE, CORE, DET, sha
 from ..detect.model_scan import BANK
 from ..track.position_memory import POSP, pos_list
 from ..track.stabilizer import STAB
-from ..track.trackers import Tracker, BotSortTracker, AltTracker
+from ..track.bytetrack import ByteTrackTracker
+from ..track.botsort import BotSortTracker
+from ..track.ocsort import OCSortTracker
+from ..track.sort import SortTracker
 from ..track.confirm_time import ConfirmByTime, MS_MAX
 from ..reid.reid_models import reid_catalog
 from ..gimbal.gimbal_link import gb_cfg
@@ -44,8 +47,10 @@ def sel_det_late(dv_, tries_=30, gap_=2.0):
 
 
 def mk_tracker_(kind_):
-    if kind_ in ('ocsort', 'sort'): return AltTracker(kind_, n_init=max(3, APP.args.n_init), class_gate=APP.args.class_gate, radius=APP.args.radius)   # v31
-    return (BotSortTracker if kind_ == 'botsort' else Tracker)('rebind' if kind_ == 'rebind' else 'bytetrack', sim=APP.args.sim, app=False, late_window=APP.args.late_window, app_first=False, gate=APP.args.gate, motion_fallback=not APP.args.no_motion_fallback,
+    alternative = {'ocsort': OCSortTracker, 'sort': SortTracker}.get(kind_)
+    if alternative is not None:
+        return alternative(n_init=max(3, APP.args.n_init), class_gate=APP.args.class_gate, radius=APP.args.radius)
+    return (BotSortTracker if kind_ == 'botsort' else ByteTrackTracker)('rebind' if kind_ == 'rebind' else 'bytetrack', sim=APP.args.sim, app=False, late_window=APP.args.late_window, app_first=False, gate=APP.args.gate, motion_fallback=not APP.args.no_motion_fallback,
                 vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h, hybrid=True, sync_k=APP.args.sync_k, hybrid_fallback=False, radius=APP.args.radius, n_init=max(3, APP.args.n_init) if kind_ == 'confirm3' else APP.args.n_init, class_gate=APP.args.class_gate)
 
 
