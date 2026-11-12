@@ -300,7 +300,7 @@ tracking_server/
 
 ### 추적 계산을 C++로 옮길 때
 
-Python 서버의 입력·출력 사이에 C++ 계산을 넣습니다. 검출기, 추적기, 결과 발행은 [`src/app.py`](src/app.py)에서 프레임별로 이어집니다. 아래는 이식 기준입니다.
+파일별 이식 순서, 입출력 규약, GUI 연결과 검증 절차는 [추적기 C++ 이식 안내](src/track/README.md)를 참고하세요. 검출기, 추적기, 결과 발행은 [`src/app.py`](src/app.py)에서 프레임별로 이어집니다.
 
 ```text
 검출 및 필터 → tracker.update(...) → KeepID → live_publish()
