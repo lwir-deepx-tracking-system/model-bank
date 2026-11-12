@@ -1,12 +1,12 @@
 // gimbal_bridge_v27 = gimbal_bridge_v25 + motion smoothing (see V27_CHANGES.md). Built against v27/ (patched copies of four team control
-// files + smoothing_config.hpp) placed before team/include; team/ itself is unchanged. Without the new options it behaves exactly like v25.
+// files + smoothing_config.hpp) placed before team/include. With no lead suffix, tracking uses the observed box reference.
 //   --deadband-exit <e>         deadband hysteresis: a centred axis moves again only when |error| > e (0 = off)
 //   --stop-rate <SPD/s>         deadband entry decelerates at this rate instead of an immediate STOP (0 = off)
 //   --axis-reversal <0|1>       1: a reversing axis halts alone, the other keeps moving (0 = STOP both, as v25)
 //   --reversal-join-speed <SPD> the halted axis rejoins once the shared SPD is at or below this (default 5)
 //   --reversal-hold-ms <ms>     ... or after this long at the latest (default 500)
 //
-// Connects the tracker to the team's gimbal and PC GUI code (team/, unchanged copy of the runtime repository, see team/SOURCE.txt).
+// Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
 // All control decisions, safety stops and serial output stay in the team's GimbalCommandExecutor; the PC wire format stays in the team's
 // GuiSender / GuiReceiver / TrackingCommandHandler. This program only feeds them and reports their state.
 //
@@ -14,6 +14,8 @@
 //   F <frame id> <capture time, CLOCK_MONOTONIC ns> <n> then n times: <id> <x> <y> <w> <h> <confidence>     people in camera image pixels (640x480), x y = top left
 //   G <frame id> <capture time ns> <width> <height> <n> then n times: <id> <x> <y> <w> <h> <confidence>     same, followed (after the newline) by width*height*2 bytes:
 //                  the 16-bit camera frame, row major, native byte order. It goes to the gimbal executor AND to the PC GUI (video + metadata)
+//   F/G headers may end with LEAD <track id> <dx px> <dy px> <control epoch>. Malformed
+//   or out-of-range lead is ignored; the observed rows and G picture remain usable.
 //   P              heartbeat of the web page. The first one opens the session. Without one for --heartbeat-ms the executor stops the gimbal and drops the selection
 //   A <id>         follow this ID
 //   M              stop following, keep an ongoing manual move
@@ -21,6 +23,8 @@
 //   H              stop following and stop moving
 // stdout, one line per message:
 //   READY
+//   LEAD_CONTROL 1   accepts the optional F/G header suffix above
+//   CONTROL_EPOCH n  reset forecast history on a new selection, loss or control session
 //   R <A|M> <OK|INVALID|NOT_READY>            answer to A or M
 //   S <auto> <lost> <moving> <error> <id>     the executor's state, on every change
 //   T <gui client 0|1> <frames given> <frames sent> <frames encoded> <rtp bytes> <send failures>   once a second when --gui-host is set
@@ -40,6 +44,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <poll.h>
@@ -104,15 +109,6 @@ struct Options {
 
 // Aim point: fraction of the box height from its top that the gimbal brings to the image centre (0.5 = the team's box centre).
 static double g_aim_y = 0.5;
-
-// The executor gets boxes moved so that their centre is the aim point; height and width stay, so the team's checks see the same box size.
-static TrackingResultPtr aimed(const TrackingResultPtr& result)
-{
-    if (!result || g_aim_y == 0.5) return result;
-    auto copy = std::make_shared<TrackingResult>(*result);
-    for (auto& t : copy->tracks) t.y += static_cast<float>((g_aim_y - 0.5) * t.height);
-    return copy;
-}
 
 // The team's pipeline boundary for the PC GUI: model list size, model change. The tracker (Python) owns the models: a request goes to it as a line.
 static std::uint32_t g_model_count = 0;
@@ -348,8 +344,17 @@ public:
             t.class_id = 0;
             result->tracks.push_back(t);
         }
+        // Keep the measured rows intact for both target validation and the PC GUI.
+        std::string suffix, trailing;
+        TrackLead lead;
+        if (in >> suffix && suffix == "LEAD" &&
+            in >> lead.track_id >> lead.dx_px >> lead.dy_px >> lead.control_epoch &&
+            lead.matches(lead.track_id) && !(in >> trailing)) {
+            result->lead = lead;
+        }
         result->frame = context;
         result->enqueued_at = std::chrono::steady_clock::now();
+        result->aim_y = g_aim_y;
         return result;
     }
 
@@ -358,7 +363,7 @@ public:
         std::uint64_t id = 0, captured_ns = 0;
         std::size_t count = 0;
         if (!(in >> id >> captured_ns >> count) || id == 0) return;
-        if (auto result = tracks(in, id, captured_ns, count)) executor_.publish(aimed(result));
+        if (auto result = tracks(in, id, captured_ns, count)) executor_.publish(result);
     }
 
     void frame_with_picture(std::istringstream& in)
@@ -381,8 +386,8 @@ public:
         context->image = cv::Mat(wait_h_, wait_w_, CV_16UC1);
         std::memcpy(context->image.data, bytes, static_cast<std::size_t>(wait_w_) * wait_h_ * 2);
         result->frame = context;
-        executor_.publish(aimed(result));   // aim point for the gimbal only
-        if (gui_) gui_->publish(result);    // the GUI draws the real boxes
+        executor_.publish(result);
+        if (gui_) gui_->publish(result);    // encodes only the observed rows
     }
 
     void heartbeat()
@@ -458,7 +463,9 @@ int main(int argc, char** argv) try {
     Bridge bridge(executor, gui.get(), session_changes);
     say("READY");
     say("TRACK_CONTROL 1");
+    say("LEAD_CONTROL 1");
     std::string pending, reported;
+    std::uint64_t reported_epoch = std::numeric_limits<std::uint64_t>::max();
     std::vector<char> buffer(262144);
     auto next_status = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     auto next_position = std::chrono::steady_clock::now();
@@ -487,6 +494,10 @@ int main(int argc, char** argv) try {
             pending.erase(0, end + 1);
         }
         const auto snapshot = executor.snapshot();
+        if (snapshot.command_generation != reported_epoch) {
+            say("CONTROL_EPOCH " + std::to_string(snapshot.command_generation));
+            reported_epoch = snapshot.command_generation;
+        }
         const auto state = state_line(snapshot);
         if (state != reported) { say(state); reported = state; }
         const auto now = std::chrono::steady_clock::now();

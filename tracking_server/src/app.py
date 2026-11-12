@@ -284,11 +284,10 @@ def main():
     APP.sel_save = page_settings.sel_save
     APP.RULES = dict(lock=md_th.Lock(), pending=None, tracker='rebind' if APP.args.tracker == 'rebind' else 'confirm3', relabel=bool(APP.args.relabel), last=None, changes=0)   # v24g. v40: the GRU confirmation choice is gone (user 11-10)
     # ---- v40 (user 11-10): tree page. app = BoT-SORT appearance, lead = 예측 제어 (default OFF, not kept over a restart), warm_prev = Filter numbers kept while 온도 Filter is off
-    APP.CTL = dict(app='repvgg', lead=False, lead_ms=150, lv=None, lead_px=0.0, warm_prev=(45000, 0), W=None)
+    APP.CTL = dict(app='repvgg', lead=False, lead_ms=150, lv=None, lead_px=0.0, warm_prev=(45000, 0), lead_motion=None)
     APP.REID = dict(lock=md_th.Lock(), req=None, cur=APP.args.relabel or '', last=None, history=[])   # v41: appearance model picked on the page; req is taken by the frame loop between two frames
     mk_tracker_ = page_settings.mk_tracker_
     APP.ctl_state = page_settings.ctl_state
-    APP.lead_shift = gimbal_link.lead_shift
     APP.RULES_PRESETS = [('confirm3', 'ByteTrack'), ('rebind', 'ByteTrack (위치 재결합 켜짐)'),
                      ('ocsort', 'OC-SORT (가려졌다 나온 사람 위치 보정, 시험 안 함)'), ('botsort', 'BoT-SORT (ByteTrack + 카메라 움직임 보정 + RepVGG_(TMOT,CAMEL) 외형 비교, 시험 안 함)'), ('sort', 'SORT (가장 단순: Kalman + 겹침만, 놓치면 바로 새 번호, 시험 안 함)')]   # v31: AltTracker. v36: BoT-SORT and SORT in, C-BIoU off the list (user 11-10)
     APP.rules_state = page_settings.rules_state
@@ -401,6 +400,7 @@ def main():
         detect = detect_frame.detect
         vit_x = np.zeros((1, vit.H, vit.W, 3), np.uint8) if vit else None
         APP.tracker = None; prev_vid = None; prev_gray = None; tr_seq = 0; rr_ptr = 0; gmc = None; gmc_fail = 0
+        previous_motion_frame = previous_motion_time = None
         def crop_into(g, box):
             x1, y1, x2, y2 = box; a, b_, c, d = int(max(0, x1)), int(max(0, y1)), int(min(640, x2)), int(min(512, y2))
             if c - a < 2 or d - b_ < 2: return False
@@ -637,6 +637,7 @@ def main():
                     elif GATE_FN is not None:   # v11: the learned confirmation gate replaces 3FrameConfirm (GateTracker has its own confirm rule). v40: offline runs only
                         APP.tracker = GateTracker(gate=GATE_FN, thr_out=GATE_FN.thr_out, thr_low=GATE_FN.thr_low, n_init=APP.args.n_init, class_gate=APP.args.class_gate, radius=APP.args.radius); gate_trackers.append(APP.tracker)
                 if APP.args.gmc:   # --gmc: fresh camera-motion state per video
+                    previous_motion_frame = previous_motion_time = None
                     APP.tracker.kf = GKF()
                     if APP.args.gmc_thread: gmc = True
                     else: gmc_fail += gmc.n_fail if gmc is not None else 0; gmc = GMC(APP.args.gmc_ds); gmc.fp = dict(gmc.fp, maxCorners=APP.args.gmc_corners, minDistance=APP.args.gmc_mindist)
@@ -696,22 +697,29 @@ def main():
                     synth_st['frames_applied'] += 1; synth_st['hidden_dets'] += n_hid; synth_st['planned_boxes_without_det'] += n_miss
                 synth_ms = (time.perf_counter_ns() - ts_) / 1e6
             bench_ms = vit_bench(g, arr, i) if APP.bench_eng is not None else 0.0   # --vit-bench-n: after NMS, before tracker.update (excluded from tracker_ms)
-            eval_pos = replay_eval.first_pass_position(APP.LIVE.arr[0]) if APP.LIVE is not None and APP.LIVE.arr else None
+            frame_time = APP.LIVE.arr[0] if APP.LIVE is not None and APP.LIVE.arr else None
+            eval_pos = replay_eval.first_pass_position(frame_time) if frame_time is not None else None
             if eval_pos == 0:
                 if APP.relabeler is not None:
                     APP.relabeler.reset()
                 APP.tracker = mk_tracker_(APP.RULES['tracker'])
                 if APP.args.gmc:
+                    previous_motion_frame = previous_motion_time = None
                     APP.tracker.kf = GKF()
             gmc_ms = 0.0
+            APP.CTL['lead_motion'] = None
             if gmc is not None:   # --gmc: warp prev -> current, consumed by the next multi_predict (pool) and applied to unconfirmed tracks now
                 tg_ = time.perf_counter_ns()
-                if APP.args.gmc_thread: W_, c_ms_ = APP.gmc_futs.pop(i).result(); gmc_comp_ms.append(c_ms_)
+                if APP.args.gmc_thread: motion, c_ms_ = APP.gmc_futs.pop(i).result(); gmc_comp_ms.append(c_ms_)
                 else:
                     if eval_pos == 0:
                         gmc.prev = None
-                    W_ = gmc.apply(g)
-                APP.tracker.kf.warp = W_; APP.CTL['W'] = W_   # v40: prev -> current warp, read by lead_shift
+                    motion = gmc.estimate(g)
+                W_ = motion.warp
+                APP.tracker.kf.warp = W_
+                if frame_time is not None:
+                    APP.CTL['lead_motion'] = motion.paired(previous_motion_frame, g, previous_motion_time, frame_time)
+                previous_motion_frame, previous_motion_time = (g, frame_time) if frame_time is not None else (None, None)
                 for t_ in APP.tracker.tracked:
                     if not t_.is_activated and t_.mean is not None:
                         m_, c_ = gmc_warp(t_.mean[None].copy(), t_.cov[None], W_); t_.mean, t_.cov = m_[0], c_[0]

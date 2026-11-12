@@ -44,6 +44,7 @@ class GimbalCommandExecutor {
     GimbalPositionEstimate position_estimate_;
     TrackingResultPtr latest_;
     std::uint64_t model_generation_ = 0, last_frame_id_ = 0;
+    std::uint64_t lead_after_frame_ = 0; // A fresh selection cannot reuse the previous selection's forecast.
     std::uint64_t tracker_epoch_ = 0;
     bool connected_ = false;
     bool stopped_ = false;

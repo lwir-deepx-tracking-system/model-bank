@@ -19,13 +19,12 @@ class LiveTracksTests(unittest.TestCase):
         APP.tracker = object()
         APP.LIVE = NS(camera_bytetrack=None)
         APP.LIVE_W, APP.LIVE_H = 640, 480
-        APP.CTL = dict(lv=None, lead_px=0, lead=False)
+        APP.CTL = dict(lv=None, lead_px=0, lead=False, lead_ms=150, lead_motion=None)
         APP.GB = NS(wcond=Condition(), wopen=True, wq=deque(), wframe=None,
                     people=[], frame=0, gui=False, skipped=0, track_control_supported=True,
                     state=dict(id=0, auto=0))
         APP.gb_send_frame = gimbal_link.gb_send_frame
         APP.gb_send = gimbal_link.gb_send
-        APP.lead_shift = gimbal_link.lead_shift
         self.people = [(17, 100., 50., 150., 200., .9)]
 
     def tearDown(self):
@@ -74,6 +73,95 @@ class LiveTracksTests(unittest.TestCase):
         self.assertEqual(APP.GB.people, self.people)
         self.assertIn(b' 17 90.0 30.0 50.0 150.0 0.900', APP.GB.wframe)
         self.assertTrue(live_tracks.click(149, 199)[0])
+
+    def publish_moving_lead(self, raw16=None):
+        start = time.perf_counter() - .12
+        APP.GB.lead_control_supported = True
+        APP.GB.control_epoch = 3
+        APP.GB.gui = raw16 is not None
+        self.publish(frame_t=start, raw16=raw16)
+        APP.GB.state.update(id=17, auto=1)
+        APP.CTL['lead'] = True
+        self.publish(frame_t=start + .04, raw16=raw16, acknowledge=False)
+        self.people = [(17, 132., 50., 182., 200., .9)]
+        APP.CTL['lead_motion'] = (start + .04, start + .08, np.eye(2, 3))
+        self.publish(frame_t=start + .08, raw16=raw16, acknowledge=False)
+        return start + .08
+
+    def test_lead_suffix_preserves_observed_rows_click_and_gui_picture(self):
+        raw = np.full((480, 640), 413, np.uint16)
+        last = self.publish_moving_lead(raw)
+        header, picture = APP.GB.wframe.split(b'\n', 1)
+        observed, _, lead = header.partition(b' LEAD ')
+        self.assertEqual(picture, raw.tobytes())
+        self.assertEqual(observed.split()[6:], b'17 132.0 50.0 50.0 150.0 0.900'.split())
+        self.assertEqual(lead.split()[0], b'17')
+        self.assertGreater(float(lead.split()[1]), 20.)
+        self.assertEqual(lead.split()[3:], [b'3'])
+        self.assertEqual(APP.GB.people, self.people)
+
+        APP.CTL['lead'] = False
+        self.publish(frame_t=last + .04, raw16=raw, acknowledge=False)
+        off_header, off_picture = APP.GB.wframe.split(b'\n', 1)
+        self.assertEqual(off_header.split()[3:], observed.split()[3:])
+        self.assertEqual(off_picture, picture)
+        self.assertEqual(APP.CTL['lead_px'], 0.)
+        self.assertTrue(live_tracks.click(133, 100)[0])
+        self.assertEqual(APP.GB.wq[-1], b'A 17\n')
+
+    def test_same_id_selection_clears_sample_and_queued_suffix(self):
+        last = self.publish_moving_lead()
+        self.assertIn(b' LEAD 17 ', APP.GB.wframe)
+        self.assertTrue(live_tracks.click(133, 100)[0])
+        self.assertEqual(APP.GB.wq[-1], b'A 17\n')
+        self.assertNotIn(b' LEAD ', APP.GB.wq[-2])
+        self.assertIsNone(APP.CTL['lv'])
+        self.assertEqual(APP.GB.lead_pending, 1)
+        APP.CTL['lead_motion'] = (last, last + .04, np.eye(2, 3))
+        self.publish(frame_t=last + .04, acknowledge=False)
+        self.assertNotIn(b' LEAD ', APP.GB.wframe)
+        self.assertIsNone(APP.CTL['lv'])
+
+    def test_bridge_without_lead_capability_only_receives_observations(self):
+        last = self.publish_moving_lead()
+        APP.GB.lead_control_supported = False
+        with patch.object(live_tracks.predictive_lead, 'estimate', side_effect=AssertionError('unsupported prediction')):
+            self.publish(frame_t=last + .04, acknowledge=False)
+        self.assertEqual(APP.GB.wframe.split()[4:], b'17 132.0 50.0 50.0 150.0 0.900'.split())
+        self.assertIsNone(APP.CTL['lv'])
+        self.assertEqual(APP.CTL['lead_px'], 0.)
+
+    def test_bridge_capability_epoch_ack_and_disconnect(self):
+        self.publish_moving_lead()
+        gb = APP.GB
+        gb.lock = Lock()
+        gb.dev = 'synthetic'
+        gb.lead_control_supported = False
+        gb.lead_pending = 1
+        gb.control_epoch = 3
+        lead_frame = gb.wframe
+
+        def lines():
+            yield b'LEAD_CONTROL 1\n'
+            self.assertTrue(gb.lead_control_supported)
+            yield b'CONTROL_EPOCH 3\n'
+            self.assertIs(gb.wframe, lead_frame)
+            yield b'CONTROL_EPOCH 4\n'
+            self.assertEqual(gb.control_epoch, 4)
+            self.assertNotIn(b' LEAD ', gb.wframe)
+            self.assertIsNone(APP.CTL['lv'])
+            yield b'R A OK\n'
+            self.assertEqual(gb.lead_pending, 0)
+            yield b''
+
+        incoming = lines()
+        gb.proc = NS(stdout=NS(readline=lambda: next(incoming)), wait=lambda timeout: 0)
+        APP.lv_os = NS(O_WRONLY=1, O_NOCTTY=2, O_NONBLOCK=4,
+                       open=lambda *args: (_ for _ in ()).throw(OSError('simulated device is absent')))
+        gimbal_link.gb_reader(gb.proc)
+        self.assertFalse(gb.wopen)
+        self.assertFalse(gb.lead_control_supported)
+        self.assertIsNone(gb.control_epoch)
 
     def test_cpp_source_replaces_python_for_click(self):
         self.publish()

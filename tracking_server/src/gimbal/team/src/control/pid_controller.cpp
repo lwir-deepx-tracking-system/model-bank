@@ -6,7 +6,7 @@
 void PidController::reset()
 {
     initialized_ = feedback_valid_ = false;
-    previous_error_ = integral_ = derivative_ = requested_ = applied_ = 0;
+    previous_derivative_error_ = integral_ = derivative_ = requested_ = applied_ = 0;
 }
 void PidController::set_applied_output(double value)
 {
@@ -16,7 +16,12 @@ void PidController::set_applied_output(double value)
 }
 PidOutput PidController::calculate(double error, double dt_seconds)
 {
-    if (!std::isfinite(error) || !std::isfinite(dt_seconds) || dt_seconds < 0) {
+    return calculate(error, dt_seconds, error);
+}
+PidOutput PidController::calculate(double error, double dt_seconds, double derivative_error)
+{
+    if (!std::isfinite(error) || !std::isfinite(derivative_error) ||
+        !std::isfinite(dt_seconds) || dt_seconds < 0) {
         reset(); return {};
     }
     const bool use_i = type_ == AutoControllerType::PI || type_ == AutoControllerType::PID;
@@ -25,7 +30,7 @@ PidOutput PidController::calculate(double error, double dt_seconds)
     output.p = config_.kp * error;
     if (initialized_ && dt_seconds > 0) {
         if (use_d && config_.kd > 0) {
-            const double raw = (error - previous_error_) / dt_seconds;
+            const double raw = (derivative_error - previous_derivative_error_) / dt_seconds;
             const double alpha = dt_seconds / (config_.derivative_filter_ms / 1000.0 + dt_seconds);
             derivative_ += alpha * (raw - derivative_);
         }
@@ -54,7 +59,7 @@ PidOutput PidController::calculate(double error, double dt_seconds)
         !std::isfinite(output.d) || !std::isfinite(output.value)) {
         reset(); return {};
     }
-    previous_error_ = error;
+    previous_derivative_error_ = derivative_error;
     requested_ = output.value;
     initialized_ = true;
     return output;

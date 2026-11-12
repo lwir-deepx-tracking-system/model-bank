@@ -108,7 +108,8 @@ const Track* GimbalCommandExecutor::target(std::uint32_t id) const
     if (!fresh() || id == 0 || id > std::uint32_t(std::numeric_limits<int>::max())) return nullptr;
     for (const auto& t : latest_->tracks)
         if (t.track_id == static_cast<int>(id) &&
-            controller_.valid(t, latest_->frame->image.cols, latest_->frame->image.rows)) return &t;
+            controller_.valid(t, latest_->frame->image.cols, latest_->frame->image.rows,
+                              latest_->aim_y)) return &t;
     return nullptr;
 }
 void GimbalCommandExecutor::failure(const std::exception& e)
@@ -180,8 +181,10 @@ void GimbalCommandExecutor::tick()
         return;
     }
     state_.lost = false; lost_since_ = {};
+    const auto lead = latest_->frame->metadata.frame_id > lead_after_frame_ &&
+        latest_->lead.control_epoch == state_.command_generation ? latest_->lead : TrackLead{};
     const auto demand = controller_.calculate(*t, latest_->frame->image.cols, latest_->frame->image.rows,
-        latest_->frame->metadata, latest_->model_generation);
+        latest_->frame->metadata, latest_->model_generation, lead, latest_->aim_y);
     if (demand.stop()) {
         if (!state_.moving) return;
         if (smoothing_.stop_rate <= 0) { stop("deadband"); return; }   // team original: immediate STOP
@@ -258,6 +261,7 @@ ControlResult GimbalCommandExecutor::select(std::uint32_t id)
         if (!target(id)) return ControlResult::InvalidTarget;
         invalidate("AUTO selection");
         if (state_.error) return ControlResult::NotReady;
+        lead_after_frame_ = last_frame_id_;
         state_.selected_id = id; state_.automatic = true;
         return ControlResult::Ok;
     });

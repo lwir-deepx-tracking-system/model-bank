@@ -1,4 +1,4 @@
-Unchanged copy of part of the team repository lwir-deepx-tracking-system/runtime.
+Imported copy of part of the team repository lwir-deepx-tracking-system/runtime, with integration changes documented below.
 Commit 5219bce (branch refactor/pipeline, the code on the board on 2026-11-06 17:00). The control and gui files are identical to commit 06bdd76 (only tracker files changed between the two).
 Files: include/{common,config,control,gui,app}, include/pipeline/runtime_control.hpp, src/common/logger.cpp, src/control/*, src/gui/*, src/pipeline/runtime_control.cpp, docs/pc_communication.md, docs/auto_control.md, tests/gui/test_gui_protocol.cpp (fixtures).
-Only gimbal_bridge.cpp next to this folder is new. Update by copying the same files from a newer commit.
+2026-11-12 predictive-control integration: common/track.hpp carries separate optional TrackLead and aim_y data; control/pid_controller.hpp and .cpp add a three-argument overload for a measured derivative while keeping the original two-argument call. No lead is applied by the original team controller; v27 uses the extension. See ../V27_CHANGES.md and its no-hardware tests. Preserve these changes when updating from upstream; do not overwrite them without reviewing the diff and rerunning the compatibility checks.

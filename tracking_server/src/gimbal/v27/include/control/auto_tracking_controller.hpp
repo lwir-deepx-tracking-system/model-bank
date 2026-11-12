@@ -29,9 +29,10 @@ public:
     explicit AutoTrackingController(AutoControlConfig config, SmoothingConfig smoothing = {})
         : config_(config), smoothing_(smoothing), x_(config.pid_x, config.controller, config.speed_max),
           y_(config.pid_y, config.controller, config.speed_max) {}
-    bool valid(const Track&, int width, int height) const;
+    bool valid(const Track&, int width, int height, double aim_y = 0.5) const;
     GimbalDemand calculate(const Track&, int width, int height,
-                          const FrameMetadata&, std::uint64_t model_generation = 0);
+                          const FrameMetadata&, std::uint64_t model_generation = 0,
+                          const TrackLead& lead = {}, double aim_y = 0.5);
     void set_applied_output(double image_x, double image_y);
     void reset();
 };

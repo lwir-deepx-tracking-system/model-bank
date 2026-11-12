@@ -12,12 +12,14 @@ class PidController {
     AutoControllerType type_;
     double max_output_;
     bool initialized_ = false, feedback_valid_ = false;
-    double previous_error_ = 0, integral_ = 0, derivative_ = 0;
+    double previous_derivative_error_ = 0, integral_ = 0, derivative_ = 0;
     double requested_ = 0, applied_ = 0;
 public:
     PidController(PidAxisConfig config, AutoControllerType type, double max_output)
         : config_(config), type_(type), max_output_(max_output) {}
     PidOutput calculate(double error, double dt_seconds);
+    // The derivative may use a separate measured error when P/I use a forecast.
+    PidOutput calculate(double error, double dt_seconds, double derivative_error);
     // Command actually submitted after common SPD conversion and rate limiting.
     // This is command-space feedback, never motor/encoder feedback.
     void set_applied_output(double value);

@@ -10,6 +10,8 @@ import numpy as np
 
 from ..common.state import APP
 from ..track.stabilizer import stab_people_real
+from . import predictive_lead
+from .gimbal_link import reset_lead, without_lead
 
 
 def current_source():
@@ -37,8 +39,8 @@ def _boundary_locked(gb, source):
     gb.people_source = source
     gb.people_t = 0.0
     gb.selection_reset = True
-    APP.CTL['lv'] = None
-    APP.CTL['lead_px'] = 0.0
+    gb.lead_pending = 0
+    reset_lead()
     gb.wcond.notify()
 
 
@@ -59,6 +61,7 @@ def publish(people, correction, frame_t, raw16, source, blocked=False):
     with gb.wcond:
         if not gb.wopen:
             gb.people = []
+            reset_lead()
             return 0
         gap = frame_t - getattr(gb, 'people_t', 0.0)
         if getattr(gb, 'people_t', 0.0) and not 0 < gap <= 1.0:
@@ -70,14 +73,25 @@ def publish(people, correction, frame_t, raw16, source, blocked=False):
         gb.frame += 1
         selected = 0 if gb.selection_reset else int(gb.state.get('id', 0))
         real = stab_people_real(gb.people, correction, float(APP.LIVE_W), float(APP.LIVE_H))
-        if APP.CTL['lead']:
-            real = APP.lead_shift(real, gb.people, selected, frame_t,
-                                  float(APP.LIVE_W), float(APP.LIVE_H))
-        elif APP.CTL['lv'] is not None or APP.CTL['lead_px']:
-            APP.CTL['lv'] = None
-            APP.CTL['lead_px'] = 0.0
         text = ''.join(' %d %.1f %.1f %.1f %.1f %.3f' %
                        (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real)
+        epoch = getattr(gb, 'control_epoch', None)
+        if (APP.CTL['lead'] and getattr(gb, 'lead_control_supported', False) and epoch is not None
+                and not getattr(gb, 'lead_pending', 0) and gb.state.get('auto')
+                and not gb.state.get('lost') and not gb.state.get('error')):
+            matches = [person for person in gb.people if person[0] == selected]
+            observed = matches[0] if len(matches) == 1 else None
+            previous = APP.CTL['lv']
+            sample, (dx, dy) = predictive_lead.estimate(
+                previous, selected, observed, frame_t, APP.CTL.get('lead_motion'), APP.CTL['lead_ms'])
+            # A settings request can reset the sample while NumPy is running.
+            if APP.CTL['lead'] and APP.CTL['lv'] is previous:
+                APP.CTL['lv'] = sample
+                APP.CTL['lead_px'] = math.hypot(dx, dy)
+                if APP.CTL['lead_px']:
+                    text += f' LEAD {selected} {dx!r} {dy!r} {epoch}'
+        else:
+            reset_lead()
         if gb.gui and raw16 is not None and raw16.shape == (APP.LIVE_H, APP.LIVE_W):
             APP.gb_send_frame('G %d %d %d %d %d' %
                               (gb.frame, int(frame_t*1e9), APP.LIVE_W, APP.LIVE_H, len(real)) + text,
@@ -113,10 +127,12 @@ def click(x, y):
             if len(gb.wq) >= 62:
                 return False, '명령 전송이 밀렸습니다. 잠시 뒤 다시 눌러 주세요'
             target = min(inside, key=lambda p: (p[3]-p[1])*(p[4]-p[2]))[0]
+            reset_lead()
+            gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
             # The writer normally flushes commands before the latest G/F slot.
-            # Move that already-published frame into the FIFO before selection.
+            # Send its observed rows before selecting, without carrying an old lead into the selection.
             if gb.wframe is not None:
-                gb.wq.append(gb.wframe)
+                gb.wq.append(without_lead(gb.wframe))
                 gb.wframe = None
             gb.wq.append(('A %d\n' % target).encode())
         gb.wcond.notify()
