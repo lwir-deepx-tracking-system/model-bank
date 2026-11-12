@@ -26,4 +26,6 @@ struct SmoothingConfig {
     int observation_grace_ms = 0;
     // Allow sustained measured motion to skip the slowest speed steps. Zero disables it.
     int catchup_speed = 0;
+    // Predict a near-term horizontal deadband entry during a validated approach.
+    bool predictive_brake = false;
 };

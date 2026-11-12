@@ -13,15 +13,39 @@
 #include "common/logger.hpp"
 
 namespace {
-void trace_output(const FrameMetadata& frame, int track_id, bool catchup_eligible,
-                  bool catchup_applied, double previous_limited_speed, double slew_limited_speed,
-                  double wanted_speed, int final_speed, int x, int y, bool sent) noexcept try
+bool control_output_trace_enabled()
 {
     static const bool enabled = [] {
         const char* value = std::getenv("LWIR_CONTROL_TRACE");
         return value && value[0] == '1' && value[1] == '\0';
     }();
-    if (!enabled) return;
+    return enabled;
+}
+
+void trace_predictive_brake(const FrameMetadata& frame, int track_id, int direction, int speed,
+                            double error, double closing, double reserve, bool sent) noexcept try
+{
+    if (!control_output_trace_enabled()) return;
+    const auto captured_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        frame.captured_at.time_since_epoch()).count();
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::boolalpha << std::setprecision(std::numeric_limits<double>::max_digits10)
+        << "{\"event\":\"predictive_brake\",\"frame_id\":" << frame.frame_id
+        << ",\"captured_ns\":" << captured_ns << ",\"track_id\":" << track_id
+        << ",\"prior_x\":" << direction << ",\"prior_speed\":" << speed
+        << ",\"error_px\":" << error << ",\"closing_px_per_s\":" << closing
+        << ",\"reserve_px\":" << reserve << ",\"sent\":" << sent << "}\n";
+    std::fputs(out.str().c_str(), stderr);
+} catch (...) {
+    // A diagnostics formatting failure must not interrupt control.
+}
+
+void trace_output(const FrameMetadata& frame, int track_id, bool catchup_eligible,
+                  bool catchup_applied, double previous_limited_speed, double slew_limited_speed,
+                  double wanted_speed, int final_speed, int x, int y, bool sent) noexcept try
+{
+    if (!control_output_trace_enabled()) return;
     const auto captured_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
         frame.captured_at.time_since_epoch()).count();
     std::ostringstream out;
@@ -74,7 +98,7 @@ void GimbalCommandExecutor::run()
     for (;;) {
         std::packaged_task<void()> request;
         Observation input;
-        bool unsafe = false;
+        bool unsafe = false, reset_brake = false;
         {
             std::unique_lock<std::mutex> lock(mutex_);
             const auto wake_at = grace_deadline_ == Clock::time_point{} ? next : std::min(next, grace_deadline_);
@@ -84,13 +108,16 @@ void GimbalCommandExecutor::run()
             if (closing_) break;
             input = std::move(pending_);
             unsafe = pending_unsafe_;
-            pending_unsafe_ = false;
+            reset_brake = pending_brake_reset_;
+            pending_unsafe_ = pending_brake_reset_ = false;
             if (!requests_.empty()) { request = std::move(requests_.front()); requests_.pop_front(); }
         }
         const auto now = Clock::now();
+        if (reset_brake) brake_ = {};
         if (unsafe) {
             latest_healthy_ = false;
             controller_.reset_catchup();
+            brake_ = {};
             if (smoothing_.observation_grace_ms > 0 && state_.automatic) {
                 mark_lost(now);
                 if (state_.moving) stop("unsafe observation");
@@ -115,7 +142,8 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         const auto received = Clock::now();
-        if ((smoothing_.observation_grace_ms > 0 || smoothing_.catchup_speed > 0) &&
+        if ((smoothing_.observation_grace_ms > 0 || smoothing_.catchup_speed > 0 ||
+             smoothing_.predictive_brake) &&
             input->model_generation == runtime_.generation.load() &&
             input->tracker_epoch == runtime_.tracker_epoch.load()) {
             if (published_model_ != input->model_generation || published_tracker_ != input->tracker_epoch) {
@@ -138,6 +166,18 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
                 if (smoothing_.observation_grace_ms > 0)
                     pending_ = {}; // A pre-barrier queued frame cannot restart AUTO.
             }
+            if (smoothing_.predictive_brake && healthy_live) {
+                const auto selected = static_cast<int>(published_brake_target_.load());
+                if (selected > 0) {
+                    const auto matches = [selected](const Track& row) { return row.track_id == selected; };
+                    const auto first = std::find_if(input->tracks.begin(), input->tracks.end(), matches);
+                    const auto& image = input->frame->image;
+                    if (first == input->tracks.end() ||
+                        !controller_.valid(*first, image.cols, image.rows, input->aim_y) ||
+                        std::any_of(first + 1, input->tracks.end(), matches))
+                        pending_brake_reset_ = true;
+                }
+            }
             if (id > published_frame_) published_frame_ = id;
             if (timely && advances) published_capture_ = captured;
         }
@@ -153,7 +193,8 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
 }
 void GimbalCommandExecutor::publish_unsafe_observation()
 {
-    if (smoothing_.observation_grace_ms == 0 && smoothing_.catchup_speed == 0) return;
+    if (smoothing_.observation_grace_ms == 0 && smoothing_.catchup_speed == 0 &&
+        !smoothing_.predictive_brake) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (smoothing_.observation_grace_ms > 0) pending_ = {};
@@ -181,6 +222,8 @@ bool GimbalCommandExecutor::ingest(Observation observation)
     latest_ = std::move(input);
     latest_healthy_ = observation.healthy_live;
     if (smoothing_.catchup_speed > 0 && (!latest_healthy_ || !adjacent)) controller_.reset_catchup();
+    if (smoothing_.predictive_brake && (!latest_healthy_ ||
+        (state_.automatic && !target(state_.selected_id)))) brake_ = {};
     if (smoothing_.observation_grace_ms == 0) return false;
 
     if (!state_.automatic || !ready()) return false;
@@ -227,6 +270,7 @@ void GimbalCommandExecutor::mark_lost(Clock::time_point now)
 {
     last_observed_capture_ = {};
     observation_cadence_ = {};
+    brake_ = {};
     if (state_.lost) return;
     controller_.reset();
     state_.lost = true;
@@ -278,7 +322,9 @@ void GimbalCommandExecutor::failure(const std::exception& e)
 {
     Logger::error(std::string("[Control] device error: ") + e.what());
     controller_.reset();
+    brake_ = {};
     state_.error = true;
+    published_brake_target_.store(0);
     state_.automatic = false; state_.selected_id = 0; state_.lost = false;
     ++state_.command_generation;
     try { device_->stop(); } catch (const std::exception& stop_error) {
@@ -292,6 +338,7 @@ void GimbalCommandExecutor::stop(const char* reason)
 {
     grace_deadline_ = {};
     controller_.reset_catchup();
+    brake_ = {};
     // No ramp: safety/Deadband STOP is immediate command submission.
     try {
         device_->stop();
@@ -307,9 +354,11 @@ void GimbalCommandExecutor::invalidate(const char* reason)
 {
     controller_.reset();
     ++state_.command_generation;
+    published_brake_target_.store(0);
     state_.automatic = false; state_.selected_id = 0; state_.lost = false;
     lost_since_ = {}; next_auto_ = {};
     grace_deadline_ = {}; last_observed_capture_ = {}; observation_cadence_ = {};
+    brake_ = {};
     if (state_.moving) stop(reason);
 }
 void GimbalCommandExecutor::send(int x, int y, int speed, bool automatic)
@@ -322,6 +371,80 @@ void GimbalCommandExecutor::send(int x, int y, int speed, bool automatic)
         x_ = x; y_ = y; sent_speed_ = speed; state_.moving = x || y;
     } catch (const std::exception& e) { failure(e); }
 }
+bool GimbalCommandExecutor::apply_predictive_brake(const Track& track, const GimbalDemand& demand,
+                                                    const TrackLead& lead)
+{
+    const bool forecast = lead.matches(track.track_id) && (lead.dx_px != 0 || lead.dy_px != 0);
+    const auto duplicate_id = std::count_if(latest_->tracks.begin(), latest_->tracks.end(),
+        [&track](const Track& row) { return row.track_id == track.track_id; }) != 1;
+    if (!latest_healthy_ || forecast || duplicate_id || y_ || demand.y) {
+        brake_ = {};
+        return false;
+    }
+
+    using namespace std::chrono_literals;
+    constexpr int max_brake_speed = 7;
+    constexpr double preview_seconds = 0.050;
+    constexpr double max_reserve_at_640 = 4.0;
+    const auto& frame = latest_->frame->metadata;
+    const int width = latest_->frame->image.cols;
+    if (brake_.width != width) brake_ = {};
+    if (frame.frame_id == brake_.previous.frame_id)
+        return brake_.hold_since != Clock::time_point{};
+
+    const double half_width = width / 2.0;
+    const double position = double(track.x) + double(track.width) / 2 - half_width;
+    const int side = position > 0 ? 1 : position < 0 ? -1 : 0;
+    double band = config_.automatic.deadband_x;
+    if (config_.automatic.fov_x_deg > 0 && config_.automatic.fov_y_deg > 0) {
+        constexpr double radians = 3.14159265358979323846 / 180.0;
+        band = std::tan(band) / std::tan(config_.automatic.fov_x_deg * radians / 2);
+    }
+    const double outside = std::abs(position) - band * half_width;
+    const double max_reserve = max_reserve_at_640 * width / 640.0;
+    const auto dt = frame.captured_at - brake_.previous.captured_at;
+    // The latest-only executor can skip a valid publication. Its observed timing
+    // remains usable, but the publisher independently records explicit target loss.
+    const bool consecutive = brake_.previous.frame_id && frame.frame_id > brake_.previous.frame_id &&
+        dt >= 10ms && dt <= 100ms;
+    const double closing = consecutive && side * brake_.position > 0 ?
+        side * (brake_.position - position) / std::chrono::duration<double>(dt).count() : 0.0;
+    const double reserve = std::min(max_reserve, preview_seconds * std::min(closing, brake_.closing_speed));
+    const bool in_shell = std::isfinite(band) && band >= 0 && outside > 0 && outside <= max_reserve;
+    // A derivative-driven reversal near center may be a correction for travel
+    // already underway. Stop first, then let new observations decide direction.
+    const bool derivative_reversal = demand.x == -side &&
+        side * (demand.pid_x.p + demand.pid_x.i) > 0 && side * demand.pid_x.d < 0;
+    const bool approach_demand = demand.x == side || derivative_reversal;
+    brake_.previous = frame;
+    brake_.width = width;
+    brake_.position = position;
+    brake_.closing_speed = closing;
+
+    if (!in_shell || brake_.used_direction != side) {
+        brake_.used_direction = 0;
+        brake_.hold_since = {};
+    } else if (brake_.hold_since != Clock::time_point{}) {
+        // Re-evaluate a hold only with new observations. Any outward motion releases
+        // immediately; duplicates cannot prolong it past the existing freshness check.
+        if (consecutive && closing >= 0 && approach_demand && frame.captured_at - brake_.hold_since < 100ms)
+            return true;
+        brake_.hold_since = {};
+    }
+    if (brake_.used_direction || !in_shell || outside > reserve ||
+        !state_.moving || x_ != side || !approach_demand ||
+        sent_speed_ < 1 || sent_speed_ > max_brake_speed)
+        return false;
+
+    if (!ready()) { invalidate("control authority"); return true; }
+    const int prior_speed = sent_speed_;
+    stop("predictive brake");
+    const bool sent = !state_.error;
+    if (sent) brake_ = {frame, width, position, closing, side, frame.captured_at};
+    trace_predictive_brake(frame, track.track_id, side, prior_speed, position, closing, reserve, sent);
+    return true;
+}
+
 void GimbalCommandExecutor::tick()
 {
     if (runtime_.generation.load() != model_generation_ ||
@@ -357,6 +480,7 @@ void GimbalCommandExecutor::tick()
          }) == 1);
     const auto demand = controller_.calculate(*t, latest_->frame->image.cols, latest_->frame->image.rows,
         latest_->frame->metadata, latest_->model_generation, lead, latest_->aim_y, catchup_observed);
+    if (smoothing_.predictive_brake && apply_predictive_brake(*t, demand, lead)) return;
     if (demand.stop()) {
         if (!state_.moving) return;
         controller_.reset_catchup();
@@ -454,6 +578,7 @@ ControlResult GimbalCommandExecutor::select(std::uint32_t id)
         if (state_.error) return ControlResult::NotReady;
         lead_after_frame_ = last_frame_id_;
         state_.selected_id = id; state_.automatic = true;
+        if (smoothing_.predictive_brake) published_brake_target_.store(id);
         if (smoothing_.observation_grace_ms > 0)
             last_observed_capture_ = latest_->frame->metadata.captured_at;
         return ControlResult::Ok;

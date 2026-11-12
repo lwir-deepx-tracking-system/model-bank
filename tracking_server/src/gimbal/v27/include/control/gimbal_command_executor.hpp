@@ -1,6 +1,7 @@
 // v27 copy of team/include/control/gimbal_command_executor.hpp: changed only where marked "v27" (motion smoothing, gimbal_bridge_v27). See ../../../V27_CHANGES.md.
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <future>
@@ -41,7 +42,9 @@ class GimbalCommandExecutor {
         bool healthy_live = false;
     };
     Observation pending_;
-    bool pending_unsafe_ = false;
+    bool pending_unsafe_ = false, pending_brake_reset_ = false;
+    // The publisher must preserve explicit target loss through latest-slot replacement.
+    std::atomic<std::uint32_t> published_brake_target_{0};
     // Publication order is checked before the latest-only slot can discard a sample.
     std::uint64_t published_model_ = 0, published_tracker_ = 0, published_frame_ = 0;
     Clock::time_point published_capture_{};
@@ -65,11 +68,20 @@ class GimbalCommandExecutor {
     double limited_speed_ = 0;
     bool hold_x_ = false, hold_y_ = false;   // v27: axis halted by a per-axis reversal, waiting to rejoin
     Clock::time_point hold_x_since_{}, hold_y_since_{};
+    struct PredictiveBrake {
+        FrameMetadata previous{};
+        int width = 0;
+        double position = 0;
+        double closing_speed = 0;
+        int used_direction = 0;
+        Clock::time_point hold_since{};
+    } brake_;
 
     void run();
     bool ingest(Observation);
     void mark_lost(Clock::time_point now);
     void tick();
+    bool apply_predictive_brake(const Track&, const GimbalDemand&, const TrackLead&);
     bool alive() const;
     bool ready() const;
     bool fresh() const;

@@ -6,6 +6,7 @@
 //   --reversal-join-speed <SPD> the halted axis rejoins once the shared SPD is at or below this (default 5)
 //   --reversal-hold-ms <ms>     ... or after this long at the latest (default 500)
 //   --catchup-speed <0..7>      speed for confirmed outward motion (default 0 = off; requires OBS 1)
+//   --predictive-brake <0|1>   near-deadband horizontal braking (default 0; requires OBS 1)
 //   --observation-grace-ms <ms> hold the last output for one validated live detector miss (0 = off, maximum 100)
 //
 // Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
@@ -228,6 +229,11 @@ Options parse(int argc, char** argv)
             if (value.size() != 1 || value[0] < '0' || value[0] > '0' + SmoothingConfig::max_catchup_speed)
                 throw std::invalid_argument("--catchup-speed must be within 0..7");
             s.catchup_speed = value[0] - '0';
+        }
+        else if (name == "--predictive-brake") {
+            if (value != "0" && value != "1")
+                throw std::invalid_argument("--predictive-brake is 0 or 1");
+            s.predictive_brake = value == "1";
         }
         else if (name == "--gui-host") { g.enabled = true; g.video.host = value; g.metadata.host = value; }
         else if (name == "--gui-bind") g.command.bind_address = value;
@@ -551,7 +557,8 @@ int main(int argc, char** argv) try {
         }
     }
     Bridge bridge(executor, gui.get(), session_changes,
-                  options.smoothing.observation_grace_ms > 0 || options.smoothing.catchup_speed > 0);
+                  options.smoothing.observation_grace_ms > 0 || options.smoothing.catchup_speed > 0 ||
+                  options.smoothing.predictive_brake);
     say("READY");
     say("TRACK_CONTROL 1");
     say("LEAD_CONTROL 1");
