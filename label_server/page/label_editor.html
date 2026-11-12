@@ -34,13 +34,21 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 #drop{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(14,17,22,.85);font-size:20px;z-index:9}
 .badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:12px;background:#0b0f14;border:1px solid var(--line)}
 .badge.ok{color:var(--good);border-color:#1f6f33}
-@media (max-width:900px){main{grid-template-columns:1fr}.cv{height:60vh;flex:none}}
+.part-tools{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}
+.part-tools button{padding:8px 6px;text-align:left;font-size:12px;min-width:0}
+.part-tools button.active{border-color:#69caff;background:#153349}
+.part-tools small{display:block;color:var(--muted);margin-top:2px}
+.part-state{width:100%;padding:8px;background:#0b0f14;color:var(--ink);border:1px solid var(--line);border-radius:6px}
+.part-hint{padding:8px;background:#101e2b;border-radius:6px;margin:8px 0;line-height:1.6}
+.part-warn{color:#ffd27a}
+@media (max-width:900px){body{height:auto;min-height:100%}main{flex:none;grid-template-columns:1fr}.cv{height:auto;aspect-ratio:4/3;flex:none}.side{overflow:visible;min-height:auto}.bar input[type=range]{min-width:120px}}
 </style></head><body>
 <header>
   <h1>LWIR 라벨 편집</h1>
   <button class="primary" id="open">폴더 열기</button>
   <input type="file" id="pick" webkitdirectory multiple hidden>
   <button id="save" disabled>저장</button>
+  <button id="export" title="저장 충돌 때도 현재 작업을 파일로 보관합니다">작업 내려받기</button>
   <span class="st" id="st">원드라이브의 녹화 폴더(labels_yolo26x_bytetrack)를 여세요.</span>
 </header>
 <main>
@@ -65,6 +73,18 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
       <div class="row" style="align-items:center">번호를 <input type="number" id="newid" min="1"> 로 <button id="relabel" disabled>바꾸기</button> <button id="swapid" disabled title="두 번호를 서로 맞바꿉니다 (번호가 뒤바뀐 경우)">맞바꾸기</button></div>
       <div class="row"><label class="st"><input type="checkbox" id="fromhere" checked> 이 프레임부터 뒤로만</label></div>
       <div class="row"><button id="copyprev" title="선택 번호의 이전 프레임 박스를 이 프레임에 복사 (C)">이전 프레임에서 복사 <kbd>C</kbd></button></div>
+    </section>
+    <section class="card" id="parts-card">
+      <h2>사람별 신체 부위</h2>
+      <div class="st" id="parts-parent">먼저 사람 박스를 선택하세요.</div>
+      <div class="part-hint st">사람 한 명 = ID 하나. 머리·몸통·팔은 그 ID에 속하며 사람 수에 더하지 않습니다. 왼쪽·오른쪽은 <b>사람 본인 기준</b>입니다.</div>
+      <div id="part-tools" class="part-tools"></div>
+      <label class="st" for="part-state">선택 부위의 상태</label>
+      <select id="part-state" class="part-state"><option value="visible">보임 — 위치 표시</option><option value="occluded">가림 — 위치는 아는 경우만</option><option value="out_of_frame">화면 밖 — 좌표 없음</option><option value="unknown">확인 불가 — 좌표 없음</option></select>
+      <div class="row"><button id="part-place">위치 표시 / 다시 그리기</button><button id="part-clear">이 부위 지우기</button></div>
+      <div class="row"><button id="parts-copy">이전 부위 복사</button><button id="parts-confirm">부위 검수 완료</button></div>
+      <div id="part-help" class="st" role="status">부위를 고른 뒤 위치를 표시하세요.</div>
+      <div class="st">사람 박스를 고쳐도 부위 좌표는 자동으로 이동하지 않습니다. 보이지 않는 몸을 임의로 그리지 마세요. 사람 박스를 삭제하거나 무시하면 연결된 부위도 제거됩니다(되돌리기 가능).</div>
     </section>
     <section class="card">
       <h2>작은 박스 무시</h2>
@@ -132,11 +152,91 @@ const col=id=>{const h=(id*137.508)%360;return `hsl(${h},75%,60%)`;};
 function status(t){ST.textContent=t;}
 function parseMot(txt){const m=new Map();for(const l of txt.split(/\r?\n/)){const p=l.trim().split(',');if(p.length<6)continue;const f=+p[0],b={id:+p[1],x:+p[2],y:+p[3],w:+p[4],h:+p[5],c:p.length>6?+p[6]:1,m:false,g:p.length>7&&+p[7]===1};if(!m.has(f))m.set(f,[]);m.get(f).push(b);}return m;}
 function toMot(){const out=[];for(const f of [...boxes.keys()].sort((a,b)=>a-b))for(const b of boxes.get(f))out.push([f,b.id,b.x.toFixed(2),b.y.toFixed(2),b.w.toFixed(2),b.h.toFixed(2),(b.m?1:b.c).toFixed(4),b.g?1:0,-1,-1].join(','));return out.join('\n')+'\n';}
-function snapshot(){undo.push(JSON.stringify([[...boxes],[...reviewed],[...removed]]));if(undo.length>200)undo.shift();dirty=true;$('save').disabled=false;try{localStorage.setItem('lwir_edit_'+srcName,JSON.stringify({boxes:[...boxes],reviewed:[...reviewed],removed:[...removed],t:Date.now()}));}catch(e){}}
-function doUndo(){const s=undo.pop();if(!s)return;const [b,r,x]=JSON.parse(s);boxes=new Map(b);reviewed=new Set(r);removed=new Set(x||[]);for(const f of purged)removed.add(f);sel=null;refresh();}
+function snapshot(){undo.push(JSON.stringify([[...boxes],[...reviewed],[...removed],[...partRecords]]));if(undo.length>200)undo.shift();dirty=true;$('save').disabled=false;}
+function persistDraft(){if(!dirty)return;try{localStorage.setItem('lwir_edit_'+srcName,JSON.stringify({boxes:[...boxes],reviewed:[...reviewed],removed:[...removed],parts:[...partRecords],base:window.LWIR_BASE??null,t:Date.now()}));}catch(e){}}
+function doUndo(){const s=undo.pop();if(!s)return;const [b,r,x,p]=JSON.parse(s);boxes=new Map(b);reviewed=new Set(r);removed=new Set(x||[]);partRecords=new Map(p||[]);for(const f of purged)removed.add(f);sel=null;cancelPart();dirty=true;$('save').disabled=false;refresh();}
+// Parts are image coordinates attached to a person, never additional MOT rows.
+const PART_DEFS=[['head','머리','xywh'],['torso','몸통','xywh'],['left_shoulder','왼쪽 어깨','xy'],['right_shoulder','오른쪽 어깨','xy'],['left_hip','왼쪽 골반','xy'],['right_hip','오른쪽 골반','xy'],['left_elbow','왼쪽 팔꿈치','xy'],['right_elbow','오른쪽 팔꿈치','xy'],['left_wrist','왼쪽 손목','xy'],['right_wrist','오른쪽 손목','xy'],['phone','휴대폰 (선택)','xywh']];
+const PART_BY_KEY=Object.fromEntries(PART_DEFS.map(p=>[p[0],p]));
+const PART_STATES={visible:'보임',occluded:'가림',out_of_frame:'화면 밖',unknown:'확인 불가'};
+let partRecords=new Map(),activePart='head',partTool=null,partDrag=null;
+const partKey=(f,id)=>`${f}:${id}`;
+const clonePart=a=>a?JSON.parse(JSON.stringify(a)):null;
+function partParent(){const b=selBox();return b&&!b.g&&!removed.has(cur)&&(boxes.get(cur)||[]).filter(x=>x.id===b.id&&!x.g).length===1?b:null;}
+function partRecord(f,id){return partRecords.get(partKey(f,id));}
+function cancelPart(){partTool=null;partDrag=null;}
+function needsPartReview(f,id){const p=partRecord(f,id);if(p)p.needs_review=true;}
+function pruneParts(){for(const [key,r] of partRecords)if(purged.has(r.frame)||!(boxes.get(r.frame)||[]).some(b=>b.id===r.id&&!b.g))partRecords.delete(key);}
+function checkPartRecord(r){
+  if(!r||!Number.isInteger(r.frame)||r.frame<1||r.frame>nFrames||!Number.isInteger(r.id)||r.id<1||typeof r.parts!=='object'||!r.parts||Array.isArray(r.parts))throw Error('부위의 프레임 또는 사람 ID가 잘못되었습니다.');
+  if((boxes.get(r.frame)||[]).filter(b=>b.id===r.id&&!b.g).length!==1)throw Error(`${r.frame}프레임 ID ${r.id}: 연결할 사람 박스가 하나여야 합니다.`);
+  if(r.needs_review!=null&&typeof r.needs_review!=='boolean')throw Error('부위 검수 표시가 잘못되었습니다.');
+  for(const [key,p] of Object.entries(r.parts)){
+    const def=PART_BY_KEY[key];if(!def||!p||!Object.hasOwn(PART_STATES,p.state))throw Error('알 수 없는 신체 부위 또는 상태입니다.');
+    const g=p[def[2]];if(g===undefined)throw Error(`${def[1]} 좌표 필드가 없습니다.`);
+    if(g===null){if(p.state==='visible')throw Error(`${def[1]}: 보임에는 좌표가 필요합니다.`);continue;}
+    if(!['visible','occluded'].includes(p.state)||!Array.isArray(g)||g.length!==(def[2]==='xy'?2:4)||!g.every(Number.isFinite))throw Error(`${def[1]} 좌표가 잘못되었습니다.`);
+    if(g[0]<0||g[1]<0||g[0]>=W0||g[1]>=H0||(g.length===4&&(g[2]<=0||g[3]<=0||g[0]+g[2]>W0||g[1]+g[3]>H0)))throw Error(`${def[1]} 좌표가 영상 밖입니다.`);
+  }
+}
+function loadParts(doc){
+  if(doc.schema_version!==1||JSON.stringify(doc.image_size)!==JSON.stringify([W0,H0])||!Array.isArray(doc.annotations))throw Error('지원하지 않는 신체 부위 파일 형식입니다.');
+  const next=new Map();for(const r of doc.annotations){checkPartRecord(r);const key=partKey(r.frame,r.id);if(next.has(key))throw Error('같은 사람의 부위 기록이 중복되었습니다.');next.set(key,clonePart(r));}partRecords=next;
+}
+function partsDocument(){const annotations=[...partRecords.values()].sort((a,b)=>a.frame-b.frame||a.id-b.id);for(const r of annotations)checkPartRecord(r);return{schema_version:1,image_size:[W0,H0],annotations};}
+function writePart(value){const b=partParent();if(!b)return;const key=partKey(cur,b.id);const r=partRecords.get(key)||{frame:cur,id:b.id,needs_review:false,parts:{}};r.parts[activePart]=value;partRecords.set(key,r);}
+function armPart(){
+  const b=partParent();if(!b)return;const state=$('part-state').value;if(!['visible','occluded'].includes(state)){status('화면 밖·확인 불가는 좌표를 그리지 않습니다.');return;}
+  if(playing)togglePlay();setDraw(false);drag=null;partTool={frame:cur,id:b.id,key:activePart,state};partDrag=null;partPanel();render();
+}
+function changePartState(){
+  if(!partParent())return;cancelPart();const state=$('part-state').value,def=PART_BY_KEY[activePart],old=partRecord(cur,partParent().id)?.parts[activePart],g=old?.[def[2]]??null;
+  if(state==='visible'&&!g){armPart();return;}snapshot();writePart({state,[def[2]]:['visible','occluded'].includes(state)?g:null});refresh();
+}
+function partPanel(){
+  const b=partParent(),r=b?partRecord(cur,b.id):null;
+  $('parts-parent').textContent=b?`선택: 사람 ID ${b.id} · 이 프레임의 부위 ${Object.keys(r?.parts||{}).length}개${r?.needs_review?' · 복사/박스 변경 후 검수 필요':''}`:'먼저 무시하지 않은 사람 박스 하나를 선택하세요.';
+  $('parts-parent').className='st'+(r?.needs_review?' part-warn':'');
+  $('part-tools').innerHTML=PART_DEFS.map(([key,name,kind])=>{const p=r?.parts[key];return `<button type="button" data-part="${key}" class="${key===activePart?'active':''}" ${b?'':'disabled'}>${name}<small>${p?PART_STATES[p.state]+(p[kind]?' · 위치 있음':' · 좌표 없음'):'미지정'} · ${kind==='xy'?'점':'박스'}</small></button>`;}).join('');
+  for(const el of $('part-tools').querySelectorAll('button'))el.onclick=()=>{activePart=el.dataset.part;cancelPart();partPanel();render();};
+  for(const id of ['part-place','part-clear','parts-copy','parts-confirm','part-state'])$(id).disabled=!b;
+  const p=r?.parts[activePart];$('part-state').value=partTool?.state||p?.state||'visible';
+  $('part-help').textContent=partTool?(PART_BY_KEY[activePart][2]==='xy'?'영상에서 관절 위치를 클릭하세요.':'영상에서 부위의 사각형을 드래그하세요.')+' Esc로 취소합니다.':(r?.needs_review?'복사한 위치를 확인·수정한 뒤 「부위 검수 완료」를 누르세요.':'부위를 고르고 「위치 표시」를 누르세요. 가려진 위치를 모르면 상태만 지정합니다.');
+  C.style.cursor=partTool?'crosshair':drawMode?'copy':'default';
+}
+function movePartId(f,from,to){const r=partRecord(f,from);partRecords.delete(partKey(f,to));partRecords.delete(partKey(f,from));if(r){r.id=to;partRecords.set(partKey(f,to),r);}}
+function swapPartIds(f,a,b){const ra=partRecord(f,a),rb=partRecord(f,b);partRecords.delete(partKey(f,a));partRecords.delete(partKey(f,b));if(ra){ra.id=b;partRecords.set(partKey(f,b),ra);}if(rb){rb.id=a;partRecords.set(partKey(f,a),rb);}}
+function copyPartTo(record,f,id){const key=partKey(f,id);if(record){const r=clonePart(record);r.frame=f;r.id=id;r.needs_review=true;partRecords.set(key,r);}else needsPartReview(f,id);}
+function confirmPartCopy(records,f){const affected=records.filter(([id,r,ignored])=>(r||ignored)&&partRecord(f,id));return !affected.length||confirm('대상 프레임의 부위 '+affected.length+'건이 바뀝니다. 무시 박스를 복사하면 연결된 부위가 제거되고, 그 외에는 복사한 부위로 바뀝니다. 계속할까요? 되돌리기(Ctrl+Z)로 복원할 수 있습니다.');}
+function renderParts(){
+  const b=partParent();if(!b)return;const r=partRecord(cur,b.id);if(!r)return;
+  const pt=(xy)=>[view.ox+xy[0]*view.s,view.oy+xy[1]*view.s];
+  X.save();X.lineWidth=Math.max(1.5,1.5*view.dpr);X.font=`${12*view.dpr}px sans-serif`;
+  for(const [a,z] of [['left_shoulder','right_shoulder'],['left_shoulder','left_hip'],['right_shoulder','right_hip'],['left_hip','right_hip'],['left_shoulder','left_elbow'],['left_elbow','left_wrist'],['right_shoulder','right_elbow'],['right_elbow','right_wrist']]){
+    const p=r.parts[a],q=r.parts[z];if(!p?.xy||!q?.xy)continue;X.strokeStyle='#c3e7fa';X.setLineDash(p.state==='occluded'||q.state==='occluded'?[4,4]:[]);X.beginPath();X.moveTo(...pt(p.xy));X.lineTo(...pt(q.xy));X.stroke();
+  }
+  for(const [key,p] of Object.entries(r.parts)){const def=PART_BY_KEY[key],g=p[def[2]];if(!g)continue;const [x,y]=pt(g);X.strokeStyle=key===activePart?'#fff':'#65d6f7';X.fillStyle='#65d6f7';X.setLineDash(p.state==='occluded'?[4,4]:[]);
+    if(def[2]==='xy'){X.beginPath();X.arc(x,y,4*view.dpr,0,2*Math.PI);if(p.state==='visible')X.fill();else X.stroke();}
+    else{X.strokeRect(x,y,g[2]*view.s,g[3]*view.s);X.fillText(def[1],x+3,y+13*view.dpr);}
+  }X.restore();
+}
+$('part-place').onclick=armPart;$('part-state').onchange=changePartState;
+$('part-clear').onclick=()=>{const b=partParent(),r=b&&partRecord(cur,b.id);if(!r?.parts[activePart])return;snapshot();delete r.parts[activePart];if(!Object.keys(r.parts).length)partRecords.delete(partKey(cur,b.id));cancelPart();refresh();};
+$('parts-confirm').onclick=()=>{const b=partParent(),r=b&&partRecord(cur,b.id);if(!r||!r.needs_review)return;snapshot();r.needs_review=false;refresh();};
+$('parts-copy').onclick=()=>{const b=partParent();if(!b)return;let r;for(let f=cur-1;f>=1;f--){r=partRecord(f,b.id);if(r)break;}if(!r){status('같은 사람의 이전 부위 기록이 없습니다.');return;}if(partRecord(cur,b.id)&&!confirm('현재 프레임의 부위를 이전 기록으로 바꿀까요? 되돌릴 수 있습니다.'))return;snapshot();copyPartTo(r,cur,b.id);refresh();};
+const boundedPoint=p=>({x:Math.max(0,Math.min(W0-0.001,p.x)),y:Math.max(0,Math.min(H0-0.001,p.y))});
+// Capture handlers isolate anatomical editing from person-box editing.
+C.addEventListener('pointerdown',e=>{if(!partTool||e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();const b=partParent();if(!b||b.id!==partTool.id||cur!==partTool.frame){cancelPart();return;}const raw=toImg(e);if(raw.x<0||raw.y<0||raw.x>=W0||raw.y>=H0)return;const p=boundedPoint(raw);try{C.setPointerCapture(e.pointerId);}catch(_){}
+  if(PART_BY_KEY[activePart][2]==='xy'){snapshot();writePart({state:partTool.state,xy:[p.x,p.y]});cancelPart();refresh();}
+  else partDrag={x0:p.x,y0:p.y,x1:p.x,y1:p.y};
+},true);
+C.addEventListener('pointermove',e=>{if(!partDrag)return;e.preventDefault();e.stopImmediatePropagation();const p=boundedPoint(toImg(e));partDrag.x1=p.x;partDrag.y1=p.y;render();},true);
+C.addEventListener('pointerup',e=>{if(!partDrag)return;e.preventDefault();e.stopImmediatePropagation();const r=normRect(partDrag);if(r.w>=1&&r.h>=1){snapshot();writePart({state:partTool.state,xywh:[r.x,r.y,r.w,r.h]});}cancelPart();refresh();},true);
+C.addEventListener('pointercancel',()=>{cancelPart();drag=null;refresh();});
 // ---------- loading ----------
 async function readText(name){if(files[name])return await files[name].text();return null;}
 async function loadFromFiles(list){
+  if(window.LWIR_SERVER_MODE){status('서버 편집 중에는 다른 폴더를 불러올 수 없습니다. 목록에서 시퀀스를 선택하세요.');return;}
   files={};let imgs=0;
   for(const f of list){const rel=(f.webkitRelativePath||f.name).split('/');const nm=rel[rel.length-1];const parent=rel.length>1?rel[rel.length-2]:'';
     if(parent==='images'&&/^\d{6}\.png$/.test(nm)){files['images/'+nm]=f;imgs++;}else files[nm]=f;}
@@ -144,6 +244,7 @@ async function loadFromFiles(list){
   await afterLoad(imgs);
 }
 async function loadFromDir(h){
+  if(window.LWIR_SERVER_MODE){status('서버 편집 중에는 다른 폴더를 불러올 수 없습니다. 목록에서 시퀀스를 선택하세요.');return;}
   dirHandle=h;files={};let imgs=0;srcName=h.name;
   for await(const [nm,e] of h.entries()){if(e.kind==='file')files[nm]=await e.getFile();
     else if(nm==='images'){for await(const [n2,e2] of e.entries())if(e2.kind==='file'&&/^\d{6}\.png$/.test(n2)){files['images/'+n2]=e2;imgs++;}}}
@@ -154,12 +255,13 @@ async function afterLoad(imgs){
   nFrames=imgs;cache.clear();
   const edited=await readText('tracks_edited_mot.txt'),orig=await readText('tracks_mot.txt');
   const rv=await readText('review_state.json');
-  boxes=parseMot(edited||orig||'');reviewed=new Set(rv?JSON.parse(rv).reviewed||[]:[]);removed=new Set(rv?JSON.parse(rv).removed||[]:[]);purged=new Set(rv?JSON.parse(rv).purged||[]:[]);for(const f of purged)removed.add(f);
-  let note=edited?'고친 라벨(tracks_edited_mot.txt)을 불러왔습니다':'원래 라벨(tracks_mot.txt)을 불러왔습니다';
+  boxes=parseMot(edited!==null?edited:(orig||''));reviewed=new Set(rv?JSON.parse(rv).reviewed||[]:[]);removed=new Set(rv?JSON.parse(rv).removed||[]:[]);purged=new Set(rv?JSON.parse(rv).purged||[]:[]);for(const f of purged)removed.add(f);
+  partRecords=new Map();const pt=await readText('person_parts.json');if(pt!==null)loadParts(JSON.parse(pt));cancelPart();
+  let note=edited!==null?'고친 라벨(tracks_edited_mot.txt)을 불러왔습니다':'원래 라벨(tracks_mot.txt)을 불러왔습니다';
   try{const ls=JSON.parse(localStorage.getItem('lwir_edit_'+srcName)||'null');
-    if(ls&&confirm('이 브라우저에 저장 안 된 편집이 남아 있습니다 ('+new Date(ls.t).toLocaleString()+'). 불러올까요?')){boxes=new Map(ls.boxes);reviewed=new Set(ls.reviewed);removed=new Set(ls.removed||[]);for(const f of purged)removed.add(f);note='저장 안 된 편집을 불러왔습니다';dirty=true;$('save').disabled=false;}}catch(e){}
+    if(ls&&confirm('이 브라우저에 저장 안 된 편집이 남아 있습니다 ('+new Date(ls.t).toLocaleString()+'). 불러올까요?')){boxes=new Map(ls.boxes);reviewed=new Set(ls.reviewed);removed=new Set(ls.removed||[]);partRecords=new Map(ls.parts||[]);for(const f of purged)removed.add(f);if(window.LWIR_SERVER_MODE&&ls.base!==window.LWIR_BASE){window.LWIR_DRAFT_CONFLICT=true;note='이전 저장본과 다른 초안입니다. 작업 내려받기로 보관한 뒤 최신 라벨을 다시 여세요.';}else note='저장 안 된 편집을 불러왔습니다';dirty=true;$('save').disabled=false;}}catch(e){}
   $('slider').max=nFrames;cur=1;undo=[];sel=null;
-  status(note+' · '+nFrames+'프레임'+(dirHandle?' · 저장하면 이 폴더에 바로 씁니다':' · 저장하면 파일로 내려받습니다'));
+  status(note+' · '+nFrames+'프레임'+(window.LWIR_SERVER_MODE?' · 저장하면 서버에 씁니다':' · 저장하면 파일로 내려받습니다'));
   refresh();
 }
 async function frameImage(f){
@@ -199,6 +301,8 @@ async function render(){
     const ty=view.oy+b.y*view.s-th<0?view.oy+b.y*view.s:view.oy+b.y*view.s-th;   // a box touching the top edge: label inside the box
     X.fillStyle=c;X.fillRect(view.ox+b.x*view.s,ty,tw,th);X.fillStyle='#000';X.fillText(t,view.ox+b.x*view.s+4,ty+th-4*view.s);
     if(isSel){X.fillStyle=c;for(const [hx,hy] of corners(b))X.fillRect(view.ox+hx*view.s-5,view.oy+hy*view.s-5,10,10);}}
+  renderParts();
+  if(partDrag){const r=normRect(partDrag);X.strokeStyle='#fff';X.setLineDash([4,4]);X.strokeRect(view.ox+r.x*view.s,view.oy+r.y*view.s,r.w*view.s,r.h*view.s);X.setLineDash([]);}
   if(removed.has(f)){X.fillStyle='rgba(0,0,0,.62)';X.fillRect(view.ox,view.oy,W0*view.s,H0*view.s);X.fillStyle='#ff6b6b';X.font=`${Math.round(22*view.s)}px sans-serif`;const t=purged.has(f)?'영상 파일까지 지운 프레임':'삭제한 프레임 (학습에서 제외)';X.fillText(t,view.ox+(W0*view.s-X.measureText(t).width)/2,view.oy+H0*view.s/2);}
   if(drag&&drag.kind==='new'){X.strokeStyle='#fff';X.setLineDash([4,4]);const r=normRect(drag);X.strokeRect(view.ox+r.x*view.s,view.oy+r.y*view.s,r.w*view.s,r.h*view.s);X.setLineDash([]);}
 }
@@ -211,7 +315,7 @@ function refresh(){
   const b=sel&&(boxes.get(sel.f)||[])[sel.i];
   $('selinfo').innerHTML=b?`번호 <b style="color:${col(b.id)}">${b.id}</b> · ${b.g?'무시 · ':''}${b.m?'수동':'점수 '+b.c.toFixed(2)} · x ${b.x.toFixed(0)} y ${b.y.toFixed(0)} w ${b.w.toFixed(0)} h ${b.h.toFixed(0)} · 넓이 ${(b.w*b.h).toFixed(0)}`:'박스를 클릭하세요.';
   for(const id of ['delbox','deltrack','relabel','swapid','igtoggle'])$(id).disabled=!b;{let n=0,t=0;for(const bs of boxes.values())for(const x of bs){t++;if(x.g)n++;}if(nFrames&&n)$('iginfo').textContent=`무시 박스 ${n}개 / 전체 ${t}개`;}
-  delPanel();idList();multiPanel();render();
+  pruneParts();partPanel();persistDraft();delPanel();idList();multiPanel();render();
 }
 function idList(){
   const cnt=new Map(),first=new Map();for(const [f,bs] of boxes)for(const b of bs){cnt.set(b.id,(cnt.get(b.id)||0)+1);if(!first.has(b.id)||f<first.get(b.id))first.set(b.id,f);}
@@ -236,7 +340,7 @@ function multiPanel(){
   for(const r of $('runs').querySelectorAll('.idrow'))r.onclick=()=>{go(+r.dataset.f);};
 }
 $('multi').onchange=()=>{if($('multi').checked&&(boxes.get(cur)||[]).length<2){const a=multiFrames();const t=a.find(f=>f>=cur)??a[0];if(t)go(t);}refresh();};
-function go(f){if(!nFrames)return;cur=Math.max(1,Math.min(nFrames,f));if(sel&&sel.f!==cur){const id=(boxes.get(sel.f)||[])[sel.i]?.id;const i=(boxes.get(cur)||[]).findIndex(b=>b.id===id);sel=i>=0?{f:cur,i}:null;}refresh();}
+function go(f){if(!nFrames)return;cancelPart();drag=null;cur=Math.max(1,Math.min(nFrames,f));if(sel&&sel.f!==cur){const id=(boxes.get(sel.f)||[])[sel.i]?.id;const i=(boxes.get(cur)||[]).findIndex(b=>b.id===id);sel=i>=0?{f:cur,i}:null;}refresh();}
 // ---------- mouse ----------
 function hit(p){const bs=boxes.get(cur)||[];const tol=8/view.s;
   if(sel&&sel.f===cur){const b=bs[sel.i];if(b){const cs=corners(b);for(let k=0;k<4;k++)if(Math.abs(p.x-cs[k][0])<tol&&Math.abs(p.y-cs[k][1])<tol)return{i:sel.i,corner:k};}}
@@ -255,10 +359,10 @@ C.addEventListener('pointermove',e=>{if(zdrag){const c=cpx(e);if(zdrag.kind==='z
   if(!drag.moved){if(Math.abs(dx)+Math.abs(dy)<2/view.s)return;snapshot();drag.moved=true;}
   if(drag.kind==='move'){b.x=drag.b0.x+dx;b.y=drag.b0.y+dy;}
   else{let x1=drag.b0.x,y1=drag.b0.y,x2=x1+drag.b0.w,y2=y1+drag.b0.h;const k=drag.corner;if(k===0||k===2)x1+=dx;else x2+=dx;if(k===0||k===1)y1+=dy;else y2+=dy;b.x=Math.min(x1,x2);b.y=Math.min(y1,y2);b.w=Math.abs(x2-x1);b.h=Math.abs(y2-y1);}
-  b.m=true;render();});
+  b.m=true;needsPartReview(cur,b.id);render();});
 C.addEventListener('pointerup',e=>{if(zdrag){zdrag=null;return;}if(!drag)return;
   if(drag.kind==='new'){const r=normRect(drag);drag=null;if(r.w>4&&r.h>4){snapshot();let id=+$('drawid').value;if(!id){id=1;for(const bs of boxes.values())for(const b of bs)id=Math.max(id,b.id+1);$('drawid').value=id;}
-      if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);const dup=bs.findIndex(b=>b.id===id);const nb={id,...clip(r),c:1,m:true};if(dup>=0)bs[dup]=nb;else bs.push(nb);sel={f:cur,i:dup>=0?dup:bs.length-1};}
+      if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);const dup=bs.findIndex(b=>b.id===id);const nb={id,...clip(r),c:1,m:true};if(dup>=0){bs[dup]=nb;needsPartReview(cur,id);}else bs.push(nb);sel={f:cur,i:dup>=0?dup:bs.length-1};}
     setDraw(false);refresh();return;}
   const b=boxes.get(cur)[sel.i];Object.assign(b,clip(b));drag=null;refresh();});
 const clip=r=>{const x=Math.max(0,r.x),y=Math.max(0,r.y);return{x,y,w:Math.min(W0,r.x+r.w)-x,h:Math.min(H0,r.y+r.h)-y};};
@@ -268,24 +372,24 @@ function igApply(){if(!nFrames)return;const T=+$('igarea').value;if(!(T>=0)||$('
   let on=0,off=0;for(const bs of boxes.values())for(const b of bs){const g=T>0&&b.w*b.h<=T;if(g&&!b.g)on++;if(!g&&b.g)off++;}
   if(!on&&!off){status('바뀌는 박스가 없습니다.');return;}
   if(!confirm(`넓이 ${T} px² 이하 박스를 무시로 표시합니다.
-새로 무시 ${on}개, 무시 해제 ${off}개 (모든 프레임, 되돌리기 Ctrl+Z 가능)`))return;
+새로 무시 ${on}개, 무시 해제 ${off}개. 새로 무시하는 박스의 신체 부위도 제거됩니다. 해제만으로 부위는 복원되지 않으며 Ctrl+Z로 함께 복원합니다.`))return;
   snapshot();for(const bs of boxes.values())for(const b of bs)b.g=T>0&&b.w*b.h<=T;try{localStorage.setItem('lwir_igarea',String(T));}catch(e){}
   status(`무시 표시 ${on}개, 해제 ${off}개. 저장하면 반영됩니다.`);refresh();}
-function igToggle(){const b=selBox();if(!b)return;snapshot();b.g=!b.g;refresh();}
+function igToggle(){const b=selBox();if(!b)return;if(!b.g&&partRecord(cur,b.id)&&!confirm('이 사람을 무시하면 연결된 신체 부위도 제거합니다. 무시 해제만으로 부위가 돌아오지는 않습니다. Ctrl+Z로 함께 복원할 수 있습니다. 계속할까요?'))return;snapshot();b.g=!b.g;refresh();}
 function delBox(){const b=selBox();if(!b)return;snapshot();boxes.get(sel.f).splice(sel.i,1);sel=null;refresh();}
 function delTrack(){const b=selBox();if(!b)return;const id=b.id;let n=0;for(const bs of boxes.values())n+=bs.filter(x=>x.id===id).length;
   if(!confirm(`${id}번 박스 ${n}개를 모든 프레임에서 지웁니다. (되돌리기 Ctrl+Z 가능)`))return;snapshot();for(const [f,bs] of boxes)boxes.set(f,bs.filter(x=>x.id!==id));sel=null;refresh();}
 function relabel(){const b=selBox();const to=+$('newid').value;if(!b||!to||to===b.id)return;const from=b.id,start=$('fromhere').checked?cur:1;
   let clash=0;for(const [f,bs] of boxes)if(f>=start&&bs.some(x=>x.id===from)&&bs.some(x=>x.id===to))clash++;
   if(clash&&!confirm(`${clash}개 프레임에 ${to}번이 이미 있습니다. 그 프레임에서는 기존 ${to}번 박스를 지우고 바꿉니다. 계속할까요?`))return;
-  snapshot();for(const [f,bs] of boxes){if(f<start||!bs.some(x=>x.id===from))continue;const keep=bs.filter(x=>x.id!==to);for(const x of keep)if(x.id===from)x.id=to;boxes.set(f,keep);}
+  snapshot();for(const [f,bs] of boxes){if(f<start||!bs.some(x=>x.id===from))continue;movePartId(f,from,to);const keep=bs.filter(x=>x.id!==to);for(const x of keep)if(x.id===from)x.id=to;boxes.set(f,keep);}
   const i=(boxes.get(cur)||[]).findIndex(x=>x.id===to);sel=i>=0?{f:cur,i}:null;status(`${from}번을 ${to}번으로 바꿨습니다 (${start===1?'전체':start+'프레임부터'})`);refresh();}
 function swapIds(){const b=selBox();const to=+$('newid').value;if(!b||!to||to===b.id)return;const from=b.id,start=$('fromhere').checked?cur:1;let n=0;
-  snapshot();for(const [f,bs] of boxes){if(f<start)continue;for(const x of bs){if(x.id===from){x.id=to;n++;}else if(x.id===to){x.id=from;n++;}}}
+  snapshot();for(const [f,bs] of boxes){if(f<start)continue;swapPartIds(f,from,to);for(const x of bs){if(x.id===from){x.id=to;n++;}else if(x.id===to){x.id=from;n++;}}}
   const i=(boxes.get(cur)||[]).findIndex(x=>x.id===to);sel=i>=0?{f:cur,i}:null;status(`${from}번과 ${to}번을 서로 맞바꿨습니다 (${start===1?'전체':start+'프레임부터'}, 박스 ${n}개)`);refresh();}
-let cbuf=[],cbufF=0;
+let cbuf=[],cbufF=0,cbufParts={};
 function copyPrev(){const b=selBox();let id=b?b.id:+$('drawid').value;if(!id){status('복사할 번호를 고르세요 (박스 선택 또는 새 박스 번호 입력).');return;}
-  for(let f=cur-1;f>=1;f--){const p=(boxes.get(f)||[]).find(x=>x.id===id);if(p){snapshot();if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);const k=bs.findIndex(x=>x.id===id);const nb={...p,m:true,c:1};if(k>=0)bs[k]=nb;else bs.push(nb);sel={f:cur,i:k>=0?k:bs.length-1};status(`${f}프레임의 ${id}번 박스를 복사했습니다`);refresh();return;}}
+  for(let f=cur-1;f>=1;f--){const p=(boxes.get(f)||[]).find(x=>x.id===id);if(p){if(!confirmPartCopy([[id,partRecord(f,id),p.g]],cur))return;snapshot();copyPartTo(partRecord(f,id),cur,id);if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);const k=bs.findIndex(x=>x.id===id);const nb={...p,m:true,c:1};if(k>=0)bs[k]=nb;else bs.push(nb);sel={f:cur,i:k>=0?k:bs.length-1};status(`${f}프레임의 ${id}번 박스를 복사했습니다. 부위 없는 출처는 현재 부위를 유지합니다. 위치를 다시 확인하세요.`);refresh();return;}}
   status(`이전 프레임에 ${id}번 박스가 없습니다`);}
 function delPanel(){const a=[...removed].sort((x,y)=>x-y),runs=[];for(const f of a){const r=runs[runs.length-1];if(r&&f===r[1]+1)r[1]=f;else runs.push([f,f]);}
   $('delinfo').textContent=nFrames?`삭제한 프레임 ${a.length} / ${nFrames} · 남은 ${nFrames-a.length}`:'-';$('delcur').textContent=removed.has(cur)?'이 프레임 되살리기':'이 프레임 삭제';
@@ -304,50 +408,50 @@ function markAll(){if(!nFrames)return;const left=nFrames-reviewed.size;
   if(!confirm(`아직 확인하지 않은 ${left}개 프레임을 포함해 ${nFrames}개 프레임 전체를 확인함으로 표시합니다. (되돌리기 Ctrl+Z 가능)`))return;
   snapshot();for(let f=1;f<=nFrames;f++)reviewed.add(f);refresh();status(`전체 ${nFrames}개 프레임을 검수 완료로 표시했습니다. 저장합니다…`);$('save').click();}
 function markRev(){snapshot();if(reviewed.has(cur))reviewed.delete(cur);else reviewed.add(cur);refresh();}
-function setDraw(on){drawMode=on;$('draw').textContent=on?'그리는 중… (Esc 취소)':'그리기 시작';$('draw').className=on?'primary':'';C.style.cursor=on?'copy':'crosshair';}
+function setDraw(on){cancelPart();drawMode=on;$('draw').textContent=on?'그리는 중… (Esc 취소)':'그리기 시작';$('draw').className=on?'primary':'';C.style.cursor=on?'copy':'crosshair';}
 $('delbox').onclick=delBox;$('deltrack').onclick=delTrack;$('relabel').onclick=relabel;$('swapid').onclick=swapIds;$('copyprev').onclick=copyPrev;$('markrev').onclick=markRev;$('draw').onclick=()=>setDraw(!drawMode);
 // ---------- play / nav ----------
 function togglePlay(){if(playing){clearInterval(playing);playing=null;$('play').textContent='▶ 재생';return;}$('play').textContent='❚❚ 정지';playing=setInterval(()=>{if(cur>=nFrames||!step(1)){togglePlay();}},42);}
 $('prev').onclick=()=>step(-1);$('next').onclick=()=>step(1);$('play').onclick=togglePlay;$('slider').oninput=e=>go(+e.target.value);
-addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'&&e.target.type!=='range'&&e.target.type!=='checkbox')return;
+addEventListener('keydown',e=>{if(e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA'||(e.target.tagName==='INPUT'&&e.target.type!=='range'&&e.target.type!=='checkbox'))return;
   const k=e.key;if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='z'){e.preventDefault();doUndo();return;}
   if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='s'){e.preventDefault();save();return;}
-  if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='c'){e.preventDefault();const b=selBox();cbuf=(b?[b]:(boxes.get(cur)||[])).map(x=>({...x}));cbufF=cur;status(cbuf.length?`${cur}프레임의 박스 ${cbuf.length}개를 복사했습니다${b?' ('+b.id+'번)':' (프레임 전체)'}. Ctrl+V 로 붙여 넣으세요.`:'복사할 박스가 없습니다.');return;}
-  if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='v'){e.preventDefault();if(!nFrames)return;if(!cbuf.length){status('먼저 Ctrl+C 로 복사하세요.');return;}snapshot();if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);let last=-1;for(const p of cbuf){const nb={...p,m:true,c:1};const i=bs.findIndex(x=>x.id===p.id);if(i>=0){bs[i]=nb;last=i;}else{bs.push(nb);last=bs.length-1;}}sel=cbuf.length===1?{f:cur,i:last}:null;status(`${cbufF}프레임에서 복사한 박스 ${cbuf.length}개를 붙여 넣었습니다 (같은 번호는 바꿔 넣음).`);refresh();return;}
+  if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='c'){e.preventDefault();const b=selBox();cbuf=(b?[b]:(boxes.get(cur)||[])).map(x=>({...x}));cbufF=cur;cbufParts=Object.fromEntries(cbuf.map(b=>[b.id,clonePart(partRecord(cur,b.id))]));status(cbuf.length?`${cur}프레임의 박스 ${cbuf.length}개와 부위를 복사했습니다. Ctrl+V 로 붙여 넣으세요.`:'복사할 박스가 없습니다.');return;}
+  if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='v'){e.preventDefault();if(!nFrames)return;if(!cbuf.length){status('먼저 Ctrl+C 로 복사하세요.');return;}if(!confirmPartCopy(cbuf.map(p=>[p.id,cbufParts[p.id],p.g]),cur))return;snapshot();if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);let last=-1;for(const p of cbuf){copyPartTo(cbufParts[p.id],cur,p.id);const nb={...p,m:true,c:1};const i=bs.findIndex(x=>x.id===p.id);if(i>=0){bs[i]=nb;last=i;}else{bs.push(nb);last=bs.length-1;}}sel=cbuf.length===1?{f:cur,i:last}:null;status(`${cbufF}프레임에서 복사한 박스 ${cbuf.length}개와 부위를 붙여 넣었습니다. 부위 위치를 다시 확인하세요.`);refresh();return;}
   if(e.ctrlKey||e.metaKey||e.altKey)return;
   if(k==='ArrowRight'){e.preventDefault();stepN(1,e.shiftKey?10:1);}else if(k==='ArrowLeft'){e.preventDefault();stepN(-1,e.shiftKey?10:1);}
   else if('wasdWASD'.includes(k)&&k.length===1){const b=selBox();if(!b){status('먼저 움직일 박스를 클릭하세요.');return;}e.preventDefault();if(!e.repeat)snapshot();const st=e.shiftKey?10:1,kk=k.toLowerCase();
     if(kk==='a')b.x-=st;else if(kk==='d')b.x+=st;else if(kk==='w')b.y-=st;else b.y+=st;
-    b.x=Math.max(0,Math.min(W0-b.w,b.x));b.y=Math.max(0,Math.min(H0-b.h,b.y));b.m=true;b.c=1;dirty=true;refresh();}
+    b.x=Math.max(0,Math.min(W0-b.w,b.x));b.y=Math.max(0,Math.min(H0-b.h,b.y));b.m=true;b.c=1;needsPartReview(cur,b.id);dirty=true;refresh();}
   else if(k==='+'||k==='='){zoomBy(1.25);}else if(k==='-'||k==='_'){zoomBy(0.8);}else if(k==='0'){zoomReset();}
   else if(k==='m'||k==='M'){$('multi').checked=!$('multi').checked;$('multi').onchange();}
   else if(k===' '){e.preventDefault();togglePlay();}else if(k==='Delete'||k==='Backspace'){e.preventDefault();delBox();}
   else if(k==='n'||k==='N')setDraw(!drawMode);else if(k==='c'||k==='C')copyPrev();else if(k==='r'||k==='R')markRev();else if(k==='i'||k==='I')igToggle();else if(k==='x'||k==='X')delFrames(cur,cur,!removed.has(cur));else if(k==='Escape'){setDraw(false);drag=null;render();}});
 addEventListener('resize',render);
 $('zin').onclick=()=>zoomBy(1.25);$('zout').onclick=()=>zoomBy(0.8);$('zfit').onclick=zoomReset;
-addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
+addEventListener('beforeunload',e=>{if(dirty){persistDraft();e.preventDefault();e.returnValue='';}});
 // ---------- save ----------
-async function save(){if(!nFrames)return;
-  const mot=toMot(),rv=JSON.stringify({reviewed:[...reviewed].sort((a,b)=>a-b),removed:[...removed].sort((a,b)=>a-b),frames:nFrames,saved:new Date().toISOString(),format:'MOT: frame,id,x,y,w,h,conf(manual boxes=1),class(0=person,1=ignore),-1,-1; 1-based frame = images/000001.png'},null,1);
-  try{
-    if(dirHandle){for(const [nm,txt] of [['tracks_edited_mot.txt',mot],['review_state.json',rv]]){const fh=await dirHandle.getFileHandle(nm,{create:true});const w=await fh.createWritable();await w.write(txt);await w.close();}
-      status('저장했습니다: tracks_edited_mot.txt, review_state.json (원드라이브가 올립니다). 원래 tracks_mot.txt는 그대로입니다.');}
-    else{for(const [nm,txt] of [['tracks_edited_mot.txt',mot],['review_state.json',rv]]){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'}));a.download=nm;a.click();}
-      status('파일로 내려받았습니다. 녹화 폴더에 넣어 두면 다음에 이어서 열 수 있습니다.');}
-    dirty=false;$('save').disabled=true;try{localStorage.removeItem('lwir_edit_'+srcName);}catch(e){}
-  }catch(e){status('저장하지 못했습니다: '+e.message);}}
+function reviewDocument(){return{reviewed:[...reviewed].sort((a,b)=>a-b),removed:[...removed].sort((a,b)=>a-b),frames:nFrames,saved:new Date().toISOString(),format:'MOT: frame,id,x,y,w,h,conf(manual boxes=1),class(0=person,1=ignore),-1,-1; 1-based frame = images/000001.png'};}
+function exportFiles(){return [['tracks_edited_mot.txt',toMot()],['review_state.json',JSON.stringify(reviewDocument(),null,1)],['person_parts.json',JSON.stringify(partsDocument(),null,2)]];}
+function downloadWork(){if(!nFrames)return;try{for(const [nm,txt] of exportFiles()){const url=URL.createObjectURL(new Blob([txt],{type:'text/plain;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=nm;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}status('사람 라벨·검수·신체 부위 3개 파일을 내려받았습니다. 서버 저장 상태는 바뀌지 않습니다.');}catch(e){status('내려받지 못했습니다: '+e.message);}}
+$('export').onclick=downloadWork;
+async function save(){if(!nFrames||window.LWIR_LOAD_FAILED)return;
+  // Browser directory writes cannot atomically replace the three related files.
+  // Offline export keeps the original directory and unsaved recovery draft intact.
+  downloadWork();}
 $('save').onclick=save;$('igapply').onclick=igApply;$('markall').onclick=markAll;$('delcur').onclick=()=>delFrames(cur,cur,!removed.has(cur));$('delset1').onclick=()=>{$('delfrom').value=cur;};$('delset2').onclick=()=>{$('delto').value=cur;};$('delrange').onclick=()=>delRange(true);$('undelrange').onclick=()=>delRange(false);$('showdel').onchange=refresh;$('igtoggle').onclick=igToggle;try{$('igarea').value=localStorage.getItem('lwir_igarea')||'';}catch(e){}
 // drag and drop a folder (Chrome/Edge)
 addEventListener('dragover',e=>{e.preventDefault();$('drop').style.display='flex';});
 addEventListener('dragleave',e=>{if(e.target===$('drop'))$('drop').style.display='none';});
-addEventListener('drop',async e=>{e.preventDefault();$('drop').style.display='none';const it=e.dataTransfer.items&&e.dataTransfer.items[0];
+addEventListener('drop',async e=>{e.preventDefault();$('drop').style.display='none';if(window.LWIR_SERVER_MODE){status('서버 편집 중에는 다른 폴더를 불러올 수 없습니다. 목록에서 시퀀스를 선택하세요.');return;}const it=e.dataTransfer.items&&e.dataTransfer.items[0];
   if(it&&it.getAsFileSystemHandle){const h=await it.getAsFileSystemHandle();if(h&&h.kind==='directory'){try{await h.requestPermission({mode:'readwrite'});}catch(_){}await loadFromDir(h);}}});
 // test hook: ?src=<url of the folder> loads over http (read only, saves download)
-(async()=>{const u=new URLSearchParams(location.search).get('src');if(!u)return;
-  const base=u.replace(/\/?$/,'/');const res=await (await fetch(base+'RESULT.json')).json();const n=res.frames;
-  files={};for(let i=1;i<=n;i++){const nm='images/'+String(i).padStart(6,'0')+'.png';files[nm]={getFile:async()=>await (await fetch(base+nm)).blob()};}
-  for(const nm of ['tracks_mot.txt','tracks_edited_mot.txt','review_state.json']){const r=await fetch(base+nm);if(r.ok){const t=await r.text();files[nm]={text:async()=>t};}}
-  srcName='http';await afterLoad(n);})();
+(async()=>{const q=new URLSearchParams(location.search),u=q.get('src');if(window.LWIR_SERVER_MODE?!q.get('seq'):!u)return;
+  const base=window.LWIR_SERVER_MODE?'/data/'+(q.get('seq')||'').split('/').map(encodeURIComponent).join('/')+'/':u.replace(/\/?$/,'/');let n;
+  if(window.LWIR_SERVER_MODE){const resp=await fetch('/api/annotations?seq='+encodeURIComponent(q.get('seq')||''));if(!resp.ok)throw Error('라벨을 불러오지 못했습니다 ('+resp.status+').');const data=await resp.json();if(!data.parts_supported)throw Error('서버를 신체 부위 지원 버전으로 업데이트해야 합니다.');window.LWIR_BASE=data.version;n=data.frames;files={};for(const [nm,obj] of [['tracks_edited_mot.txt',data.mot],['review_state.json',JSON.stringify(data.review)],['person_parts.json',JSON.stringify(data.parts)]])files[nm]={text:async()=>obj};}
+  else{const res=await(await fetch(base+'RESULT.json')).json();n=res.frames;files={};for(const nm of ['tracks_mot.txt','tracks_edited_mot.txt','review_state.json','person_parts.json']){const r=await fetch(base+nm);if(r.ok){const t=await r.text();files[nm]={text:async()=>t};}}}
+  for(let i=1;i<=n;i++){const nm='images/'+String(i).padStart(6,'0')+'.png';files[nm]={getFile:async()=>await (await fetch(base+nm)).blob()};}
+  srcName='http';await afterLoad(n);window.LWIR_LOADED=true;})().catch(e=>{window.LWIR_LOAD_FAILED=true;$('save').disabled=true;status('불러오기 실패: '+e.message+' 기존 파일은 바뀌지 않았습니다.');});
 render();
 </script>
 </body></html>
