@@ -27,5 +27,5 @@ function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;n
   chip('gdot','gtext',cls,t.running?(t.auto?'추종 '+t.id+'번':t.moving?'수동 이동':'짐벌 대기'):'짐벌 꺼짐');
   if(t.lost){if(lostSince==null)lostSince=Date.now();$('lt').textContent=((Date.now()-lostSince)/1000).toFixed(1)+' 초';}
   else{lostSince=null;$('lt').textContent='–';}
-  autoNow=!!(t.running&&t.auto&&!t.lost);if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
+  autoNow=!!(t.running&&t.auto&&!t.lost);$('camera-center').hidden=!autoNow;if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
 }

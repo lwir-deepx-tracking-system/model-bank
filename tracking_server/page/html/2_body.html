@@ -11,6 +11,7 @@
   <section class="view">
     <div class="vbox">
       <div class="frame"><img id="v" src="/stream" alt="실시간 영상" draggable="false">
+        <div id="camera-center" class="camera-center" aria-hidden="true" hidden></div>
         <div class="pose" id="gimbal-position">
           <div class="pose-axis pose-pan" id="pose-pan" role="img" hidden><i data-marker></i></div>
           <div class="pose-axis pose-tilt" id="pose-tilt" role="img" hidden><i data-marker></i></div>
@@ -35,7 +36,7 @@
           <div class="minfo rpcm" id="rpcm"></div>
         </div>
         <div class="rpnum" id="rpnum" hidden>
-          <div class="rphd"><b id="rpnhd"></b><button class="btn small" id="rpnx" title="이 숫자를 닫기 (다음 재생을 시작하면 다시 나옵니다)">닫기</button></div>
+          <div class="rphd"><b id="rpnhd"></b></div>
           <div class="rpmain" id="rpmain"></div>
           <div class="rpold" id="rpold"></div>
           <div class="rpfoot" id="rpfoot"></div>
@@ -139,6 +140,7 @@
             <div class="rtitle">정답과 비교</div>
             <div class="minfo" id="rpevmsg" style="margin-top:0">재생을 시작하면, 검수한 정답 라벨이 있는 녹화는 여기에 1초마다 점수가 나옵니다.</div>
             <table id="rpevt"></table>
+            <div class="rpids" id="rpevids"></div>
             <div class="row"><label class="chk"><input type="checkbox" id="rpevdraw"> 정답 상자 그리기</label></div>
             <details class="fold"><summary>숫자 설명</summary><dl class="legend">
               <dt>새 채점 · 옛 채점</dt><dd>같은 프레임을 두 규칙으로 셉니다. 새 채점은 무시 구역(라벨의 무시 상자, 가장자리에 걸친 좁은 사람)을 빼고, 옛 채점은 빼지 않습니다.</dd>

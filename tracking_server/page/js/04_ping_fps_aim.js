@@ -9,9 +9,11 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden)wake();});
 function hztick(){if(document.hidden)return;fetch('/healthz',{cache:'no-store'}).then(r=>r.json()).then(h=>{lastOk=Date.now();
   if(hzPrev&&h.up>hzPrev.up){const f=(h.frames_in-hzPrev.frames_in)/(h.up-hzPrev.up);$('fps').textContent=f>0?f.toFixed(1):'0';}hzPrev=h;}).catch(()=>{});}
 setInterval(hztick,2000);hztick();
-// v25: aim error while following (read only): /gimbal/people gives the boxes; the bridge brings the point 0.3 of the box height below its top to the picture centre (gimbal_bridge_v25.cpp aimed(), --aim-y 0.3)
-const AIM_Y=0.08,PX=x=>(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(0)+' px';
+// Match the bridge's configured reference height when displaying framing error.
+const PX=x=>(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(0)+' px';
 function etick(){if(document.hidden||!autoNow)return;fetch('/gimbal/people',{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();
   const id=p.state&&p.state.id,b=(p.people||[]).find(q=>q.id===id);if(!b||!autoNow){$('ex').textContent='–';$('ey').textContent='–';return;}
-  $('ex').textContent=PX((b.x1+b.x2)/2-p.width/2);$('ey').textContent=PX(b.y1+AIM_Y*(b.y2-b.y1)-p.height/2);}).catch(()=>{});}
+  const cfg=rlast&&rlast.gimbal_cfg, value=cfg&&cfg.aim_y, aim=value==null?NaN:Number(value);
+  $('ex').textContent=PX((b.x1+b.x2)/2-p.width/2);
+  $('ey').textContent=Number.isFinite(aim)&&aim>=0&&aim<=1?PX(b.y1+aim*(b.y2-b.y1)-p.height/2):'–';}).catch(()=>{});}
 setInterval(etick,500);

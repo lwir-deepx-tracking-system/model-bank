@@ -12,6 +12,11 @@
   --pose-pointer:#e8b16e;
 }
 .pose [hidden] {display:none}
+.camera-center[hidden]{display:none}
+.camera-center{position:absolute;left:50%;top:50%;width:14px;height:14px;transform:translate(-50%,-50%);pointer-events:none;z-index:1;color:#e8b16e;filter:drop-shadow(0 1px 1px #000)}
+.camera-center::before,.camera-center::after{content:'';position:absolute;background:currentColor}
+.camera-center::before{left:0;top:calc(50% - .5px);width:100%;height:1px}
+.camera-center::after{top:0;left:calc(50% - .5px);height:100%;width:1px}
 .pose-axis {
   position:absolute;
   background-color:var(--pose-rail);
