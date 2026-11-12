@@ -1,21 +1,9 @@
-/* Actual gimbal position overlay. Leave image clicks and drags to the video. */
-.pose{position:absolute;inset:0;pointer-events:none;color:#fff;font:600 11px/1.2 system-ui,sans-serif;z-index:1}
+/* Leave image clicks and drags to the video. */
+.pose{position:absolute;inset:var(--pose-y,0px) var(--pose-x,0px);pointer-events:none;z-index:1;--pose-red:#ff4141;--pose-tick:linear-gradient(var(--pose-red),var(--pose-red))}
 .pose [hidden]{display:none}
-.pose-status,.pose-axis{position:absolute;background:rgba(12,17,23,.85);border-radius:5px}
-.pose-status{right:5px;bottom:5px;padding:4px 6px}
-.pose-axis{padding:4px 6px}
-.pose-pan{top:4px;left:25%;right:18%;text-align:center}
-.pose-tilt{right:4px;top:20%;bottom:14%;min-width:48px;display:flex;flex-direction:column;align-items:center;gap:4px}
-.pose-value{white-space:nowrap;font-variant-numeric:tabular-nums}
-.pose-scale{position:relative;color:#e1e7ee;font-variant-numeric:tabular-nums}
-.pose-pan .pose-scale{height:17px;margin-top:5px;border-top:1px solid #c6d1db;background:repeating-linear-gradient(90deg,#c6d1db 0 1px,transparent 1px 25%) top left/100% 4px no-repeat}
-.pose-pan [data-low],.pose-pan [data-high]{position:absolute;top:5px}
-.pose-pan [data-low]{left:0}
-.pose-pan [data-high]{right:0}
-.pose-tilt .pose-scale{flex:1;width:100%;margin-left:6px;border-left:1px solid #c6d1db;background:repeating-linear-gradient(0deg,#c6d1db 0 1px,transparent 1px 25%) bottom left/4px 100% no-repeat}
-.pose-tilt [data-low],.pose-tilt [data-high]{position:absolute;left:8px}
-.pose-tilt [data-low]{bottom:0}
-.pose-tilt [data-high]{top:0}
-.pose [data-marker]{position:absolute;background:#ffc061;width:7px;height:7px;border:1px solid #14181e;box-sizing:border-box;border-radius:50%}
-.pose-pan [data-marker]{top:-4px;left:var(--pose-position);transform:translateX(-50%)}
-.pose-tilt [data-marker]{left:-4px;bottom:var(--pose-position);transform:translateY(50%)}
+.pose-axis{position:absolute;background-image:var(--pose-tick),var(--pose-tick),var(--pose-tick),var(--pose-tick),var(--pose-tick);background-repeat:no-repeat}
+.pose-pan{top:0;left:0;right:0;height:4px;background-size:1px 4px;background-position:left top,25% top,50% top,75% top,right top}
+.pose-tilt{top:0;right:0;bottom:0;width:4px;background-size:4px 1px;background-position:right top,right 25%,right 50%,right 75%,right bottom}
+.pose [data-marker]{position:absolute;background:var(--pose-red);box-shadow:0 0 1px #000}
+.pose-pan [data-marker]{top:0;left:clamp(2px,var(--pose-position),calc(100% - 2px));width:3px;height:9px;transform:translateX(-50%)}
+.pose-tilt [data-marker]{right:0;bottom:clamp(2px,var(--pose-position),calc(100% - 2px));width:9px;height:3px;transform:translateY(50%)}
