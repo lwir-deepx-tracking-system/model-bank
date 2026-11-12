@@ -25,12 +25,14 @@ class Sample:
     vy: float = 0.0
 
 
-def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms):
+def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms, *, space="scene"):
     """Return the next sample and a control offset, without changing any box.
 
     ``observed`` uses picture coordinates. The GMC affine uses the padded
     detector canvas. ``motion_pair`` carries its exact previous/current times.
     """
+    if space not in ("scene", "image"):
+        raise ValueError("lead space must be scene or image")
     if track_id <= 0 or observed is None or not math.isfinite(frame_time):
         return None, NO_LEAD
     x = (observed[1] + observed[3]) / 2.0
@@ -53,6 +55,11 @@ def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms):
 
     dt = frame_time - previous.time
     px, py = map(float, warp @ (previous.x, previous.y + CANVAS_Y_OFFSET, 1.0))
+    if space == "image":
+        # Experimental delay compensation: predict where the observation moves
+        # in the image, including camera motion. Keep exact GMC-pair validity
+        # gates in both comparisons; no change to the deployed scene default.
+        px, py = previous.x, previous.y + CANVAS_Y_OFFSET
     alpha = -math.expm1(-dt / TIME_CONSTANT)
     vx = (1.0 - alpha) * previous.vx + alpha * (x - px) / dt
     vy = (1.0 - alpha) * previous.vy + alpha * (y + CANVAS_Y_OFFSET - py) / dt

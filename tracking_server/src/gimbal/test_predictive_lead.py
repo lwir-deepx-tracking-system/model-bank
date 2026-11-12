@@ -20,6 +20,19 @@ def person(x, y):
 
 
 class LeadTests(unittest.TestCase):
+    def test_image_reference_includes_camera_motion_without_changing_default(self):
+        seed, _ = estimate(None, 7, person(100, 100), 1., None, 60)
+        warp = np.array([[1., 0., -12.], [0., 1., 0.]])
+        # Person moves +4 in the scene, camera shifts its image -12: net -8.
+        observed = person(92, 100)
+        scene, scene_lead = estimate(seed, 7, observed, 1.04, (1., 1.04, warp), 60)
+        image, image_lead = estimate(seed, 7, observed, 1.04, (1., 1.04, warp), 60, space="image")
+        self.assertGreater(scene.vx, 0)
+        self.assertGreater(scene_lead[0], 0)
+        self.assertLess(image.vx, 0)
+        self.assertLess(image_lead[0], 0)
+        self.assertEqual(estimate(seed, 7, observed, 1.04, None, 60, space="image")[1], NO_LEAD)
+
     def test_stationary_target_with_camera_motion_has_no_lead(self):
         # The affine is in padded canvas coordinates, while a person row is in the picture.
         warp = np.array([[.9, -.1, 20.], [.1, .9, -7.]])

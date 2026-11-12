@@ -3,6 +3,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <iomanip>
+#include <limits>
+#include <locale>
+#include <sstream>
 
 namespace {
 double observed_y(const Track& t, double aim_y)
@@ -10,6 +16,59 @@ double observed_y(const Track& t, double aim_y)
     // Use the bridge's existing box reference without changing the observation.
     const float y = t.y + static_cast<float>((aim_y - 0.5) * t.height);
     return double(y) + double(t.height) / 2;
+}
+
+bool control_trace_enabled()
+{
+    static const bool enabled = [] {
+        const char* value = std::getenv("LWIR_CONTROL_TRACE");
+        return value && value[0] == '1' && value[1] == '\0';
+    }();
+    return enabled;
+}
+
+void trace_control(const FrameMetadata& metadata, const Track& track, const TrackLead& lead,
+                   bool lead_valid, bool angular, double measured_x, double measured_y,
+                   bool hold_x, bool hold_y, bool forecast_x, bool forecast_y,
+                   const GimbalDemand& demand) noexcept try
+{
+    // Classic locale and null for non-finite values keep the line valid JSON.
+    std::ostringstream out;
+    out.imbue(std::locale::classic());
+    out << std::boolalpha << std::setprecision(std::numeric_limits<double>::max_digits10);
+    const auto number = [&out](double value) {
+        if (std::isfinite(value)) out << value;
+        else out << "null";
+    };
+    const auto pair = [&out, &number](double x, double y) {
+        out << "{\"x\":";
+        number(x);
+        out << ",\"y\":";
+        number(y);
+        out << '}';
+    };
+    const auto captured_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+        metadata.captured_at.time_since_epoch()).count();
+    out << "{\"event\":\"control_trace\",\"frame_id\":" << metadata.frame_id
+        << ",\"captured_ns\":" << captured_ns << ",\"track_id\":" << track.track_id
+        << ",\"lead_control_epoch\":" << lead.control_epoch << ",\"lead_valid\":" << lead_valid
+        << ",\"error_unit\":\"" << (angular ? "radians" : "normalized_half_frame")
+        << "\",\"measured_error\":";
+    pair(measured_x, measured_y);
+    out << ",\"predicted_error\":";
+    pair(demand.error_x, demand.error_y);
+    out << ",\"deadband_hold\":{\"x\":" << hold_x << ",\"y\":" << hold_y << '}'
+        << ",\"forecast_used\":{\"x\":" << forecast_x << ",\"y\":" << forecast_y << '}'
+        << ",\"pid_demand\":";
+    pair(demand.pid_x.value, demand.pid_y.value);
+    out << ",\"demand\":{\"x\":" << demand.x << ",\"y\":" << demand.y << ",\"speed\":";
+    number(demand.speed);
+    out << "}}\n";
+    // Opt-in only: even without an explicit flush, writing to stderr may block.
+    std::fputs(out.str().c_str(), stderr);
+}
+catch (...) {
+    // A diagnostics formatting failure must not interrupt a control calculation.
 }
 }
 
@@ -76,7 +135,8 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
     GimbalDemand d;
     d.error_x = measured_x;
     d.error_y = measured_y;
-    if (lead.matches(t.track_id)) {
+    const bool lead_valid = lead.matches(t.track_id);
+    if (lead_valid) {
         d.error_x = error(x + lead.dx_px, width / 2.0, config_.fov_x_deg);
         d.error_y = error(y + lead.dy_px, height / 2.0, config_.fov_y_deg);
     }
@@ -88,7 +148,7 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
         hold = hold ? std::abs(error) <= leave : std::abs(error) <= enter;
         return hold;
     };
-    const auto predicted_pid = [dt](PidController& pid, double predicted, double observed) {
+    const auto predicted_pid = [dt](PidController& pid, double predicted, double observed, bool& forecast_used) {
         auto measured_only = pid;
         const auto measured_output = measured_only.calculate(observed, dt, observed);
         const auto forecast_output = pid.calculate(predicted, dt, observed);
@@ -100,12 +160,14 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
             pid = measured_only;
             return measured_output;
         }
+        forecast_used = predicted != observed;
         return forecast_output;
     };
+    bool forecast_x = false, forecast_y = false;
     if (held(hold_x_, measured_x, config_.deadband_x, smoothing_.deadband_exit_x)) x_.reset();
-    else d.pid_x = predicted_pid(x_, d.error_x, measured_x);
+    else d.pid_x = predicted_pid(x_, d.error_x, measured_x, forecast_x);
     if (held(hold_y_, measured_y, config_.deadband_y, smoothing_.deadband_exit_y)) y_.reset();
-    else d.pid_y = predicted_pid(y_, d.error_y, measured_y);
+    else d.pid_y = predicted_pid(y_, d.error_y, measured_y, forecast_y);
     const auto direction = [](double value) { return value > 0 ? 1 : value < 0 ? -1 : 0; };
     d.x = direction(d.pid_x.value);
     // Image Y grows downward; the shared GUI/device command contract is +Y up.
@@ -116,5 +178,8 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
     initialized_ = true; track_id_ = t.track_id;
     width_ = width; height_ = height; generation_ = model_generation;
     previous_ = metadata; cached_ = d;
+    if (control_trace_enabled())
+        trace_control(metadata, t, lead, lead_valid, angular, measured_x, measured_y,
+                      hold_x_, hold_y_, forecast_x, forecast_y, d);
     return d;
 }
