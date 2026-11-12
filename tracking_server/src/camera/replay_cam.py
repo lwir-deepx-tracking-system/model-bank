@@ -31,7 +31,7 @@
                  (서버의 "입력이 1 초 넘게 끊기면 추적을 새로 시작" 규칙이 그 틈으로 추적을 비운다). 그 프레임은 멈춘 중이어도 한 번은 새 프레임으로 나간다.
   PAUSE          지금 프레임에서 멈춤. 멈춘 동안 같은 프레임을 "되풀이" 표시를 달아 초당 --rep-fps (기본 5) 장 보낸다 (서버가 카메라가 죽었다고 보지 않게, 그림도 계속 갱신되게. 서버는 되풀이를 채점하지 않는다).
   PLAY           이어서 재생 (멈춘 프레임의 다음 프레임부터)
-  (한 번만 재생(--loops)이 마지막 프레임을 보내고 끝날 때는 그 프레임을 "되풀이" 표시로 4 장 더 보낸 뒤 끝난다: 서버가 마지막 프레임을 화면에 내고 채점하게. 약 0.8 초)
+  웹 재생은 완주하면 마지막 장을 유지한다. PLAY는 처음부터 재생하고, SEEK는 원하는 장으로 이동한다.
   SPEED <fps>    초당 프레임 수 바꾸기
   줄은 서버가 모아서 마지막 것만 보낸다. 모르는 줄과 범위 밖의 번호는 (끝 쪽으로 맞춰) 조용히 처리한다. 표준 입력이 닫혀도 재생은 계속된다.
 
@@ -326,6 +326,7 @@ def main():
     signal.signal(signal.SIGINT, _on_signal)
     stamp = os.environ.get('LWIR_CAM_STAMP') == '1'
     ctl = Control(say) if a.control else None
+    hold_at_end = ctl is not None and stamp and a.tag and a.loops == 1
     if ctl is not None and not (os.path.isfile(a.dir) and a.dir.lower().endswith(('.raw', '.raw.gz'))):
         import cv2   # noqa: F401  (Windows: loading a DLL while another thread waits on the stdin pipe hangs, so cv2 / numpy are loaded before the control thread starts)
         import numpy   # noqa: F401
@@ -374,6 +375,7 @@ def main():
         first = True               # 새 프레임을 하나 보낼 차례 (멈춘 중이어도: 시작과 SEEK 뒤 첫 프레임)
         seek_wait = False          # SEEK 를 받았고 그 첫 프레임은 아직 안 보냄 (그 사이에 또 SEEK 가 오면 같은 구간으로 센다)
         paused = False
+        at_end = False
         cur = None                 # 마지막으로 보낸 새 프레임 (멈춘 동안 되풀이)
         cur_pos = cur_png = 0
         next_rep = 0.0
@@ -402,7 +404,11 @@ def main():
                     fps = c_speed
                     period = 1.0 / fps
                     say('REPLAY CMD speed %g' % fps)
+                if at_end and c_paused is False and c_seek is None:
+                    c_seek = 0   # Play after a completed pass uses the same gap/reset as an explicit seek.
+                    wraps = 0
                 if c_seek is not None:
+                    at_end = False
                     pos = min(max(c_seek, 0), total - 1)
                     if not seek_wait:
                         pass_no += 1
@@ -420,7 +426,7 @@ def main():
                     elif not first:
                         due = clock()
                     say('REPLAY CMD %s at %d' % ('pause' if paused else 'play', cur_pos))
-            if paused and not first:   # 멈춤: 같은 프레임을 되풀이로 (조종 줄이 오면 바로 깬다)
+            if (paused or at_end) and not first:   # 멈춤: 같은 프레임을 되풀이로 (조종 줄이 오면 바로 깬다)
                 d = next_rep - clock()
                 if d > 0:
                     if ctl is not None:
@@ -436,10 +442,15 @@ def main():
             d = due - clock()
             if not a.no_skip and not first and d < -period:   # 한 칸 넘게 늦었다: 지나간 칸은 건너뛴다 (몰아서 보내지 않는다)
                 jump = int(-d / period)
-                pos += jump
-                skipped += jump
-                due += jump * period
-                continue
+                if hold_at_end and pos < total:
+                    jump = min(jump, total - 1 - pos)   # Never skip the frame we will hold.
+                if jump:
+                    pos += jump
+                    skipped += jump
+                    due += jump * period
+                    continue
+                due = clock()
+                d = 0
             if d > SPIN_S:
                 if ctl is not None:
                     if ctl.ev.wait(d - SPIN_S):
@@ -474,10 +485,13 @@ def main():
             pos += 1
             due = max(due, clock()) + period if a.no_skip else due + period
             first = False
-            if paused:
+            if hold_at_end and pos == total:
+                at_end = True
+                say('REPLAY END: holding final frame')
+            if paused or at_end:
                 next_rep = clock() + rep_period
             if ahead is not None:
-                ahead.set_want([(pos + k) % total for k in range(AHEAD)] if not paused else [])
+                ahead.set_want([(pos + k) % total for k in range(AHEAD)] if not (paused or at_end) else [])
     except _Stop:
         pass
     except (BrokenPipeError, ConnectionError):

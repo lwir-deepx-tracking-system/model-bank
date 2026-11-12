@@ -232,6 +232,7 @@ def state():
         st_.update(name=r_['name'], fps=r_['fps'], loop=r_['loop'], bits=r_['bits'], frames=r_['frames'], total=r_['frames'], shown=n_, note=NOTE_8BIT if r_['bits'] == 8 else None,
                    pos=ps_.get('pos'), paused=bool(r_.get('paused')), seeking=ps_.get('seek_to') is not None, seek_to=ps_.get('seek_to'))   # pos = 0-based index of the frame on screen, from the frame header
         st_['pass'] = ps_.get('pass_')
+        st_['backend'] = r_.get('backend', 'python')
     return st_
 
 
@@ -239,7 +240,11 @@ def get_info(q_):
     r_ = on(); refresh_ = q_.get('refresh', ['0'])[0] == '1'
     why_ = None if r_ else ('녹화 폴더가 정해지지 않음 (--replay-root)' if not getattr(APP.args, 'replay_root', '') else '녹화 폴더가 없음')
     if r_ and APP.args.live_wait: why_ = '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
-    return dict(available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
+    backends = [dict(id='python', label='현재 추적기')]
+    library = getattr(APP.args, 'replay_bytetrack_library', '')
+    if library and os.path.isfile(library):
+        backends.append(dict(id='cpp_bytetrack', label='C++ ByteTrack'))
+    return dict(backends=backends, available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
 
 
 def start_request(q_):   # -> (http 코드, 글)
@@ -248,6 +253,12 @@ def start_request(q_):   # -> (http 코드, 글)
     if not FPS_MIN <= fps_ <= FPS_MAX: return 400, 'fps 는 %g ~ %g' % (FPS_MIN, FPS_MAX)
     lp_ = q_.get('loop', ['0'])[0]
     if lp_ not in ('0', '1'): return 400, 'loop 는 0 또는 1'
+    backend = q_.get('backend', ['python'])[0]
+    library = getattr(APP.args, 'replay_bytetrack_library', '')
+    if backend not in ('python', 'cpp_bytetrack'):
+        return 400, '알 수 없는 재생 추적기'
+    if backend == 'cpp_bytetrack' and (not library or not os.path.isfile(library)):
+        return 409, 'C++ ByteTrack 라이브러리가 설정되지 않았습니다'
     it_, d_ = find(q_.get('seq', [''])[0])
     if it_ is None: return (409 if not on() else 400), d_
     L_ = APP.LIVE
@@ -256,7 +267,8 @@ def start_request(q_):   # -> (http 코드, 글)
         if L_.cam_hold: return 409, '카메라 초기화나 다른 재생 바꾸기가 진행 중. 잠시 뒤 다시 누르세요'
         L_.cam_hold = True; L_.replay_busy = True   # 이 순간부터 짐벌에 사람을 보내지 않는다
     _gimbal_stop()
-    tgt_ = dict(name=it_['name'], dir=d_, fps=fps_, loop=lp_ == '1', bits=it_['bits'], frames=it_['frames'], fin0=None, paused=False)
+    tgt_ = dict(name=it_['name'], dir=d_, fps=fps_, loop=lp_ == '1', bits=it_['bits'], frames=it_['frames'], fin0=None, paused=False,
+                backend=backend, tracker_library=library)
     APP.lv_th.Thread(target=_switch, args=(tgt_,), daemon=True).start()
     return 200, '재생 시작: %s' % it_['name']
 
@@ -310,7 +322,7 @@ def restart_request():
     r_ = getattr(APP.LIVE, 'replay', None)
     if r_ is None:
         return 409, '재생 중이 아님'
-    return start_request({'seq': [r_['name']], 'fps': [str(r_['fps'])], 'loop': ['1' if r_['loop'] else '0']})
+    return start_request({'seq': [r_['name']], 'fps': [str(r_['fps'])], 'loop': ['1' if r_['loop'] else '0'], 'backend': [r_.get('backend', 'python')]})
 
 
 def stop_request():
@@ -338,8 +350,14 @@ def _end_old(p_, replay_):   # 지금 카메라 자리의 프로그램을 끝낸
 
 def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (카메라로)
     L_ = APP.LIVE
-    ev_ = replay_eval.prepare(tgt_) if tgt_ is not None else None   # 11-12: 정답 라벨을 미리 읽는다
+    ev_ = None
+    installed = False
     try:
+        if tgt_ is not None:
+            ev_ = replay_eval.prepare(tgt_)
+            if ev_ is None and tgt_.get('backend') == 'cpp_bytetrack':
+                _msg('C++ ByteTrack을 열지 못해 재생을 시작하지 않았습니다')
+                return
         old_ = getattr(L_, 'replay', None)
         if not _end_old(L_.proc, old_ is not None):
             _msg('카메라 프로그램이 45초 안에 끝나지 않아 재생을 시작하지 않음. 잠시 뒤 다시 누르세요'); return
@@ -352,7 +370,8 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
             with L_.cond: L_.q.clear()
             if tgt_ is not None: tgt_['fin0'] = L_.frames_in
             L_.replay = tgt_
-            replay_eval.activate(ev_, L_.replay_src_t, 'switched' if tgt_ is not None else 'stopped')   # 옛 재생의 채점은 파일로 쓰고 끝낸다
+            replay_eval.activate(ev_, L_.replay_src_t, 'switched' if tgt_ is not None else 'stopped')
+            installed = True   # 옛 재생의 채점은 파일로 쓰고 끝낸다
             _gimbal_stop()
             APP.lv_spawn()
         if tgt_ is not None:
@@ -363,6 +382,8 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
         else: _msg('재생 멈춤: 카메라 프로그램을 다시 시작함. 영상은 10~60초 뒤. 짐벌은 사람을 다시 누를 때까지 따라가지 않음')
     except Exception as e_: _msg('재생 바꾸기 오류: %s' % type(e_).__name__)
     finally:
+        if ev_ is not None and not installed:
+            ev_.close('not started')
         L_.replay_busy = False; L_.cam_hold = False
 
 

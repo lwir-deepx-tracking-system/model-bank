@@ -61,3 +61,18 @@
 4. **M1 속도 비교.** 결과가 맞은 뒤 같은 녹화·모델·옵션으로 추적 계산 시간, 전체 출력 간격, 프레임 처리 지연의 중앙값·p95를 비교합니다. 출력 개수와 건너뛴 프레임도 함께 기록합니다.
 
 인계에는 기준 커밋, 옮긴 파일과 빌드 명령, 선택 방법, 비교에 사용한 입력·설정, 처음 다른 프레임 또는 일치한 프레임 수, M1 측정 여부를 남깁니다. 이 문서는 이식 절차이며 현재 추적기 구현은 Python입니다.
+
+## 팀 runtime C++ 구현의 PC 비교
+
+팀 [runtime](https://github.com/lwir-deepx-tracking-system/runtime)의 ByteTrack과 OC-SORT를 별도로 비교할 수 있습니다. 빌드는 팀 저장소 커밋 `0fe016f7edd069900457a746dc4cc787569c5ae6`의 Git 객체를 읽습니다. 팀 코드는 모델뱅크에 복사해 넣지 않습니다. 빌드 중에만 실제 매칭된 검출의 행 번호를 결과로 전달하도록 연결합니다.
+
+```sh
+python tracking_server/src/track/build_team_tracker.py /path/to/runtime /path/to/lwirtk.so
+python -m tracking_server.src.track.check_team_tracker /path/to/lwirtk.so --cache /path/to/exact_detections.jsonl
+```
+
+Windows에서는 출력 확장자를 `.dll`로 바꾸고 필요하면 `--cxx`로 MinGW `g++` 경로를 지정합니다. 시험용 캐시에는 프레임마다 `tracker_input_xyxy_conf_class`와 `tracker_reset`이 있어야 합니다. 두 구현 모두 같은 검출을 프레임 순서대로 받고, 빈 프레임도 업데이트하며, 시퀀스 경계에서만 ID를 초기화합니다.
+
+서버의 녹화 재생에서 C++ ByteTrack을 선택할 수 있습니다. ARM64 라이브러리를 장치의 `tracking_server/models/links/lwirtk.so`에 설치한 뒤 서버를 다시 시작합니다. 다른 경로는 `--replay-bytetrack-library` 또는 `LWIR_REPLAY_BYTETRACK_LIBRARY`로 지정합니다. 녹화 재생 패널에서 **C++ ByteTrack**을 고르면 영상의 상자·ID와 평가에 적용합니다. 기본 선택은 현재 추적기입니다.
+
+C++ 경로는 최종 필터를 거친 검출 행을 받아 독립 추적 상태를 유지합니다. 녹화 전환이나 새 반복 회차에서 상태를 초기화하고, 일시정지 중에는 마지막 결과를 사용합니다. 기존 추적기와 별도로 실행되므로 추적기 단독 시간과 서버 전체 지연은 구분해서 해석합니다. 비교용 ByteTrack의 점수 문턱과 XYWH Kalman은 Python 쪽에 맞췄지만, 확인·매칭 규칙과 출력은 완전히 같지 않습니다. 특히 팀 OC-SORT는 모델뱅크 Python OC-SORT와 별도 구현입니다. 출력 수가 늘거나 줄어도 정답을 대조하지 않으면 정확도가 개선됐는지 판단할 수 없습니다.

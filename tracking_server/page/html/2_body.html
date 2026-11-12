@@ -131,6 +131,7 @@
         <!-- 11-12: a stored recording of the label site instead of the camera. The gimbal does not move while it plays. -->
         <div class="body stack">
           <select id="rpsel" aria-label="녹화 고르기"><option value="">목록을 불러오는 중…</option></select>
+          <div class="row"><label class="lbl" for="rpbackend">추적기</label><select id="rpbackend" aria-label="재생 추적기"><option value="python">현재 추적기</option></select></div>
           <div class="row"><span class="lbl">초당 장 수</span><input type="number" id="rpfps" min="5" max="30" step="1" value="25" aria-label="초당 장 수 (재생 중에 바꾸면 바로 적용)"><label class="chk"><input type="checkbox" id="rploop"> 반복</label></div>
           <div class="row"><button class="btn start" id="rpstart">재생 시작</button><button class="btn" id="rpstop" disabled>재생 멈춤 (카메라로)</button></div>
           <div class="minfo rpnote" id="rpnote" style="margin-top:0"></div>

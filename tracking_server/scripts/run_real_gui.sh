@@ -49,5 +49,6 @@ echo "START $(date +%T) page=$BIND:$PORT gui=$GUI_HOST gimbal=$GIMBAL_DEV speed_
 exec python3 -B start_tracking_server.py --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 3 --confirm-ms "$CONFIRM_MS" --warm-min 45000 --edge-birth 0.5 \
   --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 1 --confirm-gate models/track/gate_gru32_frozen.json --judge models/track/relink_judge_frozen.json --judge-crops 2 \
   --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 --replay-root "$REPLAY_ROOT" \
+  --replay-bytetrack-library "${LWIR_REPLAY_BYTETRACK_LIBRARY:-$T/models/links/lwirtk.so}" \
   --gimbal "$GIMBAL_DEV" --gimbal-speed 10 --gimbal-aim-y "$AIM_Y" --gimbal-bridge "$BRIDGE" --gimbal-opts "--controller pid --ki 0 --kd 6 --integral-limit 3 --deadband 0.06 --manual-speed 20 --speed-max $SPEED_MAX --reacquire-ms $REACQUIRE_MS $EXTRA_OPTS" \
   --gui-host "$GUI_HOST" --gui-bind 0.0.0.0

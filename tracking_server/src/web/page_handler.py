@@ -54,7 +54,7 @@ def track_color(track_id):
     return int(b * 255), int(g * 255), int(r * 255)
 
 
-def live_publish(g_, rows_, row_, detections=None):
+def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if APP.LIVE.arr else now_
     raw16_ = APP.LIVE.raws.popleft() if APP.LIVE.raws else None   # v20
     rq_ = APP.LIVE.rawq.popleft() if APP.LIVE.rawq else None   # v24f
@@ -93,7 +93,13 @@ def live_publish(g_, rows_, row_, detections=None):
         if APP.GB.gui and raw16_ is not None and raw16_.shape == (APP.LIVE_H, APP.LIVE_W):   # v20: frame + picture to the gimbal executor and the PC GUI
             APP.gb_send_frame('G %d %d %d %d %d' % (APP.GB.frame, int(t_in * 1e9), APP.LIVE_W, APP.LIVE_H, len(gb_people_)) + people_txt_, np.ascontiguousarray(raw16_, dtype=np.uint16).tobytes())
         else: APP.gb_send('F %d %d %d' % (APP.GB.frame, int(t_in * 1e9), len(gb_people_)) + people_txt_)
-    gtd_ = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections) if replay_eval.EV is not None else None   # 11-12: score this frame against the labels (replay only; after the gimbal line)
+    gtd_, replay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections, tracker_detections)
+    if replay_rows is not None:
+        rows_ = replay_rows
+        draw_ = [((int(r[0] * sc_), int((r[1] - 16) * sc_)),
+                  (int(r[2] * sc_), int((r[3] - 16) * sc_)), track_color(int(r[4])), int(r[4]))
+                 for r in rows_ if int(r[6]) == 0]
+        npers_ = len(draw_)
     # 11-12: the page picture only when somebody can see it: every frame while /stream has a viewer, otherwise once a second (/snap.jpg at most 1 s old)
     # and every frame for 3 s after a /snap.jpg request. Nothing else reads this picture (tracking, gimbal, measurement and the PC GUI use the frame itself).
     if APP.LIVE.viewers > 0 or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0:
@@ -107,7 +113,7 @@ def live_publish(g_, rows_, row_, detections=None):
             for x1_, y1_, x2_, y2_, k_ in replay_eval.draw_boxes(t_in, gtd_, sC_):
                 a_, b_ = (min(max(int(x1_ * sc_), 0), ww_ - 1), min(max(int(y1_ * sc_), 0), hh_ - 1)), (min(max(int(x2_ * sc_), 0), ww_ - 1), min(max(int(y2_ * sc_), 0), hh_ - 1))
                 if a_[0] < b_[0] and a_[1] < b_[1]: dash_rect(img_, a_, b_, (255, 255, 255) if k_ == 0 else (200, 90, 255), 1, 4)
-        if POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
+        if replay_rows is None and POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
             try:
                 seen_ = {int(r_[4]) for r_ in rows_}
                 for tid_, b_ in POSP['boxes']:

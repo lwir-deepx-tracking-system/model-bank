@@ -131,6 +131,8 @@ def main():
     ap.add_argument('--live-seconds', type=float, default=600, help='v14: live run length in seconds')
     ap.add_argument('--measure-dir', default='/mnt/lwir_data/results/live_measure', help='v22c: folder for the measurement button files (a YYYYMMDD subfolder per day); the run folder when it cannot be written')
     ap.add_argument('--live-wait', type=float, default=90, help='v21: seconds to wait for the first camera frame; 0 = never give up: the page and the gimbal link stay up with a placeholder picture and the camera is reopened every 180 s until --live-seconds ends')
+    ap.add_argument('--replay-bytetrack-library', default=os.environ.get('LWIR_REPLAY_BYTETRACK_LIBRARY', ''),
+                    help='Path to the team C++ ByteTrack library for recorded playback')
     ap.add_argument('--replay-root', default='', help='11-12: folder of the label site recordings (<root>/<name>/images/000001.png ...); the web page can play one of them instead of the camera (GET /replay, POST /replay/start, /replay/stop). Empty or missing folder = replay unavailable')
     ap.add_argument('--live-cam', default='', help='v14: path of the cam_pipe helper (default: src/camera/cam_pipe)')
     ap.add_argument('--live-map', choices=['fixed', 'pct'], default='pct', help='v14: 16 -> 8 bit mapping: fixed = linear 0..65535 (team runtime), pct = smoothed 1..99 percentile window')
@@ -806,7 +808,7 @@ def main():
             if APP.relabeler is not None:
                 APP.tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
                                         tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (APP.FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in base_rows]))
-            if APP.LIVE is not None: live_publish(g, tr_rows, row, detections=p)
+            if APP.LIVE is not None: live_publish(g, tr_rows, row, detections=p, tracker_detections=arr)
             if APP.TIMING is not None: APP.TIMING.frame(i, t0, t1, t2, t4, rl_ms, t5)
             prev_gray = g
             if budget: prev_arr = arr

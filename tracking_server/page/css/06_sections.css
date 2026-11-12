@@ -50,7 +50,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .rpev{margin-top:2px;border-top:1px solid var(--line);padding-top:8px}.rpev table{margin:4px 0 8px}.rpev th{text-align:right}.rpev tr.fp td{color:var(--warn);font-weight:700;font-size:14px}.rpev td.sub{padding-left:14px;color:var(--mut)}.rpev .rtitle{margin:0}
 /* 11-12: seek bar and comparison numbers under the picture (chips that wrap, no table) */
 .rpbar[hidden],.rpseek[hidden],.rpnum[hidden]{display:none}
-.rpbar{margin-top:6px;display:flex;flex-direction:column;gap:6px}
+.rpbar{margin-top:6px;display:flex;flex-direction:column;gap:6px;max-height:min(28vh,220px);overflow-y:auto;overscroll-behavior:contain}
 .rpseek{border:1px solid var(--line);border-radius:var(--r);background:var(--pan);padding:6px 8px;display:flex;flex-direction:column;gap:5px}
 .rpr{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .rpr .btn.small{padding:5px 9px}

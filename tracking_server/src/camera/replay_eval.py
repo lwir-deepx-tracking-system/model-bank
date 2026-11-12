@@ -24,6 +24,7 @@ import time
 from ..common.state import APP
 from ..track import gt_score, replay_metrics
 from ..track.stabilizer import stab_off, stab_people_real
+from ..track.team_tracker import TeamTracker
 
 LABEL = 'tracks_edited_mot.txt'
 AUTO = 'tracks_mot.txt'
@@ -105,6 +106,43 @@ class Eval:
         self.last_k = None; self.last_pass = None; self.passes = 0; self.draw_t = None; self.draw_gt = None
         self.pos_in = None; self.pos_shown = None; self.pass_shown = None; self.pos_t = None; self.seek_to = None; self.seek_t = None; self.seeks = 0
         self.zero()
+        self.backend = tgt.get('backend', 'python')
+        self.backend_error = None
+        self.native_tracker = TeamTracker(tgt['tracker_library'], 'bytetrack') if self.backend == 'cpp_bytetrack' else None
+        self.native_tag = None
+        self.native_rows = []
+        self.native_frames = 0
+
+    def track_frame(self, t_in, detections):
+        if self.backend != 'cpp_bytetrack':
+            return None
+        with self.lock:
+            tag = self.tags.get(t_in)
+            repeat = self.rep.get(t_in)
+            if self.ended is not None or (tag is None and repeat is None):
+                return None
+            if repeat is not None:
+                return self.native_rows if repeat == self.native_tag else []
+            if self.backend_error is not None:
+                return []
+            try:
+                if self.native_tag is not None and (tag[1] != self.native_tag[1] or tag[2] <= self.native_tag[2]):
+                    self.native_tracker.reset()
+                self.native_rows = self.native_tracker.update(detections)
+                self.native_tag = tag
+                self.native_frames += 1
+                self._sum = None
+                return self.native_rows
+            except (OSError, RuntimeError, ValueError) as error:
+                self.native_tracker.close()
+                self.backend_error = str(error)
+                self.native_rows = []
+                if self.phase == 'scoring':
+                    self.phase = 'incomplete'
+                    self.metric_frames.clear()
+                self._sum = None
+                print('REPLAY C++ ByteTrack failed:', self.backend_error, flush=True)
+                return []
 
     def zero(self):
         self.new = gt_score.Score(True); self.old = gt_score.Score(False)
@@ -240,6 +278,7 @@ class Eval:
         if self._sum is not None and with_rules: return self._sum
         lab = self.lab
         s = dict(name=self.name, fps=self.fps, loop=self.loop, started=self.started, since=self.since, ended=self.ended, end_reason=self.end_reason, file=self.file,
+                 backend=self.backend, backend_error=self.backend_error, native_frames=self.native_frames,
                  scoring=lab['ok'], why=lab['why'] or None, review=lab['review'] or None, label_file=lab['label_file'], label_sha256=lab['label_sha256'],
                  label_bad_lines=lab['bad_lines'], labelled_frames=lab['labelled'], scorable_frames=len(lab['frames']), passes=self.passes, scored_unique=len(self.uniq), seeks=self.seeks,
                  counts=dict(self.n, server_skipped=max(0, self.n['received'] - self.n['published'] - len(self.tags))),
@@ -258,6 +297,8 @@ class Eval:
     def close(self, reason):   # 재생이 끝났다: 끝난 때와 이유를 적는다 (라벨이 없어 채점하지 않은 녹화도). 파일은 write() 가 쓴다
         with self.lock:
             if self.ended is None:
+                if self.native_tracker is not None:
+                    self.native_tracker.close()
                 self.ended = time.strftime('%Y-%m-%d %H:%M:%S'); self.end_reason = reason; self._sum = None
                 if self.phase == 'scoring':
                     self.phase = 'incomplete' if reason == 'ended' else 'interrupted'
@@ -341,12 +382,16 @@ def reset_first_input(t_in):
     return True
 
 
-def on_frame(t_in, rows, sc, image_id, detections=None):
+def on_frame(t_in, rows, sc, image_id, detections=None, tracker_detections=None):
     ev = EV
-    if ev is None: return None
-    try: return ev.frame(t_in, rows, sc, image_id, detections)
+    if ev is None:
+        return None, None
+    native_rows = ev.track_frame(t_in, tracker_detections)
+    try:
+        return ev.frame(t_in, rows if native_rows is None else native_rows, sc, image_id, detections), native_rows
     except Exception as e:
-        print('REPLAY EVAL frame failed', type(e).__name__, str(e)[:120], flush=True); return None
+        print('REPLAY EVAL frame failed', type(e).__name__, str(e)[:120], flush=True)
+        return None, native_rows
 
 
 def draw_boxes(t_in, gt, sc):   # 화면 그림에만 그릴 정답 상자: [(x1, y1, x2, y2, 종류)] 종류 0 = 사람, 1 = 무시 구역(클래스 1 또는 가장자리 규칙)
