@@ -59,6 +59,8 @@
 
 ## 2. 빠른 시작
 
+이미 Orange Pi에 `~/model-bank`가 있다면 [기존 저장소 업데이트](../README.md#기존-저장소-업데이트)를 참고하세요. 아래 명령은 처음 설치할 때 사용합니다.
+
 ```bash
 git clone https://github.com/lwir-deepx-tracking-system/model-bank.git
 bash model-bank/tracking_server/scripts/setup.sh         # 한 번만: 빌드, 모델 연결과 확인

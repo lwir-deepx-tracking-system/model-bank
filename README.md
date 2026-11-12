@@ -41,7 +41,9 @@
 5. 외형을 비교해 돌아온 사람에게 옛 번호를 줍니다 (KeepID, NPU 코어 2).
 6. 고른 사람의 머리를 화면 가운데로 오게 짐벌에 속도 명령을 보냅니다 (150 ms 예측 + PID).
 
-**켜기**
+### 처음 설치하고 켜기
+
+Orange Pi에서 처음 내려받을 때 실행합니다. 이미 `~/model-bank`가 있다면 [기존 저장소 업데이트](#기존-저장소-업데이트)를 참고하세요.
 
 ```bash
 git clone https://github.com/lwir-deepx-tracking-system/model-bank.git
@@ -55,6 +57,30 @@ bash model-bank/tracking_server/scripts/run_real_gui.sh  # 켜기
 - 꺼지면 스스로 다시 켜는 스크립트(`scripts/keepalive.sh`)가 있습니다.
 
 **자세한 안내:** [tracking_server/README.md](tracking_server/README.md) — 설정, 거르는 곳, 짐벌이 멈추는 경우, 장치에서 잰 속도, 끄는 법
+
+### 기존 저장소 업데이트
+
+`destination path 'model-bank' already exists and is not an empty directory`가 나오면 `~/model-bank` 폴더가 이미 있습니다. 먼저 기존 폴더의 저장소 주소와 브랜치, 수정 파일을 확인합니다.
+
+```bash
+git -C "$HOME/model-bank" remote get-url origin
+git -C "$HOME/model-bank" status --short --branch
+```
+
+`origin`이 `lwir-deepx-tracking-system/model-bank`를 가리키고, 현재 브랜치가 `main`이며 수정 파일이 없으면 아래를 실행합니다.
+
+```bash
+git -C "$HOME/model-bank" pull --ff-only origin main
+git -C "$HOME/model-bank" log -3 --oneline
+```
+
+다른 브랜치에 있거나 수정 파일이 표시되면 현재 작업을 먼저 확인합니다. 기존 폴더가 Git 저장소가 아니라면 다른 이름으로 내려받을 수 있습니다.
+
+```bash
+git clone https://github.com/lwir-deepx-tracking-system/model-bank.git "$HOME/model-bank-new"
+```
+
+실행 중인 추적 서버의 Python 변경은 서버를 다시 시작할 때 적용됩니다. [추적 서버 시작과 종료](tracking_server/README.md#8-꺼지면-다시-켜기-끄기)
 
 ## 2. 라벨 서버 (`label_server/`)
 
