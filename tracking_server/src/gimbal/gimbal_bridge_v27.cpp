@@ -454,6 +454,7 @@ int main(int argc, char** argv) try {
     std::string pending, reported;
     std::vector<char> buffer(262144);
     auto next_status = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    auto next_position = std::chrono::steady_clock::now();
     bool input_open = true;
     while (!stop_signal && input_open) {
         pollfd input{0, POLLIN, 0};
@@ -478,8 +479,14 @@ int main(int argc, char** argv) try {
             bridge.message(pending.substr(0, end));
             pending.erase(0, end + 1);
         }
-        const auto state = state_line(executor.snapshot());
+        const auto snapshot = executor.snapshot();
+        const auto state = state_line(snapshot);
         if (state != reported) { say(state); reported = state; }
+        const auto now = std::chrono::steady_clock::now();
+        if (!snapshot.error && now >= next_position) {
+            say("POSITION_EST " + std::to_string(snapshot.pan_estimate) + " " + std::to_string(snapshot.tilt_estimate));
+            next_position = now + std::chrono::milliseconds(250);
+        }
         if (gui && std::chrono::steady_clock::now() >= next_status) { say(gui->status(gui_client.load())); next_status += std::chrono::seconds(1); }
     }
     if (receiver) { receiver->stop(); receiver_thread.join(); }

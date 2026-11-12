@@ -1,0 +1,9 @@
+/* Leave image clicks and drags to the video. */
+.pose{position:absolute;inset:var(--pose-y,0px) var(--pose-x,0px);pointer-events:none;z-index:1;--pose-red:#ff4141;--pose-tick:linear-gradient(var(--pose-red),var(--pose-red))}
+.pose [hidden]{display:none}
+.pose-axis{position:absolute;background-image:var(--pose-tick),var(--pose-tick),var(--pose-tick),var(--pose-tick),var(--pose-tick);background-repeat:no-repeat}
+.pose-pan{top:0;left:0;right:0;height:4px;background-size:1px 4px;background-position:left top,25% top,50% top,75% top,right top}
+.pose-tilt{top:0;right:0;bottom:0;width:4px;background-size:4px 1px;background-position:right top,right 25%,right 50%,right 75%,right bottom}
+.pose [data-marker]{position:absolute;background:var(--pose-red)}
+.pose-pan [data-marker]{top:0;left:clamp(8px,var(--pose-position),calc(100% - 8px));width:15px;height:11px;transform:translateX(-50%);clip-path:polygon(0 0,100% 0,50% 100%)}
+.pose-tilt [data-marker]{right:0;bottom:clamp(8px,var(--pose-position),calc(100% - 8px));width:11px;height:15px;transform:translateY(50%);clip-path:polygon(100% 0,100% 100%,0 50%)}

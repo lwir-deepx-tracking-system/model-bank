@@ -1,4 +1,5 @@
 """짐벌 연결: 짐벌 프로그램(gimbal_bridge) 띄우기와 지켜보기, 명령·프레임 보내기, 따라갈 사람의 예측 제어."""
+import math
 import time
 import numpy as np
 from ..common.state import APP
@@ -108,6 +109,35 @@ def gb_writer(p_):
         if APP.GB.proc is p_: APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None
 
 
+def parse_pose(fields):
+    """POSE pan tilt [pan_min pan_max tilt_min tilt_max], in measured degrees."""
+    if len(fields) not in (2, 6):
+        return None
+    try:
+        values = tuple(float(field) for field in fields)
+    except ValueError:
+        return None
+    if not all(math.isfinite(value) and abs(value) <= 360 for value in values):
+        return None
+    pose = {'pan': {'deg': values[0]}, 'tilt': {'deg': values[1]}}
+    if len(values) == 6:
+        for axis, low, high in (('pan', values[2], values[3]), ('tilt', values[4], values[5])):
+            if low >= high:
+                return None
+            pose[axis].update(min_deg=low, max_deg=high)
+    return pose
+
+
+def gb_sample(name):
+    sample = getattr(APP.GB, name, None)
+    if not sample:
+        return None
+    bridge, sampled_at, pose = sample
+    if bridge is APP.GB.proc and APP.GB.state['running'] and not APP.GB.state['error'] and time.monotonic() - sampled_at < 1.5:
+        return pose
+    return None
+
+
 def gb_reader(p_):
     while True:
         line_ = p_.stdout.readline()
@@ -120,6 +150,13 @@ def gb_reader(p_):
             APP.GB.state['answer'] = {'OK': '', 'INVALID': 'that person is not available', 'NOT_READY': 'the gimbal is not ready'}.get(f_[2], f_[2]); print('GIMBAL', line_.strip(), flush=True)
         elif f_[0] == 'S':
             APP.GB.state.update(auto=int(f_[1]), lost=int(f_[2]), moving=int(f_[3]), error=int(f_[4]), id=int(f_[5])); print('GIMBAL', line_.strip(), flush=True)
+        elif f_[0] == 'POSE':
+            APP.GB.pose_sample = (p_, time.monotonic(), parse_pose(f_[1:]))
+        elif f_[0] == 'POSITION_EST':
+            estimate = parse_pose(f_[1:]) if len(f_) == 3 else None
+            if estimate and all(0 <= axis['deg'] <= 100 for axis in estimate.values()):
+                percent = {key: axis['deg'] for key, axis in estimate.items()}
+                APP.GB.position_sample = (p_, time.monotonic(), percent)
         elif f_[0] == 'M' and len(f_) >= 3:   # v23: the PC GUI asks for a model change: M <req> <id>
             r_ = APP.model_request(int(f_[2]), int(f_[1])); print('MODEL request from the PC GUI: id', f_[2], '->', 'queued' if r_ < 0 else r_, flush=True)
             if r_ >= 0: APP.gb_send('N %d %d' % (int(f_[1]), r_))
