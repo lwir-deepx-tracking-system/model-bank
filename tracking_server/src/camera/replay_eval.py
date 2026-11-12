@@ -8,13 +8,9 @@
     tag() 를 불러 "도착 시각 -> (PNG 번호, 바퀴, 칸 번호)" 를 적는다. 화면을 만드는 곳(live_publish)이 그 프레임의 도착 시각으로 찾는다.
     그래서 서버가 중간 프레임을 버리거나 재생 카메라가 건너뛰어도 짝이 어긋나지 않는다. 번호를 모르는 프레임은 채점하지 않는다.
   - 재생 카메라가 건너뛴 프레임 수 = 같은 바퀴 안에서 프레임 번호가 1 보다 크게 뛴 만큼. 서버가 건너뛴 프레임 수 = 받은 프레임 - 화면에 낸 프레임.
-채점할 프레임: tracks_edited_mot.txt 에 줄이 있고 review_state.json 의 reviewed 에 있으며 removed·purged 에 없는 프레임.
-  review_state.json 이 없으면 라벨 파일의 모든 프레임 ("검수 상태 없음"). 읽을 수 없으면 채점하지 않는다. 자동 라벨(tracks_mot.txt)은 쓰지 않는다.
-반복 재생은 바퀴마다 계속 채점하고, 정답 번호와 서버 번호를 모두 (바퀴, 번호) 로 센다: 바퀴 하나 = 영상 하나로 보고 더한다.
-  (바퀴가 넘어갈 때 영상은 끝에서 처음으로 건너뛰지만 추적기는 그대로 이어 간다. 둘째 바퀴부터는 앞 바퀴 끝의 궤적을 가진 채 시작한다.)
-건너뛰기(SEEK, 11-12): 건너뛸 때마다 새 바퀴가 시작된다. 이미 센 프레임은 지우지 않고, 되감아서 같은 프레임을 다시 지나면 새 바퀴의 프레임으로 한 번 더 센다
-  (숫자에 그 장면이 두 번 들어간다. 서로 다른 장면 수 scored_unique 를 함께 보여 주고, 화면이 그렇게 적는다). 처음부터 다시 세려면 "숫자 처음부터".
-  건너뛴 직후 추적기는 서버의 "입력이 1 초 넘게 끊기면 추적을 새로 시작" 규칙으로 비워진다 (재생 카메라가 건너뛴 뒤 1.2 초 쉰다).
+채점은 첫 회차의 처음부터 끝까지 순서대로 처리한 프레임을 기준으로 한다. 반복·되감기·정지는 점수를 다시 쌓지 않는다.
+  검수됨으로 표시된 프레임에는 빈 장면도 포함한다. 삭제된 프레임은 제외한다. 검수 기록이 없다면 주석이 있는 프레임만 평가한다.
+  건너뛰거나 프레임이 누락되면 해당 실행은 최종 점수로 확정하지 않는다. HOTA와 사람 AP는 한 회차를 완료하면 별도 스레드에서 계산한다.
 점수 계산과 규칙: src/track/gt_score.py. 재생이 끝나거나 바뀌면(서버가 끝날 때도) 결과를 <결과 폴더>/replay_eval_<이름>_<시각>.json 에 쓴다.
 재생을 쓰지 않으면 EV 가 None 이고, 서버의 다른 길에서 부르는 함수는 모두 바로 돌아간다.
 """
@@ -26,8 +22,8 @@ import threading
 import time
 
 from ..common.state import APP
-from ..track import gt_score
-from ..track.stabilizer import stab_people_real
+from ..track import gt_score, replay_metrics
+from ..track.stabilizer import stab_off, stab_people_real
 
 LABEL = 'tracks_edited_mot.txt'
 AUTO = 'tracks_mot.txt'
@@ -78,9 +74,9 @@ def load_labels(rec_dir, name):
             rv = {int(v) for v in st.get('reviewed', [])}; rm = {int(v) for v in st.get('removed', [])} | {int(v) for v in st.get('purged', [])}
         except (OSError, ValueError, TypeError, AttributeError) as e:
             out['why'] = '검수 상태(review_state.json)를 읽지 못해 채점하지 않음 (%s)' % type(e).__name__; return out
-        out['frames'] = (set(gt) & rv) - rm; out['reviewed'] = len(rv); out['removed'] = len(rm)
-        out['review'] = '검수한 프레임 %d 장 가운데 라벨이 있는 %d 장을 채점' % (len(rv - rm), len(out['frames']))
-    if not out['frames']: out['why'] = '채점할 프레임이 없음 (라벨이 있고 검수한 프레임이 없음)'; return out
+        out['frames'] = rv - rm; out['reviewed'] = len(rv); out['removed'] = len(rm)
+        out['review'] = '검수한 프레임을 채점 (사람이 없는 검수 프레임 포함)'
+    if not out['frames']: out['why'] = '채점할 프레임이 없음'; return out
     out['ok'] = True
     return out
 
@@ -89,9 +85,24 @@ class Eval:
     def __init__(self, tgt):
         self.name = tgt['name']; self.fps = tgt['fps']; self.loop = tgt['loop']
         self.lab = load_labels(os.path.dirname(tgt['dir']), tgt['name'])
+        if self.lab['ok'] and os.path.isdir(tgt['dir']):
+            pngs = {int(stem) for name in os.listdir(tgt['dir'])
+                    for stem, ext in [os.path.splitext(name)] if ext.lower() == '.png' and stem.isascii() and stem.isdigit()}
+            self.lab['frames'].intersection_update(pngs)
+            if not self.lab['frames']:
+                self.lab.update(ok=False, why='검수한 프레임의 PNG가 없음')
+        self.sequence_frames = int(tgt.get('frames') or 0)
+        self.phase = 'scoring'
+        self.pass_frames = 0
+        self.gap = None
+        self.metric_status = 'unavailable'
+        self.metrics = dict(hota=None, ap50=None, map=None)
+        self.metric_frames = []
+        self.metric_worker = None
+        self.id_switches = []
         self.lock = threading.Lock(); self.tags = collections.OrderedDict(); self.rep = collections.OrderedDict()
         self.src_t = None; self.started = time.strftime('%Y-%m-%d %H:%M:%S'); self.ended = None; self.end_reason = None; self.file = None
-        self.last_k = None; self.last_pass = None; self.passes = 0; self.draw_t = None; self.draw_gt = None; self.resets = []
+        self.last_k = None; self.last_pass = None; self.passes = 0; self.draw_t = None; self.draw_gt = None
         self.pos_in = None; self.pos_shown = None; self.pass_shown = None; self.pos_t = None; self.seek_to = None; self.seek_t = None; self.seeks = 0
         self.zero()
 
@@ -124,41 +135,106 @@ class Eval:
         if self.seek_to is not None and slot == self.seek_to and t_in >= self.seek_t: self.seek_to = None
 
     def want_seek(self, pos, t):   # 서버가 SEEK 를 보냈다: 이 번호의 프레임이 화면에 나올 때까지 "건너뛰는 중"
-        with self.lock: self.seek_to = pos; self.seek_t = t; self.seeks += 1
+        with self.lock:
+            self.seek_to = pos; self.seek_t = t; self.seeks += 1
+            if self.phase == 'scoring':
+                self.phase = 'interrupted'
+                self.metric_frames.clear()
+            self._sum = None
 
     def position(self):
         with self.lock: return dict(pos=self.pos_shown, pass_=self.pass_shown, seek_to=self.seek_to, seeks=self.seeks)
 
-    def frame(self, t_in, rows, sc, image_id):   # 주 스레드 (live_publish): 화면에 낸 프레임 하나
+    def first_pass_position(self, t_in):
+        with self.lock:
+            tag = self.tags.get(t_in)
+            return tag[2] if self.phase == 'scoring' and tag is not None and tag[1] == 1 else None
+
+    def _compute(self, frames):
+        try:
+            metrics = replay_metrics.compute(frames)
+            status = 'ready'
+        except Exception as exc:
+            print('REPLAY METRICS failed', type(exc).__name__, str(exc)[:120], flush=True)
+            metrics = dict(hota=None, ap50=None, map=None)
+            status = 'error'
+        with self.lock:
+            self.metrics = metrics
+            self.metric_status = status
+            self._sum = None
+
+    def _complete(self):
+        self.phase = 'complete'
+        if not self.lab['ok'] or not self.metric_frames:
+            return
+        frames, self.metric_frames = self.metric_frames, []
+        self.metric_status = 'pending'
+        self.metric_worker = threading.Thread(target=self._compute, args=(frames,), name='replay-metrics')
+        self.metric_worker.start()
+
+    def _metric_input(self, gt, tracks, kept, detections, sc):
+        people, ignore = gt_score.split_gt(gt, True)
+        targets = [(int(gid), *box) for gid, box in people]
+        kept_tracks = [tracks[j] for j in kept]
+        if detections is None:
+            return targets, kept_tracks, None
+        det = [(0, float(r[0]), float(r[1]) - 16, float(r[2]), float(r[3]) - 16, float(r[4]))
+               for r in detections if int(r[5]) == 0]
+        if sc is not None:
+            det = stab_people_real(det, sc, float(APP.LIVE_W), float(APP.LIVE_H))
+        valid_overlap = gt_score.iou_matrix([b for _, b in people], [d[1:5] for d in det])
+        det_out = [(d[5], *d[1:5]) for j, d in enumerate(det)
+                   if (valid_overlap[:, j] >= gt_score.IOU_MIN).any()
+                   or not any(gt_score.ioa(d[1:5], b) >= gt_score.IOA_MIN for b in ignore)]
+        return targets, kept_tracks, det_out
+
+    def frame(self, t_in, rows, sc, image_id, detections=None):
         with self.lock:
             if self.src_t is not None and t_in < self.src_t: return None   # 이 재생보다 먼저 도착한 프레임 (옛 영상)
             rp = self.rep.pop(t_in, None)
             if rp is not None:   # 되풀이: 위치만 갱신하고, 채점도 '화면에 낸 프레임' 수도 늘리지 않는다 (정답 상자는 그림에 그리게 돌려준다)
                 self._shown(t_in, rp[2], rp[1])
-                return self.lab['gt'].get(rp[0]) if self.lab['ok'] and rp[0] in self.lab['frames'] else None
+                return self.lab['gt'].get(rp[0], ()) if self.lab['ok'] and rp[0] in self.lab['frames'] else None
             tg = self.tags.pop(t_in, None)
             self.n['published'] += 1
             if tg is None: self.n['untagged'] += 1; return None
             png, pss, k = tg
             self._shown(t_in, k, pss)
-            if not self.lab['ok']: return None
-            if png not in self.lab['frames']:
-                self.n['not_reviewed' if png in self.lab['gt'] else 'not_labelled'] += 1; return None
+            gt = self.lab['gt'].get(png, ()) if self.lab['ok'] and png in self.lab['frames'] else None
+            if self.phase != 'scoring':
+                return gt
+            if pss == 1 and k < self.pass_frames:
+                return gt
+            if pss != 1 or k != self.pass_frames or not self.sequence_frames or (self.lab['ok'] and not png):
+                self.phase = 'incomplete'
+                self.gap = dict(expected_slot=self.pass_frames, got_slot=k, pass_no=pss, png=png)
+                print('REPLAY EVAL incomplete:', self.gap, flush=True)
+                self.metric_frames.clear()
+                self._sum = None
+                return gt
+            if gt is None:
+                self.n['not_reviewed' if png in self.lab['gt'] else 'not_labelled'] += 1
+                self.pass_frames += 1
+                if self.pass_frames == self.sequence_frames:
+                    self._complete()
+                self._sum = None
+                return None
             ppl = [(int(r[4]), float(r[0]), float(r[1]) - 16.0, float(r[2]), float(r[3]) - 16.0, float(r[5])) for r in rows if int(r[6]) == 0]
             ppl = stab_people_real(ppl, sc, float(APP.LIVE_W), float(APP.LIVE_H)) if sc is not None else ppl   # 짐벌 줄과 같은 실제 카메라 좌표
             out = [(p[0], p[1], p[2], p[3], p[4]) for p in ppl]
-            gt = self.lab['gt'][png]
-            fn = self.new.frame(gt, out, pss); fo = self.old.frame(gt, out, pss)
+            switches, kept = [], []
+            fn = self.new.frame(gt, out, pss, switches=switches, kept=kept)
+            fo = self.old.frame(gt, out, pss)
             self.new_h.frame(gt, out, pss); self.old_h.frame(gt, out, pss)
+            self.id_switches.extend(dict(frame=k + 1, png=png, gt_id=g, from_id=old, to_id=new) for g, old, new in switches)
+            self.metric_frames.append(self._metric_input(gt, out, kept, detections, sc))
             self.n['scored'] += 1; self.uniq.add(png); self.ver += 1; self._sum = None
+            self.pass_frames += 1
+            if self.pass_frames == self.sequence_frames:
+                self._complete()
             if len(self.log) < LOG_MAX: self.log.append([image_id, png, pss, fn['found'], fn['missed'], fn['false'], fo['found'], fo['missed'], fo['false'], k])
             self.draw_t = t_in; self.draw_gt = gt
             return gt
-
-    def reset(self):
-        with self.lock:
-            self.resets.append(dict(at=time.strftime('%Y-%m-%d %H:%M:%S'), before=self._summary_locked(False)))
-            self.zero()
 
     def _summary_locked(self, with_rules=True):
         if self._sum is not None and with_rules: return self._sum
@@ -167,7 +243,9 @@ class Eval:
                  scoring=lab['ok'], why=lab['why'] or None, review=lab['review'] or None, label_file=lab['label_file'], label_sha256=lab['label_sha256'],
                  label_bad_lines=lab['bad_lines'], labelled_frames=lab['labelled'], scorable_frames=len(lab['frames']), passes=self.passes, scored_unique=len(self.uniq), seeks=self.seeks,
                  counts=dict(self.n, server_skipped=max(0, self.n['received'] - self.n['published'] - len(self.tags))),
-                 new=self.new.result() if lab['ok'] else None, old=self.old.result() if lab['ok'] else None, draw=DRAW[0],
+                 phase=self.phase, sequence_frames=self.sequence_frames, pass_frames=self.pass_frames, first_gap=self.gap,
+                 metric_status=self.metric_status, id_switches=self.id_switches[-30:],
+                 new=dict(self.new.result(), **self.metrics) if lab['ok'] else None, old=self.old.result() if lab['ok'] else None, draw=DRAW[0],
                  matching='CLEAR MOT (Bernardin & Stiefelhagen 2008, as py-motmetrics): last frame pairs kept while IoU >= 0.5, Hungarian for the rest',
                  per_frame_hungarian=dict(note='same frames, plain Hungarian every frame without keeping last frame pairs; not shown on the page',
                                           new=self.new_h.result(), old=self.old_h.result()) if lab['ok'] else None)
@@ -179,23 +257,31 @@ class Eval:
 
     def close(self, reason):   # 재생이 끝났다: 끝난 때와 이유를 적는다 (라벨이 없어 채점하지 않은 녹화도). 파일은 write() 가 쓴다
         with self.lock:
-            if self.ended is None: self.ended = time.strftime('%Y-%m-%d %H:%M:%S'); self.end_reason = reason; self._sum = None
+            if self.ended is None:
+                self.ended = time.strftime('%Y-%m-%d %H:%M:%S'); self.end_reason = reason; self._sum = None
+                if self.phase == 'scoring':
+                    self.phase = 'incomplete' if reason == 'ended' else 'interrupted'
+                    self.metric_frames.clear()
 
     def write(self, reason):
         self.close(reason)
         if not self.lab['ok']: return None
+        if self.metric_worker is not None:
+            self.metric_worker.join()
         with self.lock:
             safe = ''.join(c if (c.isalnum() or c in '-_') else '_' for c in self.name)[:60].strip('_') or 'replay'
-            p = APP.out / ('replay_eval_%s_%s.json' % (safe, time.strftime('%Y%m%d_%H%M%S')))
+            stamp = time.strftime('%Y%m%d_%H%M%S') + ('_%09d' % (time.time_ns() % 1_000_000_000))
+            p = APP.out / ('replay_eval_%s_%s.json' % (safe, stamp))
             d = dict(self._summary_locked(False), rules=gt_score.RULES_KO,
                      thresholds=dict(iou=gt_score.IOU_MIN, ioa=gt_score.IOA_MIN, edge_px=gt_score.EDGE_PX, edge_width=gt_score.EDGE_W, small_height=gt_score.SMALL_H),
                      references=['K. Bernardin, R. Stiefelhagen. Evaluating Multiple Object Tracking Performance: The CLEAR MOT Metrics. EURASIP JIVP 2008 (MOTA, ID switches)',
                                  'E. Ristani, F. Solera, R. Zou, R. Cucchiara, C. Tomasi. Performance Measures and a Data Set for Multi-Target, Multi-Camera Tracking. ECCV Workshops 2016 (IDF1)'],
+                     metric_scope='HOTA uses final track IDs and project ignore rules. AP50 and mAP50:95 use person detections after the detector score filter/NMS, before tracking and the temperature filter. Full first pass only.',
                      counts_note='received = frames from the replay camera with a PNG number; cam_skipped = frames the replay camera skipped (receiver slow); '
-                                 'published = frames shown since the start or the last reset; untagged = shown without a known PNG number (not scored); '
+                                 'published = frames processed since the start; untagged = shown without a known PNG number (not scored); '
                                  'not_reviewed / not_labelled = PNG without a reviewed label (not scored); scored = frames in the numbers; server_skipped = received but not shown; '
-                                 'repeats = frames repeated while the replay was paused (not counted anywhere else); scored_unique = different PNGs among the scored frames (a seek back scores a scene again as a new pass)',
-                     resets=self.resets, frames_cols=['image_id', 'png', 'pass', 'new_found', 'new_missed', 'new_false', 'old_found', 'old_missed', 'old_false', 'pos'], frames=self.log)
+                                 'repeats = frames repeated during pause or at the end (not scored); scored_unique = distinct PNGs scored in the first pass',
+                     id_switches=self.id_switches, frames_cols=['image_id', 'png', 'pass', 'new_found', 'new_missed', 'new_false', 'old_found', 'old_missed', 'old_false', 'pos'], frames=self.log)
             try:
                 p.write_text(json.dumps(d, ensure_ascii=False), encoding='utf-8'); self.file = str(p.name); self._sum = None
                 print('REPLAY EVAL written %s: frames scored %d, new false %d missed %d, old false %d missed %d' % (p.name, self.n['scored'], d['new']['false'], d['new']['missed'], d['old']['false'], d['old']['missed']), flush=True)
@@ -232,10 +318,33 @@ def tag(p, ta, rid, slot, flags=2):   # camera_extra._reader: 재생 카메라�
     if ev is not None: ev.tag(ta, rid, slot, flags)
 
 
-def on_frame(t_in, rows, sc, image_id):   # live_publish: 재생 중이 아니면 바로 돌아간다
+def lossless(p=None):
+    ev = EV if p is None else getattr(p, 'lwir_eval', None)
+    return ev is not None and ev.lab['ok']
+
+
+def first_pass_position(t_in):
+    ev = EV
+    return ev.first_pass_position(t_in) if ev is not None and ev.lab['ok'] else None
+
+
+def initial_fps():
+    ev = EV
+    return ev.fps if ev is not None and ev.lab['ok'] and ev.phase == 'scoring' else None
+
+
+def reset_first_input(t_in):
+    if first_pass_position(t_in) != 0:
+        return False
+    APP.LIVE.lo = APP.LIVE.hi = None
+    stab_off()
+    return True
+
+
+def on_frame(t_in, rows, sc, image_id, detections=None):
     ev = EV
     if ev is None: return None
-    try: return ev.frame(t_in, rows, sc, image_id)
+    try: return ev.frame(t_in, rows, sc, image_id, detections)
     except Exception as e:
         print('REPLAY EVAL frame failed', type(e).__name__, str(e)[:120], flush=True); return None
 
@@ -261,12 +370,6 @@ def is_repeat(t_in):   # live_publish: 이 프레임은 재생 프로그램이 �
 def last():   # 끝난 재생의 마지막 숫자 (서버가 다시 켜지면 없어진다). 없으면 None
     e = LAST
     return dict(e.summary(), on=False) if e is not None else None
-
-
-def reset_request():
-    ev = EV
-    if ev is None: return 409, '재생 중이 아님'
-    ev.reset(); return 200, '숫자를 처음부터 다시 셈'
 
 
 def draw_request(q):

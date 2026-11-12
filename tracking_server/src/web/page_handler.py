@@ -1,4 +1,6 @@
 """웹 화면: 보여 줄 그림 만들기(live_publish), 페이지 요청 처리(lv_Handler, lv_Server), 서버 끝내기(live_close)."""
+from colorsys import hsv_to_rgb
+from functools import lru_cache
 import json
 import time
 import numpy as np
@@ -45,7 +47,14 @@ def live_gimbal_position():
     return dict(pose=gb_sample('pose_sample'), position_estimate=gb_sample('position_sample'))
 
 
-def live_publish(g_, rows_, row_):
+@lru_cache(maxsize=512)
+def track_color(track_id):
+    # Golden-angle spacing gives consecutive IDs distinguishable hues.
+    r, g, b = hsv_to_rgb((track_id * 0.61803398875) % 1.0, 0.72, 1.0)
+    return int(b * 255), int(g * 255), int(r * 255)
+
+
+def live_publish(g_, rows_, row_, detections=None):
     now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if APP.LIVE.arr else now_
     raw16_ = APP.LIVE.raws.popleft() if APP.LIVE.raws else None   # v20
     rq_ = APP.LIVE.rawq.popleft() if APP.LIVE.rawq else None   # v24f
@@ -69,7 +78,7 @@ def live_publish(g_, rows_, row_):
     for r_ in rows_:
         x1_, y1_, x2_, y2_ = [float(v_) for v_ in r_[:4]]; tid_, cls_ = int(r_[4]), int(r_[6]); y1_ -= 16; y2_ -= 16
         if cls_ != 0: continue   # v16: people only
-        col_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else (60, 220, 60); npers_ += 1
+        col_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_); npers_ += 1
         if APP.GB is not None and len(gb_people_) < 60: gb_people_.append((tid_, x1_, y1_, x2_, y2_, float(r_[5])))
         if gb_id_ and tid_ != gb_id_: continue   # v39 (user 11-10): while one person is followed only that person's box is drawn
         draw_.append(((int(x1_ * sc_), int(y1_ * sc_)), (int(x2_ * sc_), int(y2_ * sc_)), col_, tid_))
@@ -84,7 +93,7 @@ def live_publish(g_, rows_, row_):
         if APP.GB.gui and raw16_ is not None and raw16_.shape == (APP.LIVE_H, APP.LIVE_W):   # v20: frame + picture to the gimbal executor and the PC GUI
             APP.gb_send_frame('G %d %d %d %d %d' % (APP.GB.frame, int(t_in * 1e9), APP.LIVE_W, APP.LIVE_H, len(gb_people_)) + people_txt_, np.ascontiguousarray(raw16_, dtype=np.uint16).tobytes())
         else: APP.gb_send('F %d %d %d' % (APP.GB.frame, int(t_in * 1e9), len(gb_people_)) + people_txt_)
-    gtd_ = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id')) if replay_eval.EV is not None else None   # 11-12: score this frame against the labels (replay only; after the gimbal line)
+    gtd_ = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections) if replay_eval.EV is not None else None   # 11-12: score this frame against the labels (replay only; after the gimbal line)
     # 11-12: the page picture only when somebody can see it: every frame while /stream has a viewer, otherwise once a second (/snap.jpg at most 1 s old)
     # and every frame for 3 s after a /snap.jpg request. Nothing else reads this picture (tracking, gimbal, measurement and the PC GUI use the frame itself).
     if APP.LIVE.viewers > 0 or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0:
@@ -103,7 +112,7 @@ def live_publish(g_, rows_, row_):
                 seen_ = {int(r_[4]) for r_ in rows_}
                 for tid_, b_ in POSP['boxes']:
                     if tid_ in seen_ or (APP.GB is not None and tid_ != gb_id_): continue   # v36 (user 11-10): only the person being followed (no gimbal link: every lost person)
-                    pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else (60, 220, 60)
+                    pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_)
                     p1_ = (int((b_[0] - b_[2] / 2) * sc_), int((b_[1] - b_[3] / 2 - 16) * sc_)); p2_ = (int((b_[0] + b_[2] / 2) * sc_), int((b_[1] + b_[3] / 2 - 16) * sc_))
                     dash_rect(img_, p1_, p2_, pc_, 2); APP.cv2.putText(img_, '%d predict' % tid_, (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, pc_, 2)   # v36: same colour as the track, dashed = estimate
             except Exception: pass
@@ -200,7 +209,7 @@ def make_lv_Handler():
                 elif u4_.path == '/replay/pause': code_, text_ = replay_link.pause_request()
                 elif u4_.path == '/replay/play': code_, text_ = replay_link.play_request()
                 elif u4_.path == '/replay/speed': code_, text_ = replay_link.speed_request(pq4_(u4_.query))   # 11-12: frames per second while playing
-                elif u4_.path == '/replay/eval/reset': code_, text_ = replay_eval.reset_request()   # 11-12: count again from now
+                elif u4_.path == '/replay/eval/reset': code_, text_ = replay_link.restart_request()
                 elif u4_.path == '/replay/eval/draw': code_, text_ = replay_eval.draw_request(pq4_(u4_.query))   # 11-12: ground-truth boxes on the page picture
                 else: self.send_error(404); return
                 b_ = json.dumps(dict(ok=code_ == 200, text=text_, state=replay_link.state(), eval=replay_eval.state(), eval_last=replay_eval.last()), ensure_ascii=False).encode()

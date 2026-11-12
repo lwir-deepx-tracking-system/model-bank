@@ -143,20 +143,24 @@ class Feed:
                         if self.quit or L_.stopped: return
                         if not self.paused:
                             e_ = self._free() if len(self.out) < AHEAD else None
-                            if e_ is None:
+                            if e_ is None and not camera_extra.replay_eval.lossless():
                                 while len(L_.q) > 1: L_.q.popleft(); L_.q_drop += 1; self.st['drop_wait'] += 1   # 지금은 넣을 수 없다: 기다리는 것은 가장 새 프레임 1 장만
-                            elif self.redo or L_.q: break
+                            elif e_ is not None and (self.redo or L_.q): break
                         L_.cond.wait(timeout=0.5)
                     r_ = self.redo.popleft() if self.redo else None
-                    if r_ is None: t_, raw_ = L_.q.popleft()
+                    if r_ is None:
+                        t_, raw_ = L_.q.popleft()
+                        if camera_extra.replay_eval.lossless():
+                            L_.cond.notify_all()
                     self.busy[e_] = True; self.working = True
                     if sum(self.busy) > 1: self.st['overlap'] += 1
                 self._job = None
                 if r_ is None:
+                    restart = camera_extra.replay_eval.reset_first_input(t_)
                     g8_ = APP.lv_to8(raw_); gg_ = np.empty((512, 640), np.uint8); gg_[16:496] = g8_; gg_[:16] = g8_[0]; gg_[496:] = g8_[-1]   # live_next 와 같은 순서, 같은 계산
                     sc_ = stab_live(g8_, t_, gg_) if STAB['on'] else stab_off()
                     r_ = _Rec(); r_.seq = self.seq; self.seq += 1; r_.t = t_; r_.raw = raw_; r_.g8 = g8_; r_.gg = gg_; r_.stab = sc_
-                    r_.gmc = self._gmc(gg_) if APP.args.gmc_thread else None
+                    r_.gmc = self._gmc(gg_, restart) if APP.args.gmc_thread else None
                 self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
                 r_.e = e_; r_.job = self._job
                 with L_.cond:
@@ -168,8 +172,8 @@ class Feed:
                 if e_ is not None and self._job is None and e_ < len(self.busy): self.busy[e_] = False
                 self.err = repr(x_)[:200]; self.working = False; L_.cond.notify_all()
 
-    def _gmc(self, gg_):   # camera_motion.gmc_submit 과 같은 일 (첫 프레임에서 계산 객체를 만들고, 작업 스레드에 순서대로 맡긴다). 프레임 번호는 받아 갈 때 붙는다
-        if not APP.gmc_objs:
+    def _gmc(self, gg_, restart=False):   # camera_motion.gmc_submit 과 같은 일 (첫 프레임에서 계산 객체를 만들고, 작업 스레드에 순서대로 맡긴다). 프레임 번호는 받아 갈 때 붙는다
+        if restart or not APP.gmc_objs:
             o_ = camera_motion.GMC(APP.args.gmc_ds); o_.fp = dict(o_.fp, maxCorners=APP.args.gmc_corners, minDistance=APP.args.gmc_mindist); APP.gmc_objs.append(o_)
         return APP.gmc_pool.submit(APP.gmc_job, APP.gmc_objs[-1], gg_)
 

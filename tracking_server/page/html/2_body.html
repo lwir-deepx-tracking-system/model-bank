@@ -31,6 +31,7 @@
         <div class="rpseek" id="rpseek" hidden>
           <div class="rpr"><button class="btn small" id="rpplay" disabled>일시정지</button><button class="btn small" id="rpm10" disabled title="10초 앞으로 되감기">−10초</button><input type="range" id="rpslider" min="0" max="0" step="1" value="0" disabled aria-label="재생 위치"><button class="btn small" id="rpp10" disabled title="10초 앞으로 건너뛰기">+10초</button></div>
           <div class="rpr rpt"><span class="num" id="rptime">–</span><span class="rpj">장 번호 <input type="number" id="rpjn" min="1" step="1" inputmode="numeric" aria-label="이동할 장 번호 (1부터)" disabled><button class="btn small" id="rpgo" disabled>이동</button></span></div>
+          <div class="minfo"><kbd>Esc</kbd> 카메라로 돌아가기</div>
           <div class="minfo rpcm" id="rpcm"></div>
         </div>
         <div class="rpnum" id="rpnum" hidden>
@@ -38,6 +39,7 @@
           <div class="rpmain" id="rpmain"></div>
           <div class="rpold" id="rpold"></div>
           <div class="rpfoot" id="rpfoot"></div>
+          <div class="rpids" id="rpids"></div>
         </div>
       </div>
       <div class="hint">사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
@@ -128,7 +130,7 @@
         <!-- 11-12: a stored recording of the label site instead of the camera. The gimbal does not move while it plays. -->
         <div class="body stack">
           <select id="rpsel" aria-label="녹화 고르기"><option value="">목록을 불러오는 중…</option></select>
-          <div class="row"><span class="lbl">초당 장 수</span><input type="number" id="rpfps" min="5" max="30" step="1" value="25" aria-label="초당 장 수 (재생 중에 바꾸면 바로 적용)"><label class="chk"><input type="checkbox" id="rploop" checked> 반복</label></div>
+          <div class="row"><span class="lbl">초당 장 수</span><input type="number" id="rpfps" min="5" max="30" step="1" value="25" aria-label="초당 장 수 (재생 중에 바꾸면 바로 적용)"><label class="chk"><input type="checkbox" id="rploop"> 반복</label></div>
           <div class="row"><button class="btn start" id="rpstart">재생 시작</button><button class="btn" id="rpstop" disabled>재생 멈춤 (카메라로)</button></div>
           <div class="minfo rpnote" id="rpnote" style="margin-top:0"></div>
           <div class="minfo" id="rpmsg" style="margin-top:0"></div>
@@ -137,7 +139,7 @@
             <div class="rtitle">정답과 비교</div>
             <div class="minfo" id="rpevmsg" style="margin-top:0">재생을 시작하면, 검수한 정답 라벨이 있는 녹화는 여기에 1초마다 점수가 나옵니다.</div>
             <table id="rpevt"></table>
-            <div class="row"><button class="btn small" id="rpevreset" disabled>숫자 처음부터</button><label class="chk"><input type="checkbox" id="rpevdraw"> 정답 상자 그리기</label></div>
+            <div class="row"><label class="chk"><input type="checkbox" id="rpevdraw"> 정답 상자 그리기</label></div>
             <details class="fold"><summary>숫자 설명</summary><dl class="legend">
               <dt>새 채점 · 옛 채점</dt><dd>같은 프레임을 두 규칙으로 셉니다. 새 채점은 무시 구역(라벨의 무시 상자, 가장자리에 걸친 좁은 사람)을 빼고, 옛 채점은 빼지 않습니다.</dd>
               <dt>잘못 그린 상자</dt><dd>정답 사람과 짝이 없는 서버의 사람 상자 수. 있으면 안 되는 상자라 맨 위에 둡니다. 새 채점에서는 무시 구역 안에 반 넘게 든 상자는 세지 않습니다.</dd>
@@ -150,8 +152,11 @@
               <dt>IDF1</dt><dd>사람마다 번호를 얼마나 끝까지 지켰는지. 채점한 모든 프레임에 걸쳐 정답 번호와 서버 번호를 하나씩 짝지어 셈 (Ristani 외 2016). 100 이 가장 좋음.</dd>
               <dt>MOTA</dt><dd>1 − (놓침 + 잘못 그린 상자 + 번호 바뀜) ÷ 정답 사람 (CLEAR MOT). 100 이 가장 좋고, 0 보다 작을 수도 있음.</dd>
               <dt>무시 구역 상자</dt><dd>새 채점에서 무시 구역 안이라 세지 않은 서버 상자 수.</dd>
-              <dt>채점한 장</dt><dd>정답 라벨이 있고 검수한 프레임 가운데 서버가 화면에 낸 프레임. 재생 카메라나 서버가 건너뛴 프레임, 어느 PNG 인지 모르는 프레임, 일시정지 중에 되풀이한 프레임은 채점하지 않습니다.</dd>
-              <dt>바퀴 · 구간</dt><dd>반복 재생은 바퀴마다, 건너뛰기는 건너뛸 때마다 새 구간으로 계속 채점합니다. 구간 하나를 영상 하나처럼 보고 더합니다 (정답 번호와 서버 번호 모두 구간마다 새로 셈).</dd>
+              <dt>완주 기준</dt><dd>녹화 한 편을 처음부터 끝까지 연속으로 한 번 재생한 결과를 기준으로 씁니다. 중간에 멈추거나 건너뛰면 완주 점수로 확정하지 않습니다. 다시 확인하려면 처음부터 새 재생을 시작합니다.</dd>
+              <dt>채점한 장</dt><dd>검수된 정답 라벨이 있고 서버 출력과 프레임 번호가 맞는 장면만 셉니다. 결과 아래에 전체 영상 진행량과 정답 비교 가능 장 수를 따로 보여 줍니다.</dd>
+              <dt>HOTA</dt><dd>사람 검출과 추적 ID 연결을 함께 평가하는 점수입니다. 한 번 완주한 뒤 계산 상태가 완료되면 표시합니다.</dd>
+              <dt>사람 mAP50:95 · AP50</dt><dd>저장된 사람 검출 후보를 정답 상자와 비교한 검출 점수입니다. 추적이 끝난 뒤 별도로 계산하며, 계산 중·계산 불가 상태를 구분해 표시합니다.</dd>
+              <dt>ID 변경</dt><dd>정답 사람과 연결된 추적 번호가 바뀐 장면을 영상 아래에 프레임 번호와 함께 표시합니다.</dd>
             </dl></details>
             <details class="fold"><summary>채점 규칙</summary><dl class="legend">
               <dt>사람만</dt><dd>정답 클래스 0 과 서버가 내보낸 사람 상자 (화면에 보이고 짐벌에 가는 상자, 640x480 좌표).</dd>
@@ -167,14 +172,14 @@
           <details class="fold" style="margin-top:0"><summary>녹화 재생 설명</summary><dl class="legend">
             <dt>하는 일</dt><dd>라벨 사이트의 녹화 폴더 하나를 카메라 대신 서버에 넣습니다. 검출·추적은 카메라 영상과 똑같이 돌고, 영상 맨 위 줄에 REPLAY 와 녹화 이름이 나옵니다.</dd>
             <dt>짐벌</dt><dd>재생을 시작하면 짐벌을 멈추고, 재생 중에는 사람을 눌러도 손으로 움직여도 짐벌이 움직이지 않습니다. 재생을 멈춘 뒤에는 사람을 다시 누를 때까지 따라가지 않습니다.</dd>
-            <dt>카메라로</dt><dd>재생 멈춤을 누르면 카메라 프로그램을 다시 시작합니다. 영상은 10~60초 뒤에 나옵니다. "반복"을 끄면 한 번 끝까지 튼 뒤 저절로 카메라로 돌아갑니다.</dd>
+            <dt>카메라로</dt><dd>Esc 또는 재생 멈춤을 누르면 카메라 프로그램을 다시 시작합니다. 영상은 10~60초 뒤에 나옵니다. "반복"을 끄면 한 번 끝까지 튼 뒤 저절로 카메라로 돌아갑니다.</dd>
             <dt>8비트 녹화</dt><dd>값이 0~255 를 늘린 것이라 온도 Filter(16비트 값)가 맞지 않아 사람이 걸러질 수 있습니다. 볼 때만 설정의 "온도 Filter"를 잠시 끄세요. 서버가 Filter 를 스스로 바꾸지는 않습니다.</dd>
             <dt>측정</dt><dd>재생 중에도 측정할 수 있습니다. 측정 결과(summary.json, README_KO.txt)에 재생한 녹화 이름이 적힙니다.</dd>
             <dt>길이</dt><dd>길이 제한이 없습니다. 장면은 필요할 때 하나씩 읽습니다.</dd>
             <dt>영상 아래 막대</dt><dd>재생 중에는 영상 바로 아래에 재생 위치 막대, 재생·일시정지, −10초·+10초, 장 번호로 이동이 나옵니다. 막대는 놓을 때 건너뜁니다. 시간은 위의 "초당 장 수" 기준입니다. 장 번호는 1부터 셉니다 (1 = 녹화의 첫 장면).</dd>
             <dt>건너뛰면</dt><dd>건너뛴 뒤 약 1.2초는 영상이 멈춘 듯 보이고, 그 사이 추적은 새로 시작합니다 (사람 번호가 새로 붙음). 짐벌은 건너뛰는 중에도 움직이지 않습니다. 먼 곳이나 뒤로 건너뛰면 PNG 녹화는 이 1.2초 안쪽, 측정 녹화(raw.gz)는 파일을 앞에서부터 다시 풀어야 해서 몇 초 더 걸릴 수 있습니다.</dd>
             <dt>일시정지</dt><dd>멈춘 동안 같은 장면을 초당 5장 되풀이해 보냅니다 (서버가 카메라가 죽었다고 보지 않게, 화면이 살아 있게). 되풀이한 장면은 정답과 비교에 세지 않습니다.</dd>
-            <dt>건너뛰고 숫자</dt><dd>건너뛸 때마다 새 구간이 시작되고, 이미 센 숫자는 지우지 않습니다. 되감아서 같은 장면을 다시 지나가면 새 구간의 장면으로 한 번 더 셉니다 (숫자에 그 장면이 두 번 들어감). "서로 다른 장면" 수를 함께 보여 줍니다. 처음부터 다시 세려면 "숫자 처음부터".</dd>
+            <dt>점수 비교 재생</dt><dd>새 재생은 처음부터 한 번 완주하는 것을 기준으로 합니다. 반복은 기본으로 꺼져 있습니다. 완료 전에 건너뛰거나 재생을 멈추면 해당 회차는 중단으로 표시되며, 처음부터 새로 재생해야 완주 기준 결과를 얻습니다.</dd>
           </dl></details>
         </div>
       </details>

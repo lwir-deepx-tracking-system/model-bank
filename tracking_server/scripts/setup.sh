@@ -13,6 +13,10 @@ cd "$(dirname "$0")/.."
 g++ -O3 -shared -fPIC -o src/detect/post.so src/detect/post.cpp
 echo "post.so built"
 
+if ! bash scripts/build_native_trackers.sh; then
+  echo "Optional C++ tracker build failed; check the build log. Unsupported presets use Python." >&2
+fi
+
 mkdir -p models/links
 python3 - <<'EOF'
 import hashlib, json, os

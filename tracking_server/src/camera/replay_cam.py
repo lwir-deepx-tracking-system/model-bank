@@ -306,6 +306,7 @@ def main():
     ap.add_argument('--rep-fps', type=float, default=float(os.environ.get('LWIR_REPLAY_REP_FPS', '5') or 5))
     ap.add_argument('--control', action='store_true', default=os.environ.get('LWIR_REPLAY_CONTROL') == '1')
     ap.add_argument('--tag', action='store_true', default=os.environ.get('LWIR_REPLAY_TAG') == '1')
+    ap.add_argument('--no-skip', action='store_true', help='preserve sequential frames under backpressure')
     a = ap.parse_args()
     err = sys.stderr
 
@@ -433,7 +434,7 @@ def main():
                 next_rep = max(next_rep + rep_period, clock() + rep_period * 0.5)
                 continue
             d = due - clock()
-            if not first and d < -period:   # 한 칸 넘게 늦었다: 지나간 칸은 건너뛴다 (몰아서 보내지 않는다)
+            if not a.no_skip and not first and d < -period:   # 한 칸 넘게 늦었다: 지나간 칸은 건너뛴다 (몰아서 보내지 않는다)
                 jump = int(-d / period)
                 pos += jump
                 skipped += jump
@@ -471,7 +472,7 @@ def main():
             seek_wait = False
             sent += 1
             pos += 1
-            due += period
+            due = max(due, clock()) + period if a.no_skip else due + period
             first = False
             if paused:
                 next_rep = clock() + rep_period

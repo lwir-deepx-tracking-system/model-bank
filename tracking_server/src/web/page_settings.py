@@ -6,6 +6,7 @@ from ..common import settings
 from ..common.state import APP
 from ..common.shared_values import HERE, CORE, DET, sha
 from ..detect.model_scan import BANK
+from ..track import native_backend
 from ..track.position_memory import POSP, pos_list
 from ..track.stabilizer import STAB
 from ..track.bytetrack import ByteTrackTracker
@@ -49,9 +50,16 @@ def sel_det_late(dv_, tries_=30, gap_=2.0):
 def mk_tracker_(kind_):
     alternative = {'ocsort': OCSortTracker, 'sort': SortTracker}.get(kind_)
     if alternative is not None:
-        return alternative(n_init=max(3, APP.args.n_init), class_gate=APP.args.class_gate, radius=APP.args.radius)
-    return (BotSortTracker if kind_ == 'botsort' else ByteTrackTracker)('rebind' if kind_ == 'rebind' else 'bytetrack', sim=APP.args.sim, app=False, late_window=APP.args.late_window, app_first=False, gate=APP.args.gate, motion_fallback=not APP.args.no_motion_fallback,
-                vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h, hybrid=True, sync_k=APP.args.sync_k, hybrid_fallback=False, radius=APP.args.radius, n_init=max(3, APP.args.n_init) if kind_ == 'confirm3' else APP.args.n_init, class_gate=APP.args.class_gate)
+        kwargs = dict(n_init=max(3, APP.args.n_init), class_gate=APP.args.class_gate, radius=APP.args.radius)
+        return native_backend.create(kind_, kind_, kwargs, lambda: alternative(**kwargs))
+    cls = BotSortTracker if kind_ == 'botsort' else ByteTrackTracker
+    py_mode = 'rebind' if kind_ == 'rebind' else 'bytetrack'
+    native_mode = 'botsort' if kind_ == 'botsort' else py_mode
+    kwargs = dict(sim=APP.args.sim, app=False, late_window=APP.args.late_window, app_first=False, gate=APP.args.gate,
+                  motion_fallback=not APP.args.no_motion_fallback, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h,
+                  hybrid=True, sync_k=APP.args.sync_k, hybrid_fallback=False, radius=APP.args.radius,
+                  n_init=max(3, APP.args.n_init) if kind_ == 'confirm3' else APP.args.n_init, class_gate=APP.args.class_gate)
+    return native_backend.create(kind_, native_mode, kwargs, lambda: cls(py_mode, **kwargs))
 
 
 def ctl_state():
@@ -74,7 +82,8 @@ def ctl_state():
 def rules_state():
     with APP.RULES['lock']:
         return dict(warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
-                    gate_available=False, presets=[dict(key=k_, name=n_) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
+                    gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker),
+                    presets=[dict(key=k_, name=n_, backend=native_backend.backend_label(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
                     predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state())   # v32. v40: app / lead / gimbal / warm_on
 

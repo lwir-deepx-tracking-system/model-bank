@@ -121,7 +121,7 @@ def live_next(*, wait=True, fresh_only=False):
             if not wait and not APP.LIVE.q:
                 return None
             while not APP.LIVE.q:
-                if APP.LIVE.stopped or (APP.LIVE.cam_lost and APP.args.live_wait): break
+                if APP.LIVE.stopped or (APP.LIVE.cam_lost and (APP.args.live_wait or getattr(APP.LIVE, 'replay', None) is not None)): break
                 wait_s_ = (APP.args.live_wait or 10) if APP.LIVE.last is None else 10   # v20: the real camera takes >10 s to start (scan, open, shutter calibration)
                 if APP.LIVE.cond.wait(timeout=wait_s_): continue
                 if APP.args.live_wait: raise RuntimeError('no camera frame for %d s' % wait_s_)
@@ -129,9 +129,12 @@ def live_next(*, wait=True, fresh_only=False):
             if fresh_only and APP.LIVE.stopped:
                 return None
             if APP.LIVE.q:
-                if not APP.args.pipeline:
+                preserve = camera_extra.replay_eval.lossless()
+                if not APP.args.pipeline and not preserve:
                     while len(APP.LIVE.q) > 1: APP.LIVE.q.popleft()
                 t_, raw_ = APP.LIVE.q.popleft()
+                if preserve:
+                    APP.LIVE.cond.notify_all()
                 if APP.LIVE.prev_t is not None and t_ - APP.LIVE.prev_t > 1.0:   # v26b: the camera gave no frame for over 1 s (repair, restart). The person at the old place may be someone else now:
                     APP.LIVE.gap_n += 1                                         # the gimbal selection is dropped here, before this frame goes to the bridge, and the tracker forgets its tracks at this frame (see the main loop). The person is clicked again.
                     if APP.GB is not None: APP.gb_send('H')
@@ -143,6 +146,7 @@ def live_next(*, wait=True, fresh_only=False):
                 if APP.LIVE.last is None: raise RuntimeError('camera delivered no frame')
                 return APP.LIVE.last
         with APP.LIVE.cam_lock: APP.lv_cam_wait()   # v33: cam_lock. v21: outside the lock: may reopen the camera process
+    camera_extra.replay_eval.reset_first_input(t_)
     APP.FRAME_DY[0] = 16.0; g8_ = APP.lv_to8(raw_); gg_ = np.empty((512, 640), np.uint8); gg_[16:496] = g8_; gg_[:16] = g8_[0]; gg_[496:] = g8_[-1]
     APP.LIVE.stabq.append(stab_live(g8_, t_, gg_) if STAB['on'] else stab_off())   # stab: LIVE.raws / LIVE.rawq below keep the unmoved frames
     APP.LIVE.arr.append(t_); APP.LIVE.last = gg_

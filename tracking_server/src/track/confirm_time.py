@@ -56,10 +56,10 @@ class ConfirmByTime:
         return dict(ms=self.ms, frames=(self.frames_for(base) if base is not None else (self.n or None)), fps=(round(self.fps, 1) if self.fps else None), changes=self.changes)
 
 
-def apply(rule, tracker, t):
+def apply(rule, tracker, t, *, fps=None):
     """매 프레임, 추적기 update 전에 부른다. 추적기의 n_init 을 지금 장 수로 맞추고, 바뀌었으면 (이전, 새 값) 을 돌려준다(아니면 None).
     이미 화면에 나온 궤적은 그대로다. 아직 확인 전인 궤적만 새 장 수를 따른다."""
-    n = rule.tick(t)
+    n = rule.tick(t) if fps is None else int(rule.ms * fps / 1000.0 + 0.5)
     if not hasattr(tracker, 'n_init_base'): tracker.n_init_base = int(tracker.n_init)
     want = max(tracker.n_init_base, n)
     if want == tracker.n_init: return None

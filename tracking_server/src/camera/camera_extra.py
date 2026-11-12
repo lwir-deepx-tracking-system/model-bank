@@ -29,6 +29,7 @@ C. 공유 메모리로 프레임 넘기기 (기본으로 꺼짐, LWIR_CAM_STAMP=
 """
 import atexit
 import collections
+import math
 import mmap
 import os
 import struct
@@ -371,6 +372,7 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
     n_ = APP.LIVE_W * APP.LIVE_H * 2; buf_ = bytearray(n_); cnt_ = 0; tl_ = time.monotonic()
     mv_ = memoryview(buf_); hb_ = bytearray(HDR_N); hv_ = memoryview(hb_); pend_ = bytearray(); ring_ = None; last_seq_ = 0; good_ = 0
     cs_ = APP.LIVE.cam_stamp; recent_ = APP.LIVE.cam_stamp_recent
+    last_tag_t = None
     while True:
         if not _take(p_, pend_, hv_): return _end(p_, ring_)
         h_ = parse_header(hb_)
@@ -415,10 +417,31 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
         age_ = time.monotonic() - tns_ * 1e-9; gap_ = dtus_ * 1e-6
         raw_ = np.frombuffer(buf_, np.uint16).reshape(APP.LIVE_H, APP.LIVE_W).copy()
         ta_ = time.perf_counter()
-        if flags_ & 2: replay_eval.tag(p_, ta_, rid_, slot_, flags_)   # 11-12: only the replay program sets bit 2 (png number, position and pass for the ground-truth comparison and the seek bar; value 4 = a frame repeated while paused); cam_pipe never does
+        if flags_ & 2:
+            # Two frames can arrive in one clock tick after backpressure releases.
+            if last_tag_t is not None and ta_ <= last_tag_t:
+                ta_ = math.nextafter(last_tag_t, math.inf)
+            last_tag_t = ta_
+        scored_replay = bool(flags_ & 2) and replay_eval.lossless(p_)
+        if scored_replay and flags_ & 4:
+            # Pause keeps the same displayed frame without advancing tracker state.
+            replay_eval.tag(p_, ta_, rid_, slot_, flags_)
+            APP.LIVE.last_frame_t = time.monotonic()
+            continue
         with APP.LIVE.cond:
+            if scored_replay:
+                while len(APP.LIVE.q) == APP.LIVE.q.maxlen and not APP.LIVE.stopped and p_ is APP.LIVE.proc:
+                    APP.LIVE.cond.wait(timeout=0.1)
+                if APP.LIVE.stopped or p_ is not APP.LIVE.proc:
+                    continue
+            if flags_ & 2:
+                replay_eval.tag(p_, ta_, rid_, slot_, flags_)
             if len(APP.LIVE.q) == APP.LIVE.q.maxlen: APP.LIVE.q_drop += 1
-            APP.LIVE.q.append((ta_, raw_)); APP.LIVE.cond.notify()
+            APP.LIVE.q.append((ta_, raw_))
+            if scored_replay:
+                APP.LIVE.cond.notify_all()
+            else:
+                APP.LIVE.cond.notify()
         rc_ = APP.LIVE.rec
         if rc_ is not None:
             with rc_['cond']:

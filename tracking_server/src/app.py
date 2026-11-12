@@ -36,7 +36,7 @@ from .detect import model_scan, npu_engine, detect_frame
 from .web import system_buttons, page_handler, page_settings, measure
 from .track import camera_motion
 from .reid import reid_embed
-from .camera import camera_link
+from .camera import camera_link, replay_eval
 from .gimbal import gimbal_link
 from .common import result_summary
 from .common import stage_timing   # 2026-11-11: 단계별 시간 재기 (LWIR_STAGE_TIMING=1 일 때만, 기본 꺼짐)
@@ -633,7 +633,7 @@ def main():
                     else: gmc_fail += gmc.n_fail if gmc is not None else 0; gmc = GMC(APP.args.gmc_ds); gmc.fp = dict(gmc.fp, maxCorners=APP.args.gmc_corners, minDistance=APP.args.gmc_mindist)
             async_vit = vit is not None and not budget                  # --vit-budget: every crop is synchronous inside / right after update()
             if APP.args.pipeline:
-                if ready_prefetch and not ahead:
+                if (ready_prefetch or replay_eval.lossless()) and not ahead:
                     # The last result was already published before we waited here.
                     g = APP.live_next(fresh_only=True)
                     if g is None:
@@ -646,7 +646,7 @@ def main():
                 read_ms = 0.0
                 next_i = i + APP.args.npu_depth
                 if next_i < len(APP.images):
-                    if ready_prefetch:
+                    if ready_prefetch or replay_eval.lossless():
                         # An empty queue must never delay this result, including during replay transitions.
                         g_n = APP.live_next(wait=False, fresh_only=True)
                     else:
@@ -687,11 +687,21 @@ def main():
                     synth_st['frames_applied'] += 1; synth_st['hidden_dets'] += n_hid; synth_st['planned_boxes_without_det'] += n_miss
                 synth_ms = (time.perf_counter_ns() - ts_) / 1e6
             bench_ms = vit_bench(g, arr, i) if APP.bench_eng is not None else 0.0   # --vit-bench-n: after NMS, before tracker.update (excluded from tracker_ms)
+            eval_pos = replay_eval.first_pass_position(APP.LIVE.arr[0]) if APP.LIVE is not None and APP.LIVE.arr else None
+            if eval_pos == 0:
+                if APP.relabeler is not None:
+                    APP.relabeler.reset()
+                APP.tracker = mk_tracker_(APP.RULES['tracker'])
+                if APP.args.gmc:
+                    APP.tracker.kf = GKF()
             gmc_ms = 0.0
             if gmc is not None:   # --gmc: warp prev -> current, consumed by the next multi_predict (pool) and applied to unconfirmed tracks now
                 tg_ = time.perf_counter_ns()
                 if APP.args.gmc_thread: W_, c_ms_ = APP.gmc_futs.pop(i).result(); gmc_comp_ms.append(c_ms_)
-                else: W_ = gmc.apply(g)
+                else:
+                    if eval_pos == 0:
+                        gmc.prev = None
+                    W_ = gmc.apply(g)
                 APP.tracker.kf.warp = W_; APP.CTL['W'] = W_   # v40: prev -> current warp, read by lead_shift
                 for t_ in APP.tracker.tracked:
                     if not t_.is_activated and t_.mean is not None:
@@ -710,12 +720,12 @@ def main():
                 if not keep_.all(): APP.LIVE.warm_dropped += int((~keep_).sum()); arr = arr[keep_]
             if APP.LIVE is not None and APP.LIVE.arr and APP.tracker is not None:   # v26b: first frame after an input gap of over 1 s: no track is continued by position alone (the tracker counts frames, not seconds, so it would not notice the gap).
                 ta_ = APP.LIVE.arr[0]                                         # every track ends here; people get new tracks through the normal confirmation, and KeepID may give a returning person the old number by appearance only.
-                if APP.LIVE.upd_t is not None and ta_ - APP.LIVE.upd_t > 1.0:
+                if eval_pos is None and APP.LIVE.upd_t is not None and ta_ - APP.LIVE.upd_t > 1.0:
                     for t_ in APP.tracker.tracked + APP.tracker.lost: t_.state = REMOVED
                     print('LIVE input gap: %d tracks ended at frame %d' % (len(APP.tracker.tracked) + len(APP.tracker.lost), i), flush=True); APP.tracker.tracked = []; APP.tracker.lost = []
                 APP.LIVE.upd_t = ta_
                 if APP.CONFIRM is not None:   # 11-11 --confirm-ms: the tracker's confirmation count follows the measured frame rate (arrival times of the frames the tracker gets)
-                    ch_ = confirm_apply(APP.CONFIRM, APP.tracker, ta_)
+                    ch_ = confirm_apply(APP.CONFIRM, APP.tracker, ta_, fps=replay_eval.initial_fps() if eval_pos is not None else None)
                     if ch_: print('CONFIRM %g ms at %.1f fps: %d -> %d frames (frame %d)' % (APP.CONFIRM.ms, APP.CONFIRM.fps or 0.0, ch_[0], ch_[1], i), flush=True)
             if APP.TIMING is not None: APP.TIMING.mark()
             n_sync0 = len(sync_lat)
@@ -729,7 +739,8 @@ def main():
                 feat_fn = (lambda idxs, g_=g, arr_=arr, f_=i: sync_embed(idxs, g_, arr_, f_)) if (vit is not None and APP.args.vit_sync and APP.args.app_first) else None
                 if GATE_FN is not None: APP.tracker.gray = g   # v11: the gate's local-contrast / texture features read the current gray frame
                 bs_feats = None   # v38: BoT-SORT appearance = RepVGG_(TMOT,CAMEL) (KeepID engine, NPU core 2) on the 4 highest-score people >= 32 px. v40: app = off | repvgg
-                if isinstance(APP.tracker, BotSortTracker) and APP.rl_eng is not None and len(arr) and APP.CTL['app'] == 'repvgg':
+                is_botsort = isinstance(APP.tracker, BotSortTracker) or (APP.LIVE is not None and APP.RULES['tracker'] == 'botsort')
+                if is_botsort and APP.rl_eng is not None and len(arr) and APP.CTL['app'] == 'repvgg':
                     bk_ = [int(j) for j in np.argsort(-arr[:, 4]) if int(arr[j, 5]) == PERSON_CLS and arr[j, 4] >= 0.25 and arr[j, 3] - arr[j, 1] >= 32.0][:4]
                     try:
                         if bk_: bs_feats = APP.rl_embed(bk_, g, {j: arr[j, :4].tolist() for j in bk_})
@@ -795,7 +806,7 @@ def main():
             if APP.relabeler is not None:
                 APP.tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
                                         tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (APP.FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in base_rows]))
-            if APP.LIVE is not None: live_publish(g, tr_rows, row)
+            if APP.LIVE is not None: live_publish(g, tr_rows, row, detections=p)
             if APP.TIMING is not None: APP.TIMING.frame(i, t0, t1, t2, t4, rl_ms, t5)
             prev_gray = g
             if budget: prev_arr = arr

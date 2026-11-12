@@ -30,7 +30,10 @@ def gmc_job(o_, g_):
 
 
 def gmc_submit(k, g_):
-    if k == 0 or APP.images[k]['extra_info']['video_id'] != APP.images[k - 1]['extra_info']['video_id']:
+    from ..camera import replay_eval
+    live = APP.LIVE
+    replay_start = live is not None and live.arr and replay_eval.first_pass_position(live.arr[-1]) == 0
+    if replay_start or not APP.gmc_objs or k == 0 or APP.images[k]['extra_info']['video_id'] != APP.images[k - 1]['extra_info']['video_id']:
         o_ = GMC(APP.args.gmc_ds); o_.fp = dict(o_.fp, maxCorners=APP.args.gmc_corners, minDistance=APP.args.gmc_mindist); APP.gmc_objs.append(o_)
     APP.gmc_futs[k] = APP.gmc_pool.submit(APP.gmc_job, APP.gmc_objs[-1], g_)
 

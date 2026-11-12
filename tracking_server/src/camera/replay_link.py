@@ -157,7 +157,10 @@ def frame_blocked(t_in_):   # live_publish: 이 프레임은 짐벌에 사람 �
 def cam_argv():   # 카메라 자리에 띄울 명령. 재생이 없으면 전과 똑같다
     r_ = getattr(APP.LIVE, 'replay', None)
     if r_ is None: return [APP.args.live_cam or str(HERE / 'src' / 'camera' / 'cam_pipe')]
-    return [sys.executable, '-B', str(HERE / 'src' / 'camera' / 'replay_cam.py'), '--dir', r_['dir'], '--fps', '%g' % r_['fps'], '--loops', '0' if r_['loop'] else '1', '--tag', '--control', '--total', str(r_['frames'] or 0)]
+    argv = [sys.executable, '-B', str(HERE / 'src' / 'camera' / 'replay_cam.py'), '--dir', r_['dir'], '--fps', '%g' % r_['fps'], '--loops', '0' if r_['loop'] else '1', '--tag', '--control', '--total', str(r_['frames'] or 0)]
+    if replay_eval.lossless():
+        argv.append('--no-skip')
+    return argv
 
 
 class Ctl:
@@ -243,7 +246,7 @@ def start_request(q_):   # -> (http 코드, 글)
     try: fps_ = float(q_.get('fps', [str(FPS_DEF)])[0])
     except ValueError: return 400, 'fps 가 숫자가 아님'
     if not FPS_MIN <= fps_ <= FPS_MAX: return 400, 'fps 는 %g ~ %g' % (FPS_MIN, FPS_MAX)
-    lp_ = q_.get('loop', ['1'])[0]
+    lp_ = q_.get('loop', ['0'])[0]
     if lp_ not in ('0', '1'): return 400, 'loop 는 0 또는 1'
     it_, d_ = find(q_.get('seq', [''])[0])
     if it_ is None: return (409 if not on() else 400), d_
@@ -301,6 +304,13 @@ def speed_request(q_):   # POST /replay/speed?fps=<5~30>
     if r_ is None: return e_
     r_['fps'] = fps_; ctl_.send('speed', fps_)
     return 200, '초당 %g 장' % fps_
+
+
+def restart_request():
+    r_ = getattr(APP.LIVE, 'replay', None)
+    if r_ is None:
+        return 409, '재생 중이 아님'
+    return start_request({'seq': [r_['name']], 'fps': [str(r_['fps'])], 'loop': ['1' if r_['loop'] else '0']})
 
 
 def stop_request():

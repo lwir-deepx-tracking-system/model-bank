@@ -12,7 +12,8 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
   const ps=(r.presets||[]).map(p=>Array.isArray(p)?{key:p[0],name:p[1]}:p).filter(p=>p&&p.key&&p.key!=='gate');
-  T.push({lab:'Tracker',n:ps.map(p=>({key:p.key,name:TN[p.key]?TN[p.key][0]:p.name,note:TN[p.key]?TN[p.key][1]:'',sel:p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}))});
+  const tb=(r.tracker_backend==='C++'||r.tracker_backend==='Python')?r.tracker_backend:'미보고';
+  T.push({lab:'Tracker',sub:'실제 실행 엔진: '+tb,n:ps.map(p=>({key:p.key,name:(TN[p.key]?TN[p.key][0]:p.name)+' · '+((p.backend==='C++'||p.backend==='Python')?p.backend:'백엔드 미보고'),note:TN[p.key]?TN[p.key][1]:'',sel:p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}))});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
   const hot=!!(r.reid_hot&&r.reids&&r.reids.length),rk=hot?(r.reid_pending||r.reid):'',fol=!!(r.gimbal&&r.gimbal.auto);

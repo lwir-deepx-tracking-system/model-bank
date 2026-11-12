@@ -128,7 +128,7 @@ class Score:
         self.n_gt = collections.Counter(); self.n_out = collections.Counter()
         self._res = None
 
-    def frame(self, gt_rows, out_rows, key=None):
+    def frame(self, gt_rows, out_rows, key=None, *, switches=None, kept=None):
         """gt_rows: [(번호, x1, y1, x2, y2, 클래스)], out_rows: [(서버 번호, x1, y1, x2, y2)] (사람만), key: 정답 번호와 서버 번호 앞에 붙는 값
         (바퀴 번호: 바퀴마다 다른 영상처럼 센다). -> 이 프레임의 셈 dict"""
         ppl, ign = split_gt(gt_rows, self.ignore)
@@ -139,7 +139,10 @@ class Score:
         f = dict(gt=len(ppl), found=len(pairs), missed=0, missed_small=0, false=0, ignored_out=0, idsw=0, out=0)
         for i, j in pairs:
             g = (key, ppl[i][0]); o = oid[j]
-            if g in self.last and self.last[g] != o: f['idsw'] += 1
+            if g in self.last and self.last[g] != o:
+                f['idsw'] += 1
+                if switches is not None:
+                    switches.append((int(g[1]), self.last[g][1], o[1]))
             self.last[g] = o
         for i, (_, b) in enumerate(ppl):
             if i in mg: continue
@@ -151,6 +154,8 @@ class Score:
             if j in mo: keep.append(j); continue
             if self.ignore and any(ioa(b, r) >= IOA_MIN for r in ign): f['ignored_out'] += 1; continue
             f['false'] += 1; keep.append(j)
+        if kept is not None:
+            kept.extend(keep)
         f['out'] = len(keep)
         for i, (gid, _) in enumerate(ppl):
             g = (key, gid); self.n_gt[g] += 1

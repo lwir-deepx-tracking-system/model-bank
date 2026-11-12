@@ -40,12 +40,18 @@
 - BoT-SORT의 외형 입력은 `{det_idx: L2 정규화 특징}`입니다. GUI의 `repvgg` 경로는 `app.py`에서 `isinstance(..., BotSortTracker)`를 확인합니다. 래퍼 적용 후에도 타입 검사 또는 그와 동등한 기능 판별이 유지되어야 합니다. LostFirst와 `rebind`의 후보별 외형 콜백 및 비동기 결과는 프레임·검출 행과 맞춥니다. KeepID는 추적기 뒤에서 동작하며, 최종 화면 ID는 KeepID 뒤의 값을 비교해야 합니다.
 - 매칭은 [`tracker_common.py`](tracker_common.py)의 비용 제한과 순서를 따릅니다. SciPy와 다른 솔버는 동점에서 다른 짝을 낼 수 있습니다. 빈 행렬, `1×1`, 임계값과 같은 비용, 직사각 행렬, 동점, 매칭 후 미배정 목록을 먼저 맞춥니다. Python의 Kalman 상태와 `Track` 박스는 `float64`를 쓰므로 처음부터 일괄 `float32`로 바꾸지 않습니다.
 
-## C++을 Python에 연결하는 방법
+## C++ 자동 선택 규약
 
-1. 공통 계산 하나를 C++17 공유 라이브러리(`.so`)로 만들고 Python 어댑터에서 `ctypes`로 호출합니다. 현재 프로젝트의 [`native_post.py`](../detect/native_post.py)와 [`setup.sh`](../../scripts/setup.sh)에서 로드·빌드 방식을 볼 수 있습니다. 이식 대상의 `.so`는 검출 후처리 `post.so`와 별도로 둡니다.
-2. `extern "C"` 함수에 배열 자료형·개수·출력 버퍼 크기·실패 반환값을 명시합니다. Python에서 연속 배열을 넘기고 `argtypes`와 `restype`를 지정합니다. C++이 다음 호출까지 쓸 입력은 자체 소유 버퍼에 보관합니다. C++ 예외를 Python 호출 경계 밖으로 내보내지 않습니다.
-3. 전체 추적기로 확장하면 Python 객체 하나가 C++ 인스턴스 하나의 생성·갱신·종료를 맡게 합니다. 첫 통합은 Python판과 C++판을 실행 설정으로 고를 수 있게 하고, 프레임을 처리하는 도중에 한 인스턴스의 구현을 바꾸지 않습니다. 실시간 GUI에는 기존 추적기 이름과 설정 키를 유지합니다.
-4. 8090 브라우저는 [`live_publish()`](../web/page_handler.py)가 그린 `/stream`을 받습니다. 팀 PC GUI도 기존 전송 경로를 씁니다. 웹에서 박스나 ID를 별도로 계산할 필요가 없고, 팀 PC 전송 시에는 캡처 프레임 번호와 영상 타임스탬프를 유지합니다. [팀 PC 통신 형식](../gimbal/team/docs/pc_communication.md)
+- 실시간 GUI는 `bytetrack.cpp`, `botsort.cpp`, `ocsort.cpp`, `sort.cpp`를 찾습니다. `confirm3`와 `rebind`는 `bytetrack.cpp`를 공유합니다.
+- 소스를 이 폴더에 넣고 저장소 최상위에서 `bash tracking_server/scripts/setup.sh`를 실행합니다. 추적기만 빌드할 때는 `bash tracking_server/scripts/build_native_trackers.sh`를 사용합니다. Orange Pi의 `g++`, 서버 Python 버전에 맞는 개발 헤더와 `python3-config`가 필요합니다. 재시작하면 빌드된 C++를 우선 사용합니다.
+- C++ 소스는 CPython 확장 모듈 `_native_<이름>`을 제공해야 합니다. 예를 들어 `bytetrack.cpp`의 초기화 함수는 `PyInit__native_bytetrack`입니다. `API_VERSION = 1`과 `create_tracker(mode, kwargs)`를 내보냅니다. 여러 모드는 `SUPPORTED_MODES`에 선언합니다. `confirm3`는 `mode='bytetrack'`과 `n_init` 설정을, `rebind`는 `mode='rebind'`를 받습니다. 나머지 모드는 파일 이름과 같습니다.
+- 팩토리는 `update(arr, det_feats, feat_fn)`와 위의 상태 필드를 갖는 객체를 반환합니다. 서버가 `n_init`, `kf`, `tracked`, `lost`를 변경하는 경로도 지원해야 합니다. 빌드나 로드가 실패하면 Python을 사용합니다. 메뉴는 사용 가능 구현을, 현재 값은 실제 실행 중인 구현을 보여 줍니다.
+- 일부 계산만 옮길 때는 Python 추적기 내부에서 `ctypes`로 별도 공유 라이브러리를 호출할 수도 있습니다. [후처리 어댑터 예](../detect/native_post.py). 전체 추적기를 메뉴에 C++로 표시하려면 위 모듈 규약을 따릅니다.
+- 8090은 기존 [`live_publish()`](../web/page_handler.py)를 사용합니다. 팀 PC GUI도 캡처 프레임 번호와 영상 타임스탬프를 유지한 기존 전송 경로를 씁니다. [팀 PC 통신 형식](../gimbal/team/docs/pc_communication.md)
+
+## 팀 runtime의 C++ 코드
+
+팀의 [runtime C++ 추적기](https://github.com/lwir-deepx-tracking-system/runtime/tree/0fe016f7edd069900457a746dc4cc787569c5ae6/src/tracking)에는 ByteTrack과 OC-SORT가 있습니다. `track(vector<Detection>)`과 `reset()`을 사용합니다. 재사용하려면 `XYWH`↔`XYXY`를 변환하고, 검출 인덱스 `det_idx`와 서버가 읽는 추적 상태를 연결하는 어댑터가 필요합니다. 임계값, Kalman 상태 표현, 새 트랙 확인과 클래스 구분도 Python판과 맞춰서 검증합니다.
 
 ## 넘기기 전 확인
 
