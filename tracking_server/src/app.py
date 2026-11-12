@@ -435,6 +435,7 @@ def main():
             APP.LIVE.camera_bytetrack = CameraByteTrack(APP.args)
             APP.LIVE.restart_supported = ready_prefetch and os.environ.get('LWIR_REAL_GUI_LAUNCH') == '1'
             APP.LIVE.restart_pending = False
+            APP.LIVE.restart_stop = False
             APP.LIVE.instance = str(time.monotonic_ns())
             APP.LIVE.jpeg = b''; APP.LIVE.seq = 0; APP.LIVE.viewers = 0; APP.LIVE.pic_t = -1e9; APP.LIVE.pic_n = 0; APP.LIVE.snap_t = -1e9; APP.LIVE.jcond = APP.lv_th.Condition(); APP.LIVE.t0 = time.monotonic(); APP.LIVE.cam_fps = 0.0; APP.LIVE.done_ts = APP.lv_col.deque(maxlen=40)
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
@@ -575,6 +576,8 @@ def main():
                 g_k, _ = read_frame(k_); ahead.append((g_k, submit_tiles(g_k, k_))); gmc_submit(k_, g_k)
         do_model_swap = page_settings.do_model_swap
         for i, im in enumerate(APP.images):
+            if APP.LIVE is not None and APP.LIVE.restart_stop:
+                break
             vid = im['extra_info']['video_id']; reset = vid != prev_vid
             if APP.MODEL['req'] is not None:   # v23: a model change was asked for; taken here, between two frames
                 rq_ = APP.MODEL['req']; APP.MODEL['busy'] = True

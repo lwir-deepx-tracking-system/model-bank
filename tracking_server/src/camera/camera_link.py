@@ -121,12 +121,14 @@ def live_next(*, wait=True, fresh_only=False):
             if not wait and not APP.LIVE.q:
                 return None
             while not APP.LIVE.q:
-                if APP.LIVE.stopped or (APP.LIVE.cam_lost and (APP.args.live_wait or getattr(APP.LIVE, 'replay', None) is not None)): break
+                if (APP.LIVE.stopped or (fresh_only and getattr(APP.LIVE, 'restart_stop', False))
+                        or (APP.LIVE.cam_lost and (APP.args.live_wait or getattr(APP.LIVE, 'replay', None) is not None))):
+                    break
                 wait_s_ = (APP.args.live_wait or 10) if APP.LIVE.last is None else 10   # v20: the real camera takes >10 s to start (scan, open, shutter calibration)
                 if APP.LIVE.cond.wait(timeout=wait_s_): continue
                 if APP.args.live_wait: raise RuntimeError('no camera frame for %d s' % wait_s_)
                 break   # v21: --live-wait 0: no frame yet
-            if fresh_only and APP.LIVE.stopped:
+            if fresh_only and (APP.LIVE.stopped or getattr(APP.LIVE, 'restart_stop', False)):
                 return None
             if APP.LIVE.q:
                 preserve = camera_extra.replay_eval.lossless()

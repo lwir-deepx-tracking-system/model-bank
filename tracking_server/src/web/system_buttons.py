@@ -27,7 +27,9 @@ def stop_for_restart():
     live = APP.LIVE
     print('Tracking server restart requested', flush=True)
     with live.cond:
-        live.stopped = True
+        # Only the frame loop can mark the stream stopped. An in-flight frame
+        # still uses the live image index until its camera-motion work is queued.
+        live.restart_stop = True
         live.cond.notify_all()
 
 
