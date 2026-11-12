@@ -80,8 +80,10 @@ def ctl_state():
 
 
 def rules_state():
+    cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
+    camera_backend = cam_tracker.state() if cam_tracker is not None else None
     with APP.RULES['lock']:
-        return dict(warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
+        return dict(camera_bytetrack=camera_backend, warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
                     gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker),
                     presets=[dict(key=k_, name=n_, backend=native_backend.backend_label(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
@@ -170,6 +172,9 @@ def rules_request(q_):
     with APP.RULES['lock']:
         if pend_: APP.RULES['pending'] = dict(APP.RULES['pending'] or {}, **pend_, t=time.time())
         APP.RULES['changes'] += 1; APP.RULES['last'] = dict(at=time.strftime('%H:%M:%S'), warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, queued=sorted(pend_.keys()))
+    cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
+    if 'tracker' in pend_ and cam_tracker is not None:
+        cam_tracker.select(False)
     print('RULES set warm_min %d warm_max %d edge_birth %.2f pending %s' % (settings.WARM_MIN, settings.WARM_MAX, settings.EDGE_BIRTH, pend_), flush=True)
     APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), app=APP.CTL['app'], lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **(dict(confirm_ms=APP.CONFIRM.ms) if cm_ is not None else {}), **pend_)   # v36. v40: lead itself is not kept (comes back OFF)
     return True, '적용됨' if not (pend_ or rk_ is not None) else '다음 프레임에 적용'

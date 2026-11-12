@@ -8,11 +8,14 @@ function rpEnded(st){return !!(st&&st.on&&!st.loop&&!st.seeking&&st.total>0&&st.
 function rpItem(n){return rpList.find(x=>x.name===n)||null;}
 function rpBackendLabel(id,r){const b=(r&&Array.isArray(r.backends)?r.backends:[]).find(x=>x.id===id);return b&&b.label||({python:'현재 추적기',cpp_bytetrack:'C++ ByteTrack'}[id]||id||'현재 추적기');}
 function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state;RPNOTE.textContent=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';}
-function rpShow(r){rpLast=r;
+function rpCppState(r){return r&&r.state&&r.state.on&&r.state.backend==='cpp_bytetrack'?(r.eval&&r.eval.backend_error?'error':'active'):'';}
+function rpShow(r){const redraw=rpCppState(rpLast)!==rpCppState(r);rpLast=r;
+  if(redraw)otdraw();
   const backends=Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}];
   const backendKeys=backends.map(x=>x.id+'|'+x.label).join('\n');
   if(backendKeys!==rpBackendKeys){const keep=RPBACK.value;rpBackendKeys=backendKeys;RPBACK.innerHTML=backends.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.label)+'</option>').join('');
-    if(backends.some(x=>x.id===keep))RPBACK.value=keep;else if(backends.some(x=>x.id==='python'))RPBACK.value='python';else RPBACK.value=backends[0].id;}
+    const active=r.state&&r.state.on&&r.state.backend;
+    if(active&&backends.some(x=>x.id===active))RPBACK.value=active;else if(backends.some(x=>x.id===keep))RPBACK.value=keep;else RPBACK.value=backends[0].id;}
   if(!r.available){RPSEL.innerHTML='<option value="">쓸 수 없음</option>';rpKeys='';rpList=[];RPST.disabled=RPSP.disabled=true;RPNOTE.textContent='';RPMSG.textContent=r.why||'쓸 수 없음';barShow(r);return;}
   // Keep original and BandFill recordings side by side; original sequences come first.
   const source='outdoor_bandfill_20261111/', originals='opi_sequences/';
@@ -25,7 +28,6 @@ function rpShow(r){rpLast=r;
     RPSEL.innerHTML=list.length?list.map(x=>{const label=x.name.startsWith(source)?'BandFill / '+x.name.slice(source.length):x.name.startsWith(originals)?'원본 / '+x.name.slice(originals.length):x.name;return '<option value="'+esc(x.name)+'"'+(x.usable?'':' disabled')+'>'+esc(label)+' · '+x.frames+'장 · '+(x.bits?x.bits+'비트':'?')+(x.usable?'':' (쓸 수 없음)')+'</option>';}).join(''):'<option value="">녹화가 없습니다</option>';
     if(keep&&rpItem(keep))RPSEL.value=keep;}
   const st=r.state;
-  if(st.backend&&document.activeElement!==RPBACK&&backends.some(x=>x.id===st.backend))RPBACK.value=st.backend;
   if(st.on&&document.activeElement!==RPSEL&&rpItem(st.name))RPSEL.value=st.name;
   if(st.on&&document.activeElement!==RPFPS&&st.fps!=null)RPFPS.value=Math.round(st.fps);
   RPST.disabled=rpBusy||st.busy||!list.some(x=>x.usable);RPSP.disabled=rpBusy||st.busy||!st.on;

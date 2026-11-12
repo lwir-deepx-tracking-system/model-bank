@@ -1,4 +1,4 @@
-// Tracker-only ABI for offline playback. No camera, control, or deployment interfaces.
+// LWIR_BYTETRACK_C_ABI: track rows only; built by build_bytetrack.py.
 #include "tracking/bytetrack_tracker.hpp"
 #include "common/logger.hpp"
 

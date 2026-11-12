@@ -1,5 +1,10 @@
 """ByteTrack association and the server's optional rebind mode."""
 
+import ctypes as C
+from functools import lru_cache
+from pathlib import Path
+from threading import Lock
+
 import numpy as np
 
 from ..common.shared_values import LOST, PERSON_CLS, REMOVED, TRACKED
@@ -246,3 +251,173 @@ def crop_requests(tracker, every, k, vit_conf, vit_min_h, has_prev):
         act.sort(key=lambda t: t.feat_frame)
         for t in act: req.append(dict(kind='refresh', track_id=t.track_id, frame=tracker.frame_id, idx=t.idx, box=t.last_det[2], src='cur'))
     return req[:k]
+
+
+class _Det(C.Structure):
+    _fields_ = [(name, C.c_float) for name in ("x1", "y1", "x2", "y2", "score")] + [("cls", C.c_int)]
+
+
+class _Track(C.Structure):
+    _fields_ = [(name, C.c_float) for name in ("x1", "y1", "x2", "y2", "score")] + [
+        (name, C.c_int) for name in ("id", "cls", "source_index")]
+
+
+class NativeByteTrack:
+    """Plain C++ ByteTrack; one stateful instance per input stream."""
+
+    @staticmethod
+    def bind(library):
+        lib = C.CDLL(str(library))
+        lib.lwirtk_abi.argtypes, lib.lwirtk_abi.restype = [], C.c_int
+        if lib.lwirtk_abi() != 2:
+            raise RuntimeError("Unsupported C++ ByteTrack ABI")
+        lib.lwirtk_create.argtypes, lib.lwirtk_create.restype = [], C.c_void_p
+        lib.lwirtk_close.argtypes, lib.lwirtk_close.restype = [C.c_void_p], None
+        lib.lwirtk_reset.argtypes, lib.lwirtk_reset.restype = [C.c_void_p], C.c_int
+        lib.lwirtk_step.argtypes = [C.c_void_p, C.POINTER(_Det), C.c_int, C.POINTER(_Track), C.c_int]
+        lib.lwirtk_step.restype = C.c_int
+        return lib
+
+    def __init__(self, library):
+        self._lib = lib = load_bytetrack_library(Path(library))
+        self._handle = lib.lwirtk_create()
+        if not self._handle:
+            raise RuntimeError("Could not create C++ ByteTrack")
+
+    def __del__(self):
+        self.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+
+    def _check_open(self):
+        if not self._handle:
+            raise RuntimeError("C++ ByteTrack is closed")
+
+    def close(self):
+        if getattr(self, "_handle", None):
+            self._lib.lwirtk_close(self._handle)
+            self._handle = None
+
+    def reset(self):
+        self._check_open()
+        if self._lib.lwirtk_reset(self._handle):
+            raise RuntimeError("Could not reset C++ ByteTrack")
+
+    def update(self, rows):
+        self._check_open()
+        rows = np.asarray(rows, dtype=np.float32)
+        if rows.shape == (0,):
+            rows = rows.reshape(0, 6)
+        if (rows.ndim != 2 or rows.shape[1] != 6 or not np.isfinite(rows).all()
+                or np.any(rows[:, 4:] < 0) or np.any(rows[:, 4] > 1)
+                or np.any(rows[:, 5] > 2147483520) or np.any(rows[:, 5] != np.trunc(rows[:, 5]))):
+            raise ValueError("Expected finite [N,6] xyxy, score in [0,1], and nonnegative integer class IDs")
+        n = len(rows)
+        inputs = (_Det * n)(*(_Det(*row[:5], int(row[5])) for row in rows))
+        output = (_Track * n)()
+        size = self._lib.lwirtk_step(self._handle, inputs, n, output, n)
+        if size < 0:
+            self.close()  # after a native failure the frame may have partially advanced
+            raise RuntimeError(f"C++ ByteTrack step failed ({size})")
+        return [[r.x1, r.y1, r.x2, r.y2, r.id, r.score, r.cls, r.source_index]
+                for r in output[:size]]
+
+
+_BYTETRACK_LINKS = Path(__file__).resolve().parents[2] / 'models' / 'links'
+
+
+@lru_cache(maxsize=8)
+def _bind_bytetrack_library(path, signature):
+    try:
+        return NativeByteTrack.bind(path)
+    except (AttributeError, OSError, RuntimeError):
+        return None
+
+
+def load_bytetrack_library(path):
+    path = path.resolve(strict=True)
+    stat = path.stat()
+    lib = _bind_bytetrack_library(path, (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size))
+    if lib is None:
+        raise RuntimeError("C++ ByteTrack library has an incompatible ABI")
+    return lib
+
+
+def available_bytetrack_library(args):
+    """Find the installed ABI without requiring a path setting or a server restart."""
+    override = getattr(args, 'replay_bytetrack_library', '')
+    choices = (Path(override),) if override else (
+        _BYTETRACK_LINKS / 'bytetrack.so', _BYTETRACK_LINKS / 'team_bytetrack.so')
+    for path in choices:
+        try:
+            if path.is_file():
+                load_bytetrack_library(path)
+                return path
+        except (OSError, RuntimeError):
+            continue
+    return None
+
+
+class CameraByteTrack:
+    """Independent preview tracker. Its IDs never enter the control or ReID pipeline."""
+
+    def __init__(self, args):
+        self.args = args
+        self.lock = Lock()
+        self.requested = self.active = False
+        self.error = None
+        self.tracker = self.last_t = None
+
+    def state(self):
+        available = available_bytetrack_library(self.args) is not None
+        with self.lock:
+            return dict(available=available, requested=self.requested, active=self.active, error=self.error)
+
+    def select(self, enabled):
+        with self.lock:
+            if enabled and available_bytetrack_library(self.args) is None:
+                return False
+            self.requested, self.error = enabled, None
+            return True
+
+    def blocks_selection(self):
+        with self.lock:
+            return self.requested or self.active
+
+    def _close(self):
+        if self.tracker is not None:
+            self.tracker.close()
+            self.tracker = None
+        self.last_t = None
+        self.active = False
+
+    def close(self):
+        with self.lock:
+            self._close()
+
+    def step(self, rows, frame_t, camera):
+        with self.lock:
+            if not self.requested or not camera or rows is None:
+                self._close()
+                return None
+            try:
+                if self.last_t is not None and not 0 < frame_t - self.last_t <= 1.0:
+                    self._close()
+                if self.tracker is None:
+                    library = available_bytetrack_library(self.args)
+                    if library is None:
+                        raise RuntimeError("C++ ByteTrack library is no longer available")
+                    self.tracker = NativeByteTrack(library)
+                tracked = self.tracker.update(rows)
+                self.last_t = frame_t
+                self.active = True
+                return tracked
+            except (OSError, RuntimeError, ValueError) as exc:
+                self._close()
+                self.requested = False
+                self.error = str(exc)
+                return None

@@ -25,6 +25,9 @@ function rshow(r){rlast=r;
   if(r.stab_err)t+=' · 흔들림 보정 오류: '+r.stab_err;
   if(r.lead)t+=' · 예측 제어 켜짐'+(r.lead_ms!=null?' ('+r.lead_ms+' ms 앞을 겨눔'+(r.lead_px?', 지금 '+r.lead_px+' px':'')+')':'');
   if(r.pending)t+=' · 다음 프레임에 적용';
+  const cam=r.camera_bytetrack;
+  if(cam&&cam.active)t='카메라 화면 · ByteTrack · C++ · 박스와 ID 표시 전용 · 원래 추적기: '+tname(trk);
+  else if(cam&&cam.error)t+=' · C++ 화면 추적 실패, 기존 엔진으로 돌아옴';
   RI.textContent=t;
   rdoc(trk);
   if(r.cam_reset&&r.cam_reset.text&&!sysbusy&&(r.cam_reset.busy||r.cam_reset.at+'|'+r.cam_reset.text!==sysat)){sysat=r.cam_reset.at+'|'+r.cam_reset.text;SM.textContent='카메라 초기화 '+r.cam_reset.at+' — '+r.cam_reset.text;}

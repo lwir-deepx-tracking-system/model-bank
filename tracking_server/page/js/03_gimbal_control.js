@@ -1,5 +1,5 @@
 function post(u,ka){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',keepalive:!!ka}).then(r=>r.json()).then(show).catch(()=>{S.textContent='명령이 전달되지 않았습니다';netChip();});}
-v.addEventListener('click',e=>{if(Date.now()<joyClickBlock)return;const r=v.getBoundingClientRect();   // v40: the click that ends a joystick drag picks nobody
+v.addEventListener('click',e=>{if(typeof rlast!=='undefined'&&rlast&&rlast.camera_bytetrack&&(rlast.camera_bytetrack.active||rlast.camera_bytetrack.requested))return;if(Date.now()<joyClickBlock)return;const r=v.getBoundingClientRect();   // v40: the click that ends a joystick drag picks nobody
   // the image keeps 4:3 inside its box (object-fit: contain): map the click into the picture itself
   const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
   const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;

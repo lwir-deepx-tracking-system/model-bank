@@ -57,7 +57,7 @@ def build(repo, output, cxx):
         dll = tmp / output.name
         platform = ["-static-libstdc++", "-static-libgcc", "-static"] if os.name == "nt" else ["-fPIC", "-pthread"]
         subprocess.run([cxx, "-std=c++17", "-O3", "-shared", "-fvisibility=hidden", *platform, "-I", str(tmp / "include"),
-                        str(root / "team_bytetrack.cpp"), *(str(tmp / path) for path in SOURCES),
+                        str(root / "bytetrack.cpp"), *(str(tmp / path) for path in SOURCES),
                         "-o", str(dll)], check=True)
         # Keep the last working library if compilation fails.
         shutil.copy2(dll, output)

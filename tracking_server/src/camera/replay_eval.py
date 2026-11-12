@@ -24,7 +24,7 @@ import time
 from ..common.state import APP
 from ..track import gt_score, replay_metrics
 from ..track.stabilizer import stab_off, stab_people_real
-from ..track.team_bytetrack import TeamByteTrack
+from ..track.bytetrack import NativeByteTrack
 
 LABEL = 'tracks_edited_mot.txt'
 AUTO = 'tracks_mot.txt'
@@ -117,7 +117,7 @@ class Eval:
         self.zero()
         self.backend = tgt.get('backend', 'python')
         self.backend_error = None
-        self.native_tracker = TeamByteTrack(tgt['tracker_library']) if self.backend == 'cpp_bytetrack' else None
+        self.native_tracker = NativeByteTrack(tgt['tracker_library']) if self.backend == 'cpp_bytetrack' else None
         self.native_tag = None
         self.native_rows = []
         self.native_frames = 0

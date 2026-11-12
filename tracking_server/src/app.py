@@ -21,7 +21,7 @@ from .track.kalman import gmc_warp, GKF
 from .track.position_memory import pos_select
 from .track.camera_motion import GMC
 from .track.stabilizer import STAB_M, stab_shift, stab_margins
-from .track.bytetrack import ByteTrackTracker, crop_requests
+from .track.bytetrack import ByteTrackTracker, CameraByteTrack, crop_requests
 from .track.botsort import BotSortTracker
 from .track.lostfirst import LostFirstTracker
 from .track.gate import GateTracker, NumpyGRUGate
@@ -132,7 +132,7 @@ def main():
     ap.add_argument('--measure-dir', default='/mnt/lwir_data/results/live_measure', help='v22c: folder for the measurement button files (a YYYYMMDD subfolder per day); the run folder when it cannot be written')
     ap.add_argument('--live-wait', type=float, default=90, help='v21: seconds to wait for the first camera frame; 0 = never give up: the page and the gimbal link stay up with a placeholder picture and the camera is reopened every 180 s until --live-seconds ends')
     ap.add_argument('--replay-bytetrack-library', default=os.environ.get('LWIR_REPLAY_BYTETRACK_LIBRARY', ''),
-                    help='Path to the team C++ ByteTrack library for recorded playback')
+                    help='Optional path override for the C++ ByteTrack library used by camera preview and playback')
     ap.add_argument('--replay-root', default='', help='11-12: folder of the label site recordings (<root>/<name>/images/000001.png ...); the web page can play one of them instead of the camera (GET /replay, POST /replay/start, /replay/stop). Empty or missing folder = replay unavailable')
     ap.add_argument('--live-cam', default='', help='v14: path of the cam_pipe helper (default: src/camera/cam_pipe)')
     ap.add_argument('--live-map', choices=['fixed', 'pct'], default='pct', help='v14: 16 -> 8 bit mapping: fixed = linear 0..65535 (team runtime), pct = smoothed 1..99 percentile window')
@@ -432,6 +432,7 @@ def main():
             APP.S640_BUFS = [np.full((1, 640, 640, 3), 114, np.uint8) for _ in range(APP.args.npu_depth + 3)]   # v16: --det s640
             _Live = camera_link._Live
             APP.LIVE = _Live(); APP.LIVE.stopped = False; APP.LIVE.cam_lost = False; APP.LIVE.q = APP.lv_col.deque(maxlen=3); APP.LIVE.cond = APP.lv_th.Condition(); APP.LIVE.arr = APP.lv_col.deque()
+            APP.LIVE.camera_bytetrack = CameraByteTrack(APP.args)
             APP.LIVE.jpeg = b''; APP.LIVE.seq = 0; APP.LIVE.viewers = 0; APP.LIVE.pic_t = -1e9; APP.LIVE.pic_n = 0; APP.LIVE.snap_t = -1e9; APP.LIVE.jcond = APP.lv_th.Condition(); APP.LIVE.t0 = time.monotonic(); APP.LIVE.cam_fps = 0.0; APP.LIVE.done_ts = APP.lv_col.deque(maxlen=40)
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
             APP.LIVE.lo = None; APP.LIVE.hi = None; APP.LIVE.last = None; APP.LIVE.log = open(APP.out / 'cam_pipe.log', 'w'); APP.LIVE.raws = APP.lv_col.deque(); APP.LIVE.rawq = APP.lv_col.deque(); APP.LIVE.warm_dropped = 0; APP.LIVE.last_frame_t = time.monotonic(); APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.cam_next_spawn = None; APP.LIVE.cam_hold = False; APP.LIVE.cam_reset = None; APP.LIVE.sys_lock = APP.lv_th.Lock(); APP.LIVE.cam_lock = APP.lv_th.Lock(); APP.LIVE.frames_in = 0; APP.LIVE.q_drop = 0; APP.LIVE.prev_t = None; APP.LIVE.upd_t = None; APP.LIVE.gap_n = 0; APP.LIVE.delays = APP.lv_col.deque(maxlen=2000); APP.LIVE.dlock = APP.lv_th.Lock(); APP.LIVE.perf = APP.lv_col.deque(maxlen=900); APP.LIVE.perf_acc = [time.perf_counter(), 0, 0.0, 0.0, 0.0]   # v26b: q_drop = camera frames thrown away because the tracker was 3 frames behind, gap_n = input gaps over 1 s, delays = (time, capture-to-picture ms) of the last frames. v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)

@@ -33,6 +33,10 @@ for stem in bytetrack botsort ocsort sort; do
     echo "native $stem skipped: $stem.cpp not present"
     continue
   fi
+  if grep -q "^// LWIR_BYTETRACK_C_ABI:" "$source"; then
+    echo "native $stem uses the separate C ABI; see src/track/build_bytetrack.py"
+    continue
+  fi
   tmp="$(mktemp "$OUT/.build_${stem}.XXXXXX")" || exit 1
   if g++ -O3 -DNDEBUG -std=c++17 -shared -fPIC "${PY_INCLUDE_ARGS[@]}" \
       "$source" -o "$tmp" && mv -f -- "$tmp" "$target"; then

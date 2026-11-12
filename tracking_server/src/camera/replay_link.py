@@ -25,6 +25,7 @@ import time
 
 from ..common.state import APP
 from ..common.shared_values import HERE
+from ..track.bytetrack import available_bytetrack_library
 from . import camera_extra
 from . import replay_eval
 
@@ -243,8 +244,7 @@ def get_info(q_):
     why_ = None if r_ else ('녹화 폴더가 정해지지 않음 (--replay-root)' if not getattr(APP.args, 'replay_root', '') else '녹화 폴더가 없음')
     if r_ and APP.args.live_wait: why_ = '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
     backends = [dict(id='python', label='현재 추적기')]
-    library = getattr(APP.args, 'replay_bytetrack_library', '')
-    if library and os.path.isfile(library):
+    if available_bytetrack_library(APP.args) is not None:
         backends.append(dict(id='cpp_bytetrack', label='C++ ByteTrack'))
     return dict(backends=backends, result_views=True, available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
 
@@ -256,10 +256,10 @@ def start_request(q_):   # -> (http 코드, 글)
     lp_ = q_.get('loop', ['0'])[0]
     if lp_ not in ('0', '1'): return 400, 'loop 는 0 또는 1'
     backend = q_.get('backend', ['python'])[0]
-    library = getattr(APP.args, 'replay_bytetrack_library', '')
+    library = available_bytetrack_library(APP.args) if backend == 'cpp_bytetrack' else None
     if backend not in ('python', 'cpp_bytetrack'):
         return 400, '알 수 없는 재생 추적기'
-    if backend == 'cpp_bytetrack' and (not library or not os.path.isfile(library)):
+    if backend == 'cpp_bytetrack' and library is None:
         return 409, 'C++ ByteTrack 라이브러리가 설정되지 않았습니다'
     it_, d_ = find(q_.get('seq', [''])[0])
     if it_ is None: return (409 if not on() else 400), d_

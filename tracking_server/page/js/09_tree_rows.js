@@ -13,7 +13,13 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
   const ps=(r.presets||[]).map(p=>Array.isArray(p)?{key:p[0],name:p[1]}:p).filter(p=>p&&p.key&&p.key!=='gate');
   const tb=(r.tracker_backend==='C++'||r.tracker_backend==='Python')?r.tracker_backend:'미보고';
-  T.push({lab:'Tracker',sub:'실제 실행 엔진: '+tb,n:ps.map(p=>({key:p.key,name:(TN[p.key]?TN[p.key][0]:p.name)+' · '+((p.backend==='C++'||p.backend==='Python')?p.backend:'백엔드 미보고'),note:TN[p.key]?TN[p.key][1]:'',sel:p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}))});
+  const camNative=r.camera_bytetrack,camCpp=!!(camNative&&camNative.active);
+  const replayCpp=!!(typeof rpLast!=='undefined'&&rpLast&&rpLast.state&&rpLast.state.on&&rpLast.state.backend==='cpp_bytetrack');
+  const replayErr=replayCpp&&!!(rpLast.eval&&rpLast.eval.backend_error);
+  const tn=ps.map(p=>({key:p.key,name:(TN[p.key]?TN[p.key][0]:p.name)+' · '+((p.backend==='C++'||p.backend==='Python')?p.backend:'백엔드 미보고'),note:TN[p.key]?TN[p.key][1]:'',sel:!camCpp&&!replayCpp&&!(camNative&&camNative.requested)&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
+  if(camNative)tn.unshift({key:'cpp_bytetrack',name:'ByteTrack · C++',note:replayCpp?'녹화 재생':camNative.error?'실행 실패 · 기존 추적기로 복귀':camNative.requested&&!camCpp?'다음 카메라 프레임 대기':'실시간 카메라 · 화면 표시용',sel:camCpp||replayCpp&&!replayErr,lock:!camNative.available&&!replayCpp?'장치에 사용 가능한 bytetrack.so가 없습니다':'',u:'/tracker/camera?backend=cpp_bytetrack'});
+  const engine=replayCpp?(replayErr?'C++ 오류 (녹화)':'C++ (녹화)'):camCpp?'C++ (카메라)':tb;
+  T.push({lab:'Tracker',sub:'실제 실행 엔진: '+engine,n:tn});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
   const hot=!!(r.reid_hot&&r.reids&&r.reids.length),rk=hot?(r.reid_pending||r.reid):'',fol=!!(r.gimbal&&r.gimbal.auto);

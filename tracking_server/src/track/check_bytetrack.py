@@ -7,12 +7,11 @@ import time
 
 import numpy as np
 
-from .bytetrack import ByteTrackTracker
-from .team_bytetrack import TeamByteTrack
+from .bytetrack import ByteTrackTracker, NativeByteTrack
 
 
 def smoke(library):
-    with TeamByteTrack(library) as tracker, TeamByteTrack(library) as independent:
+    with NativeByteTrack(library) as tracker, NativeByteTrack(library) as independent:
         det = [[90, 10, 91, 11, .04, 3], [20, 30, 40, 80, .95, 0], [20, 30, 40, 80, .8, 2]]
         first = {t[7]: t for t in tracker.update(det)}
         assert set(first) == {1, 2}, first
@@ -37,7 +36,7 @@ def smoke(library):
 def compare(library, cache):
     totals = Counter()
     native_ms, python_ms = [], []
-    with TeamByteTrack(library) as native, cache.open(encoding="utf-8") as stream:
+    with NativeByteTrack(library) as native, cache.open(encoding="utf-8") as stream:
         python = None
         for line in stream:
             frame = json.loads(line)

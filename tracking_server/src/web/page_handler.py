@@ -56,6 +56,12 @@ def track_color(track_id):
 
 def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if APP.LIVE.arr else now_
+    cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
+    camera_rows = (cam_tracker.step(tracker_detections, t_in,
+                   not replay_link.frame_blocked(t_in))
+                   if cam_tracker is not None else None)
+    display_rows = rows_ if camera_rows is None else camera_rows
+    now_ = time.perf_counter()
     raw16_ = APP.LIVE.raws.popleft() if APP.LIVE.raws else None   # v20
     rq_ = APP.LIVE.rawq.popleft() if APP.LIVE.rawq else None   # v24f
     rep_ = replay_eval.is_repeat(t_in)   # 11-12: a frame the replay program repeats (while paused, and the few at the end) is not a camera fault
@@ -64,7 +70,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     APP.LIVE.done_ts.append(now_)
     if APP.LIVE.meas is not None:   # v22
         with APP.LIVE.meas_lock:
-            if APP.LIVE.meas is not None: APP.LIVE.meas['boxes'].append((t_in, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0, int(b_[4]), float(b_[5]), int(b_[6])) for b_ in stab_rows_real(rows_, sC_)]))   # v22d
+            if APP.LIVE.meas is not None: APP.LIVE.meas['boxes'].append((t_in, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0, int(b_[4]), float(b_[5]), int(b_[6])) for b_ in stab_rows_real(display_rows, sC_)]))   # v22d
             if APP.LIVE.meas is not None: APP.LIVE.meas['rows'].append((now_, (now_ - t_in) * 1000.0, float(row_.get('frame_total_ms', 0.0)), float(row_.get('pre_model_ms', 0.0)), float(row_.get('tracker_ms', 0.0)), float(APP.LIVE.cam_fps)))
     fps_ = (len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0
     # v26c: one sample per second of the numbers in the top line of the picture (TRACK fps, CAM fps, delay, compute), kept 15 min for the graph on the page (GET /perf)
@@ -94,8 +100,9 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
             APP.gb_send_frame('G %d %d %d %d %d' % (APP.GB.frame, int(t_in * 1e9), APP.LIVE_W, APP.LIVE_H, len(gb_people_)) + people_txt_, np.ascontiguousarray(raw16_, dtype=np.uint16).tobytes())
         else: APP.gb_send('F %d %d %d' % (APP.GB.frame, int(t_in * 1e9), len(gb_people_)) + people_txt_)
     gtd_, replay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections, tracker_detections)
-    if replay_rows is not None:
-        rows_ = replay_rows
+    overlay_rows = replay_rows if replay_rows is not None else camera_rows
+    if overlay_rows is not None:
+        rows_ = overlay_rows
         draw_ = [((int(r[0] * sc_), int((r[1] - 16) * sc_)),
                   (int(r[2] * sc_), int((r[3] - 16) * sc_)), track_color(int(r[4])), int(r[4]))
                  for r in rows_ if int(r[6]) == 0]
@@ -113,7 +120,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
             for x1_, y1_, x2_, y2_, k_ in replay_eval.draw_boxes(t_in, gtd_, sC_):
                 a_, b_ = (min(max(int(x1_ * sc_), 0), ww_ - 1), min(max(int(y1_ * sc_), 0), hh_ - 1)), (min(max(int(x2_ * sc_), 0), ww_ - 1), min(max(int(y2_ * sc_), 0), hh_ - 1))
                 if a_[0] < b_[0] and a_[1] < b_[1]: dash_rect(img_, a_, b_, (255, 255, 255) if k_ == 0 else (200, 90, 255), 1, 4)
-        if replay_rows is None and POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
+        if overlay_rows is None and POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
             try:
                 seen_ = {int(r_[4]) for r_ in rows_}
                 for tid_, b_ in POSP['boxes']:
@@ -124,6 +131,8 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
             except Exception: pass
         txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
         rp_ = getattr(APP.LIVE, 'replay', None)
+        if camera_rows is not None:
+            txt_ = 'ByteTrack C++ | TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | persons %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, npers_)
         if rp_ is not None: txt_ = '%s | TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | persons %d' % (replay_link.top_text(rp_), fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, npers_)   # 11-12: shorter line so the name fits
         APP.cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0) if rp_ is None else (0, 0, 150), -1); APP.cv2.putText(img_, txt_, (8, 19), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
         if APP.GB is not None:
@@ -183,6 +192,23 @@ def make_lv_Handler():
                 try: self.send_response(200 if ok_ else 409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 except (BrokenPipeError, ConnectionResetError, OSError): pass
                 return
+            if self.path.startswith('/tracker/camera?') and self.headers.get('X-Gimbal') == '1':
+                from urllib.parse import urlsplit, parse_qs
+                backend = parse_qs(urlsplit(self.path).query).get('backend', [''])[0]
+                cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
+                if backend != 'cpp_bytetrack' or cam_tracker is None:
+                    self.send_error(400); return
+                if replay_link.blocking():
+                    ok_, text_ = False, '카메라로 돌아온 뒤 선택하세요'
+                elif APP.GB is not None and APP.GB.state.get('auto'):
+                    ok_, text_ = False, '현재 따라가기를 멈춘 뒤 선택하세요'
+                else:
+                    ok_ = cam_tracker.select(True)
+                    text_ = '다음 카메라 프레임에 적용' if ok_ else 'C++ ByteTrack 라이브러리가 없습니다'
+                b_ = json.dumps(dict(APP.rules_state(), ok=ok_, text=text_), ensure_ascii=False).encode()
+                try: self.send_response(200 if ok_ else 409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                except (BrokenPipeError, ConnectionResetError, OSError): pass
+                return
             if self.path.startswith('/rules/set') and self.headers.get('X-Gimbal') == '1':   # v24g: live rule / tracker switches
                 from urllib.parse import urlsplit as us2_, parse_qs as pq2_
                 ok_, text_ = APP.rules_request(pq2_(us2_(self.path).query))
@@ -226,6 +252,9 @@ def make_lv_Handler():
             from urllib.parse import urlsplit, parse_qs
             u_ = urlsplit(self.path); q_ = parse_qs(u_.query)
             try:
+                cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
+                if u_.path == '/gimbal/click' and cam_tracker is not None and cam_tracker.blocks_selection():
+                    self.send_error(409, 'Camera C++ ByteTrack preview is display-only'); return
                 ip_ = self.client_address[0]; APP.GB.mover_t[ip_] = time.monotonic()
                 APP.gb_send('P')
                 if u_.path in ('/gimbal/click', '/gimbal/move') and replay_link.blocking() and (u_.path == '/gimbal/click' or int(q_['x'][0]) or int(q_['y'][0])):   # 11-12: no gimbal move while a recording is played (a move of 0 0 = stop is let through)
@@ -330,6 +359,7 @@ def make_lv_Server():
 
 def live_close():
     APP.LIVE.stopped = True
+    APP.LIVE.camera_bytetrack.close()
     try: APP.meas_stop()   # v22: keep a measurement that is still running
     except Exception as e_: print('MEASURE save failed', e_, flush=True)
     try: replay_eval.finish('server stopped')   # 11-12: a replay still running: its comparison is written

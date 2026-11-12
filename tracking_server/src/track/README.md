@@ -60,21 +60,26 @@
 3. **서버 연결 확인.** 카메라와 짐벌 없이 PC의 모의 입력 또는 저장 영상으로 한 사람·두 사람, 교차·가림·재등장, 무검출, 재생 전환·탐색, 추적기 변경을 확인합니다. KeepID 사용 시에는 추적기 직후와 최종 출력 양쪽을 봅니다. 웹 화면의 박스·ID가 같은 프레임에 나오는지 확인하고, 팀 PC GUI도 사용한다면 별도로 영상과 메타데이터를 맞춰 봅니다.
 4. **M1 속도 비교.** 결과가 맞은 뒤 같은 녹화·모델·옵션으로 추적 계산 시간, 전체 출력 간격, 프레임 처리 지연의 중앙값·p95를 비교합니다. 출력 개수와 건너뛴 프레임도 함께 기록합니다.
 
-인계에는 기준 커밋, 옮긴 파일과 빌드 명령, 선택 방법, 비교에 사용한 입력·설정, 처음 다른 프레임 또는 일치한 프레임 수, M1 측정 여부를 남깁니다. 이 문서는 이식 절차이며 현재 추적기 구현은 Python입니다.
+인계에는 기준 커밋, 옮긴 파일과 빌드 명령, 선택 방법, 비교에 사용한 입력·설정, 처음 다른 프레임 또는 일치한 프레임 수, M1 측정 여부를 남깁니다. 기존 실시간 추적 프리셋은 Python이며, 아래 C++ ByteTrack은 별도 선택입니다.
 
-## 팀 C++ ByteTrack 비교
+## C++ ByteTrack 설치와 비교
 
 팀 [runtime](https://github.com/lwir-deepx-tracking-system/runtime)의 ByteTrack을 Python ByteTrack과 비교합니다. 빌드는 팀 저장소 커밋 `0fe016f7edd069900457a746dc4cc787569c5ae6`의 Git 객체를 읽습니다. 팀 코드는 모델뱅크에 복사해 넣지 않습니다. 빌드 중에만 실제 매칭된 검출의 행 번호를 결과로 전달하도록 연결합니다.
 
 ```sh
-python tracking_server/src/track/build_team_bytetrack.py /path/to/runtime /path/to/team_bytetrack.so
-python -m tracking_server.src.track.check_team_bytetrack /path/to/team_bytetrack.so --cache /path/to/exact_detections.jsonl
+python tracking_server/src/track/build_bytetrack.py /path/to/runtime tracking_server/models/links/bytetrack.so
+python -m tracking_server.src.track.check_bytetrack tracking_server/models/links/bytetrack.so --cache /path/to/exact_detections.jsonl
 ```
 
 Windows에서는 출력 확장자를 `.dll`로 바꾸고 필요하면 `--cxx`로 MinGW `g++` 경로를 지정합니다. 시험용 캐시에는 프레임마다 `tracker_input_xyxy_conf_class`와 `tracker_reset`이 있어야 합니다. 두 구현 모두 같은 검출을 프레임 순서대로 받고, 빈 프레임도 업데이트하며, 시퀀스 경계에서만 ID를 초기화합니다.
 
-서버의 녹화 재생에서 C++ ByteTrack을 선택할 수 있습니다. ARM64 라이브러리를 장치의 `tracking_server/models/links/team_bytetrack.so`에 설치한 뒤 서버를 다시 시작합니다. 다른 경로는 `--replay-bytetrack-library` 또는 `LWIR_REPLAY_BYTETRACK_LIBRARY`로 지정합니다. 녹화 재생 패널에서 **C++ ByteTrack**을 고르면 영상의 상자·ID와 평가에 적용합니다. 기본 선택은 현재 추적기입니다.
+소스 파일은 [`bytetrack.py`](bytetrack.py)와 [`bytetrack.cpp`](bytetrack.cpp)입니다. 이 C++ 소스는 위의 CPython 확장과 다른 C ABI를 사용하므로 전용 명령으로 빌드합니다.
 
-C++ 경로는 최종 필터를 거친 검출 행을 받아 독립 추적 상태를 유지합니다. 녹화 전환이나 새 반복 회차에서 상태를 초기화하고, 일시정지 중에는 마지막 결과를 사용합니다. 기존 추적기와 별도로 실행되므로 추적기 단독 시간과 서버 전체 지연은 구분해서 해석합니다. 비교용 ByteTrack의 점수 문턱과 XYWH Kalman은 Python 쪽에 맞췄지만, 확인·매칭 규칙과 출력은 완전히 같지 않습니다. 출력 수가 늘거나 줄어도 정답을 대조하지 않으면 정확도가 개선됐는지 판단할 수 없습니다.
+1. Orange Pi용 ARM64 **`bytetrack.so`**를 `tracking_server/models/links/`에 넣습니다. 완성된 파일을 임시 이름으로 복사한 뒤 그 자리에서 이름을 바꾸면 복사 도중 읽히지 않습니다. 구버전 설치의 `team_bytetrack.so`도 인식합니다.
+2. 이 버전 서버에서는 새로 넣은 라이브러리의 ABI를 확인해 메뉴를 자동으로 엽니다. `.cpp` 소스만 복사해서는 실행되지 않습니다. 라이브러리 경로를 따로 지정할 때만 `--replay-bytetrack-library` 또는 `LWIR_REPLAY_BYTETRACK_LIBRARY`를 씁니다.
+3. **카메라:** Tracker → **ByteTrack · C++**를 고르면 브라우저 박스와 ID에 적용됩니다. 화면 비교용이며 사람 클릭으로 따라가는 기능은 이 선택에서 꺼집니다. 기존 프리셋을 고르면 카메라에서 원래대로 돌아갑니다.
+4. **녹화:** 녹화 재생 → 추적기 → **C++ ByteTrack**을 고르고 재생하면 상자·ID와 평가에 적용됩니다. 카메라 선택과 녹화 선택은 독립입니다.
+
+C++ 경로는 최종 필터를 거친 검출 행을 받아 독립 추적 상태를 유지합니다. 녹화 전환이나 새 반복 회차에서 상태를 초기화하고, 일시정지 중에는 마지막 결과를 사용합니다. 카메라 비교에서는 기존 추적도 별도로 계속 실행되므로, 이 화면의 전체 지연으로 C++ 단독 교체의 속도를 평가할 수 없습니다. 비교용 ByteTrack의 점수 문턱과 XYWH Kalman은 Python 쪽에 맞췄지만, 확인·매칭 규칙과 출력은 완전히 같지 않습니다. 출력 수가 늘거나 줄어도 정답을 대조하지 않으면 정확도가 개선됐는지 판단할 수 없습니다.
 
 재생 화면에서 **끝까지 다시 계산**을 누르면 선택한 추적기로 첫 장부터 한 번 재생합니다. 슬라이더로 이동하면 해당 장에서 멈추고 첫 장부터 그 장까지 채점한 누적값을 표시합니다. 아직 그 위치까지 채점하지 않았다면 다시 계산해 결과를 만들 수 있습니다. **최종 보기**는 재생 위치를 유지한 채 같은 녹화와 추적기의 완주 결과를 표시합니다.
