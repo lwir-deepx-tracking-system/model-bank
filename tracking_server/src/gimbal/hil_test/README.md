@@ -13,6 +13,15 @@
 
 ## 파일
 
+- `OBSERVATION_GAP_20261112_KO.md` — 한 프레임 관측 누락 보완의 배포·실기 결과와 실패 기록
+- `observation_gap_hil.py` — 같은 PD/저속 조건의 관측 누락·복귀·반전 시험. 기본은 합성 카메라와 가상 직렬입니다. 실제 시험에는 `--execute --attended`와 현장 사람이 필요합니다. `--single-condition 100`은 단독 기능 진단이며 짝지은 성능 비교가 아닙니다. 출력은 저장소 밖의 새 비공개 폴더로 지정합니다.
+
+새 관측 누락 도구를 모의 실행할 때의 예입니다. `<저장소>`는 `tracking_server`를 포함하는 최상위 폴더입니다.
+
+```bash
+python3 observation_gap_hil.py --repo <저장소> --bridge <새_v27_실행파일> --out <저장소_밖_새_결과폴더>
+```
+
 - `PLAN_V27_HILS_20261111_KO.md` — 계획, 규칙, 판정 기준 (실행 전에 적어 둔 것)
 - `CHANGES_FROM_M1_TOOLS_KO.md` — 장치에 있던 옛 도구와 다른 점
 - `run_v27_hil.sh` — 실행 스크립트 (단계, 시간 한계, 끝날 때 멈춤)

@@ -144,7 +144,7 @@ PC(macOS, clang, OpenCV 없음 → `sim/stub`)에서 한 것:
 - 두 번째 누락, 영상 동결·오래된 입력·재생·카메라 초기화·STOP·연결 끊김에는 정지합니다. 중간 프레임이 전송 슬롯에서 사라져 확인할 수 없을 때도 정지 후 새 관측으로 계산합니다.
 - 무효 입력 표지는 Python과 C++의 최신 프레임 슬롯에서 덮어써지지 않도록 별도로 보존합니다. `/healthz`의 `observation_status`, `observation_healthy`, `observation_good`, `observation_bad`로 실제 경로를 확인할 수 있습니다.
 
-PC Python 37개와 C++ 새 검사 26개·기존 검사 40개를 통과했습니다. Orange Pi 별도 빌드와 F/G 가상 직렬 포트 검사도 통과했습니다. 기존 유예 0의 동작 검사 3종을 함께 통과했습니다. 이 검사는 모터를 움직이지 않으며, 실제 사람 급이동의 화면 안정성 증명은 아닙니다.
+PC Python 37개와 C++ 새 검사 26개·기존 검사 40개를 통과했습니다. Orange Pi 별도 빌드와 F/G 가상 직렬 포트 검사도 통과했습니다. 기존 유예 0의 동작 검사 3종을 함께 통과했습니다. 이후 8090에 적용하고 저속 가상 표적의 실제 짐벌 진단을 수행했습니다. [실기 기록과 남은 범위](hil_test/OBSERVATION_GAP_20261112_KO.md). 실제 사람 급이동의 화면 안정성 증명은 아닙니다.
 
 ```bash
 python3 test_v27_observation_grace.py ./gimbal_bridge_v27
