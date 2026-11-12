@@ -40,7 +40,8 @@ def live_publish(g_, rows_, row_):
     now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if APP.LIVE.arr else now_
     raw16_ = APP.LIVE.raws.popleft() if APP.LIVE.raws else None   # v20
     rq_ = APP.LIVE.rawq.popleft() if APP.LIVE.rawq else None   # v24f
-    frozen_ = frozen_check(rq_)   # 11-12: the same picture as the previous frame -> the gimbal gets no people for this frame
+    rep_ = replay_eval.is_repeat(t_in)   # 11-12: a frame the replay program repeats (while paused, and the few at the end) is not a camera fault
+    frozen_ = False if rep_ else frozen_check(rq_)   # 11-12: the same picture as the previous frame -> the gimbal gets no people for this frame (a paused replay repeats the same picture on purpose: no log lines)
     sC_ = APP.LIVE.stabq.popleft() if APP.LIVE.stabq else None; STAB['px'] = sC_ or (0.0, 0.0)   # stab: correction of the frame being shown
     APP.LIVE.done_ts.append(now_)
     if APP.LIVE.meas is not None:   # v22
@@ -182,10 +183,14 @@ def make_lv_Handler():
                 u4_ = us4_(self.path)
                 if u4_.path == '/replay/start': code_, text_ = replay_link.start_request(pq4_(u4_.query))
                 elif u4_.path == '/replay/stop': code_, text_ = replay_link.stop_request()
+                elif u4_.path == '/replay/seek': code_, text_ = replay_link.seek_request(pq4_(u4_.query))   # 11-12: jump to a frame (0-based index)
+                elif u4_.path == '/replay/pause': code_, text_ = replay_link.pause_request()
+                elif u4_.path == '/replay/play': code_, text_ = replay_link.play_request()
+                elif u4_.path == '/replay/speed': code_, text_ = replay_link.speed_request(pq4_(u4_.query))   # 11-12: frames per second while playing
                 elif u4_.path == '/replay/eval/reset': code_, text_ = replay_eval.reset_request()   # 11-12: count again from now
                 elif u4_.path == '/replay/eval/draw': code_, text_ = replay_eval.draw_request(pq4_(u4_.query))   # 11-12: ground-truth boxes on the page picture
                 else: self.send_error(404); return
-                b_ = json.dumps(dict(ok=code_ == 200, text=text_, state=replay_link.state(), eval=replay_eval.state()), ensure_ascii=False).encode()
+                b_ = json.dumps(dict(ok=code_ == 200, text=text_, state=replay_link.state(), eval=replay_eval.state(), eval_last=replay_eval.last()), ensure_ascii=False).encode()
                 try: self.send_response(code_); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 except (BrokenPipeError, ConnectionResetError, OSError): pass
                 return
@@ -271,7 +276,7 @@ def make_lv_Handler():
                 elif self.path.startswith('/replay'):   # 11-12: recordings that can be played, and the replay state
                     from urllib.parse import urlsplit as us5_, parse_qs as pq5_
                     u5_ = us5_(self.path)
-                    b_ = json.dumps(replay_eval.state() if u5_.path == '/replay/eval' else replay_link.get_info(pq5_(u5_.query)), ensure_ascii=False).encode()   # 11-12: /replay/eval = the comparison alone
+                    b_ = json.dumps(dict(replay_eval.state(), eval_last=replay_eval.last()) if u5_.path == '/replay/eval' else replay_link.get_info(pq5_(u5_.query)), ensure_ascii=False).encode()   # 11-12: /replay/eval = the comparison alone (+ eval_last = the numbers of the last finished replay)
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/snap.jpg'):
                     APP.LIVE.snap_t = time.perf_counter()   # 11-12: pictures for every frame during the next 3 s

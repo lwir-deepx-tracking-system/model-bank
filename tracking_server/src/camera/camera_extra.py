@@ -415,7 +415,7 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
         age_ = time.monotonic() - tns_ * 1e-9; gap_ = dtus_ * 1e-6
         raw_ = np.frombuffer(buf_, np.uint16).reshape(APP.LIVE_H, APP.LIVE_W).copy()
         ta_ = time.perf_counter()
-        if flags_ & 2: replay_eval.tag(p_, ta_, rid_, slot_)   # 11-12: only the replay program sets bit 2 (png number for the ground-truth comparison); cam_pipe never does
+        if flags_ & 2: replay_eval.tag(p_, ta_, rid_, slot_, flags_)   # 11-12: only the replay program sets bit 2 (png number, position and pass for the ground-truth comparison and the seek bar; value 4 = a frame repeated while paused); cam_pipe never does
         with APP.LIVE.cond:
             if len(APP.LIVE.q) == APP.LIVE.q.maxlen: APP.LIVE.q_drop += 1
             APP.LIVE.q.append((ta_, raw_)); APP.LIVE.cond.notify()
