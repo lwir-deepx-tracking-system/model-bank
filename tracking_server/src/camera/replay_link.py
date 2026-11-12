@@ -7,6 +7,8 @@
 - 짐벌 안전: 재생을 시작할 때 짐벌 프로그램에 멈춤(H). 재생 중(바꾸는 중 포함)에는 짐벌에 가는 줄에 사람이 없고(blocked), /gimbal/click·move 는 거절한다.
   재생을 멈춘 뒤에도, 멈추기 전에 도착한 프레임(처리 중이던 몇 장)은 사람 없이 보낸다 (도착 시각 < src_t). 멈출 때도 H 를 보낸다.
   옛 영상의 마지막 프레임과 새 영상의 첫 프레임 사이는 언제나 1.5 초보다 길어서, 전부터 있던 "1초 넘는 입력 끊김" 규칙이 추적을 새로 시작하고 고른 사람을 놓는다.
+- 측정 버튼 녹화도 목록에 나온다 (11-12): --measure-dir 아래 <날짜>/MEASURE_*/ 의 frames.raw.gz (16비트 원본). 이름 = '측정/<날짜>/<MEASURE 폴더>'.
+  정답 라벨이 없으므로 채점하지 않는다. 메모리 한도(LWIR_REPLAY_MAX_MB, 기본 400 MB)까지 앞에서부터만 재생한다.
 - 재생을 한 번도 쓰지 않으면 이 파일은 아무것도 바꾸지 않는다 (cam_argv() 는 전과 같은 명령을 돌려준다, LIVE.replay 는 None).
 - 정답과 비교 (11-12, replay_eval.py): 재생 카메라는 늘 프레임 머리(LWIR_CAM_STAMP=1)와 PNG 번호(--tag)를 붙여 띄운다 (spawn).
   카메라 쪽 설정(LWIR_CAM_STAMP)과 상관없이 재생 프로그램에만 그렇게 하고, 진짜 카메라를 띄우는 길은 바꾸지 않는다.
@@ -33,6 +35,18 @@ _C = dict(t=-1e9, items=[], root=None)
 def root():   # 쓸 수 있는 녹화 폴더 (없으면 None)
     r_ = getattr(APP.args, 'replay_root', '') or ''
     return r_ if r_ and os.path.isdir(r_) else None
+
+
+MEAS = '측정'
+
+
+def mroot():   # 측정 버튼 녹화 폴더 (없으면 None). 라벨 폴더를 못 쓰는 실행에서도 목록에 나오려면 --replay-root 가 있어야 한다 (재생을 켜는 스위치)
+    m_ = getattr(APP.args, 'measure_dir', '') or ''
+    return m_ if getattr(APP.args, 'replay_root', '') and m_ and os.path.isdir(m_) else None
+
+
+def on():   # 재생 기능을 쓸 수 있는가 (라벨 폴더나 측정 폴더 가운데 하나)
+    return root() is not None or mroot() is not None
 
 
 def _png_head(p_):   # (비트, 폭, 높이, 색 종류) 또는 None. PNG 머리(IHDR)만 읽는다
@@ -63,24 +77,60 @@ def _scan(r_):
     return sorted(out_, key=lambda x_: x_['name'])
 
 
+def _scan_measure(m_):   # 측정 버튼 녹화: <날짜>/MEASURE_*/frames.raw.gz + frames.json (머리만 읽는다, 큰 파일은 열지 않는다)
+    import json
+    out_ = []
+    try: days_ = sorted(e_.name for e_ in os.scandir(m_) if e_.is_dir() and not e_.name.startswith('.'))
+    except OSError: return out_
+    for day_ in days_:
+        try: recs_ = sorted(e_.name for e_ in os.scandir(os.path.join(m_, day_)) if e_.is_dir() and e_.name.startswith('MEASURE_'))
+        except OSError: continue
+        for rec_ in recs_:
+            d_ = os.path.join(m_, day_, rec_); fp_ = os.path.join(d_, 'frames.raw.gz')
+            if not os.path.isfile(fp_): continue
+            try:
+                with open(os.path.join(d_, 'frames.json'), 'rb') as f_: j_ = json.loads(f_.read(4_000_000).decode('utf-8', 'replace').split('"times_s"')[0].rstrip(', \n') + '}')
+            except (OSError, ValueError): j_ = {}
+            w_, h_, n_ = j_.get('width'), j_.get('height'), j_.get('frames')
+            it_ = dict(name='%s/%s/%s' % (MEAS, day_, rec_), frames=n_ if isinstance(n_, int) else None, bits=16, size='%sx%s' % (w_, h_) if w_ and h_ else None)
+            it_['usable'] = bool(isinstance(n_, int) and n_ > 0 and (w_, h_) == (640, 480) and 'uint16' in str(j_.get('dtype', '')))
+            if not it_['usable']: it_['note'] = '쓸 수 없음: frames.json 이 없거나 640x480 16비트 원본이 아님'
+            else:
+                u_ = _used(n_); it_['note'] = '측정 버튼 녹화(16비트 원본). 정답 라벨이 없어 채점하지 않음' + ('. 메모리 한도로 앞 %d 장만 재생 (전체 %d 장)' % (u_, n_) if u_ < n_ else '')
+            out_.append(it_)
+    return out_
+
+
 def listing(refresh_=False):
-    r_ = root()
-    if r_ is None: return []
-    if refresh_ or _C['root'] != r_ or time.monotonic() - _C['t'] > LIST_TTL:
-        try: items_ = _scan(r_)
-        except OSError: items_ = []
-        _C.update(t=time.monotonic(), items=items_, root=r_)
+    r_ = root(); m_ = mroot()
+    if r_ is None and m_ is None: return []
+    key_ = (r_, m_)
+    if refresh_ or _C['root'] != key_ or time.monotonic() - _C['t'] > LIST_TTL:
+        items_ = []
+        try: items_ += _scan(r_) if r_ else []
+        except OSError: pass
+        try: items_ += _scan_measure(m_) if m_ else []
+        except OSError: pass
+        _C.update(t=time.monotonic(), items=items_, root=key_)
     return _C['items']
 
 
 def find(name_):   # 이름 -> (목록 항목, images 폴더의 절대 경로) 또는 (None, 이유)
     r_ = root()
-    if r_ is None: return None, '녹화 폴더가 없음 (--replay-root)'
+    if r_ is None and mroot() is None: return None, '녹화 폴더가 없음 (--replay-root)'
     n_ = str(name_ or '')
     parts_ = n_.replace('\\', '/').split('/')
     if not n_ or '\x00' in n_ or n_.startswith(('/', '\\')) or ':' in n_ or any(p_ in ('', '.', '..') for p_ in parts_): return None, '이름이 올바르지 않음'
     it_ = next((x_ for x_ in listing() if x_['name'] == n_), None) or next((x_ for x_ in listing(True) if x_['name'] == n_), None)
     if it_ is None: return None, '목록에 없는 이름'
+    if parts_[0] == MEAS:   # 측정 버튼 녹화: 파일 하나 (frames.raw.gz)
+        m_ = mroot()
+        if m_ is None or len(parts_) != 3: return None, '측정 폴더가 없음'
+        mr_ = os.path.realpath(m_); f_ = os.path.realpath(os.path.join(m_, parts_[1], parts_[2], 'frames.raw.gz'))
+        if os.path.commonpath([mr_, f_]) != mr_ or not os.path.isfile(f_): return None, '측정 폴더 밖을 가리킴'
+        if not it_['usable']: return None, it_.get('note', '쓸 수 없는 녹화')
+        return it_, f_
+    if r_ is None: return None, '녹화 폴더가 없음 (--replay-root)'
     rr_ = os.path.realpath(r_); d_ = os.path.realpath(os.path.join(r_, *parts_, 'images'))
     if os.path.commonpath([rr_, d_]) != rr_ or not os.path.isdir(d_): return None, '녹화 폴더 밖을 가리킴'
     if not it_['usable']: return None, it_.get('note', '쓸 수 없는 녹화')
@@ -139,7 +189,7 @@ def state():
 
 
 def get_info(q_):
-    r_ = root(); refresh_ = q_.get('refresh', ['0'])[0] == '1'
+    r_ = on(); refresh_ = q_.get('refresh', ['0'])[0] == '1'
     why_ = None if r_ else ('녹화 폴더가 정해지지 않음 (--replay-root)' if not getattr(APP.args, 'replay_root', '') else '녹화 폴더가 없음')
     if r_ and APP.args.live_wait: why_ = '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
     return dict(available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state(), eval=replay_eval.state())
@@ -158,7 +208,7 @@ def start_request(q_):   # -> (http 코드, 글)
     lp_ = q_.get('loop', ['1'])[0]
     if lp_ not in ('0', '1'): return 400, 'loop 는 0 또는 1'
     it_, d_ = find(q_.get('seq', [''])[0])
-    if it_ is None: return (409 if root() is None else 400), d_
+    if it_ is None: return (409 if not on() else 400), d_
     L_ = APP.LIVE
     with L_.sys_lock, L_.cam_lock:
         if L_.stopped or APP.args.live_wait: return 409, '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
