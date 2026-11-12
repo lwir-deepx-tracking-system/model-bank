@@ -64,7 +64,7 @@
 
 ## C++ ByteTrack 설치와 비교
 
-팀 [runtime](https://github.com/lwir-deepx-tracking-system/runtime)의 ByteTrack을 Python ByteTrack과 비교합니다. 빌드는 팀 저장소 커밋 `0fe016f7edd069900457a746dc4cc787569c5ae6`의 Git 객체를 읽습니다. 팀 코드는 모델뱅크에 복사해 넣지 않습니다. 빌드 중에만 실제 매칭된 검출의 행 번호를 결과로 전달하도록 연결합니다.
+팀 [runtime](https://github.com/lwir-deepx-tracking-system/runtime)의 ByteTrack을 Python ByteTrack과 비교합니다. 입출력을 바꾼 C++ 파일 4개는 [bytetrack_runtime](bytetrack_runtime/)에 있으며, 변경 줄에 `// LWIR I/O:` 표시가 있습니다. 빌드는 이 파일들을 직접 쓰고, 나머지 의존 파일은 팀 runtime의 `0fe016f7edd069900457a746dc4cc787569c5ae6`에서 읽습니다.
 
 ```sh
 python tracking_server/src/track/build_bytetrack.py /path/to/runtime tracking_server/models/links/bytetrack.so
@@ -114,7 +114,7 @@ Windows에서는 출력 확장자를 `.dll`로 바꾸고 필요하면 `--cxx`로
 
 **출력**은 원본이 계산한 `Track` 박스를 `[x, y, x+width, y+height, track_id, confidence, class_id, source_index]` 순서로 돌려줍니다. 예를 들어 검출 배열의 세 번째 박스가 트랙 17과 매칭되면 `track_id=17`이고 출력의 마지막 열은 `source_index=2`입니다. 트래커가 추정한 박스를 사용하므로 입력 박스와 출력 박스의 좌표는 달라질 수 있습니다. 현재 프레임에 대응하는 검출이 없는 행은 `source_index=-1`이며, 이 서버 연결에서는 예측 행이나 유효한 검출 번호가 없는 행을 오류로 처리합니다. [좌표 변환과 행 검사](bytetrack.cpp#L41)
 
-위 diff는 팀 원본에 들어가는 입출력 변경입니다. 좌표 변환은 모델뱅크의 `bytetrack.cpp`에서 처리합니다. 위쪽의 빌드 명령을 실행하면 [빌드 스크립트](build_bytetrack.py#L21)가 고정된 원본 커밋의 임시 사본에 이 변경을 적용하므로, 팀 runtime 파일에 수동으로 붙여 넣을 필요가 없습니다. 빌드 뒤에는 위의 `check_bytetrack`으로 같은 검출 행이 출력과 맞는지 확인합니다.
+위 diff의 주석은 [ByteTrack 매칭·반환](bytetrack_runtime/src/tracking/bytetrack_tracker.cpp#L482), [Detection 입력](bytetrack_runtime/include/common/detection.hpp#L20), [STrack 상태](bytetrack_runtime/include/tracking/bytetrack_tracker.hpp#L35), [Track 출력](bytetrack_runtime/include/common/track.hpp#L31)에서 바로 볼 수 있습니다. 좌표 변환은 모델뱅크의 [서버 연결부](bytetrack.cpp#L51)에 있습니다. 빌드 뒤에는 위의 `check_bytetrack`으로 검출 행 번호를 확인합니다.
 
 ### 라이브러리 연결과 재생
 
