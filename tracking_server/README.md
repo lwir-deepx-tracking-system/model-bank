@@ -102,11 +102,54 @@
 |---|---|
 | 4 | 서버가 이미 떠 있음 |
 | 5 | 짐벌 시리얼 포트를 다른 프로그램이 사용 중. [점유 확인과 재시작](#gimbal-busy-해결) |
-| 7 | 짐벌 프로그램이 없음 (`setup.sh` 다시) |
+| 7 | 짐벌 프로그램이 없음. v25는 `setup.sh`, v27은 [별도 빌드](#v27로-실행하고-짐벌-위치-표시-확인) |
 | 8 | 페이지 주소 없음 (`LWIR_LIVE_BIND`) |
 | 9 | 폴더 이동 실패 |
 
 </details>
+
+### v27로 실행하고 짐벌 위치 표시 확인
+
+카메라 영상의 위쪽에는 좌우 위치, 오른쪽에는 상하 위치가 표시됩니다. 눈금 위의 주황색 삼각형은 v27이 이동 명령을 바탕으로 계산한 **0~100% 추정 위치**입니다. 브리지를 켤 때는 50%에서 시작합니다. 녹화 재생과 카메라 전환 중에는 표시를 숨깁니다.
+
+1. 저장소 최상위 폴더에서 아래 명령으로 v27을 빌드합니다. OpenCV와 GStreamer가 필요합니다. 기본 설치용 `setup.sh`는 v25를 빌드합니다.
+
+   ```bash
+   (
+     cd tracking_server/src/gimbal || exit 1
+     g++ -O2 -std=c++17 -pthread -Iv27/include -Iteam/include \
+       $(pkg-config --cflags opencv4 gstreamer-1.0 gstreamer-app-1.0) \
+       gimbal_bridge_v27.cpp \
+       v27/src/control/auto_tracking_controller.cpp v27/src/control/gimbal_command_executor.cpp \
+       team/src/control/gimbal_device.cpp team/src/control/pid_controller.cpp \
+       team/src/control/tracking_command_handler.cpp team/src/gui/gui_protocol.cpp \
+       team/src/gui/gui_sender.cpp team/src/gui/gui_receiver.cpp \
+       team/src/gui/gui_command_handler.cpp team/src/common/logger.cpp \
+       $(pkg-config --libs gstreamer-1.0 gstreamer-app-1.0) \
+       -lopencv_core -lopencv_imgproc -o gimbal_bridge_v27
+   )
+   ```
+
+2. `tracking_server/scripts/live.env`에 아래 값을 설정합니다. 기존 파일에 같은 항목이 있으면 그 줄만 바꾸고, 파일이 없으면 만들어 이 줄을 넣습니다.
+
+   ```bash
+   LWIR_GIMBAL_BRIDGE=src/gimbal/gimbal_bridge_v27
+   ```
+
+3. 현장에 사람이 짐벌 옆에 있고 카메라와 짐벌을 사용할 수 있을 때, [기존 서버를 정상 종료](#8-꺼지면-다시-켜기-끄기)한 뒤 저장소 최상위 폴더에서 실행합니다.
+
+   ```bash
+   bash tracking_server/scripts/run_real_gui.sh
+   ```
+
+4. 팀 네트워크에서 8090 화면을 엽니다. 녹화를 재생하고 있다면 **재생 멈춤 (카메라로)**를 누릅니다. 실시간 영상이 나오면 위쪽과 오른쪽의 회색 눈금과 주황색 삼각형을 확인합니다. 표시 확인에 짐벌을 움직일 필요는 없습니다. 장치의 다른 터미널에서 위치값도 확인할 수 있습니다.
+
+   ```bash
+   curl -fsS http://127.0.0.1:8090/gimbal/people |
+     python3 -c 'import json,sys; print(json.load(sys.stdin)["position_estimate"])'
+   ```
+
+   `pan`과 `tilt` 값이 나오면 웹 서버에 위치값이 들어온 것입니다. 값이 비어 있으면 브리지 설정과 `tracking_server/real_gui_1.out`을 보고, 실시간 카메라 영상이 실제로 표시되는지 확인합니다. [짐벌 표시 동작](page/README.md)
 
 ### `gimbal busy` 해결
 

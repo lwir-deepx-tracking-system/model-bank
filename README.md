@@ -110,6 +110,8 @@ git clone https://github.com/lwir-deepx-tracking-system/model-bank.git "$HOME/mo
 
    `LISTEN`이 보이면 브라우저로 추적 화면을 확인합니다. 로그에 `NPU busy`가 있으면 기존 서버 프로세스부터 확인합니다. 로그에 `gimbal busy`가 있으면 [짐벌 포트 점유 확인과 서버 재시작](tracking_server/README.md#gimbal-busy-해결)을 참고하세요. 다른 종료 이유는 [추적 서버 빠른 시작](tracking_server/README.md#2-빠른-시작)에 정리했습니다.
 
+영상 테두리에서 짐벌 위치까지 보려면 [v27 빌드와 8090 실행](tracking_server/README.md#v27로-실행하고-짐벌-위치-표시-확인)을 참고하세요.
+
 ## 2. 라벨 서버 (`label_server/`)
 
 열화상 녹화에 자동으로 붙인 사람 상자를, 사람이 브라우저에서 고치는 사이트입니다. 팀원은 받은 주소 하나만 열면 됩니다.
