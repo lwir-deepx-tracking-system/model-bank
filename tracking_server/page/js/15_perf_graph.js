@@ -65,7 +65,7 @@ function pfdraw(){
   pfOverflow.hidden=peak<=PF_LATENCY_LIMIT;
   pfOverflow.textContent=pfOverflow.hidden?'':`▲ ${PF_LATENCY_LIMIT} ms 초과 · 기간 최대 ${peak.toFixed(1)} ms`;
   const last=PF.rows.length?PF.rows[PF.rows.length-1]:null,r=last&&now-last[0]<5?last:null;   // values older than 5 s are not shown as current
-  [[0,1],[1,2],[2,3],[3,4],[4,5]].forEach(([i,k])=>{$('pfv'+i).textContent=r?r[k].toFixed(0):'–';});}
+  [[0,1],[1,2],[2,3],[3,4],[4,5]].forEach(([i,k])=>{$('pfv'+i).textContent=r&&Number.isFinite(r[k])?r[k].toFixed(0):'–';});}
 function pftick(){if(document.hidden||!PF.on||PF.busy)return;PF.busy=true;const since=PF.rows.length?PF.rows[PF.rows.length-1][0]:0;
   fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again

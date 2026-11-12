@@ -2,6 +2,7 @@
 import os
 import time
 from ..common.state import APP
+from .preview_worker import invalidate_preview
 
 
 RESTART_REQUESTED = object()
@@ -20,6 +21,7 @@ def reserve_restart():
             return False, '짐벌이 멈춘 뒤 다시 시도하세요'
         live.restart_pending = True
         live.cam_hold = True
+        invalidate_preview(live, before=time.perf_counter())
     return True, '서버 재시작 요청을 받았습니다'
 
 
@@ -41,6 +43,7 @@ def sys_reboot():   # v33: reboot button. Same command as the keepalive's last r
         if APP.LIVE.stopped or APP.args.live_wait: return False, '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
         if APP.LIVE.cam_hold: return False, '카메라 초기화 중. 끝난 뒤 다시 누르세요'
         APP.LIVE.cam_hold = True
+        invalidate_preview(APP.LIVE, before=time.perf_counter())
     print('SYSREBOOT requested from the page', flush=True)
     try:
         if APP.GB is not None: APP.gb_send('H')

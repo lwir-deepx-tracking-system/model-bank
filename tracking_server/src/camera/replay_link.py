@@ -26,6 +26,7 @@ import time
 from ..common.state import APP
 from ..common.shared_values import HERE
 from ..track.bytetrack import available_bytetrack_library
+from ..web.preview_worker import set_preview_producer
 from . import camera_extra
 from . import replay_eval
 
@@ -207,7 +208,7 @@ def spawn():   # lv_spawn 의 재생 판 (LIVE.replay 가 있을 때만): 머리
     p_.lwir_stamp = True; p_.lwir_eval = replay_eval.EV   # 이 프로그램의 프레임은 이 재생의 채점에만 들어간다
     p_.lwir_ctl = Ctl(p_)
     APP.LIVE.replay['paused'] = False   # 새로 띄운 프로그램은 처음부터 재생한다 (서버가 같은 녹화를 다시 띄운 경우도)
-    APP.LIVE.proc = p_; APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()
+    camera_extra.install_producer(p_)
     camera_extra.log_start()
     APP.lv_th.Thread(target=APP.lv_reader, args=(p_,), daemon=True).start()
 
@@ -268,6 +269,7 @@ def start_request(q_):   # -> (http 코드, 글)
         if L_.stopped or APP.args.live_wait: return 409, '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
         if L_.cam_hold: return 409, '카메라 초기화나 다른 재생 바꾸기가 진행 중. 잠시 뒤 다시 누르세요'
         L_.cam_hold = True; L_.replay_busy = True   # 이 순간부터 짐벌에 사람을 보내지 않는다
+        set_preview_producer(L_, None, before=time.perf_counter())
     _gimbal_stop()
     tgt_ = dict(name=it_['name'], dir=d_, fps=fps_, loop=lp_ == '1', bits=it_['bits'], frames=it_['frames'], fin0=None, paused=False,
                 backend=backend, tracker_library=library)
@@ -337,6 +339,7 @@ def stop_request():
         if getattr(L_, 'replay', None) is None: return 409, '재생 중이 아님'
         if L_.cam_hold: return 409, '재생 바꾸기가 진행 중. 잠시 뒤 다시 누르세요'
         L_.cam_hold = True; L_.replay_busy = True
+        set_preview_producer(L_, None, before=time.perf_counter())
     _gimbal_stop()
     APP.lv_th.Thread(target=_switch, args=(None,), daemon=True).start()
     return 200, '재생 멈춤: 카메라로 돌아가는 중 (영상은 10~60초 뒤)'
@@ -356,6 +359,8 @@ def _end_old(p_, replay_):   # 지금 카메라 자리의 프로그램을 끝낸
 
 def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (카메라로)
     L_ = APP.LIVE
+    old_ = getattr(L_, 'replay', None)
+    old_proc_ = L_.proc
     ev_ = None
     installed = False
     try:
@@ -364,8 +369,7 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
             if ev_ is None and tgt_.get('backend') == 'cpp_bytetrack':
                 _msg('C++ ByteTrack을 열지 못해 재생을 시작하지 않았습니다')
                 return
-        old_ = getattr(L_, 'replay', None)
-        if not _end_old(L_.proc, old_ is not None):
+        if not _end_old(old_proc_, old_ is not None):
             _msg('카메라 프로그램이 45초 안에 끝나지 않아 재생을 시작하지 않음. 잠시 뒤 다시 누르세요'); return
         time.sleep(1.5)   # 옛 프로그램의 읽기 스레드가 파이프 끝을 먼저 본다. 옛 영상과 새 영상 사이가 1초를 넘어 추적이 새로 시작한다
         with L_.cam_lock:
@@ -390,6 +394,9 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
     finally:
         if ev_ is not None and not installed:
             ev_.close('not started')
+        if (not installed and old_ is not None and not L_.stopped
+                and L_.proc is old_proc_ and getattr(L_, 'replay', None) is old_):
+            set_preview_producer(L_, old_proc_, before=time.perf_counter())
         L_.replay_busy = False; L_.cam_hold = False
 
 
@@ -402,7 +409,9 @@ def on_cam_lost(now_):   # lv_cam_wait (cam_lock 안, 주 스레드): 재생 프
         except Exception:
             if now_ - L_.proc_t0 > 30: L_.proc.kill()
             return True
-    L_.replay_src_t = time.perf_counter(); L_.replay = None
+    L_.replay_src_t = time.perf_counter()
+    set_preview_producer(L_, None, before=L_.replay_src_t)
+    L_.replay = None
     replay_eval.activate(None, None, 'ended' if rc_ == 0 else 'replay program ended with code %s' % rc_)
     with L_.cond: L_.q.clear()
     L_.cam_fail_n = 0; L_.cam_unrec_n = 0; L_.cam_next_spawn = None

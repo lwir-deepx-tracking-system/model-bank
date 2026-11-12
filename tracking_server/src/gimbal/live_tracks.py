@@ -149,7 +149,27 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         return selected
 
 
-def click(x, y):
+def hit_id(people, x, y):
+    inside = (p for p in people if p[1] <= x <= p[3] and p[2] <= y <= p[4])
+    hit = min(inside, key=lambda p: (p[3] - p[1]) * (p[4] - p[2]), default=None)
+    return hit[0] if hit is not None else None
+
+
+def preview_people(frame_t, visible_ids):
+    """Snapshot click boxes and the acknowledged tracker boundary for one JPEG."""
+    gb = APP.GB
+    with gb.wcond:
+        if (not gb.wopen or getattr(gb, 'selection_reset', True)
+                or getattr(gb, 'people_t', None) != frame_t):
+            return None, None
+        people = tuple(tuple(p[:5]) for p in gb.people if p[0] in visible_ids)
+        return people, getattr(gb, 'tracks_ticket', 0)
+
+
+_UNGUARDED_CLICK = object()
+
+
+def click(x, y, *, expected_id=_UNGUARDED_CLICK, expected_ticket=None):
     """Select from the published live snapshot, then send its frame BEFORE A."""
     if not math.isfinite(x) or not math.isfinite(y) or not 0 <= x <= APP.LIVE_W or not 0 <= y <= APP.LIVE_H:
         return False, '영상 밖의 좌표입니다'
@@ -162,8 +182,11 @@ def click(x, y):
                 or source != getattr(gb, 'people_source', None)
                 or not 0 <= time.perf_counter() - getattr(gb, 'people_t', 0.0) < 0.5):
             return False, '현재 카메라 추적 결과를 기다려 주세요'
-        inside = [p for p in gb.people if p[1] <= x <= p[3] and p[2] <= y <= p[4]]
-        if not inside:
+        target = hit_id(gb.people, x, y)
+        if expected_id is not _UNGUARDED_CLICK and (
+                target != expected_id or expected_ticket != getattr(gb, 'tracks_ticket', 0)):
+            return False, '화면의 사람과 최신 추적 결과가 다릅니다. 새 화면에서 다시 누르세요'
+        if target is None:
             # Empty-picture clicks retain Python's stop behavior.
             # Reuse the same acknowledged boundary mechanism; repeated empty
             # clicks cannot pile up STOP commands or retain queued selections.
@@ -172,7 +195,6 @@ def click(x, y):
         else:
             if len(gb.wq) >= 62:
                 return False, '명령 전송이 밀렸습니다. 잠시 뒤 다시 눌러 주세요'
-            target = min(inside, key=lambda p: (p[3]-p[1])*(p[4]-p[2]))[0]
             reset_lead()
             gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
             # The writer normally flushes commands before the latest G/F slot.

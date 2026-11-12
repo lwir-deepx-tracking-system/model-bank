@@ -296,6 +296,19 @@ class Ring:   # cam_pipe 가 만든 고리를 읽기 전용으로 붙인다. 안
         except Exception: pass
 
 
+def install_producer(process):
+    """Swap readers under the queue lock used to accept their frames."""
+    from ..web.preview_worker import set_preview_producer
+
+    live = APP.LIVE
+    with live.cond:
+        set_preview_producer(live, process, before=time.perf_counter())
+        live.proc = process
+        live.cam_lost = False
+        live.proc_t0 = time.monotonic()
+        live.cond.notify_all()
+
+
 def spawn():   # lv_spawn 의 시간표 판: cam_pipe 에 같은 설정을 환경 변수로 넘겨 양쪽이 항상 같게 한다
     stamp_ = not _S['stamp_off']; shm_ = stamp_ and os.environ.get('LWIR_CAM_SHM') == '1' and not _S['shm_off']
     env_ = dict(os.environ); env_['LWIR_CAM_STAMP'] = '1' if stamp_ else '0'; env_['LWIR_CAM_SHM'] = '1' if shm_ else '0'
@@ -303,7 +316,7 @@ def spawn():   # lv_spawn 의 시간표 판: cam_pipe 에 같은 설정을 환�
     from .replay_link import cam_argv   # 11-12: the same command as lv_spawn (the replay program while a recording is played)
     p_ = APP.lv_sp.Popen(cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0, env=env_)
     p_.lwir_stamp = stamp_
-    APP.LIVE.proc = p_; APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()
+    install_producer(p_)
     log_start()
     cs_ = APP.LIVE.cam_stamp; cs_['on'] = stamp_; cs_['fallback'] = _S['stamp_off'] or _S['shm_off']
     if not stamp_: cs_['transport'] = 'pipe'
@@ -340,8 +353,9 @@ def _resync(p_, pend_, hb_, limit_):   # 다음 맞는 머리를 찾는다. True
 
 def _end(p_, ring_):   # 읽기 끝: 전 방식의 끝과 같다
     if ring_ is not None: ring_.close()
-    if p_ is APP.LIVE.proc: APP.LIVE.cam_lost = True
-    with APP.LIVE.cond: APP.LIVE.cond.notify_all()
+    with APP.LIVE.cond:
+        if p_ is APP.LIVE.proc: APP.LIVE.cam_lost = True
+        APP.LIVE.cond.notify_all()
 
 
 def _stop_and_drain(p_, ring_):   # cam_pipe 를 끝내고(SIGTERM) 파이프가 닫힐 때까지 읽어 버린다. 그 뒤는 서버가 전처럼 다시 띄운다
@@ -391,7 +405,8 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
         flags_, seq_, tns_, dtus_, slot_, nb_, rid_, w_, hh_ = h_
         if nb_ != n_ or w_ != APP.LIVE_W or hh_ != APP.LIVE_H:
             _S['size_bad'] += 1; wait_ = SIZE_BAD_WAIT[min(_S['size_bad'], len(SIZE_BAD_WAIT)) - 1]
-            if p_ is APP.LIVE.proc: APP.LIVE.cam_next_spawn = time.monotonic() + wait_   # lv_cam_wait 는 이 시각 전에는 다시 띄우지 않는다 (전에는 약 20 초마다 끝없이 다시 띄웠다)
+            with APP.LIVE.cond:
+                if p_ is APP.LIVE.proc: APP.LIVE.cam_next_spawn = time.monotonic() + wait_   # lv_cam_wait 는 이 시각 전에는 다시 띄우지 않는다
             say('LIVE camera: cam_pipe sends %dx%d pictures (%d bytes), the server expects %dx%d: cam_pipe stopped, next start in %d s (%d in a row)' % (w_, hh_, nb_, APP.LIVE_W, APP.LIVE_H, wait_, _S['size_bad']))
             return _stop_and_drain(p_, ring_)
         good_ += 1
@@ -423,12 +438,14 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
                 ta_ = math.nextafter(last_tag_t, math.inf)
             last_tag_t = ta_
         scored_replay = bool(flags_ & 2) and replay_eval.lossless(p_)
-        if scored_replay and flags_ & 4:
-            # Pause keeps the same displayed frame without advancing tracker state.
-            replay_eval.tag(p_, ta_, rid_, slot_, flags_)
-            APP.LIVE.last_frame_t = time.monotonic()
-            continue
         with APP.LIVE.cond:
+            if APP.LIVE.stopped or p_ is not APP.LIVE.proc:
+                continue
+            if scored_replay and flags_ & 4:
+                # Pause keeps the same displayed frame without advancing tracker state.
+                replay_eval.tag(p_, ta_, rid_, slot_, flags_)
+                APP.LIVE.last_frame_t = time.monotonic()
+                continue
             if scored_replay:
                 while len(APP.LIVE.q) == APP.LIVE.q.maxlen and not APP.LIVE.stopped and p_ is APP.LIVE.proc:
                     APP.LIVE.cond.wait(timeout=0.1)
@@ -438,6 +455,8 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
                 replay_eval.tag(p_, ta_, rid_, slot_, flags_)
             if len(APP.LIVE.q) == APP.LIVE.q.maxlen: APP.LIVE.q_drop += 1
             APP.LIVE.q.append((ta_, raw_))
+            cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
+            if now_ - tl_ >= 1.0: APP.LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
             if scored_replay:
                 APP.LIVE.cond.notify_all()
             else:
@@ -447,8 +466,6 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
             with rc_['cond']:
                 if len(rc_['q']) < 240: rc_['q'].append((ta_, raw_)); rc_['cond'].notify()
                 else: rc_['dropped'] += 1
-        cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
-        if now_ - tl_ >= 1.0: APP.LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
         recent_.append((ta_, seq_, tns_ * 1e-9, dtus_))
         cs_['seq'] = seq_; cs_['frames'] += 1; cs_['gap_ms'] = round(gap_ * 1000, 2)
         ok_ = -0.005 <= age_ < 3600.0   # 아니면 두 프로그램의 시계가 다르다 (같은 장치의 리눅스에서는 일어나지 않아야 한다)

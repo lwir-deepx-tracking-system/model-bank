@@ -3,6 +3,7 @@ from colorsys import hsv_to_rgb
 from functools import lru_cache
 import json
 import math
+import os
 import time
 import numpy as np
 from ..common.state import APP
@@ -13,17 +14,88 @@ from ..track.position_memory import POSP
 from ..track.stabilizer import STAB, stab_rows_real
 from ..camera import replay_link
 from . import system_buttons
+from . import preview_worker
 from ..camera import replay_eval   # 11-12: ground-truth comparison while a labelled recording is replayed
 
 
-def dash_rect(img, p1, p2, col, th=2, dash=7):
-    """v36: dashed rectangle (an estimate, not a detection)"""
-    import cv2
-    (x1, y1), (x2, y2) = p1, p2
-    for x in range(x1, x2, dash * 2):
-        cv2.line(img, (x, y1), (min(x + dash, x2), y1), col, th); cv2.line(img, (x, y2), (min(x + dash, x2), y2), col, th)
-    for y in range(y1, y2, dash * 2):
-        cv2.line(img, (x1, y), (x1, min(y + dash, y2)), col, th); cv2.line(img, (x2, y), (x2, min(y + dash, y2)), col, th)
+def init_preview(live, *, transition_jpeg=None):
+    if os.environ.get('LWIR_ASYNC_PREVIEW') == '1':
+        if transition_jpeg is None:
+            transition_jpeg = preview_worker.transition_jpeg(APP.cv2)
+        live.preview_worker = preview_worker.PreviewWorker(live, APP.cv2, transition_jpeg=transition_jpeg)
+
+
+def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
+                      rows_, row_, npers_, now_, fps_, gb_id_, *, owned, click_people=None,
+                      click_ticket=None):
+    gt_boxes = ()
+    if gtd_ is not None and replay_eval.DRAW[0]:
+        gt_boxes = tuple(tuple(b) for b in replay_eval.draw_boxes(t_in, gtd_, sC_))
+    predictions = []
+    if overlay_rows is None and camera_rows is None and POSP['show'] and now_ - POSP['boxes_t'] < 0.5:
+        try:
+            seen_ = {int(r_[4]) for r_ in rows_}
+            for tid_, b_ in POSP['boxes']:
+                if tid_ in seen_ or (APP.GB is not None and tid_ != gb_id_): continue
+                pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_)
+                p1_ = (int((b_[0] - b_[2] / 2) * sc_), int((b_[1] - b_[3] / 2 - 16) * sc_)); p2_ = (int((b_[0] + b_[2] / 2) * sc_), int((b_[1] + b_[3] / 2 - 16) * sc_))
+                predictions.append((p1_, p2_, pc_, int(tid_)))
+        except Exception: pass
+    txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
+    rp_ = getattr(APP.LIVE, 'replay', None)
+    if camera_rows is not None:
+        txt_ = 'ByteTrack C++ | TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | persons %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, npers_)
+    if rp_ is not None: txt_ = '%s | TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | persons %d' % (replay_link.top_text(rp_), fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, npers_)
+    gtxt_, gc_ = None, (255, 255, 255)
+    if APP.GB is not None and rp_ is None:
+        st_ = APP.GB.state
+        gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else ('gimbal: lost %d, waiting' % st_['id'] if st_['lost'] else 'gimbal: following %d' % st_['id'] if st_['auto'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle, click a person')
+        if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s: sent %d, failed %d' % ('connected' if gu_['client'] else 'no client', gu_['sent'], gu_['failed'])
+        if st_['auto']: gc_ = (0, 220, 255)
+    gray_ = g_[16:496]
+    if owned:
+        # bytes owns an immutable copy; the ndarray view cannot re-enable writes.
+        gray_ = np.frombuffer(gray_.tobytes(), dtype=gray_.dtype).reshape(gray_.shape)
+    return preview_worker.PreviewFrame(t_in, gray_, sc_, tuple(draw_), gt_boxes,
+                                       tuple(predictions), txt_, rp_ is not None, gtxt_, gc_,
+                                       click_people, click_ticket)
+
+
+def _click_live(x, y):
+    live = APP.LIVE
+    if getattr(live, 'preview_worker', None) is None:
+        return live_tracks.click(x, y)
+    with live.jcond:
+        frame_t = getattr(live, 'jpeg_frame_t', None)
+        people = getattr(live, 'jpeg_people', None)
+        ticket = getattr(live, 'jpeg_tracks_ticket', None)
+        if (frame_t is None or people is None or ticket is None
+                or not 0 <= time.perf_counter() - frame_t < 0.5
+                or live.stopped or getattr(live, 'cam_hold', False)
+                or getattr(live, 'cam_lost', False) or replay_link.frame_blocked(frame_t)):
+            return False, '최신 카메라 화면을 기다려 주세요'
+        return live_tracks.click(x, y, expected_id=live_tracks.hit_id(people, x, y),
+                                 expected_ticket=ticket)
+
+
+def _record_perf(live, now, frame_t, fps, compute_ms):
+    acc = live.perf_acc
+    acc[1] += 1
+    acc[4] += compute_ms
+    if frame_t is not None:
+        delay = (now - frame_t) * 1000.0
+        acc[2] += delay
+        acc[3] = max(acc[3], delay)
+        live.perf_paired_n = getattr(live, 'perf_paired_n', 0) + 1
+    if now - acc[0] >= 1.0:
+        paired = getattr(live, 'perf_paired_n', 0)
+        avg_delay = round(acc[2] / paired, 1) if paired else None
+        max_delay = round(acc[3], 1) if paired else None
+        with live.dlock:
+            live.perf.append((round(time.time(), 1), round(fps, 1), round(float(live.cam_fps), 1),
+                              avg_delay, max_delay, round(acc[4] / acc[1], 1), paired))
+        live.perf_acc = [now, 0, 0.0, 0.0, 0.0]
+        live.perf_paired_n = 0
 
 
 def frozen_check(raw_):
@@ -64,6 +136,15 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         # Keep UI timing arithmetic valid, but never turn fabricated time into OBS1.
         paired_stamp_ = False
         t_in = now_
+    worker_ = getattr(APP.LIVE, 'preview_worker', None)
+    replay_ = getattr(APP.LIVE, 'replay', None)
+    async_live_ = worker_ is not None and replay_ is None
+    token_ = (worker_.token(t_in, replay=replay_ is not None)
+              if worker_ is not None and paired_stamp_ else None)
+    replay_source_ = None
+    if worker_ is None and replay_ is not None and paired_stamp_:
+        with APP.LIVE.jcond:
+            replay_source_ = preview_worker.replay_preview_source(APP.LIVE, t_in)
     cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
     camera_rows = (cam_tracker.step(tracker_detections, t_in,
                    not replay_link.frame_blocked(t_in))
@@ -83,11 +164,8 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
             if APP.LIVE.meas is not None: APP.LIVE.meas['boxes'].append((t_in, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0, int(b_[4]), float(b_[5]), int(b_[6])) for b_ in stab_rows_real(display_rows, sC_)]))   # v22d
             if APP.LIVE.meas is not None: APP.LIVE.meas['rows'].append((now_, (now_ - t_in) * 1000.0, float(row_.get('frame_total_ms', 0.0)), float(row_.get('pre_model_ms', 0.0)), float(row_.get('tracker_ms', 0.0)), float(APP.LIVE.cam_fps)))
     fps_ = (len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0
-    # v26c: one sample per second of the numbers in the top line of the picture (TRACK fps, CAM fps, delay, compute), kept 15 min for the graph on the page (GET /perf)
-    pa_ = APP.LIVE.perf_acc; d_ms_ = (now_ - t_in) * 1000.0; pa_[1] += 1; pa_[2] += d_ms_; pa_[3] = max(pa_[3], d_ms_); pa_[4] += float(row_.get('frame_total_ms', 0.0))
-    if now_ - pa_[0] >= 1.0:
-        with APP.LIVE.dlock: APP.LIVE.perf.append((round(time.time(), 1), round(fps_, 1), round(float(APP.LIVE.cam_fps), 1), round(pa_[2] / pa_[1], 1), round(pa_[3], 1), round(pa_[4] / pa_[1], 1)))
-        APP.LIVE.perf_acc = [now_, 0, 0.0, 0.0, 0.0]
+    # v26c: track output timing, independent of whether a JPEG is made.
+    _record_perf(APP.LIVE, now_, t_in if paired_stamp_ else None, fps_, float(row_.get('frame_total_ms', 0.0)))
     sc_ = APP.args.live_scale
     # 11-12: boxes are collected first and drawn after the gimbal line below has gone out (the page picture takes about 6 ms on the board)
     npers_ = 0; gb_people_ = []; gb_id_ = APP.GB.state['id'] if APP.GB is not None else 0; draw_ = []
@@ -98,6 +176,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         if APP.GB is not None and len(gb_people_) < 60: gb_people_.append((tid_, x1_, y1_, x2_, y2_, float(r_[5])))
         if gb_id_ and tid_ != gb_id_: continue   # v39 (user 11-10): while one person is followed only that person's box is drawn
         draw_.append(((int(x1_ * sc_), int(y1_ * sc_)), (int(x2_ * sc_), int(y2_ * sc_)), col_, tid_))
+    healthy_ = False
     if APP.GB is not None:
         source_ = ('replay',) if replay_link.frame_blocked(t_in) else live_tracks.current_source()
         healthy_ = (paired_stamp_ and tracker_detections is not None and raw_valid_
@@ -120,46 +199,38 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         npers_ = len(draw_)
     # 11-12: the page picture only when somebody can see it: every frame while /stream has a viewer, otherwise once a second (/snap.jpg at most 1 s old)
     # and every frame for 3 s after a /snap.jpg request. Nothing else reads this picture (tracking, gimbal, measurement and the PC GUI use the frame itself).
-    if APP.LIVE.viewers > 0 or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0:
-        APP.LIVE.pic_t = now_; APP.LIVE.pic_n += 1
-        img_ = APP.cv2.cvtColor(g_[16:496], APP.cv2.COLOR_GRAY2BGR)
-        if sc_ != 1: img_ = APP.cv2.resize(img_, None, fx=sc_, fy=sc_, interpolation=APP.cv2.INTER_LINEAR)
-        for p1_, p2_, col_, tid_ in draw_:
-            APP.cv2.rectangle(img_, p1_, p2_, col_, 2); APP.cv2.putText(img_, str(tid_), (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, col_, 2)
-        if gtd_ is not None and replay_eval.DRAW[0]:   # 11-12: ground-truth boxes, thin and dashed, over the track boxes, on the page picture only (white = person, pink = ignore region)
-            hh_, ww_ = img_.shape[:2]
-            for x1_, y1_, x2_, y2_, k_ in replay_eval.draw_boxes(t_in, gtd_, sC_):
-                a_, b_ = (min(max(int(x1_ * sc_), 0), ww_ - 1), min(max(int(y1_ * sc_), 0), hh_ - 1)), (min(max(int(x2_ * sc_), 0), ww_ - 1), min(max(int(y2_ * sc_), 0), hh_ - 1))
-                if a_[0] < b_[0] and a_[1] < b_[1]: dash_rect(img_, a_, b_, (255, 255, 255) if k_ == 0 else (200, 90, 255), 1, 4)
-        if overlay_rows is None and camera_rows is None and POSP['show'] and now_ - POSP['boxes_t'] < 0.5:   # v32: predicted position of lost people (picture only, never sent to the gimbal)
+    preview_allowed_ = (token_ is not None if worker_ is not None else
+                        replay_ is None or replay_source_ is not None)
+    if preview_allowed_ and (
+            APP.LIVE.viewers > 0 or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0):
+        click_people, click_ticket = None, None
+        if async_live_ and healthy_ and overlay_rows is None:
+            click_people, click_ticket = live_tracks.preview_people(t_in, {d[3] for d in draw_})
+        frame_ = _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
+                                   rows_, row_, npers_, now_, fps_, gb_id_, owned=async_live_,
+                                   click_people=click_people, click_ticket=click_ticket)
+        if async_live_:
+            worker_.submit(token_, frame_, requested_at=now_)
+        else:
             try:
-                seen_ = {int(r_[4]) for r_ in rows_}
-                for tid_, b_ in POSP['boxes']:
-                    if tid_ in seen_ or (APP.GB is not None and tid_ != gb_id_): continue   # v36 (user 11-10): only the person being followed (no gimbal link: every lost person)
-                    pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_)
-                    p1_ = (int((b_[0] - b_[2] / 2) * sc_), int((b_[1] - b_[3] / 2 - 16) * sc_)); p2_ = (int((b_[0] + b_[2] / 2) * sc_), int((b_[1] + b_[3] / 2 - 16) * sc_))
-                    dash_rect(img_, p1_, p2_, pc_, 2); APP.cv2.putText(img_, '%d predict' % tid_, (p1_[0], max(p1_[1] - 4, 12)), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, pc_, 2)   # v36: same colour as the track, dashed = estimate
-            except Exception: pass
-        txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
-        rp_ = getattr(APP.LIVE, 'replay', None)
-        if camera_rows is not None:
-            txt_ = 'ByteTrack C++ | TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | persons %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, npers_)
-        if rp_ is not None: txt_ = '%s | TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | persons %d' % (replay_link.top_text(rp_), fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, npers_)   # 11-12: shorter line so the name fits
-        APP.cv2.rectangle(img_, (0, 0), (img_.shape[1], 26), (0, 0, 0) if rp_ is None else (0, 0, 150), -1); APP.cv2.putText(img_, txt_, (8, 19), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-        if APP.GB is not None and rp_ is None:
-            st_ = APP.GB.state
-            gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else ('gimbal: lost %d, waiting' % st_['id'] if st_['lost'] else 'gimbal: following %d' % st_['id'] if st_['auto'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle, click a person')
-            if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s: sent %d, failed %d' % ('connected' if gu_['client'] else 'no client', gu_['sent'], gu_['failed'])   # v20
-            APP.cv2.rectangle(img_, (0, 26), (img_.shape[1], 50), (0, 0, 0), -1); APP.cv2.putText(img_, gtxt_, (8, 44), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255) if st_['auto'] else (255, 255, 255), 1)
-        ok_, jb_ = APP.cv2.imencode('.jpg', img_, [APP.cv2.IMWRITE_JPEG_QUALITY, 80])
-        with APP.LIVE.jcond:
-            APP.LIVE.jpeg = jb_.tobytes()
-            APP.LIVE.jpeg_frame_t = t_in
-            APP.LIVE.seq += 1
-            APP.LIVE.jcond.notify_all()
-    td_ = time.perf_counter()
-    with APP.LIVE.dlock: APP.LIVE.delays.append((td_, (td_ - t_in) * 1000.0))   # v26b: camera frame arrival -> picture ready for the page, kept for /healthz
-    if time.monotonic() - APP.LIVE.t0 > APP.args.live_seconds or (APP.LIVE.cam_lost and APP.args.live_wait): APP.LIVE.stopped = True
+                jpeg_ = preview_worker.render_preview(APP.cv2, frame_)
+            except Exception:
+                jpeg_ = None
+            if worker_ is not None:
+                worker_.commit_replay(token_, t_in, jpeg_, requested_at=now_)
+            else:
+                with APP.LIVE.jcond:
+                    source_ok_ = (replay_ is None or (
+                        preview_worker.replay_preview_source(APP.LIVE, t_in) is replay_source_))
+                    if source_ok_:
+                        APP.LIVE.pic_t = now_
+                        if jpeg_:
+                            preview_worker.publish_jpeg_locked(APP.LIVE, jpeg_, t_in, paired=paired_stamp_)
+                        else:
+                            APP.LIVE.preview_errors = getattr(APP.LIVE, 'preview_errors', 0) + 1
+    if time.monotonic() - APP.LIVE.t0 > APP.args.live_seconds or (APP.LIVE.cam_lost and APP.args.live_wait):
+        if worker_ is not None: worker_.close()
+        APP.LIVE.stopped = True
     if APP.args.mamba and len(APP.relabeler.events) and APP.relabeler.events[-1] is not getattr(APP.LIVE, 'rl_last', None):
         new_ = []
         for ev_ in reversed(APP.relabeler.events):
@@ -304,7 +375,7 @@ def make_lv_Handler():
                 elif u_.path == '/gimbal/move': APP.GB.mover = ip_ if (int(q_['x'][0]) or int(q_['y'][0])) else None
                 if u_.path == '/gimbal/click':
                     x_, y_ = float(q_['x'][0]) * APP.LIVE_W, float(q_['y'][0]) * APP.LIVE_H
-                    ok_, answer_ = live_tracks.click(x_, y_)
+                    ok_, answer_ = _click_live(x_, y_)
                     APP.GB.state['answer'] = answer_
                     if not ok_:
                         b_ = json.dumps(dict(APP.GB.state, refused=True), ensure_ascii=False).encode()
@@ -346,7 +417,7 @@ def make_lv_Handler():
                     try: since_ = float(pq3_(us3_(self.path).query).get('since', ['0'])[0])   # the page asks only for the samples after the last one it has
                     except ValueError: since_ = 0.0
                     with APP.LIVE.dlock: pr_ = [r_ for r_ in APP.LIVE.perf if r_[0] > since_]
-                    b_ = json.dumps(dict(now=round(time.time(), 1), cols=['t', 'track_fps', 'cam_fps', 'delay_ms', 'delay_max_ms', 'compute_ms'], rows=pr_)).encode()
+                    b_ = json.dumps(dict(now=round(time.time(), 1), delay_kind='tracker_output', cols=['t', 'track_fps', 'cam_fps', 'delay_ms', 'delay_max_ms', 'compute_ms', 'paired_n'], rows=pr_)).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/healthz'):   # v24d: read-only liveness for the keep-alive supervisor (never POST /gimbal/ping from a script: that is the page's safety heartbeat)
                     now_ = time.monotonic(); last_out_ = APP.LIVE.done_ts[-1] if APP.LIVE.done_ts else None
@@ -358,7 +429,11 @@ def make_lv_Handler():
                               observation_status=bool(getattr(APP.GB, 'observation_status_supported', False)), observation_healthy=bool(getattr(APP.GB, 'observation_ok', False)), observation_good=getattr(APP.GB, 'observation_good', 0), observation_bad=getattr(APP.GB, 'observation_bad', 0),
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,
                               q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, replay=(getattr(APP.LIVE, 'replay', None) or {}).get('name'), track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
-                    with APP.LIVE.dlock: dl_ = [d_ for t_, d_ in APP.LIVE.delays if time.perf_counter() - t_ <= 30.0]   # v26b: delay of the last 30 s (camera frame arrival -> picture ready), ms
+                    worker_ = getattr(APP.LIVE, 'preview_worker', None)
+                    h_.update(delay_kind='jpeg_ready', async_preview=worker_ is not None)
+                    h_.update(worker_.stats() if worker_ is not None else dict(preview_dropped=0, preview_errors=getattr(APP.LIVE, 'preview_errors', 0)))
+                    cut_ = time.perf_counter() - 30.0
+                    with APP.LIVE.dlock: dl_ = [d_ for t_, d_ in APP.LIVE.delays if t_ >= cut_]   # arrival -> successfully published JPEG, last 30 s
                     if dl_: dl_.sort(); h_.update(delay_n=len(dl_), delay_p50=round(dl_[len(dl_) // 2], 1), delay_p95=round(dl_[min(len(dl_) - 1, int(len(dl_) * 0.95))], 1), delay_max=round(dl_[-1], 1))
                     else: h_.update(delay_n=0, delay_p50=None, delay_p95=None, delay_max=None)
                     b_ = json.dumps(h_).encode()
@@ -376,8 +451,14 @@ def make_lv_Handler():
                     b_ = json.dumps(replay_eval.results(pq5_(u5_.query)) if u5_.path == '/replay/eval' else replay_link.get_info(pq5_(u5_.query)), ensure_ascii=False).encode()   # 11-12: /replay/eval = the comparison alone (+ eval_last = the numbers of the last finished replay)
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/snap.jpg'):
-                    APP.LIVE.snap_t = time.perf_counter()   # 11-12: pictures for every frame during the next 3 s
-                    with APP.LIVE.jcond: jb_ = APP.LIVE.jpeg
+                    with APP.LIVE.jcond:
+                        jb_ = None
+                        if not APP.LIVE.stopped:
+                            APP.LIVE.snap_t = time.perf_counter()   # 11-12: pictures for every frame during the next 3 s
+                            jb_ = APP.LIVE.jpeg
+                    if jb_ is None:
+                        self.send_error(503)
+                        return
                     self.send_response(200); self.send_header('Content-Type', 'image/jpeg'); self.send_header('Content-Length', str(len(jb_))); self.end_headers(); self.wfile.write(jb_)
                 else:
                     lp_ = HERE / 'page' / 'live_page.html'   # v22: read on every request, so the page can be changed without restarting the server
@@ -398,6 +479,8 @@ def make_lv_Server():
 
 
 def live_close():
+    worker_ = getattr(APP.LIVE, 'preview_worker', None)
+    if worker_ is not None: worker_.close()
     APP.LIVE.stopped = True
     APP.LIVE.camera_bytetrack.close()
     try: APP.meas_stop()   # v22: keep a measurement that is still running
@@ -419,3 +502,4 @@ def live_close():
     cp_.terminate()
     try: cp_.wait(20)   # v24c: was 5 s
     except Exception: cp_.kill()
+    if worker_ is not None: worker_.join(0.5)

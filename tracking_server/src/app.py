@@ -441,6 +441,7 @@ def main():
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
             APP.LIVE.lo = None; APP.LIVE.hi = None; APP.LIVE.last = None; APP.LIVE.log = open(APP.out / 'cam_pipe.log', 'w'); APP.LIVE.raws = APP.lv_col.deque(); APP.LIVE.rawq = APP.lv_col.deque(); APP.LIVE.warm_dropped = 0; APP.LIVE.last_frame_t = time.monotonic(); APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.cam_next_spawn = None; APP.LIVE.cam_hold = False; APP.LIVE.cam_reset = None; APP.LIVE.sys_lock = APP.lv_th.Lock(); APP.LIVE.cam_lock = APP.lv_th.Lock(); APP.LIVE.frames_in = 0; APP.LIVE.q_drop = 0; APP.LIVE.prev_t = None; APP.LIVE.upd_t = None; APP.LIVE.gap_n = 0; APP.LIVE.delays = APP.lv_col.deque(maxlen=2000); APP.LIVE.dlock = APP.lv_th.Lock(); APP.LIVE.perf = APP.lv_col.deque(maxlen=900); APP.LIVE.perf_acc = [time.perf_counter(), 0, 0.0, 0.0, 0.0]   # v26b: q_drop = camera frames thrown away because the tracker was 3 frames behind, gap_n = input gaps over 1 s, delays = (time, capture-to-picture ms) of the last frames. v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)
             APP.LIVE_W, APP.LIVE_H = 640, 480
+            page_handler.init_preview(APP.LIVE)
             APP.LIVE.stabq = APP.lv_col.deque()   # stab: correction (cx, cy) or None of every frame read, paired with LIVE.arr
             APP.lv_reader = camera_link.lv_reader
             APP.lv_spawn = camera_link.lv_spawn
@@ -977,6 +978,8 @@ def main():
         if zoom_eng is not None: print(json.dumps({'zoom': {k: res['zoom'][k] for k in ('candidates', 'windows', 'windows_skipped', 'canvases', 'raw_canvas_boxes', 'accepted', 'fates', 'canvas_ms', 'wait_ms', 'merge_ms', 'npu_ms_per_canvas')}}), flush=True)
     except BaseException:
         failed = True
+        worker_ = getattr(APP.LIVE, 'preview_worker', None)
+        if worker_ is not None: worker_.close()
         for e_ in list(APP.eng.values()):
             while getattr(e_, 'q', None):
                 try: e_.b.wait(e_.q.pop(0)[0])

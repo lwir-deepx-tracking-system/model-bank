@@ -5,6 +5,7 @@ import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
 from ..track.stabilizer import STAB, stab_live, stab_off
+from ..web.preview_worker import invalidate_preview, publish_jpeg_locked
 from . import replay_link   # 11-12: recording replay from the page (does nothing until it is used)
 from . import camera_extra   # 2026-11-11: 지워지지 않는 카메라 기록(기본 켜짐), 프레임 시간표와 공유 메모리(환경 변수로만 켜짐)
 
@@ -27,30 +28,35 @@ def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a ne
         while got_ < n_:
             k_ = p_.stdout.readinto(mv_[got_:])
             if not k_:
-                if p_ is APP.LIVE.proc: APP.LIVE.cam_lost = True
-                with APP.LIVE.cond: APP.LIVE.cond.notify_all()
+                with APP.LIVE.cond:
+                    if p_ is APP.LIVE.proc: APP.LIVE.cam_lost = True
+                    APP.LIVE.cond.notify_all()
                 return
             got_ += k_
         if APP.LIVE.stopped: continue
         raw_ = np.frombuffer(buf_, np.uint16).reshape(APP.LIVE_H, APP.LIVE_W).copy()
         ta_ = time.perf_counter()
         with APP.LIVE.cond:
+            if APP.LIVE.stopped or p_ is not APP.LIVE.proc:
+                continue
             if len(APP.LIVE.q) == APP.LIVE.q.maxlen: APP.LIVE.q_drop += 1   # v26b: the oldest waiting frame is thrown away (the tracker is 3 frames behind)
             APP.LIVE.q.append((ta_, raw_)); APP.LIVE.cond.notify()
+            cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
+            if now_ - tl_ >= 1.0: APP.LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
         rc_ = APP.LIVE.rec   # v22d: measurement video
         if rc_ is not None:
             with rc_['cond']:
                 if len(rc_['q']) < 240: rc_['q'].append((ta_, raw_)); rc_['cond'].notify()
                 else: rc_['dropped'] += 1
-        cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
-        if now_ - tl_ >= 1.0: APP.LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
 
 
 def lv_spawn():   # v21: open (or reopen) the camera process and its reader
+    invalidate_preview(APP.LIVE, before=time.perf_counter())
     if getattr(APP.LIVE, 'replay', None) is not None: return replay_link.spawn()   # 11-12: the replay program, always with frame headers and png numbers (the camera start below is unchanged)
     if camera_extra.wanted(): return camera_extra.spawn()   # LWIR_CAM_STAMP=1 (off by default): the same start with the setting passed on to cam_pipe
-    APP.LIVE.proc = APP.lv_sp.Popen(replay_link.cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0); APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()   # v26: cam_lost is cleared after the new process is in place (the old reader's end-of-file could set it for the new one and start a second cam_pipe)
-    APP.lv_th.Thread(target=APP.lv_reader, args=(APP.LIVE.proc,), daemon=True).start()
+    proc = APP.lv_sp.Popen(replay_link.cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0)
+    camera_extra.install_producer(proc)
+    APP.lv_th.Thread(target=APP.lv_reader, args=(proc,), daemon=True).start()
     camera_extra.log_start()   # camera_events.log: cam_pipe's lines and the server's camera lines, kept over restarts (LWIR_CAM_LOG=0 turns it off)
 
 
@@ -86,6 +92,7 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
             try: APP.LIVE.proc.wait(5)   # v26: the killed process must be gone (camera lock released) before the next one starts
             except Exception: pass
         camera_extra.say('LIVE camera: no frame for %.0f s from a live cam_pipe, restarting it' % idle_); APP.LIVE.cam_next_spawn = None; APP.lv_spawn()
+    token_ = invalidate_preview(APP.LIVE)
     img_ = np.zeros((480, 640, 3), np.uint8)
     APP.cv2.putText(img_, 'NO CAMERA FRAME  %.0f s' % idle_, (90, 230), APP.cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
     if APP.LIVE.cam_fail_n: APP.cv2.putText(img_, 'CAMERA FAILED: %d restarts without a frame - check the USB cable / power' % APP.LIVE.cam_fail_n, (20, 275), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
@@ -96,12 +103,17 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
         st_ = APP.GB.state; gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle'
         if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s' % ('connected' if gu_['client'] else 'no client')
         APP.cv2.putText(img_, gtxt_, (8, 44), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
-    ok_, jb_ = APP.cv2.imencode('.jpg', img_, [APP.cv2.IMWRITE_JPEG_QUALITY, 80])
-    with APP.LIVE.jcond:
-        APP.LIVE.jpeg = jb_.tobytes()
-        APP.LIVE.jpeg_frame_t = None
-        APP.LIVE.seq += 1
-        APP.LIVE.jcond.notify_all()
+    try:
+        ok_, jb_ = APP.cv2.imencode('.jpg', img_, [APP.cv2.IMWRITE_JPEG_QUALITY, 80])
+    except APP.cv2.error:
+        return
+    if ok_ and jb_ is not None:
+        jpeg_ = jb_.tobytes()
+        if token_ is not None:
+            APP.LIVE.preview_worker.publish_placeholder(token_, jpeg_)
+        else:
+            with APP.LIVE.jcond:
+                publish_jpeg_locked(APP.LIVE, jpeg_, None)
 
 
 def lv_to8(raw_):
@@ -306,4 +318,5 @@ def cam_reset_request():
         if APP.LIVE.meas is not None: return False, '측정 중에는 초기화하지 않음'
         if replay_link.blocking(): return False, '녹화 재생 중에는 카메라 초기화를 하지 않음. 먼저 재생을 멈추세요'   # 11-12
         APP.LIVE.cam_hold = True
+        invalidate_preview(APP.LIVE, before=time.perf_counter())
     APP.lv_th.Thread(target=APP.cam_reset_work, daemon=True).start(); return True, '카메라 초기화 시작'
