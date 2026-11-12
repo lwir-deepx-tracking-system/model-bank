@@ -13,6 +13,7 @@ v.addEventListener('error',()=>setTimeout(openStream,2000));
 // v25: the bridge answers in English; shown in Korean
 const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
 let lostSince=null,autoNow=false,hzPrev=null;
+function cameraCppPreview(){const camera=rlast?.camera_bytetrack;return !!(camera?.active||camera?.requested);}
 function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;netChip();
   renderGimbalPose(t.pose, t.position_estimate);
   let txt,cls='good',sq='';
@@ -22,7 +23,7 @@ function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;n
   else if(t.auto){txt=t.id+'번을 따라가는 중';sq='auto';}
   else if(t.moving){txt='수동으로 움직이는 중';sq='man';}
   else if(t.ready===false){txt='짐벌 준비 중';cls='';}
-  else{txt='대기 중 · 영상에서 사람을 클릭하세요';cls='';}
+  else{txt=cameraCppPreview()?'대기 중 · 짐벌로 따라가려면 ByteTrack에서 Python을 선택하세요':'대기 중 · 영상에서 사람을 클릭하세요';cls='';}
   S.textContent=txt;$('sq').className='sq '+sq;$('ans').textContent=t.answer?(ANS[t.answer]||t.answer):'';
   chip('gdot','gtext',cls,t.running?(t.auto?'추종 '+t.id+'번':t.moving?'수동 이동':'짐벌 대기'):'짐벌 꺼짐');
   if(t.lost){if(lostSince==null)lostSince=Date.now();$('lt').textContent=((Date.now()-lostSince)/1000).toFixed(1)+' 초';}

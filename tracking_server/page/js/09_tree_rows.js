@@ -19,10 +19,10 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const replayErr=replayCpp&&!!(rpLast.eval&&rpLast.eval.backend_error);
   const camCpp=!!(!recording&&camNative&&camNative.active);
   const cpp=camCpp||replayCpp, btSelected=BT_KEYS.includes(trk)||cpp;
-  const engine=replayCpp?(replayErr?'C++ 오류 (녹화)':'C++ (녹화)'):camCpp?'C++ (카메라)':r.tracker_backend||'미보고';
+  const engine=replayCpp?(replayErr?'C++ 오류 (녹화)':'C++ (녹화)'):r.tracker_backend||'미보고';
   const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(p.backend||'백엔드 미보고'),note:TN[p.key]?TN[p.key][1]:'',sel:!cpp&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
   if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack',sel:btSelected,u:Q('tracker='+encodeURIComponent(bt.key))});
-  T.push({lab:'Tracker',sub:'실제 실행 엔진: '+engine,n:tn});
+  T.push({lab:'Tracker',sub:camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine,n:tn});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
   const hot=!!(r.reid_hot&&r.reids&&r.reids.length),rk=hot?(r.reid_pending||r.reid):'',fol=!!(r.gimbal&&r.gimbal.auto);
@@ -56,7 +56,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'Python',sel:!cpp&&!(camNative&&camNative.requested),lock:switching?'영상 전환 중입니다':'',
        replayBackend:recording?'python':null,u:Q('tracker='+encodeURIComponent(pythonPreset))},
       {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?'C++ 라이브러리를 사용할 수 없습니다':'',
-       note:recording?'녹화 재생':camNative?.error?'실행 실패 · Python으로 복귀':camNative?.requested&&!camCpp?'다음 카메라 프레임 대기':'실시간 화면 표시',
+       note:recording?'녹화 재생':camNative?.error?'실행 실패 · Python으로 복귀':camNative?.requested&&!camCpp?'다음 카메라 프레임 대기':'카메라 화면에서 박스·ID 표시',
        replayBackend:recording?'cpp_bytetrack':null,u:'/tracker/camera?backend=cpp_bytetrack'},
       {name:'위치 재결합',note:trk==='rebind'?'켜짐':'꺼짐',sel:trk==='rebind',lock:optionLock,
        u:Q('tracker='+encodeURIComponent(trk==='rebind'?bt.key:'rebind'))}

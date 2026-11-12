@@ -1,13 +1,26 @@
-/* v26d: small speed / delay graphs on the top-left corner of the picture, switched with the small button there. The box lets clicks through to the picture (people under it can still be picked); only the two buttons take clicks. Line colours are for the graphs only (orange stays for the followed state). */
-:root{--c1:#5aa9e6;--c2:#c9c9c9;--c3:#b07cd8}
-.pfo{position:absolute;left:6px;top:calc(5% + 6px);z-index:2;width:236px;pointer-events:none;font-size:11px;line-height:1.35;color:var(--ink2)}
+/* The chart lets pointer events through to the video. Only its two buttons take clicks. */
+:root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--pf-grid:#465363;--pf-label:#e1e8f2}
+.pfo{position:absolute;left:6px;top:calc(5% + 6px);z-index:2;width:min(264px,calc(100% - 12px));pointer-events:none;font-size:12px;line-height:1.3;color:var(--pf-label)}
 .pfo .pfb{display:flex;gap:4px}
-.pfo button{pointer-events:auto;font:inherit;height:22px;padding:0 7px;border:1px solid var(--line2);border-radius:var(--r);background:rgba(24,24,24,.8);color:var(--mut);cursor:pointer}
-.pfo button.on{color:var(--ink);border-color:var(--ink2)}
-.pfo .pfx{margin-top:4px;padding:4px 6px 6px;background:rgba(24,24,24,.8);border:1px solid var(--line);border-radius:var(--r)}
+.pfo .pfb button{pointer-events:auto;font:inherit;font-weight:600;height:24px;padding:0 8px;border:1px solid #667385;border-radius:var(--r);background:#161b23;color:var(--pf-label);cursor:pointer}
+.pfo .pfb button.on{color:#fff;border-color:var(--c1)}
+.pfo .pfx{margin-top:4px;padding:6px 8px;background:rgba(15,20,28,.96);border:1px solid #536174;border-radius:var(--r)}
 .pfo.off .pfx,.pfo.off #pfspan{display:none}
-.pfh{display:flex;flex-wrap:wrap;gap:0 8px;align-items:center}
-.pfh>span:last-child{margin-left:auto;color:var(--mut)}
-.pfl{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.pfl i{width:8px;height:2px;display:inline-block}.pfl b{color:var(--ink);font-weight:600}
-.pfo canvas{display:block;width:100%;height:48px;margin:2px 0 3px}
-.pfo canvas:last-child{margin-bottom:0}
+.pfo .pfh{display:flex;flex-wrap:wrap;gap:2px 9px;align-items:center}
+.pfh>span:last-child{margin-left:auto;color:var(--pf-label)}
+.pfl{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
+.pfl i{width:11px;height:3px;border-radius:2px;display:inline-block}
+.pfl b{color:#fff;font-weight:700}
+.pfo .pfx canvas{display:block;width:100%;height:52px;margin:2px 0 5px}
+.pfo .pfx #pfc1{margin-bottom:0}
+.pfo .pf-overflow{margin:3px 0 0;color:var(--c3);font-weight:600;overflow-wrap:anywhere}
+@media (max-width:900px){
+  .pfo#pfo{width:min(220px,calc(100% - 8px));font-size:11px;left:4px}
+  .pfo .pfb button{height:26px;padding:0 9px}
+  .pfo .pfx{padding:5px 6px}
+  .pfo .pfh{column-gap:6px}
+  .pfo .pfx canvas{height:40px}
+}
+@media (max-width:900px) and (max-height:400px) and (orientation:landscape){
+  .pfo .pfx canvas{height:36px}
+}
