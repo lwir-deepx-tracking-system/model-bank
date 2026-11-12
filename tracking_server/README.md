@@ -59,18 +59,12 @@
 
 ## 2. 빠른 시작
 
-이미 Orange Pi에 `~/model-bank`가 있다면 [기존 저장소 업데이트](../README.md#기존-저장소-업데이트)를 참고하세요. 아래 명령은 처음 설치할 때 사용합니다.
-
-```bash
-git clone https://github.com/lwir-deepx-tracking-system/model-bank.git
-bash model-bank/tracking_server/scripts/setup.sh         # 한 번만: 빌드, 모델 연결과 확인
-bash model-bank/tracking_server/scripts/run_real_gui.sh  # 켜기
-```
+첫 설치는 [처음 설치하고 켜기](../README.md#처음-설치하고-켜기), 기존 설치는 [기존 저장소 업데이트](../README.md#기존-저장소-업데이트)를 참고하세요. 저장소에 들어간 다음 [빌드와 서버 실행](../README.md#빌드와-서버-실행)을 진행합니다.
 
 브라우저에서 `http://<장치 주소>:8090/` 을 엽니다.
 
 - **화면에는 비밀번호가 없고 짐벌을 움직입니다.** 믿을 수 있는 기기만 닿는 주소에서 쓰세요.
-- `setup.sh` 끝에 `setup done` 이 나오면 준비가 된 것입니다.
+- 실시간 카메라와 기본 PC GUI를 실행하려면 `setup.sh`에서 `cam_pipe built`, `gimbal_bridge_v25 built`, 마지막 `setup done`을 확인합니다.
 - 장치마다 다른 값은 `scripts/live.env.example` 을 `scripts/live.env` 로 복사해 고칩니다 (4절).
 - 서버를 다시 켜면 예측 제어는 꺼진 채로 켜집니다. 화면에서 다시 켭니다.
 
@@ -102,7 +96,7 @@ bash model-bank/tracking_server/scripts/run_real_gui.sh  # 켜기
 <details>
 <summary>켜자마자 끝날 때</summary>
 
-`real_gui_1.out` 과 끝나는 값을 봅니다.
+실행 직후 셸 프롬프트가 돌아오면 선택한 저장소의 `tracking_server/real_gui_1.out`과 종료 값을 확인합니다. 기존 서버가 떠 있는지는 `ss -ltn 'sport = :8090'`과 웹 화면으로 확인합니다.
 
 | 끝나는 값 | 뜻 |
 |---|---|

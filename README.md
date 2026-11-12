@@ -46,12 +46,11 @@
 Orange Pi에서 처음 내려받을 때 실행합니다. 이미 `~/model-bank`가 있다면 [기존 저장소 업데이트](#기존-저장소-업데이트)를 참고하세요.
 
 ```bash
-git clone https://github.com/lwir-deepx-tracking-system/model-bank.git
-bash model-bank/tracking_server/scripts/setup.sh         # 한 번만: 빌드, 모델 연결과 확인
-bash model-bank/tracking_server/scripts/run_real_gui.sh  # 켜기
+git clone https://github.com/lwir-deepx-tracking-system/model-bank.git "$HOME/model-bank"
+cd "$HOME/model-bank"
 ```
 
-- 브라우저에서 `http://<장치 주소>:8090/` 을 엽니다.
+저장소로 들어간 뒤 [빌드와 서버 실행](#빌드와-서버-실행)을 진행합니다.
 - 화면에서 할 수 있는 것: 사람을 눌러 따라가기, 손으로 짐벌 움직이기, 검출·외형 모델 바꾸기, Filter 값 바꾸기, 측정 저장, 카메라 초기화.
 - 팀 PC GUI 에도 영상과 상자를 보냅니다.
 - 꺼지면 스스로 다시 켜는 스크립트(`scripts/keepalive.sh`)가 있습니다.
@@ -60,18 +59,22 @@ bash model-bank/tracking_server/scripts/run_real_gui.sh  # 켜기
 
 ### 기존 저장소 업데이트
 
-`destination path 'model-bank' already exists and is not an empty directory`가 나오면 `~/model-bank` 폴더가 이미 있습니다. 먼저 기존 폴더의 저장소 주소와 브랜치, 수정 파일을 확인합니다.
+`destination path 'model-bank' already exists and is not an empty directory`가 나오면 `~/model-bank` 폴더가 이미 있습니다. 먼저 사용하려는 저장소 폴더로 들어가 주소와 브랜치, 수정 파일을 확인합니다.
 
 ```bash
-git -C "$HOME/model-bank" remote get-url origin
-git -C "$HOME/model-bank" status --short --branch
+cd "$HOME/model-bank"
+git rev-parse --show-toplevel
+git remote get-url origin
+git status --short --branch
 ```
+
+`~/model-bank` 안에서 다시 클론했다면 안쪽 저장소인 `~/model-bank/model-bank`로 들어가 위 Git 확인 명령을 실행합니다. 아래부터는 선택한 저장소의 최상위 폴더에서 실행합니다.
 
 `origin`이 `lwir-deepx-tracking-system/model-bank`를 가리키고, 현재 브랜치가 `main`이며 수정 파일이 없으면 아래를 실행합니다.
 
 ```bash
-git -C "$HOME/model-bank" pull --ff-only origin main
-git -C "$HOME/model-bank" log -3 --oneline
+git pull --ff-only origin main
+git log -3 --oneline
 ```
 
 다른 브랜치에 있거나 수정 파일이 표시되면 현재 작업을 먼저 확인합니다. 기존 폴더가 Git 저장소가 아니라면 다른 이름으로 내려받을 수 있습니다.
@@ -80,7 +83,32 @@ git -C "$HOME/model-bank" log -3 --oneline
 git clone https://github.com/lwir-deepx-tracking-system/model-bank.git "$HOME/model-bank-new"
 ```
 
-실행 중인 추적 서버의 Python 변경은 서버를 다시 시작할 때 적용됩니다. [추적 서버 시작과 종료](tracking_server/README.md#8-꺼지면-다시-켜기-끄기)
+업데이트 후에는 같은 폴더에서 [빌드와 서버 실행](#빌드와-서버-실행)을 진행합니다. 실행 중인 추적 서버의 Python 변경은 서버를 다시 시작할 때 적용됩니다. [추적 서버 시작과 종료](tracking_server/README.md#8-꺼지면-다시-켜기-끄기)
+
+### 빌드와 서버 실행
+
+1. 처음 설치하거나 바이너리·모델 파일이 바뀌었다면, 저장소 최상위 폴더에서 준비 스크립트를 실행합니다.
+
+   ```bash
+   bash tracking_server/scripts/setup.sh
+   ```
+
+   `cam_pipe built` 뒤에는 브리지 컴파일이 진행되는 동안 출력이 뜸할 수 있습니다. 실시간 카메라와 기본 PC GUI 구성은 `cam_pipe built`, `gimbal_bridge_v25 built`, 마지막 `setup done`을 확인합니다.
+
+2. 기존 추적 서버가 꺼져 있을 때 같은 폴더에서 실행합니다.
+
+   ```bash
+   bash tracking_server/scripts/run_real_gui.sh
+   ```
+
+3. 브라우저에서 `http://<장치 주소>:8090/`을 엽니다. 명령 직후 셸 프롬프트가 돌아왔다면 그 실행은 종료된 상태입니다. 같은 저장소에서 최근 로그와 8090 포트를 확인합니다. `LWIR_LIVE_PORT`를 바꿨다면 해당 포트를 확인합니다.
+
+   ```bash
+   tail -n 60 tracking_server/real_gui_1.out
+   ss -ltn 'sport = :8090'
+   ```
+
+   `LISTEN`이 보이면 브라우저로 추적 화면을 확인합니다. 로그에 `NPU busy`가 있으면 기존 서버 프로세스부터 확인합니다. 다른 종료 이유는 [추적 서버 빠른 시작](tracking_server/README.md#2-빠른-시작)에 정리했습니다.
 
 ## 2. 라벨 서버 (`label_server/`)
 
