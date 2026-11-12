@@ -246,8 +246,8 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
   <section class="view">
     <div class="vbox">
       <div class="frame"><img id="v" src="/stream" alt="실시간 영상" draggable="false">
-        <div class="pose" aria-label="짐벌 실측 각도">
-          <span id="pose-status" class="pose-status">짐벌 각도 데이터 없음</span>
+        <div class="pose" aria-label="짐벌 위치">
+          <span id="pose-status" class="pose-status">짐벌 위치 데이터 없음</span>
           <div class="pose-axis pose-pan" id="pose-pan" hidden>
             <span class="pose-value" data-value></span>
             <div class="pose-scale" data-scale hidden>
@@ -453,25 +453,28 @@ function poseDegrees(deg) {
   return (deg > 0 ? '+' : '') + deg.toFixed(1).replace(/\.0$/, '') + '°';
 }
 
-function renderGimbalPose(pose) {
+function renderGimbalPose(pose, estimate) {
   let any = false;
+  const estimated = !pose && !!estimate;
+  const format = estimated ? value => Math.round(value) + '%' : poseDegrees;
   for (const {key, label, axis, value, scale, low, high, marker} of poseAxes) {
-    const data = pose && pose[key];
+    const data = estimated ? {deg: estimate[key], min_deg: 0, max_deg: 100} : pose && pose[key];
     const valid = !!data && Number.isFinite(data.deg);
     axis.hidden = !valid;
     if (!valid) continue;
     any = true;
     const hasRange = Number.isFinite(data.min_deg) && Number.isFinite(data.max_deg) && data.max_deg > data.min_deg;
     const inRange = hasRange && data.deg >= data.min_deg && data.deg <= data.max_deg;
-    value.textContent = label + ' ' + poseDegrees(data.deg) + (hasRange && !inRange ? ' · 범위 밖' : '');
+    value.textContent = label + (estimated ? ' 추정 ' : ' ') + format(data.deg) + (hasRange && !inRange ? ' · 범위 밖' : '');
     scale.hidden = !hasRange;
     marker.hidden = !inRange;
     if (!hasRange) continue;
-    low.textContent = poseDegrees(data.min_deg);
-    high.textContent = poseDegrees(data.max_deg);
+    low.textContent = format(data.min_deg);
+    high.textContent = format(data.max_deg);
     if (inRange) marker.style.setProperty('--pose-position', (100 * (data.deg - data.min_deg) / (data.max_deg - data.min_deg)) + '%');
   }
-  poseStatus.hidden = any;
+  poseStatus.hidden = any && !estimated;
+  poseStatus.textContent = any ? '이동 명령 기반 · 시작점 50%' : '짐벌 위치 데이터 없음';
   poseReceivedAt = any ? Date.now() : 0;
 }
 
@@ -494,7 +497,7 @@ v.addEventListener('error',()=>setTimeout(openStream,2000));
 const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
 let lostSince=null,autoNow=false,hzPrev=null;
 function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;netChip();
-  renderGimbalPose(t.pose);
+  renderGimbalPose(t.pose, t.position_estimate);
   let txt,cls='good',sq='';
   if(!t.running){txt='짐벌 프로그램이 꺼져 있습니다';cls='bad';sq='bad';}
   else if(t.error){txt='짐벌 오류: 서버를 다시 켜야 합니다';cls='bad';sq='bad';}

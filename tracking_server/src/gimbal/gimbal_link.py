@@ -128,12 +128,12 @@ def parse_pose(fields):
     return pose
 
 
-def gb_pose():
-    sample = getattr(APP.GB, 'pose_sample', None)
+def gb_sample(name):
+    sample = getattr(APP.GB, name, None)
     if not sample:
         return None
     bridge, sampled_at, pose = sample
-    if bridge is APP.GB.proc and APP.GB.state['running'] and time.monotonic() - sampled_at < 1.5:
+    if bridge is APP.GB.proc and APP.GB.state['running'] and not APP.GB.state['error'] and time.monotonic() - sampled_at < 1.5:
         return pose
     return None
 
@@ -152,6 +152,11 @@ def gb_reader(p_):
             APP.GB.state.update(auto=int(f_[1]), lost=int(f_[2]), moving=int(f_[3]), error=int(f_[4]), id=int(f_[5])); print('GIMBAL', line_.strip(), flush=True)
         elif f_[0] == 'POSE':
             APP.GB.pose_sample = (p_, time.monotonic(), parse_pose(f_[1:]))
+        elif f_[0] == 'POSITION_EST':
+            estimate = parse_pose(f_[1:]) if len(f_) == 3 else None
+            if estimate and all(0 <= axis['deg'] <= 100 for axis in estimate.values()):
+                percent = {key: axis['deg'] for key, axis in estimate.items()}
+                APP.GB.position_sample = (p_, time.monotonic(), percent)
         elif f_[0] == 'M' and len(f_) >= 3:   # v23: the PC GUI asks for a model change: M <req> <id>
             r_ = APP.model_request(int(f_[2]), int(f_[1])); print('MODEL request from the PC GUI: id', f_[2], '->', 'queued' if r_ < 0 else r_, flush=True)
             if r_ >= 0: APP.gb_send('N %d %d' % (int(f_[1]), r_))

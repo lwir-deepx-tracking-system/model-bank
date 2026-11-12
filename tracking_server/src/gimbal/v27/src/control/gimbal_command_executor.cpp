@@ -121,6 +121,7 @@ void GimbalCommandExecutor::failure(const std::exception& e)
     try { device_->stop(); } catch (const std::exception& stop_error) {
         Logger::error(std::string("[Control] STOP failed: ") + stop_error.what());
     }
+    position_estimate_.command(Clock::now(), 0, 0, 0);
     state_.moving = false; x_ = y_ = sent_speed_ = 0; limited_speed_ = 0;
     hold_x_ = hold_y_ = false;   // v27
 }
@@ -129,6 +130,7 @@ void GimbalCommandExecutor::stop(const char* reason)
     // No ramp: safety/Deadband STOP is immediate command submission.
     try {
         device_->stop();
+        position_estimate_.command(Clock::now(), 0, 0, 0);
         controller_.set_applied_output(0, 0);
         Logger::debug(std::string("[Control] STOP reason=") + reason);
         state_.moving = false; x_ = y_ = sent_speed_ = 0; limited_speed_ = 0;
@@ -150,6 +152,7 @@ void GimbalCommandExecutor::send(int x, int y, int speed, bool automatic)
     try {
         if (automatic) device_->move_with_speed(x, y, speed);
         else device_->move(x, y);
+        position_estimate_.command(Clock::now(), x, y, speed);
         x_ = x; y_ = y; sent_speed_ = speed; state_.moving = x || y;
     } catch (const std::exception& e) { failure(e); }
 }
@@ -279,4 +282,12 @@ void GimbalCommandExecutor::move(int x, int y)
 void GimbalCommandExecutor::halt() { invoke([this] { invalidate("halt/HOME"); }, true); }
 void GimbalCommandExecutor::suspend() { invoke([this] { invalidate("model switch"); latest_.reset(); last_frame_id_ = 0; }, true); }
 void GimbalCommandExecutor::shutdown() { invoke([this] { stopped_ = true; connected_ = false; invalidate("shutdown"); }, true); }
-ControlSnapshot GimbalCommandExecutor::snapshot() { return invoke([this] { return state_; }); }
+ControlSnapshot GimbalCommandExecutor::snapshot()
+{
+    return invoke([this] {
+        position_estimate_.advance(Clock::now());
+        state_.pan_estimate = position_estimate_.pan;
+        state_.tilt_estimate = position_estimate_.tilt;
+        return state_;
+    });
+}

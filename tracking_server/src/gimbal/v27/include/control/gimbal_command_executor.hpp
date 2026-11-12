@@ -8,6 +8,7 @@
 #include <thread>
 #include "control/auto_tracking_controller.hpp"
 #include "control/gimbal_device.hpp"
+#include "control/gimbal_position_estimate.hpp"
 #include "pipeline/runtime_control.hpp"
 
 enum class ControlResult { Ok, InvalidTarget, NotReady };
@@ -18,6 +19,8 @@ struct ControlSnapshot {
     bool error = false;
     std::uint32_t selected_id = 0;
     std::uint64_t command_generation = 0;
+    double pan_estimate = 50.0;
+    double tilt_estimate = 50.0;
 };
 
 // One worker owns device I/O and every mutable control decision. GUI requests
@@ -38,6 +41,7 @@ class GimbalCommandExecutor {
 
     // Worker-owned state only.
     ControlSnapshot state_;
+    GimbalPositionEstimate position_estimate_;
     TrackingResultPtr latest_;
     std::uint64_t model_generation_ = 0, last_frame_id_ = 0;
     std::uint64_t tracker_epoch_ = 0;
