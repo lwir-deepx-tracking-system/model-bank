@@ -33,6 +33,11 @@ OT.addEventListener('click',e=>{const sb=e.target.closest('.ot-sf'),fb=e.target.
   const b=e.target.closest('.ot-n');if(!b||!b.dataset.i)return;const ix=b.dataset.i.split('.'),t=OTT[+ix[0]],n=t&&t.n[+ix[1]];if(!n)return;
   if(n.lock){OH.textContent=n.name+': '+n.lock;return;}
   if(n.info){OH.textContent=n.info;return;}
+  if(n.replayBackend){
+    if(!n.sel&&!otbusy)rpUseTracker(n.replayBackend);
+    return;
+  }
+  if(t.kidKey==='bytetrack'&&n.name==='Python'&&n.sel)return;
   if(!n.u||(!t.multi&&n.sel)){OH.textContent='';return;}   // the node already chosen in a pick-one row: nothing to send
   if(otbusy)return;
   if(n.ask&&!confirm(n.ask))return;

@@ -20,8 +20,8 @@
 #   --speed-max 100       자동으로 따라갈 때의 최고 속도를 10 에서 장치 한계 100 으로 올림. --gimbal-speed 10 이 넘기는 --speed-max 10 을 뒤에서 덮어쓴다.
 #                         PD 값은 최고 속도 10 일 때 맞춘 것이다. 되돌리려면 scripts/live.env 에 LWIR_GIMBAL_SPEED_MAX=10.
 #   --reacquire-ms 10000  사람을 놓친 뒤 다시 잡기를 기다리는 시간 10 초.
-# 2026-11-11 (새 사람 확인 규칙을 시간으로): --confirm-ms 130. 장 수 = round(130 x 잰 초당 장 수 / 1000), --n-init 3 보다 작아지지 않는다.
-#   초당 22~27 장에서는 전과 같은 3 장, 초당 28 장을 넘으면 4 장. 0 을 주면 꺼지고 전처럼 --n-init 3 만 쓴다. scripts/live.env 의 LWIR_CONFIRM_MS 로 바꾼다.
+# 새 ID 추가 확인은 --confirm-ms 로 정한다. 0 은 추가 확인을 끈다.
+# 기본 시간은 scripts/live.env 의 LWIR_CONFIRM_MS 로 바꾼다.
 T="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$T" || exit 9
 [ -f scripts/live.env ] && . scripts/live.env
@@ -33,7 +33,7 @@ GIMBAL_DEV="${LWIR_GIMBAL_DEV:-}"
 GIMBAL_DEV="${GIMBAL_DEV:-/dev/ttyUSB0}"
 SPEED_MAX="${LWIR_GIMBAL_SPEED_MAX:-100}"
 REACQUIRE_MS="${LWIR_GIMBAL_REACQUIRE_MS:-10000}"
-CONFIRM_MS="${LWIR_CONFIRM_MS:-130}"   # 새 사람 확인 시간(ms). 0 = 끔 (--n-init 3 장 그대로)
+CONFIRM_MS="${LWIR_CONFIRM_MS:-130}"   # 새 ID 확인 시간(ms). 0 = 추가 확인 끔
 AIM_Y="${LWIR_GIMBAL_AIM_Y:-0.08}"   # 사람 상자의 어느 높이를 화면 가운데에 둘지 (위에서부터의 비율). 0.08 = 머리 (2026-11-11 부터, 그 전에는 0.3 = 가슴). 화면의 세로 오차 표시(page/js/04_ping_fps_aim.js 의 AIM_Y)와 같아야 한다.
 BRIDGE="${LWIR_GIMBAL_BRIDGE:-src/gimbal/gimbal_bridge_v25}"   # 짐벌 프로그램. v27(움직임 부드럽게, 시험용)을 쓰려면 scripts/live.env 에 LWIR_GIMBAL_BRIDGE=src/gimbal/gimbal_bridge_v27
 REPLAY_ROOT="${LWIR_REPLAY_ROOT:-/mnt/lwir_data/label_web/LWIR_labels}"   # 녹화 재생(웹 화면 "녹화 재생")에 쓰는 라벨 사이트 녹화 폴더. 폴더가 없으면 서버가 재생을 끈다
@@ -49,7 +49,7 @@ fuser "$GIMBAL_DEV" > /dev/null 2>&1 && { echo "gimbal busy"; exit 5; }
 echo "START $(date +%T) page=$BIND:$PORT gui=$GUI_HOST gimbal=$GIMBAL_DEV speed_max=$SPEED_MAX reacquire_ms=$REACQUIRE_MS confirm_ms=$CONFIRM_MS"
 export LWIR_REAL_GUI_LAUNCH=1
 tracker_args=(
-  --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 3 --confirm-ms "$CONFIRM_MS" --warm-min 45000 --edge-birth 0.5
+  --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 2 --confirm-ms "$CONFIRM_MS" --warm-min 45000 --edge-birth 0.5
   --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 1 --confirm-gate models/track/gate_gru32_frozen.json --judge models/track/relink_judge_frozen.json --judge-crops 2
   --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 --replay-root "$REPLAY_ROOT"
   --replay-bytetrack-library "${LWIR_REPLAY_BYTETRACK_LIBRARY:-}"

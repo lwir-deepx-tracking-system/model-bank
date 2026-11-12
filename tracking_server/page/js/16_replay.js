@@ -8,9 +8,9 @@ function rpEnded(st){return !!(st&&st.on&&!st.loop&&!st.seeking&&st.total>0&&st.
 function rpItem(n){return rpList.find(x=>x.name===n)||null;}
 function rpBackendLabel(id,r){const b=(r&&Array.isArray(r.backends)?r.backends:[]).find(x=>x.id===id);return b&&b.label||({python:'현재 추적기',cpp_bytetrack:'C++ ByteTrack'}[id]||id||'현재 추적기');}
 function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state;RPNOTE.textContent=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';}
-function rpCppState(r){return r&&r.state&&r.state.on&&r.state.backend==='cpp_bytetrack'?(r.eval&&r.eval.backend_error?'error':'active'):'';}
-function rpShow(r){const redraw=rpCppState(rpLast)!==rpCppState(r);rpLast=r;
-  if(redraw)otdraw();
+function rpTrackerState(r){const st=r?.state;return JSON.stringify([st?.on,st?.busy,st?.backend,!!r?.eval?.backend_error,r?.backends?.map(b=>b.id)]);}
+function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLast=r;
+  if(redraw){syncConfirmTime();otdraw();}
   const backends=Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}];
   const backendKeys=backends.map(x=>x.id+'|'+x.label).join('\n');
   if(backendKeys!==rpBackendKeys){const keep=RPBACK.value;rpBackendKeys=backendKeys;RPBACK.innerHTML=backends.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.label)+'</option>').join('');
@@ -147,7 +147,30 @@ if(window.ResizeObserver)new ResizeObserver(()=>document.documentElement.style.s
 let rpTick=0;
 function rptick(force){if(!force){const on=rpLast&&rpLast.state&&rpLast.state.on;if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;}fetch('/replay'+(force==='refresh'?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()).then(rpShow).catch(()=>{});}
 function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=true;
-  return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:r.status===403||r.status===404?'서버 재시작 후 쓸 수 있습니다':'서버 응답 '+r.status}))).then(r=>{RPMSG.textContent=r.text||(r.ok?'완료':'실패');}).catch(()=>{RPMSG.textContent='서버 연결 끊김';}).finally(()=>{rpBusy=false;setTimeout(()=>rptick(true),300);});}
+  return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:r.status===403||r.status===404?'서버 재시작 후 쓸 수 있습니다':'서버 응답 '+r.status}))).then(r=>{RPMSG.textContent=r.text||(r.ok?'완료':'실패');return r;}).catch(()=>{RPMSG.textContent='서버 연결 끊김';return {ok:false,text:RPMSG.textContent};}).finally(()=>{rpBusy=false;setTimeout(()=>rptick(true),300);});}
+async function rpUseTracker(backend){
+  const st=rpLast?.state;
+  if(rpBusy||!st?.on||st.busy||!rpLast.backends?.some(b=>b.id===backend))return;
+  if(!confirm('이 녹화를 ByteTrack '+(backend==='cpp_bytetrack'?'C++':'Python')+'으로 처음부터 다시 재생할까요?'))return;
+  if(backend==='python'&&!BT_KEYS.includes(pend(rlast,'tracker'))){
+    const preset=rlast.presets.find(p=>(p.key||p[0])==='confirm3'||(p.key||p[0])==='bytetrack');
+    if(!preset)return;
+    rpBusy=true;
+    try{
+      const response=await fetch('/rules/set?tracker='+encodeURIComponent(preset.key||preset[0]),{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store'});
+      const result=await response.json();
+      if(!result.ok){OH.textContent=result.text||'ByteTrack을 선택하지 못했습니다';return;}
+      if(result.presets)rshow(result);
+    }catch(_){OH.textContent='서버 연결 끊김';return;}
+    finally{rpBusy=false;}
+    if(!rpLast?.state?.on||rpLast.state.busy||rpLast.state.name!==st.name)return;
+  }
+  RPBACK.value=backend;
+  rpEvalSetMode('live');
+  const query=new URLSearchParams({seq:st.name,fps:String(st.fps),loop:st.loop?'1':'0',backend});
+  const result=await rppost('/replay/start?'+query);
+  OH.textContent=result.ok?'선택한 엔진으로 녹화를 다시 시작합니다.':result.text||'재생을 시작하지 못했습니다';
+}
 RPSEL.addEventListener('change',rpNote);
 RPBACK.addEventListener('change',()=>{const b=RPBACK.value;if(rpLast&&rpLast.state&&rpLast.state.on)RPMSG.textContent='선택한 추적기는 다음 재생부터 적용됩니다: '+rpBackendLabel(b,rpLast);});
 EVLIVE.addEventListener('click',()=>{rpEvalSetMode('live');rpRenderEval(rpLast||{});});

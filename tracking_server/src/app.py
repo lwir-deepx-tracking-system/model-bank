@@ -289,7 +289,7 @@ def main():
     mk_tracker_ = page_settings.mk_tracker_
     APP.ctl_state = page_settings.ctl_state
     APP.lead_shift = gimbal_link.lead_shift
-    APP.RULES_PRESETS = [('confirm3', 'ByteTrack + 3프레임 확인 (기본: 새 사람이 3프레임 연속 잡히면 표시)'), ('rebind', 'ByteTrack + 위치 재결합 (우리 규칙: 놓친 사람을 가까운 새 상자에 같은 번호로 다시 붙임, 외형 안 봄)'),
+    APP.RULES_PRESETS = [('confirm3', 'ByteTrack'), ('rebind', 'ByteTrack (위치 재결합 켜짐)'),
                      ('ocsort', 'OC-SORT (가려졌다 나온 사람 위치 보정, 시험 안 함)'), ('botsort', 'BoT-SORT (ByteTrack + 카메라 움직임 보정 + RepVGG_(TMOT,CAMEL) 외형 비교, 시험 안 함)'), ('sort', 'SORT (가장 단순: Kalman + 겹침만, 놓치면 바로 새 번호, 시험 안 함)')]   # v31: AltTracker. v36: BoT-SORT and SORT in, C-BIoU off the list (user 11-10)
     APP.rules_state = page_settings.rules_state
     APP.rules_state0_ = APP.rules_state   # stab: stab / stab_px next to the v24g fields

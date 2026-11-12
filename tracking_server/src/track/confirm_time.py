@@ -9,7 +9,7 @@
 - 경계에서 3 장과 4 장 사이를 오가지 않도록 여유(MARGIN)를 둔다: 장 수는 x = ms x fps / 1000 이 지금 값에서 0.5 + MARGIN 넘게 벗어나야 바뀐다.
 - 추적기마다 원래 장 수(--n-init 로 받은 값)보다 작아지지는 않는다(frames_for). 느려졌다고 확인을 느슨하게 하지 않기 위해서다.
 - 시작할 때는 NOMINAL_FPS(카메라 25 fps 모드) 기준의 장 수로 시작한다.
-- ms = 0 은 끔: 추적기는 원래 장 수(--n-init)로 돌아간다. 실행 중에 set_ms 로 바꿀 수 있다(화면의 Filter 값, /rules/set?confirm_ms=).
+- ms = 0 은 끔: 추적기는 원래 장 수(--n-init)로 돌아간다. 실행 중에 set_ms 로 바꿀 수 있다(화면의 새 ID 확인 시간, /rules/set?confirm_ms=).
 """
 import statistics
 from collections import deque

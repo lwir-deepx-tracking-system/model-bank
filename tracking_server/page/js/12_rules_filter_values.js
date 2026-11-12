@@ -4,8 +4,7 @@ function rshow(r){rlast=r;
   const pl=r.predictors||null;
   PST.textContent=pl?pl.filter(p=>p.key!=='kalman').map(p=>(PN[p.key]?PN[p.key][0]:p.name)+': '+(p.available?'고를 수 있음':'고를 수 없음')+(p.note?' — '+p.note:'')).join(' / '):'이 서버 버전에는 위치 기억 선택이 없습니다. 서버를 다시 켜면 열립니다.';
   RWX.disabled=r.warm_max==null;   // v30: old server has no upper limit
-  RC.disabled=!('confirm' in r);   // 11-11: an older server has no confirm_ms
-  if(!rdirty){RW.value=r.warm_min;RWX.value=r.warm_max||0;RE.value=r.edge_birth;RC.value=r.confirm?r.confirm.ms:0;}
+  if(!rdirty){RW.value=r.warm_min;RWX.value=r.warm_max||0;RE.value=r.edge_birth;}
   const wx=r.warm_max||0,wp=r.warm_prev;
   let f='Filter · warmth '+(r.warm_min>0||wx>0?(r.warm_min>0?r.warm_min:'0')+' ~ '+(wx>0?wx:'제한 없음')+' 만 사람으로 인정':'검사 끔'+(wp&&(wp[0]>0||wp[1]>0)?' (켜면 '+wp[0]+' ~ '+(wp[1]>0?wp[1]:'제한 없음')+')':''))+' · 가장자리 새 궤적은 '+(r.edge_birth>0?'점수 '+r.edge_birth+' 이상':'제한 없음');
   if(r.warm_dropped!=null)f+=' · warmth 범위 밖이라 버린 상자 '+r.warm_dropped+'개';
@@ -14,7 +13,7 @@ function rshow(r){rlast=r;
   const trk=pend(r,'tracker');
   const backend=(r.tracker_backend==='C++'||r.tracker_backend==='Python')?r.tracker_backend:'미보고';
   let t='Tracker · '+tname(trk)+' · 실제 실행 엔진 '+backend+' · KeepID '+(pend(r,'relabel')?'켜짐':'꺼짐');
-  if(r.confirm&&r.confirm.ms>0)t+=' · 새 사람 확인 '+r.confirm.ms+' ms = '+r.confirm.frames+'장'+(r.confirm.fps?' (지금 초당 '+r.confirm.fps+'장)':' (속도 재는 중)');   // 11-11 --confirm-ms
+  if(BT_KEYS.includes(trk))t+=' · 위치 재결합 '+(trk==='rebind'?'켜짐':'꺼짐')+' · 새 ID 확인 시간 '+(r.confirm&&r.confirm.ms>0?r.confirm.ms+' ms':'끔');
   if(trk==='botsort')t+=' · 외형 비교 '+(r.reids&&r.reids.length?(r.app==='off'?'끔':'켜짐'):r.apps?(AN[r.app]||r.app||'끔'):AN.repvgg);
   if(r.reids&&r.reids.length){const rc=r.reids.find(a=>a.key===r.reid),rp=r.reid_pending&&r.reids.find(a=>a.key===r.reid_pending),L=r.reid_last;   // v41
     t+=' · 외형 모델 '+(rc?rc.name:(r.reid||'–'));
@@ -33,6 +32,7 @@ function rshow(r){rlast=r;
   if(r.cam_reset&&r.cam_reset.text&&!sysbusy&&(r.cam_reset.busy||r.cam_reset.at+'|'+r.cam_reset.text!==sysat)){sysat=r.cam_reset.at+'|'+r.cam_reset.text;SM.textContent='카메라 초기화 '+r.cam_reset.at+' — '+r.cam_reset.text;}
   gshow(r.gimbal_cfg);
   syncSystemButtons();
+  syncConfirmTime();
   otdraw();}
 // 짐벌 제어기 구역: the options the server gave the gimbal program at start (GET /rules, key gimbal_cfg; read only). No key = older server, null = the server runs without a gimbal, a value that was not given = the program's own default.
 let glast=null;
@@ -44,10 +44,36 @@ function gshow(g){const v=x=>x==null||x===''?'프로그램 기본값':'<b class=
       +' · 놓친 사람을 기다리는 시간 '+(g.reacquire_ms!=null&&isFinite(ms)?'<b class="num">'+ms/1000+'</b>초':v(g.reacquire_ms))+' · 겨누는 높이 '+v(g.aim_y)+(g.aim_y!=null?' (사람 상자 위에서부터의 비율'+(an?' · '+an:'')+')':'')+' · 그 밖의 옵션 '+(g.extra?'<b class="num">'+esc(g.extra)+'</b>':'없음');}
   if(h!==glast){glast=h;$('gcfg').innerHTML=h;}}
 function rtick(){if(document.hidden)return Promise.resolve();return fetch('/rules',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(rshow).catch(()=>{});}
-// Filter numbers: Apply sends warm_min, warm_max, edge_birth and confirm_ms (11-11, only to a server that reports it) only. While 온도 Filter is off and both boxes still say 0, the warmth numbers are left out, so the numbers the server remembers are not wiped.
+// Preserve the saved warmth range when the filter is off and both inputs are 0.
 RA2.addEventListener('click',()=>{RA2.disabled=true;FM.textContent='보내는 중…';
   const woff=rlast&&rlast.warm_on===false&&!(+RW.value>0)&&!(+RWX.value>0);
-  const q=(woff?'':'warm_min='+encodeURIComponent(RW.value||0)+(rlast&&rlast.warm_max!=null?'&warm_max='+encodeURIComponent(RWX.value||0):'')+'&')+'edge_birth='+encodeURIComponent(RE.value||0)+(rlast&&'confirm' in rlast&&(+RC.value||0)!==(rlast.confirm?rlast.confirm.ms:0)?'&confirm_ms='+encodeURIComponent(RC.value||0):'');   // only when this box was changed: a value sent once is remembered and then wins over LWIR_CONFIRM_MS at the next start
+  const q=(woff?'':'warm_min='+encodeURIComponent(RW.value||0)+(rlast&&rlast.warm_max!=null?'&warm_max='+encodeURIComponent(RWX.value||0):'')+'&')+'edge_birth='+encodeURIComponent(RE.value||0);
   fetch('/rules/set?'+q,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store'}).then(x=>x.json().catch(()=>({ok:false,text:'서버 응답 '+x.status})))
     .then(r=>{if(r.ok!==false){rdirty=false;clearTimeout(rdt);}if(r.presets)rshow(r);FM.textContent=r.ok===false?'적용 안 됨: '+(r.text||''):'적용됨';})
     .catch(()=>{FM.textContent='서버 연결 끊김';}).finally(()=>{RA2.disabled=false;});});
+
+const confirmPanel=$('bt-confirm'), confirmApply=$('rconf-apply'), confirmMessage=$('rconf-msg');
+let confirmDirty=false, confirmBusy=false;
+function syncConfirmTime(){
+  if(!rlast)return;
+  const replay=rpLast?.state?.on;
+  const cameraCpp=rlast.camera_bytetrack?.requested||rlast.camera_bytetrack?.active;
+  const byteTrack=BT_KEYS.includes(pend(rlast,'tracker'));
+  confirmPanel.hidden=!byteTrack||!!replay||!!cameraCpp;
+  if(!confirmDirty&&!confirmBusy)RC.value=rlast.confirm?.ms??0;
+  RC.disabled=confirmApply.disabled=confirmBusy||!('confirm' in rlast);
+}
+RC.addEventListener('input',()=>{confirmDirty=true;confirmMessage.textContent='0이면 추가 확인 시간을 끕니다.';});
+confirmApply.addEventListener('click',async()=>{
+  if(!RC.reportValidity())return;
+  confirmBusy=true;
+  syncConfirmTime();
+  try{
+    const response=await fetch('/rules/set?confirm_ms='+encodeURIComponent(RC.value||0),{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store'});
+    const result=await response.json();
+    if(response.ok&&result.ok)confirmDirty=false;
+    if(result.presets)rshow(result);
+    confirmMessage.textContent=result.ok?'적용됨':result.text||'적용하지 못했습니다';
+  }catch(_){confirmMessage.textContent='서버 연결 끊김';}
+  finally{confirmBusy=false;syncConfirmTime();}
+});

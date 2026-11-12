@@ -58,7 +58,7 @@ def mk_tracker_(kind_):
     kwargs = dict(sim=APP.args.sim, app=False, late_window=APP.args.late_window, app_first=False, gate=APP.args.gate,
                   motion_fallback=not APP.args.no_motion_fallback, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h,
                   hybrid=True, sync_k=APP.args.sync_k, hybrid_fallback=False, radius=APP.args.radius,
-                  n_init=max(3, APP.args.n_init) if kind_ == 'confirm3' else APP.args.n_init, class_gate=APP.args.class_gate)
+                  n_init=APP.args.n_init, class_gate=APP.args.class_gate)
     return native_backend.create(kind_, native_mode, kwargs, lambda: cls(py_mode, **kwargs))
 
 

@@ -12,13 +12,16 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
   const ps=(r.presets||[]).map(p=>Array.isArray(p)?{key:p[0],name:p[1]}:p).filter(p=>p&&p.key&&p.key!=='gate');
-  const tb=(r.tracker_backend==='C++'||r.tracker_backend==='Python')?r.tracker_backend:'미보고';
-  const camNative=r.camera_bytetrack,camCpp=!!(camNative&&camNative.active);
-  const replayCpp=!!(typeof rpLast!=='undefined'&&rpLast&&rpLast.state&&rpLast.state.on&&rpLast.state.backend==='cpp_bytetrack');
+  const bt=ps.find(p=>p.key==='bytetrack')||ps.find(p=>p.key==='confirm3');
+  const camNative=r.camera_bytetrack;
+  const recording=rpLast&&rpLast.state&&rpLast.state.on?rpLast.state:null;
+  const replayCpp=!!(recording&&recording.backend==='cpp_bytetrack');
   const replayErr=replayCpp&&!!(rpLast.eval&&rpLast.eval.backend_error);
-  const tn=ps.map(p=>({key:p.key,name:(TN[p.key]?TN[p.key][0]:p.name)+' · '+((p.backend==='C++'||p.backend==='Python')?p.backend:'백엔드 미보고'),note:TN[p.key]?TN[p.key][1]:'',sel:!camCpp&&!replayCpp&&!(camNative&&camNative.requested)&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
-  if(camNative)tn.unshift({key:'cpp_bytetrack',name:'ByteTrack · C++',note:replayCpp?'녹화 재생':camNative.error?'실행 실패 · 기존 추적기로 복귀':camNative.requested&&!camCpp?'다음 카메라 프레임 대기':'실시간 카메라 · 화면 표시용',sel:camCpp||replayCpp&&!replayErr,lock:!camNative.available&&!replayCpp?'장치에 사용 가능한 bytetrack.so가 없습니다':'',u:'/tracker/camera?backend=cpp_bytetrack'});
-  const engine=replayCpp?(replayErr?'C++ 오류 (녹화)':'C++ (녹화)'):camCpp?'C++ (카메라)':tb;
+  const camCpp=!!(!recording&&camNative&&camNative.active);
+  const cpp=camCpp||replayCpp, btSelected=BT_KEYS.includes(trk)||cpp;
+  const engine=replayCpp?(replayErr?'C++ 오류 (녹화)':'C++ (녹화)'):camCpp?'C++ (카메라)':r.tracker_backend||'미보고';
+  const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(p.backend||'백엔드 미보고'),note:TN[p.key]?TN[p.key][1]:'',sel:!cpp&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
+  if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack',sel:btSelected,u:Q('tracker='+encodeURIComponent(bt.key))});
   T.push({lab:'Tracker',sub:'실제 실행 엔진: '+engine,n:tn});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
@@ -44,4 +47,19 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   T.push({lab:'제어',sub:'여러 개 켜기',multi:1,n:[
     {name:'예측 제어',note:'시험 안 함 · 따라갈 때만 작동 · 재시작하면 꺼짐',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1)),ask:lead?'':'예측 제어는 아직 시험하지 않은 기능입니다.\n따라가는 동안 짐벌이 사람이 움직이는 쪽으로 조금 앞서 움직입니다.\n켤까요?'},
     {name:'예측 상자 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.predictors?'':OLDSRV,u:Q('pred_show='+(r.pred_show?0:1))}]});
+  if(bt){
+    const switching=!!(recording&&recording.busy)||!!(rpLast&&rpLast.state&&rpLast.state.busy);
+    const hasCpp=recording?rpLast.backends?.some(b=>b.id==='cpp_bytetrack'):camNative?.available;
+    const pythonPreset=BT_KEYS.includes(trk)?trk:bt.key;
+    const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
+    T.push({lab:'ByteTrack 옵션',kidOf:3,kidKey:'bytetrack',show:btSelected,multi:1,n:[
+      {name:'Python',sel:!cpp&&!(camNative&&camNative.requested),lock:switching?'영상 전환 중입니다':'',
+       replayBackend:recording?'python':null,u:Q('tracker='+encodeURIComponent(pythonPreset))},
+      {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?'C++ 라이브러리를 사용할 수 없습니다':'',
+       note:recording?'녹화 재생':camNative?.error?'실행 실패 · Python으로 복귀':camNative?.requested&&!camCpp?'다음 카메라 프레임 대기':'실시간 화면 표시',
+       replayBackend:recording?'cpp_bytetrack':null,u:'/tracker/camera?backend=cpp_bytetrack'},
+      {name:'위치 재결합',note:trk==='rebind'?'켜짐':'꺼짐',sel:trk==='rebind',lock:optionLock,
+       u:Q('tracker='+encodeURIComponent(trk==='rebind'?bt.key:'rebind'))}
+    ]});
+  }
   return T;}
