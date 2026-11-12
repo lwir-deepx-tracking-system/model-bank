@@ -160,16 +160,16 @@ def main():
     ap.add_argument('--confirm-gate', default='', help='v11: path of GATE_GRU32_FROZEN.json = the learned confirmation gate replaces 3FrameConfirm (GateTracker); requires --tracker bytetrack --class-gate --no-vit; default off = unchanged')
     ap.add_argument('--judge-crops', type=int, default=2, help='v10: with --judge, crops per frame on NPU_2 (new IDs first, then refresh); 0 = every eligible crop')
     APP.args = ap.parse_args()
-    ready_prefetch_supported = (
-        APP.args.live_port and APP.args.pipeline and APP.args.no_vit and APP.args.npu_depth == 1
-        and APP.args.live_wait == 0 and not APP.args.zoom
-        and os.environ.get('LWIR_NPU_FEED') != 'arrival'
-    )
-    ready_prefetch_setting = os.environ.get('LWIR_LIVE_READY_PREFETCH', '')
-    if ready_prefetch_setting == '1' and not ready_prefetch_supported:
-        ap.error('LWIR_LIVE_READY_PREFETCH=1 needs --live-port --pipeline --no-vit '
-                 '--npu-depth 1 --live-wait 0 without --zoom or LWIR_NPU_FEED=arrival')
-    ready_prefetch = ready_prefetch_supported and ready_prefetch_setting != '0'
+    APP.FEED_MODE = frame_feed.load_mode()
+    APP.FEED = None
+    APP.FEED_READY = False
+    ready_prefetch_compatible = frame_feed.ready_prefetch_compatible(APP.args)
+    APP.FEED_HOT_SWITCH = ready_prefetch_compatible and os.environ.get('LWIR_NPU_HOT_SWITCH') == '1'
+    try:
+        ready_prefetch = frame_feed.ready_prefetch_enabled(
+            APP.FEED_MODE, os.environ.get('LWIR_LIVE_READY_PREFETCH', ''), ready_prefetch_compatible)
+    except ValueError as exc:
+        ap.error(str(exc))
     settings.WARM_MIN, settings.EDGE_BIRTH, settings.EDGE_PX = int(APP.args.warm_min), float(APP.args.edge_birth), float(APP.args.edge_px)   # v24f
     settings.WARM_MAX = max(0, int(APP.args.warm_max))   # v33
     if APP.args.prepare: return prepare(APP.args)
@@ -433,7 +433,7 @@ def main():
             _Live = camera_link._Live
             APP.LIVE = _Live(); APP.LIVE.stopped = False; APP.LIVE.cam_lost = False; APP.LIVE.q = APP.lv_col.deque(maxlen=3); APP.LIVE.cond = APP.lv_th.Condition(); APP.LIVE.arr = APP.lv_col.deque()
             APP.LIVE.camera_bytetrack = CameraByteTrack(APP.args)
-            APP.LIVE.restart_supported = ready_prefetch and os.environ.get('LWIR_REAL_GUI_LAUNCH') == '1'
+            APP.LIVE.restart_supported = ready_prefetch_compatible and os.environ.get('LWIR_REAL_GUI_LAUNCH') == '1'
             APP.LIVE.restart_pending = False
             APP.LIVE.restart_stop = False
             APP.LIVE.instance = str(time.monotonic_ns())
@@ -543,8 +543,15 @@ def main():
         read_frame = detect_frame.read_frame
         submit_tiles = detect_frame.submit_tiles
         APP.TIMING = stage_timing.start()   # None unless LWIR_STAGE_TIMING=1
-        APP.FEED = frame_feed.start()       # None unless LWIR_NPU_FEED=arrival: then a small thread submits every frame to the detector when it arrives (NPU cores 0 and 1) and the loop below takes the results in order
-        if APP.FEED is not None: read_frame, submit_tiles = APP.FEED.read_frame, APP.FEED.submit_time
+        APP.FEED_INCOMPATIBLE = frame_feed.refuse_reason()
+        APP.FEED = frame_feed.start()
+        APP.FEED_READY = True
+        if APP.FEED is not None:
+            ready_prefetch = False
+            read_frame, submit_tiles = APP.FEED.read_frame, APP.FEED.submit_time
+        elif APP.LIVE is not None and APP.LIVE.restart_supported:
+            def read_frame(_):
+                return APP.live_next(fresh_only=True), 0.0
         def sync_embed(idxs, g_cur, arr_cur, frame_no):
             """--vit-sync: embed the candidate detections (arr rows) now, batch 1, one after another; a pending asynchronous job is collected first."""
             nonlocal inflight, delivered, vit_wait_total
@@ -574,7 +581,10 @@ def main():
             print('LIVE camera prefetch: only take the next frame before publication if it is queued', flush=True)
         if APP.args.pipeline and APP.images and not ready_prefetch:
             for k_ in range(min(APP.args.npu_depth, len(APP.images))):
-                g_k, _ = read_frame(k_); ahead.append((g_k, submit_tiles(g_k, k_))); gmc_submit(k_, g_k)
+                g_k, _ = read_frame(k_)
+                if g_k is None:
+                    break
+                ahead.append((g_k, submit_tiles(g_k, k_))); gmc_submit(k_, g_k)
         do_model_swap = page_settings.do_model_swap
         for i, im in enumerate(APP.images):
             if APP.LIVE is not None and APP.LIVE.restart_stop:
@@ -669,12 +679,16 @@ def main():
                 t_nms0 = time.perf_counter_ns(); p = detect(ra, rb); t2 = time.perf_counter_ns(); t3 = t2
             else:
                 g, _ = read_frame(i); read_ms = 0.0
+                if g is None:
+                    break
                 t0 = submit_tiles(g, i)
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                          # sync point 1
                 ra = APP.a.wait(); rb = APP.b.wait() if APP.b is not None else None; t1 = time.perf_counter_ns(); t_nms0 = t1
                 p = detect(ra, rb); t2 = time.perf_counter_ns()
                 if async_vit: vw += vit_sync(g, prev_gray, i)                                                   # sync point 2
                 t3 = time.perf_counter_ns()
+            if APP.LIVE is not None and APP.LIVE.restart_stop:
+                break
             arr = p[np.isin(p[:, 5].astype(int), list(TARGET))].astype(np.float32)                        # frame coords
             zoom_flags = None; z_ms = (0.0, 0.0); n_zacc = 0
             if zoom_inflight is not None:   # v9: collect + merge THIS frame's zoom canvas (submitted at the end of the previous iteration) before the tracker
@@ -978,6 +992,11 @@ def main():
         if zoom_eng is not None: print(json.dumps({'zoom': {k: res['zoom'][k] for k in ('candidates', 'windows', 'windows_skipped', 'canvases', 'raw_canvas_boxes', 'accepted', 'fates', 'canvas_ms', 'wait_ms', 'merge_ms', 'npu_ms_per_canvas')}}), flush=True)
     except BaseException:
         failed = True
+        if APP.FEED is not None:
+            try:
+                APP.FEED.close()
+            except Exception as exc:
+                print('FEED cleanup failed: %r' % exc, flush=True)
         worker_ = getattr(APP.LIVE, 'preview_worker', None)
         if worker_ is not None: worker_.close()
         for e_ in list(APP.eng.values()):

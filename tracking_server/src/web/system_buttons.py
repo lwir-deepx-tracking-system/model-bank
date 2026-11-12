@@ -2,23 +2,53 @@
 import os
 import time
 from ..common.state import APP
+from ..detect import frame_feed
 from .preview_worker import invalidate_preview
 
 
 RESTART_REQUESTED = object()
 
 
+def restart_conflict(live):
+    if not getattr(live, 'restart_supported', False) or live.stopped:
+        return '표준 실행 스크립트로 서버를 시작한 뒤 사용할 수 있습니다'
+    if live.cam_hold or live.restart_pending:
+        return '시스템 작업이 진행 중입니다'
+    if live.meas is not None or getattr(live, 'replay', None) is not None:
+        return '측정 또는 녹화 재생을 종료한 뒤 다시 시도하세요'
+    if APP.GB is not None and (APP.GB.state.get('auto') or APP.GB.state.get('moving')):
+        return '짐벌이 멈춘 뒤 다시 시도하세요'
+    return None
+
+
+def npu_feed_state():
+    state = frame_feed.status()
+    reason = frame_feed.switch_conflict()
+    if reason is None and state['pending']:
+        reason = 'NPU 검출 모드를 바꾸고 있습니다'
+    if reason is None and state['requested'] == 'normal' and len(APP.FEED.eng) != 2:
+        reason = 'NPU 1에 검출 모델이 올라가 있지 않습니다'
+    state.update(can_toggle=reason is None, toggle_reason=reason)
+    return state
+
+
+def request_npu_feed(mode):
+    with APP.LIVE.sys_lock, APP.MODEL['lock']:
+        reason = frame_feed.switch_conflict()
+        if reason is not None:
+            return False, reason
+        return APP.FEED.request_mode(mode)
+
+
 def reserve_restart():
     live = APP.LIVE
     with live.sys_lock, live.cam_lock, live.meas_lock:
-        if not live.restart_supported or live.stopped:
-            return False, '표준 실행 스크립트로 서버를 시작한 뒤 사용할 수 있습니다'
-        if live.cam_hold or live.restart_pending:
-            return False, '시스템 작업이 진행 중입니다'
-        if live.meas is not None or getattr(live, 'replay', None) is not None:
-            return False, '측정 또는 녹화 재생을 종료한 뒤 다시 시도하세요'
-        if APP.GB is not None and (APP.GB.state.get('auto') or APP.GB.state.get('moving')):
-            return False, '짐벌이 멈춘 뒤 다시 시도하세요'
+        reason = restart_conflict(live)
+        if reason is not None:
+            return False, reason
+        feed = vars(APP).get('FEED')
+        if feed is not None and feed.pending is not None:
+            return False, 'NPU 검출 모드를 바꾸고 있습니다'
         live.restart_pending = True
         live.cam_hold = True
         invalidate_preview(live, before=time.perf_counter())

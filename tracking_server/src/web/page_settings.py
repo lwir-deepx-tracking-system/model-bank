@@ -16,6 +16,7 @@ from ..track.sort import SortTracker
 from ..track.confirm_time import ConfirmByTime, MS_MAX
 from ..reid.reid_models import reid_catalog
 from ..gimbal.gimbal_link import gb_cfg
+from .system_buttons import npu_feed_state
 
 
 def sel_save(**over_):
@@ -87,6 +88,7 @@ def rules_state():
     with APP.RULES['lock']:
         return dict(camera_bytetrack=camera_backend,
                     server_restart=bool(getattr(APP.LIVE, 'restart_supported', False)),
+                    npu_feed=npu_feed_state(),
                     restart_pending=bool(getattr(APP.LIVE, 'restart_pending', False)), warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
                     gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker),
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
@@ -212,6 +214,8 @@ def model_request(model_id, req_no=None):
         c_ = next((x_ for x_ in APP.MODEL['catalog'] if x_['id'] == model_id), None)
         if c_ is None: return 1
         if APP.MODEL['req'] is not None or APP.MODEL['busy']: return 2
+        feed = vars(APP).get('FEED')
+        if feed is not None and feed.pending is not None: return 2
         if c_['det'] == APP.args.det: APP.sel_save(det=APP.args.det); return 0   # already running
         APP.MODEL['req'] = dict(det=c_['det'], id=c_['id'], req=req_no, t=time.time()); return -1
 

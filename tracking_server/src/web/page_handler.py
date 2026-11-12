@@ -5,6 +5,7 @@ import json
 import math
 import os
 import time
+from urllib.parse import parse_qs, urlsplit
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
@@ -261,16 +262,29 @@ def make_lv_Handler():
                 try: self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 except (BrokenPipeError, ConnectionResetError, OSError): pass
                 return
-            if self.path == '/system/restart':
+            system_path, _, query = self.path.partition('?')
+            if self.path == '/system/restart' or system_path == '/system/npu-feed':
                 host = self.headers.get('Host')
                 origin = self.headers.get('Origin')
                 if not host or self.headers.get('X-Gimbal') != '1' or origin not in (f'http://{host}', f'https://{host}'):
                     self.send_error(403)
                     return
-                ok, message = system_buttons.reserve_restart()
+                mode = None
+                bad_mode = False
+                if system_path == '/system/npu-feed':
+                    modes = parse_qs(query, keep_blank_values=True).get('mode', [])
+                    bad_mode = len(modes) != 1 or modes[0] not in ('arrival', 'normal')
+                    if not bad_mode:
+                        mode = modes[0]
+                if bad_mode:
+                    ok, message = False, 'NPU 검출 모드는 arrival 또는 normal이어야 합니다'
+                elif mode is not None:
+                    ok, message = system_buttons.request_npu_feed(mode)
+                else:
+                    ok, message = system_buttons.reserve_restart()
                 body = json.dumps(dict(ok=ok, text=message, instance=APP.LIVE.instance), ensure_ascii=False).encode()
                 try:
-                    self.send_response(202 if ok else 409)
+                    self.send_response(400 if bad_mode else (202 if ok else 409))
                     self.send_header('Content-Type', 'application/json')
                     self.send_header('Content-Length', str(len(body)))
                     self.end_headers()
@@ -279,7 +293,7 @@ def make_lv_Handler():
                 except OSError:
                     pass
                 finally:
-                    if ok:
+                    if ok and system_path == '/system/restart':
                         system_buttons.stop_for_restart()
                 return
             if self.path.startswith('/system/reboot') and self.headers.get('X-Gimbal') == '1':   # v33: reboot button. The page sends confirm=REBOOT after a confirm dialog.
@@ -296,7 +310,6 @@ def make_lv_Handler():
                 except (BrokenPipeError, ConnectionResetError, OSError): pass
                 return
             if self.path.startswith('/tracker/camera?') and self.headers.get('X-Gimbal') == '1':
-                from urllib.parse import urlsplit, parse_qs
                 backend = parse_qs(urlsplit(self.path).query).get('backend', [''])[0]
                 cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
                 if backend != 'cpp_bytetrack' or cam_tracker is None:
@@ -340,7 +353,9 @@ def make_lv_Handler():
                 u4_ = us4_(self.path)
                 if u4_.path == '/replay/start': code_, text_ = replay_link.start_request(pq4_(u4_.query))
                 elif u4_.path == '/replay/stop': code_, text_ = replay_link.stop_request()
-                elif u4_.path == '/replay/seek': code_, text_ = replay_link.seek_request(pq4_(u4_.query))   # 11-12: jump to a frame (0-based index)
+                elif u4_.path == '/replay/seek':
+                    with APP.LIVE.cond:
+                        code_, text_ = replay_link.seek_request(pq4_(u4_.query))   # 11-12: jump to a frame (0-based index)
                 elif u4_.path == '/replay/pause': code_, text_ = replay_link.pause_request()
                 elif u4_.path == '/replay/play': code_, text_ = replay_link.play_request()
                 elif u4_.path == '/replay/speed': code_, text_ = replay_link.speed_request(pq4_(u4_.query))   # 11-12: frames per second while playing
@@ -352,7 +367,6 @@ def make_lv_Handler():
                 except (BrokenPipeError, ConnectionResetError, OSError): pass
                 return
             if APP.GB is None or self.headers.get('X-Gimbal') != '1': self.send_error(403); return
-            from urllib.parse import urlsplit, parse_qs
             u_ = urlsplit(self.path); q_ = parse_qs(u_.query)
             try:
                 cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
@@ -430,7 +444,8 @@ def make_lv_Handler():
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,
                               q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, replay=(getattr(APP.LIVE, 'replay', None) or {}).get('name'), track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
                     worker_ = getattr(APP.LIVE, 'preview_worker', None)
-                    h_.update(delay_kind='jpeg_ready', async_preview=worker_ is not None)
+                    h_.update(delay_kind='jpeg_ready', async_preview=worker_ is not None,
+                              npu_feed=system_buttons.npu_feed_state())
                     h_.update(worker_.stats() if worker_ is not None else dict(preview_dropped=0, preview_errors=getattr(APP.LIVE, 'preview_errors', 0)))
                     cut_ = time.perf_counter() - 30.0
                     with APP.LIVE.dlock: dl_ = [d_ for t_, d_ in APP.LIVE.delays if t_ >= cut_]   # arrival -> successfully published JPEG, last 30 s

@@ -1,4 +1,7 @@
-"""도착하는 대로 검출기에 넣기 (2026-11-11). 기본으로 꺼져 있다. 환경 변수 LWIR_NPU_FEED 가 정확히 arrival 일 때만 켜진다.
+"""도착하는 대로 검출기에 넣기 (2026-11-11). 기본으로 꺼져 있다. npu_feed.json의 선택이 환경 변수 LWIR_NPU_FEED에 우선한다.
+
+LWIR_NPU_HOT_SWITCH=1인 호환 라이브 서버는 두 엔진을 보유한다. normal은 같은 공급 방식으로 코어 0만 쓰고,
+arrival은 코어 0과 1을 번갈아 쓴다. 변경 요청이 들어오면 새 제출을 잠시 멈추고 기존 제출 결과를 처리한 뒤 전환한다.
 
 왜: 보통 방식에서는 프레임 반복이 그 자리에 왔을 때 프레임을 검출기(NPU)에 넣는다. CPU 가 앞 프레임 일로 바쁜 동안 도착한 프레임은
 검출이 시작되기도 전에 기다린다. 이 방식에서는 작은 스레드(넣는 스레드) 하나가 프레임이 도착하자마자 검출기에 넣고, 프레임 반복은 끝난 검출을 도착 순서대로 받아 간다.
@@ -33,14 +36,17 @@
 """
 import collections
 import gc
+import json
 import os
 import sys
+import tempfile
 import threading
 import time
 
 import numpy as np
 
 from ..common.state import APP
+from ..common.shared_values import HERE
 from ..track.stabilizer import STAB, stab_live, stab_off
 from ..track import camera_motion
 from ..camera import camera_extra
@@ -48,10 +54,99 @@ from . import detect_frame
 
 SECOND = '#core1'   # 둘째 엔진의 이름 꼬리 (APP.pending 의 열쇠가 첫째 엔진과 겹치지 않게)
 AHEAD = 1           # 검출기에 넣어 두고 프레임 반복이 아직 안 받아 간 프레임 수의 한도
+MODE_FILE = HERE / 'npu_feed.json'
+MODES = ('arrival', 'normal')
 
 
-def wanted():
-    return os.environ.get('LWIR_NPU_FEED', '') == 'arrival'
+def load_mode():
+    try:
+        data = json.loads(MODE_FILE.read_text(encoding='utf-8'))
+        if not isinstance(data, dict) or data.get('mode') not in MODES:
+            raise ValueError('invalid mode')
+        return data['mode']
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError) as exc:
+        print('FEED npu_feed.json ignored: %s' % exc, flush=True)
+    mode = os.environ.get('LWIR_NPU_FEED', 'normal')
+    if mode and mode not in MODES:
+        print('FEED: unknown LWIR_NPU_FEED=%r; using normal' % mode[:40], flush=True)
+    return 'arrival' if mode == 'arrival' else 'normal'
+
+
+def save_mode(mode):
+    if mode not in MODES:
+        raise ValueError('invalid NPU feed mode')
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=MODE_FILE.parent,
+                                         prefix='.npu_feed.', suffix='.tmp', delete=False) as file:
+            tmp = file.name
+            json.dump({'mode': mode}, file)
+            file.write('\n')
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(tmp, MODE_FILE)
+    finally:
+        if tmp is not None and os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def ready_prefetch_compatible(args):
+    return bool(args.live_port and args.pipeline and args.no_vit and args.npu_depth == 1
+                and args.live_wait == 0 and not args.zoom)
+
+
+def ready_prefetch_enabled(mode, setting, compatible):
+    if mode == 'arrival':
+        return False
+    if setting == '1' and not compatible:
+        raise ValueError('LWIR_LIVE_READY_PREFETCH=1 needs --live-port --pipeline --no-vit '
+                         '--npu-depth 1 --live-wait 0 without --zoom')
+    return compatible and setting != '0'
+
+
+def status():
+    state = vars(APP)
+    live = state.get('LIVE')
+    mode = state.get('FEED_MODE', 'normal')
+    feed = state.get('FEED')
+    result = dict(requested=mode, mode='normal', pending=False, active=False, cores=[0, 0],
+                  submitted=0, taken=0, order_errors=0, reason=state.get('FEED_REASON'))
+    if feed is not None:
+        with live.cond:
+            reason = feed.reason
+            if feed.err is not None:
+                reason = '교대 검출 중 오류가 발생했습니다'
+            elif feed.paused:
+                reason = '검출 모델을 바꾸고 있습니다'
+            result.update(requested=feed.pending or APP.FEED_MODE, mode=feed.mode, pending=feed.pending is not None,
+                          active=(feed.mode == 'arrival' and len(feed.eng) == 2 and not feed.paused
+                                  and not feed.direct and not feed.closed and feed.err is None),
+                          cores=list(feed.st['core']), submitted=feed.st['submitted'], taken=feed.st['taken'],
+                          order_errors=feed.st['order_bad'], reason=reason)
+    return result
+
+
+def switch_conflict():
+    app = vars(APP)
+    live = app.get('LIVE')
+    feed = app.get('FEED')
+    if not app.get('FEED_READY'):
+        return '검출기를 초기화하고 있습니다'
+    if feed is None or not feed.hot_switch or feed.direct or feed.closed or feed.err is not None:
+        return '현재 검출 설정에서는 실행 중에 모드를 바꿀 수 없습니다'
+    if live.stopped or live.restart_pending or live.cam_hold or getattr(live, 'replay_busy', False):
+        return '서버 또는 카메라 작업이 진행 중입니다'
+    if app.get('GB') is not None and (APP.GB.state.get('auto') or APP.GB.state.get('moving')):
+        return '짐벌이 멈춘 뒤 다시 시도하세요'
+    model = app.get('MODEL')
+    if model is not None and (model['req'] is not None or model['busy']):
+        return '검출 모델을 바꾸고 있습니다'
+    ev = camera_extra.replay_eval.EV
+    if getattr(live, 'replay', None) is not None and ev is not None and ev.position()['seek_to'] is not None:
+        return '녹화 위치를 옮긴 뒤 다시 시도하세요'
+    return None
 
 
 def refuse_reason():
@@ -78,20 +173,30 @@ def make_second():
 
 
 def start():
-    """app.py 가 프레임 반복 전에 한 번 부른다. 꺼져 있거나 켤 수 없으면 None (보통 방식)."""
-    v_ = os.environ.get('LWIR_NPU_FEED', '')
-    if v_ in ('', 'normal'): return None
-    if v_ != 'arrival':
-        camera_extra.say('FEED: LWIR_NPU_FEED=%s is not a known value (only "arrival"). The normal path is used.' % v_[:40]); return None
-    why_ = refuse_reason(); second_ = None
+    """Start the feed for arrival mode or for an opted-in live mode switch."""
+    hot_switch = APP.FEED_HOT_SWITCH and not APP.FEED_INCOMPATIBLE
+    if APP.FEED_MODE != 'arrival' and not hot_switch: return None
+    why_ = APP.FEED_INCOMPATIBLE; second_ = None
+    reason = '현재 검출 설정에서는 두 NPU에 교대로 넣을 수 없습니다'
     if not why_:
         try: second_ = make_second()
-        except Exception as e_: why_ = 'the second detector engine on NPU core 1 could not be made (%s)' % repr(e_)[:160]
+        except Exception as e_:
+            why_ = 'the second detector engine on NPU core 1 could not be made (%s)' % repr(e_)[:160]
+            reason = 'NPU 1에 검출 모델을 올리지 못했습니다. 기본 검출로 실행 중입니다'
     if why_:
-        camera_extra.say('FEED arrival refused: %s. The normal path is used.' % why_); return None
-    f_ = Feed(second_)
+        if not hot_switch:
+            APP.FEED_REASON = reason
+            camera_extra.say('FEED arrival refused: %s. The normal path is used.' % why_)
+            return None
+        camera_extra.say('FEED: %s. Core 0 remains available.' % why_)
+    f_ = Feed(second_, hot_switch=hot_switch)
+    if second_ is None and APP.FEED_MODE == 'arrival':
+        f_.reason = 'NPU 1에 검출 모델을 올리지 못했습니다. NPU 0에서 실행 중입니다'
     sw_ = _switch_interval()
-    camera_extra.say('FEED arrival on: frames go to the detector as they arrive, model %s on NPU cores 0 and 1%s' % (APP.det_names[0], ', thread switch interval %g ms' % (sw_ * 1000) if sw_ else ''))
+    if f_.mode == 'arrival':
+        camera_extra.say('FEED arrival on: frames go to the detector as they arrive, model %s on NPU cores 0 and 1%s' % (APP.det_names[0], ', thread switch interval %g ms' % (sw_ * 1000) if sw_ else ''))
+    else:
+        camera_extra.say('FEED normal on: frames go to the detector on NPU core 0')
     return f_
 
 
@@ -110,11 +215,17 @@ class _Rec:
 
 
 class Feed:
-    def __init__(self, second_):
-        self.eng = [APP.a, second_]; self.busy = [False, False]; self.last_e = 1
+    def __init__(self, second_, *, hot_switch=False):
+        self.eng = [APP.a] + ([second_] if second_ is not None else [])
+        self.busy = [False] * len(self.eng)
+        self.last_e = len(self.eng) - 1
+        self.hot_switch = hot_switch
+        self.mode = APP.FEED_MODE if second_ is not None else 'normal'
+        self.pending = None
         self.out = collections.deque()   # 검출기에 넣은 프레임 (도착 순서). 프레임 반복이 아직 받아 가지 않은 것
         self.redo = collections.deque()  # 모델을 바꿀 때 옛 모델에 들어가 있던 프레임: 새 모델에 다시 넣을 것 (도착 순서)
         self.cur = None; self.paused = False; self.working = False; self.quit = False; self.direct = False; self.err = None; self.closed = False
+        self.reason = None
         self.seq = 0; self.tgt = 0; self._job = None; self.prev_seq = -1
         self.st = dict(submitted=0, taken=0, core=[0, 0], overlap=0, drop_wait=0, redo=0, order_bad=0, max_ahead=0, swaps=0, one_core=0)
         APP.args.pipeline = False   # 프레임 반복은 "읽기 -> 넣기 -> 기다리기" 갈래를 탄다. 읽기는 read_frame(넣어 둔 프레임 받아 오기), 넣기는 submit_time(넣은 시각만 돌려줌)
@@ -128,6 +239,8 @@ class Feed:
 
     # ---------------------------------------------------------------- 넣는 스레드
     def _free(self):
+        if self.mode == 'normal':
+            return 0 if not self.busy[0] else None
         n_ = len(self.eng)
         for k_ in range(1, n_ + 1):
             e_ = (self.last_e + k_) % n_
@@ -140,8 +253,8 @@ class Feed:
             while True:
                 with L_.cond:
                     while True:
-                        if self.quit or L_.stopped: return
-                        if not self.paused:
+                        if self.quit or L_.stopped or getattr(L_, 'restart_stop', False): return
+                        if not self.paused and self.pending is None:
                             e_ = self._free() if len(self.out) < AHEAD else None
                             if e_ is None and not camera_extra.replay_eval.lossless():
                                 while len(L_.q) > 1: L_.q.popleft(); L_.q_drop += 1; self.st['drop_wait'] += 1   # 지금은 넣을 수 없다: 기다리는 것은 가장 새 프레임 1 장만
@@ -184,12 +297,55 @@ class Feed:
 
     # ---------------------------------------------------------------- 프레임 반복 (app.py) 이 부르는 것
     def read_frame(self, k_):
-        g_ = APP.live_next() if self.direct else self._next()
+        g_ = self._live_next() if self.direct else self._next()
+        if g_ is None:
+            return None, 0.0
         if APP.args.gmc_thread:
             r_ = self.cur
             if r_ is not None and r_.gmc is not None: APP.gmc_futs[k_] = r_.gmc   # 도착했을 때 이미 맡겨 둔 계산
             else: camera_motion.gmc_submit(k_, g_)
         return g_, 0.0
+
+    def _live_next(self):
+        if getattr(APP.LIVE, 'restart_supported', False):
+            return APP.live_next(fresh_only=True)
+        return APP.live_next()
+
+    def request_mode(self, mode):
+        """Reserve one mode change under the same condition as submission."""
+        if mode not in MODES:
+            return False, 'NPU 검출 모드는 arrival 또는 normal이어야 합니다'
+        with APP.LIVE.cond:
+            conflict = switch_conflict()
+            if conflict is not None:
+                return False, conflict
+            if self.pending is not None:
+                return False, 'NPU 검출 모드를 바꾸고 있습니다'
+            if mode == 'arrival' and len(self.eng) != 2:
+                return False, 'NPU 1에 검출 모델이 올라가 있지 않습니다'
+            self.pending = mode
+            self.reason = None
+            APP.LIVE.cond.notify_all()
+        return True, 'NPU 검출 모드 변경을 요청했습니다'
+
+    def _apply_mode(self):
+        """Called by the frame loop while holding the condition, after previous jobs have been collected."""
+        mode = self.pending
+        if mode is None or self.out or self.working or any(self.busy):
+            return
+        self.reason = switch_conflict()
+        if self.reason is None:
+            try:
+                save_mode(mode)
+            except (OSError, ValueError) as exc:
+                print('FEED selection not saved: %r' % exc, flush=True)
+                self.reason = 'NPU 검출 모드를 저장하지 못했습니다'
+            else:
+                self.mode = APP.FEED_MODE = mode
+                self.last_e = len(self.eng) - 1
+                camera_extra.say('FEED mode changed to %s' % mode)
+        self.pending = None
+        APP.LIVE.cond.notify_all()
 
     def submit_time(self, g_, k_):
         if self.direct or self.cur is None: return detect_frame.submit_tiles(g_, k_)
@@ -213,13 +369,16 @@ class Feed:
         L_ = APP.LIVE
         while True:
             with L_.cond:
-                while not self.out:
+                while not self.out and not getattr(L_, 'restart_stop', False):
+                    self._apply_mode()
                     if self.err is not None or L_.stopped: break
                     if L_.cam_lost and APP.args.live_wait and not L_.q and not self.working: break
                     wait_s_ = (APP.args.live_wait or 10) if L_.last is None else 10
                     if L_.cond.wait(timeout=wait_s_): continue
                     if APP.args.live_wait: raise RuntimeError('no camera frame for %d s' % wait_s_)
                     break
+                if getattr(L_, 'restart_stop', False):
+                    return None
                 r_ = self.out.popleft() if self.out else None
             if r_ is not None:
                 if L_.prev_t is not None and r_.t - L_.prev_t > 1.0:
@@ -228,18 +387,20 @@ class Feed:
                     camera_extra.say('LIVE input gap of %.1f s: selection dropped, tracks restart' % (r_.t - L_.prev_t))
                 L_.prev_t = r_.t; break
             if self.err is not None:
-                self._off('the feeding thread stopped on an error (%s)' % self.err); return APP.live_next()
+                self._off('the feeding thread stopped on an error (%s)' % self.err); return self._live_next()
             if L_.stopped or APP.args.live_wait:
                 if L_.last is None: raise RuntimeError('camera delivered no frame')
                 self._off(''); return L_.last
             with L_.cam_lock: APP.lv_cam_wait()
-        if r_.seq <= self.prev_seq: self.st['order_bad'] += 1
-        self.prev_seq = r_.seq
+        with L_.cond:
+            if r_.seq <= self.prev_seq: self.st['order_bad'] += 1
+            self.prev_seq = r_.seq
+            self.st['taken'] += 1
         APP.FRAME_DY[0] = 16.0
         L_.stabq.append(r_.stab); L_.arr.append(r_.t); L_.last = r_.gg
         if APP.GB is not None and APP.GB.gui: L_.raws.append(r_.raw if APP.args.gui_map == 'team' else (r_.g8.astype(np.uint16) * 257))
         L_.rawq.append(r_.raw)
-        self.cur = r_; self.st['taken'] += 1
+        self.cur = r_
         return r_.gg
 
     # ---------------------------------------------------------------- 멈추기, 모델 바꾸기, 끝내기
@@ -257,6 +418,8 @@ class Feed:
     def _off(self, why_):   # 이 방식을 끈다: 여기서부터 read_frame 은 보통 읽기(live_next), APP.a 는 첫째 엔진
         self._stop_thread(); self._drain()
         APP.a = self.eng[0]; second_ = self.eng[1:]; self.eng = self.eng[:1]; self.direct = True
+        self.mode = 'normal'
+        self.pending = None
         for e_ in second_:
             try: e_.b.dispose()
             except Exception: pass
@@ -271,16 +434,23 @@ class Feed:
             while self.working and self.th.is_alive(): L_.cond.wait(0.2)
         rs_ = self._drain(); self.st['swaps'] += 1; self.st['redo'] += len(rs_)
         self.redo.extendleft(reversed(rs_))   # 옛 모델에 들어가 있던 프레임: 바꾼 뒤 새 모델에 다시 넣는다 (보통 방식과 같다)
-        APP.a = self.eng[0]; self.eng = []; self.busy = []   # 엔진을 놓는다: 바꾸는 코드(do_model_swap)가 전과 똑같이 옛 엔진을 비우고 새 엔진을 만든다
+        APP.a = self.eng[0]
+        for engine in self.eng[1:]:
+            engine.b.dispose()
+        self.eng = []; self.busy = []   # 바꾸는 코드(do_model_swap)가 옛 첫째 엔진을 비우고 새 엔진을 만든다
 
     def resume(self, code_):   # 바꾼 뒤. code_ = do_model_swap 의 답 (5 = 되돌리기도 실패: 프레임 반복이 곧 오류로 끝난다)
         if self.direct or code_ == 5: return
         prim_ = APP.a; second_ = None
+        self.reason = None
         try: second_ = make_second()
         except Exception as e_:
             self.st['one_core'] += 1
+            if APP.FEED_MODE == 'arrival':
+                self.reason = 'NPU 1에 검출 모델을 올리지 못했습니다. NPU 0에서 실행 중입니다'
             camera_extra.say('FEED arrival: the second detector engine on NPU core 1 could not be made for %s (%s). Frames are still fed as they arrive, on core 0 only.' % (APP.det_names[0], repr(e_)[:160]))
         self.eng = [prim_] + ([second_] if second_ is not None else []); self.busy = [False] * len(self.eng); self.last_e = len(self.eng) - 1
+        self.mode = APP.FEED_MODE if second_ is not None else 'normal'
         APP.a = self
         with APP.LIVE.cond: self.paused = False; APP.LIVE.cond.notify_all()
 
