@@ -13,6 +13,12 @@
 
 두 서버는 각각 켜고 끌 수 있습니다. 라벨 서버는 카메라와 NPU를 쓰지 않습니다.
 
+별도로 [PC 직접 연결 GUI](pc_lan_gui/README.md)가 있습니다. Orange Pi에서
+C++ Runtime을 실행할 때 PC 한 대에서 같은 디자인의 화면을 띄웁니다.
+이 GUI는 기존 UDP 영상·메타데이터와 TCP 명령을 사용하며 8090 웹서버를
+실행하지 않습니다. 현재 Runtime 명령으로 연결된 기능과 미지원 기능은
+링크한 문서에 구분했습니다.
+
 > 이어서 일하는 사람이나 AI 작업자는 [HANDOFF.md](HANDOFF.md)(지금 상태, 다음 할 일, 규칙)를 먼저 읽으세요.
 
 ## 1. 추적 서버 (`tracking_server/`)
@@ -102,6 +108,9 @@ python3 start_label_server.py --root <라벨 폴더> --bind <주소> --port 8770
 - 짐벌 제어 프로그램, 팀 코드 사본, 제어값 기록: [`tracking_server/src/gimbal/`](tracking_server/src/gimbal/)
 - 8090 웹 화면: [`tracking_server/page/`](tracking_server/page/)
 - 준비·켜기·다시 켜기 스크립트: [`tracking_server/scripts/`](tracking_server/scripts/)
+
+**PC 직접 연결 GUI**
+- C++ Runtime용 Python 데스크톱 화면: [`pc_lan_gui/`](pc_lan_gui/)
 
 **모델**
 - 검출 모델 (YOLO26, YOLOv8, YOLOX): [`tracking_server/models/detect/`](tracking_server/models/detect/)

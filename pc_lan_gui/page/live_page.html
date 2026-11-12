@@ -1,0 +1,1044 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>LWIR 추적</title>
+<style>
+/* v25: palette A (dark grey + orange). Orange is used only for the followed / selected state. */
+:root{--bg:#1b1b1b;--bar:#242424;--pan:#212121;--field:#161616;--line:#353535;--line2:#505050;--ink:#e6e6e6;--ink2:#b2b2b2;--mut:#838383;--acc:#e07a24;--acc-ink:#161616;--sel:#3a3a3a;--stop:#a92b23;--key:#2b2b2b;--warn:#d2a046;--bad:#c5473d;--r:3px;--bar-h:40px;--pan-w:clamp(340px,30vw,540px)}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:13.5px/1.45 "Malgun Gothic","Segoe UI","Noto Sans KR",-apple-system,sans-serif;display:flex;flex-direction:column;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,.result,.file,.minfo,.rmemo{-webkit-user-select:text;user-select:text}
+img,button,select,.pad{-webkit-user-drag:none;-webkit-touch-callout:none}
+button,select,summary{touch-action:manipulation;font-family:inherit}
+.num{font-family:"Segoe UI","Malgun Gothic",sans-serif;font-variant-numeric:tabular-nums}
+/* top bar */
+header{height:var(--bar-h);flex:none;display:flex;align-items:center;gap:18px;padding:0 16px;background:var(--bar);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.2px;margin-right:auto;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink2);max-width:360px;white-space:nowrap}
+.chip span:last-child{overflow:hidden;text-overflow:ellipsis}
+.dot{width:8px;height:8px;border-radius:1px;background:transparent;border:1px solid var(--mut);flex:none}
+.dot.good{background:var(--ink2);border-color:var(--ink2)}.dot.warn{background:var(--warn);border-color:var(--warn)}.dot.bad{background:var(--bad);border-color:var(--bad)}.dot.live{background:var(--bad);border-color:var(--bad);animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+/* layout */
+main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--pan-w);gap:0;width:100%}
+.view{min-height:0;display:flex;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto}
+.vbox{width:min(100%,calc((100dvh - var(--bar-h) - 24px - 26px - var(--rbh,0px)) * 4 / 3))}
+.frame{position:relative;width:100%;aspect-ratio:4/3;background:#000;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.frame img{display:block;width:100%;height:100%;object-fit:contain;cursor:crosshair;background:#000}
+.hint{font-size:12px;color:var(--mut);margin-top:6px}
+.panel{min-height:0;background:var(--pan);border-left:1px solid var(--line);display:flex;flex-direction:column}
+.secs{flex:1;min-height:0;overflow-y:auto}
+/* status block */
+.st{padding:14px 16px 12px;border-bottom:1px solid var(--line)}
+.sthead{display:flex;align-items:center;gap:10px}
+.sq{width:12px;height:12px;border-radius:2px;border:1.5px solid var(--mut);flex:none}
+.sq.auto{background:var(--acc);border-color:var(--acc)}.sq.lost{background:transparent;border-color:var(--acc)}.sq.man{background:var(--ink2);border-color:var(--ink2)}.sq.bad{background:var(--bad);border-color:var(--bad)}
+.status{font-size:15px;font-weight:700;margin:0;min-height:22px;line-height:1.3}
+.ans{font-size:12px;color:var(--mut);margin:3px 0 0 22px;min-height:16px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:10px 0 0 22px;font-size:12.5px}
+.kv dt{color:var(--mut)}.kv dd{margin:0;color:var(--ink);text-align:right}
+.mobhint{display:none;font-size:12px;color:var(--mut);margin-top:8px}
+/* pad */
+.padsec{display:none;padding:12px 16px 10px;border-bottom:1px solid var(--line)}
+.padsec .lbl2{font-size:12px;color:var(--mut);margin:0 0 8px}
+.pad{display:grid;grid-template-columns:52px 64px 52px;grid-template-rows:44px 52px 44px;gap:6px;justify-content:center}
+.pad button{border:1px solid var(--line2);background:var(--key);color:var(--ink);border-radius:var(--r);font-size:16px;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer;padding:0}
+.pad button:active,.pad button.on{background:var(--sel);border-color:var(--ink2)}
+.pad .u{grid-column:2;grid-row:1}.pad .l{grid-column:1;grid-row:2}.pad .c{grid-column:2;grid-row:2}.pad .rt{grid-column:3;grid-row:2}.pad .d{grid-column:2;grid-row:3}
+.pad .stop{background:var(--stop);border-color:var(--stop);color:#fff;font-size:15px;font-weight:700;display:none}
+.pad .stop:active{background:#c93a30}
+.padhint{display:none;font-size:12px;color:var(--mut);margin-top:10px;text-align:center}
+.stopbar{flex:none;margin:0;width:100%;height:46px;border:0;border-top:1px solid var(--line);background:var(--stop);color:#fff;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.5px}
+.stopbar:active{background:#c93a30}
+/* sections */
+details.sec{border-bottom:1px solid var(--line)}
+details.sec>summary{list-style:none;cursor:pointer;padding:10px 16px;font-size:13px;font-weight:700;color:var(--ink2);display:flex;justify-content:space-between;align-items:center}
+details.sec>summary::-webkit-details-marker{display:none}
+details.sec>summary::after{content:"";width:6px;height:6px;border-right:1.5px solid var(--mut);border-bottom:1.5px solid var(--mut);transform:rotate(-45deg);transition:transform .15s;margin-right:3px}
+details.sec[open]>summary::after{transform:rotate(45deg)}
+.body{padding:0 16px 14px}
+.ctl{font-size:12.5px;color:var(--ink2);line-height:1.6}.ctl b{color:var(--ink);font-weight:600}.ctl small{display:block;color:var(--mut);font-size:11.5px}
+.row{display:flex;gap:8px;align-items:center}
+.btn{flex:1;border:1px solid var(--line2);border-radius:var(--r);padding:8px 12px;font-size:13.5px;font-weight:600;cursor:pointer;color:var(--ink);background:var(--key);white-space:nowrap}
+.btn.start{background:var(--ink2);border-color:var(--ink2);color:var(--acc-ink)}.btn.accent{background:var(--acc);border-color:var(--acc);color:var(--acc-ink)}.btn.small{flex:none;padding:6px 10px;font-size:12.5px}
+.btn:disabled{opacity:.35;cursor:default}
+select,input,textarea{width:100%;background:var(--field);color:var(--ink);border:1px solid var(--line2);border-radius:var(--r);padding:7px 9px;font:inherit;font-size:13px}
+select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
+textarea{resize:vertical;min-height:34px}
+.stack{display:flex;flex-direction:column;gap:7px}
+.chk{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);white-space:nowrap;cursor:pointer}
+.chk input{width:auto;margin:0;accent-color:var(--acc)}
+.minfo{margin:8px 0 0;font-size:12.5px;color:var(--mut);min-height:18px}
+.result{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.rtitle{font-size:13.5px;font-weight:700;margin:0 0 2px}
+.rmemo{font-size:12.5px;color:var(--ink2);white-space:pre-wrap;margin:0 0 6px}
+.sum{font-size:12.5px;color:var(--mut);margin:2px 0 6px}
+table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+th,td{padding:4px 3px;text-align:right;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{color:var(--mut);font-weight:500}
+td small{display:block;font-size:10.5px;color:var(--mut);font-weight:400}
+td.over{color:var(--warn)}
+details.fold{margin-top:8px;border-top:1px solid var(--line);padding-top:6px}
+details.fold summary{cursor:pointer;font-size:12.5px;color:var(--mut);list-style:none;display:flex;justify-content:space-between;align-items:center}
+details.fold summary::-webkit-details-marker{display:none}
+details.fold summary::after{content:"";width:5px;height:5px;border-right:1.5px solid var(--mut);border-bottom:1.5px solid var(--mut);transform:rotate(-45deg);transition:transform .15s;margin-right:3px}
+details.fold[open] summary::after{transform:rotate(45deg)}
+details.fold>*:not(summary){margin-top:6px}
+.legend{margin:0;font-size:12px;color:var(--mut);display:grid;grid-template-columns:auto 1fr;gap:3px 10px}
+.legend dt{color:var(--ink);font-weight:600;white-space:nowrap}.legend dd{margin:0}
+#rdoc h4{margin:8px 0 4px;font-size:12.5px;color:var(--ink);font-weight:600}#rdoc h4:first-child{margin-top:0}
+@media(max-width:560px){.fold .legend{grid-template-columns:1fr}.fold .legend dt{margin-top:4px}}
+.file{font-size:11.5px;color:var(--mut);word-break:break-all;line-height:1.5}
+.edit{display:flex;flex-direction:column;gap:6px;margin-top:6px}
+.hist button{display:flex;justify-content:space-between;gap:8px;width:100%;text-align:left;background:transparent;border:0;border-radius:var(--r);color:var(--ink);padding:5px 6px;font:inherit;font-size:12.5px;cursor:pointer}
+.hist button:hover{background:var(--sel)}.hist button.sel{background:var(--sel);box-shadow:inset 2px 0 0 var(--acc)}
+.hist .hn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.hist .hv{color:var(--mut);white-space:nowrap;font-variant-numeric:tabular-nums}
+.keys{font-size:12.5px;color:var(--mut);line-height:1.9}
+kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r);padding:0 5px;font-size:11.5px;background:var(--field);color:var(--ink)}
+.lbl{color:var(--mut);font-size:12px;white-space:nowrap}
+.row input[type=number]{width:84px;min-width:0}
+.rpnote{color:var(--warn)}.rpnote:empty{display:none}
+.rpev{margin-top:2px;border-top:1px solid var(--line);padding-top:8px}.rpev table{margin:4px 0 8px}.rpev th{text-align:right}.rpev tr.fp td{color:var(--warn);font-weight:700;font-size:14px}.rpev td.sub{padding-left:14px;color:var(--mut)}.rpev .rtitle{margin:0}
+/* 11-12: seek bar and comparison numbers under the picture (chips that wrap, no table) */
+.rpbar[hidden],.rpseek[hidden],.rpnum[hidden]{display:none}
+.rpbar{margin-top:6px;display:flex;flex-direction:column;gap:6px}
+.rpseek{border:1px solid var(--line);border-radius:var(--r);background:var(--pan);padding:6px 8px;display:flex;flex-direction:column;gap:5px}
+.rpr{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.rpr .btn.small{padding:5px 9px}
+.rpr input[type=range]{flex:1 1 140px;min-width:0;width:auto;padding:0;height:26px;accent-color:var(--acc);background:transparent;border:0}
+.rpt{justify-content:space-between;font-size:12.5px;color:var(--ink2)}
+.rpj{display:flex;align-items:center;gap:6px;color:var(--mut);font-size:12px}.rpj input{width:84px}
+.rpcm{margin:0;min-height:0;font-size:12px}.rpcm:empty{display:none}
+.rpnum{border:1px solid var(--line);border-radius:var(--r);background:var(--pan);padding:6px 8px}
+.rphd{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2)}.rphd b{font-weight:700;color:var(--ink)}.rphd .btn.small{padding:3px 8px;font-size:12px}
+.rpmain{display:flex;flex-wrap:wrap;gap:4px 6px;margin-top:6px}
+.rpc{display:inline-flex;align-items:baseline;gap:5px;border:1px solid var(--line2);border-radius:var(--r);padding:2px 7px;font-size:12.5px;color:var(--ink2);background:var(--field)}
+.rpc b{color:var(--ink);font-weight:700}
+.rpc.fp{border-color:var(--warn);font-size:15px;padding:3px 9px}.rpc.fp b{color:var(--warn);font-size:19px}.rpc.fp.zero b{color:var(--ink)}.rpc.fp.zero{border-color:var(--line2)}
+.rpold{margin-top:6px;font-size:11.5px;color:var(--mut)}.rpold b{color:var(--ink2);font-weight:600}
+.rpfoot{margin-top:4px;font-size:11.5px;color:var(--mut)}
+@media(max-width:560px){.rpc{font-size:12px;padding:2px 6px}.rpc.fp b{font-size:17px}.rpj input{width:70px}}
+/* v26d: small speed / delay graphs on the top-left corner of the picture, switched with the small button there. The box lets clicks through to the picture (people under it can still be picked); only the two buttons take clicks. Line colours are for the graphs only (orange stays for the followed state). */
+:root{--c1:#5aa9e6;--c2:#c9c9c9;--c3:#b07cd8}
+.pfo{position:absolute;left:6px;top:calc(5% + 6px);z-index:2;width:236px;pointer-events:none;font-size:11px;line-height:1.35;color:var(--ink2)}
+.pfo .pfb{display:flex;gap:4px}
+.pfo button{pointer-events:auto;font:inherit;height:22px;padding:0 7px;border:1px solid var(--line2);border-radius:var(--r);background:rgba(24,24,24,.8);color:var(--mut);cursor:pointer}
+.pfo button.on{color:var(--ink);border-color:var(--ink2)}
+.pfo .pfx{margin-top:4px;padding:4px 6px 6px;background:rgba(24,24,24,.8);border:1px solid var(--line);border-radius:var(--r)}
+.pfo.off .pfx,.pfo.off #pfspan{display:none}
+.pfh{display:flex;flex-wrap:wrap;gap:0 8px;align-items:center}
+.pfh>span:last-child{margin-left:auto;color:var(--mut)}
+.pfl{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}.pfl i{width:8px;height:2px;display:inline-block}.pfl b{color:var(--ink);font-weight:600}
+.pfo canvas{display:block;width:100%;height:48px;margin:2px 0 3px}
+.pfo canvas:last-child{margin-bottom:0}
+/* phone, portrait */
+@media (max-width:900px){
+  :root{--bar-h:48px}
+  body{display:block;height:auto;min-height:100%}
+  header{gap:14px;padding:0 14px}
+  header .desk{display:none}
+  main{display:flex;flex-direction:column}
+  .view{padding:0}
+  .vbox{width:100%}
+  .frame{border-left:0;border-right:0;border-radius:0}
+  .hint{display:none}
+  .mobhint{display:block}
+  .panel{border-left:0}
+  .st{padding:12px 14px 10px}
+  .kv{grid-template-columns:repeat(6,auto);justify-content:space-between;gap:2px 6px;margin-left:22px}
+  .padsec{padding:14px 14px 10px;display:flex;flex-direction:column;align-items:center}
+  .padsec .lbl2{display:none}
+  .pad{grid-template-columns:100px 142px 100px;grid-template-rows:80px 100px 80px;gap:8px}
+  .pad button{font-size:22px}
+  .pad .stop{display:block;font-size:18px}
+  .padhint{display:block}
+  .stopbar{display:none}
+  .pfo{width:200px;font-size:10px;left:4px}.pfh{gap:0 5px}
+  .pfo button{height:26px;padding:0 9px}
+  .pfo canvas{height:32px}
+}
+/* phone, landscape: picture left, keys right */
+@media (max-width:900px) and (orientation:landscape){
+  main{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:min-content 1fr min-content}
+  .view{grid-column:1;grid-row:1/3;align-items:center}
+  .vbox{width:min(100%,calc((100dvh - var(--bar-h)) * 4 / 3))}
+  .frame{border:0;border-radius:0}
+  .panel{display:contents}
+  .st{grid-column:2;grid-row:1;border-bottom:0;width:300px;padding-bottom:4px}
+  .kv{grid-template-columns:auto 1fr;gap:2px 14px}
+  .mobhint{display:none}
+  .padsec{grid-column:2;grid-row:2;align-self:end;padding-top:4px;border-bottom:0}
+  .pad{grid-template-columns:72px 100px 72px;grid-template-rows:60px 72px 60px}
+  .padhint{display:none}
+  .secs{grid-column:1/3;grid-row:3;overflow:visible;border-top:1px solid var(--line)}
+  .stopbar{display:none}
+}
+/* v40: settings tree. One row per step, top row first; a row whose nodes are all locked is drawn with a dashed line. Orange = selected (same meaning as elsewhere on the page). */
+.ot-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;padding:10px 0 10px 14px;border-left:2px solid var(--line2);position:relative;margin-left:6px}
+.ot-row:before{content:"";position:absolute;left:-6px;top:16px;width:10px;height:10px;border-radius:50%;background:var(--key);border:2px solid var(--line2)}
+.ot-row.off{border-left-style:dashed}
+/* v41: a row that belongs to one node of the row above (외형 비교 under BoT-SORT) is drawn inside that row, only while that node is chosen */
+.ot-kid{flex:1 1 100%;min-width:0;margin:2px 0 0 10px;padding:8px 0 2px 12px;border-left:2px solid var(--key)}
+.ot-kidlab{font-size:12px;font-weight:600;color:var(--ink);margin-bottom:6px}
+.ot-kidlab small{font-size:11px;font-weight:400;color:var(--mut);margin-left:6px}
+/* v42: the child sits in the same outline as the tile it belongs to (BoT-SORT = header strip, 외형 비교 inside) */
+.ot-grp.ot-own>.ot-n.sel{display:block;width:100%;border:0;border-bottom:1px solid var(--acc);border-radius:0;background:rgba(224,122,36,.14);padding:7px 10px}
+.ot-own>.ot-kid{margin:0;padding:8px 8px 10px;border-left:0}
+.ot-kid .ot-n{overflow-wrap:anywhere}
+.ot-lab{font-size:13px;font-weight:600;color:var(--ink);padding-top:6px}
+.ot-lab small{display:block;font-size:11px;font-weight:400;color:var(--mut)}
+.ot-nodes{display:flex;flex-wrap:wrap;gap:8px;align-content:flex-start}
+.ot-n{font:inherit;font-size:13px;padding:6px 10px;border-radius:var(--r);border:1px solid var(--line2);background:var(--key);color:var(--ink);cursor:pointer;text-align:left;line-height:1.35;max-width:100%}
+.ot-n small{display:block;font-size:11px;color:var(--ink2)}
+.ot-n.sel{border:2px solid var(--acc);background:rgba(224,122,36,.14);padding:5px 9px}
+.ot-n.sel small{color:var(--ink)}
+.ot-n.lock{border-style:dashed;background:transparent;color:var(--mut)}
+.ot-n.lock small{color:var(--mut)}
+.ot-n:focus-visible{outline:1px solid var(--ink2);outline-offset:1px}
+.ot-ic{width:11px;height:11px;vertical-align:-1px}
+.ot-f{font-weight:600;min-width:112px}
+.ot-f small{font-weight:400}
+.ot-f.open{border-color:var(--ink2);border-bottom-left-radius:0;border-bottom-right-radius:0}
+.ot-f.sel.open{border-color:var(--acc)}
+.ot-sub{flex-basis:100%;display:flex;flex-wrap:wrap;gap:8px;padding:8px 10px 10px;border:1px solid var(--line2);border-radius:var(--r);background:rgba(255,255,255,.03)}
+.ot-subh{flex-basis:100%;font-size:11px;color:var(--mut)}
+/* open folder = one box: the folder is the header strip, its models sit inside the same outline (user 11-11: "위에서 열렸다는 느낌이 없어") */
+.ot-grp{flex-basis:100%;border:1px solid var(--ink2);border-radius:var(--r);background:rgba(255,255,255,.03);overflow:hidden}
+.ot-grp.sel{border:2px solid var(--acc)}
+.ot-grp>.ot-f{display:block;width:100%;border:0;border-bottom:1px solid var(--line2);border-radius:0;background:rgba(255,255,255,.05);padding:7px 10px}
+.ot-grp.sel>.ot-f{background:rgba(224,122,36,.14);border-bottom-color:var(--acc)}
+.ot-grp>.ot-sub{border:0;border-radius:0;background:transparent}
+/* second level inside an architecture folder: one box per model size (user 11-11: "m s 모델 분류 ... 한번더 세부적으로") */
+.ot-sg{flex-basis:100%;border:1px solid var(--line2);border-radius:var(--r);overflow:hidden}
+.ot-sg.sel{border-color:var(--acc)}
+.ot-sg>.ot-f{display:block;width:100%;min-width:0;border:0;border-radius:0;background:rgba(255,255,255,.04);padding:6px 10px}
+.ot-sg>.ot-f.open{border-bottom:1px solid var(--line2)}
+.ot-sg.sel>.ot-f{background:rgba(224,122,36,.10)}
+.ot-sg.sel>.ot-f.open{border-bottom-color:var(--acc)}
+.ot-sg>.ot-sub{border:0;border-radius:0;background:transparent}
+.ot-none{font-size:12px;color:var(--mut);padding:4px 0}
+.ot-leg{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;font-size:12px;color:var(--mut)}
+.ot-leg .ot-n{display:inline-block;cursor:default;font-size:12px;padding:1px 8px}
+.ot-hint{font-size:13px;color:var(--warn);min-height:20px}
+.ot-sum{border-top:1px solid var(--line);padding-top:8px;font-size:13px;color:var(--ink2);-webkit-user-select:text;user-select:text}
+#ot-sum{color:var(--ink)}
+@media(max-width:560px){.ot-row{grid-template-columns:1fr;gap:6px}.ot-lab{padding-top:0}.ot-lab small{display:inline;margin-left:6px}}
+/* v40: phone joystick. A finger pressed on the picture and dragged moves the gimbal; the ring is drawn where the finger went down. The picture no longer scrolls the page under a finger (touch-action). */
+#v{touch-action:none}
+.joy{position:absolute;display:none;width:112px;height:112px;margin:-56px 0 0 -56px;border-radius:50%;border:1px solid var(--line2);background:rgba(24,24,24,.45);pointer-events:none;z-index:3}
+.joy i{position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;background:var(--acc);opacity:.9}
+/* v40: no arrow keys on the page any more (phone = drag the picture, computer = keyboard); only the stop key stays, on phones */
+.pad{grid-template-columns:142px;grid-template-rows:64px}.pad .c{grid-column:1;grid-row:1}
+@media (max-width:900px) and (orientation:landscape){.pad{grid-template-columns:100px;grid-template-rows:60px}}
+/* Position rulers sit on the image edge and leave clicks and drags to the video. */
+.pose {
+  position:absolute;
+  inset:var(--pose-y,0px) var(--pose-x,0px);
+  pointer-events:none;
+  z-index:1;
+  --pose-rail:rgba(21,23,25,.86);
+  --pose-baseline:rgba(213,217,221,.38);
+  --pose-major:#c6cacf;
+  --pose-mid:#93999f;
+  --pose-minor:#626970;
+  --pose-pointer:#e8b16e;
+}
+.pose [hidden] {display:none}
+.pose-axis {
+  position:absolute;
+  background-color:var(--pose-rail);
+  background-repeat:no-repeat;
+}
+.pose-pan {
+  top:0; left:0; right:0; height:9px;
+  background-image:
+    linear-gradient(var(--pose-major),var(--pose-major)),
+    repeating-linear-gradient(to right,var(--pose-major) 0 1px,transparent 1px 10%),
+    repeating-linear-gradient(to right,var(--pose-mid) 0 1px,transparent 1px 5%),
+    repeating-linear-gradient(to right,var(--pose-minor) 0 1px,transparent 1px 2.5%),
+    linear-gradient(var(--pose-baseline),var(--pose-baseline));
+  background-size:1px 7px,100% 7px,100% 5px,100% 3px,100% 1px;
+  background-position:right top,left top,left top,left top,left top;
+}
+.pose-tilt {
+  top:0; right:0; bottom:0; width:9px;
+  background-image:
+    linear-gradient(var(--pose-major),var(--pose-major)),
+    repeating-linear-gradient(to top,var(--pose-major) 0 1px,transparent 1px 10%),
+    repeating-linear-gradient(to top,var(--pose-mid) 0 1px,transparent 1px 5%),
+    repeating-linear-gradient(to top,var(--pose-minor) 0 1px,transparent 1px 2.5%),
+    linear-gradient(var(--pose-baseline),var(--pose-baseline));
+  background-size:7px 1px,7px 100%,5px 100%,3px 100%,1px 100%;
+  background-position:right top,right bottom,right bottom,right bottom,right top;
+}
+.pose [data-marker] {
+  position:absolute;
+  z-index:1;
+  background:var(--pose-pointer);
+}
+.pose-pan [data-marker] {
+  top:0;
+  left:clamp(6px,var(--pose-position),calc(100% - 6px));
+  width:11px; height:9px;
+  transform:translateX(-50%);
+  clip-path:polygon(0 0,100% 0,50% 100%);
+}
+.pose-tilt [data-marker] {
+  right:0;
+  bottom:clamp(6px,var(--pose-position),calc(100% - 6px));
+  width:9px; height:11px;
+  transform:translateY(50%);
+  clip-path:polygon(100% 0,100% 100%,0 50%);
+}
+</style></head><body>
+<header>
+  <h1>LWIR 추적</h1>
+  <span class="chip"><span class="dot" id="cdot"></span><span id="ctext">연결 확인 중</span></span>
+  <span class="chip desk num"><span id="fps">–</span><span>&nbsp;fps</span></span>
+  <span class="chip desk"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
+  <span class="chip desk"><span class="dot" id="mcdot"></span><span id="mctext">모델</span></span>
+  <span class="chip"><span class="dot" id="mdot"></span><span id="mtext">측정 대기</span></span>
+</header>
+<main>
+  <section class="view">
+    <div class="vbox">
+      <div class="frame"><img id="v" src="/stream" alt="실시간 영상" draggable="false">
+        <div class="pose" id="gimbal-position">
+          <div class="pose-axis pose-pan" id="pose-pan" role="img" hidden><i data-marker></i></div>
+          <div class="pose-axis pose-tilt" id="pose-tilt" role="img" hidden><i data-marker></i></div>
+        </div>
+        <div class="joy" id="joyb" aria-hidden="true"><i id="joyk"></i></div>
+        <!-- v26d: the numbers of the top line of the picture (TRACK fps, CAM fps, delay, compute), one point per second from GET /perf (read only). fps and ms have different scales, so they are two graphs, not one with two axes. -->
+        <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
+          <div class="pfx">
+            <div class="pfh"><span class="pfl" title="PC에 수신된 추적 메타데이터의 초당 횟수"><i style="background:var(--c1)"></i>추적 <b class="num" id="pfv0">–</b></span><span class="pfl" title="PC에서 디코딩해 표시한 영상의 초당 프레임 수"><i style="background:var(--c2)"></i>영상 <b class="num" id="pfv1">–</b></span><span>fps</span></div>
+            <canvas id="pfc0"></canvas>
+            <div class="pfh"><span class="pfl" title="프레임이 서버에 도착한 뒤 추적 결과가 나올 때까지, 1초 평균 (delay)"><i style="background:var(--c1)"></i>지연 <b class="num" id="pfv2">–</b></span><span class="pfl" title="그 1초 중 가장 느린 프레임"><i style="background:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 프레임의 서버 안 계산 시간, 1초 평균 (compute)"><i style="background:var(--c2)"></i>처리 <b class="num" id="pfv4">–</b></span><span>ms</span></div>
+            <canvas id="pfc1"></canvas>
+          </div></div>
+      </div>
+      <!-- 11-12: under the picture while a recording plays and after it ended. One copy of the seek bar (GET /replay: state.pos / total / paused / fps, POST /replay/seek, /replay/pause, /replay/play)
+           and the numbers of the comparison with the labels (GET /replay: eval, the same source as the block in the side panel), kept after the end until the next replay or "닫기". -->
+      <div class="rpbar" id="rpbar" hidden>
+        <div class="rpseek" id="rpseek" hidden>
+          <div class="rpr"><button class="btn small" id="rpplay" disabled>일시정지</button><button class="btn small" id="rpm10" disabled title="10초 앞으로 되감기">−10초</button><input type="range" id="rpslider" min="0" max="0" step="1" value="0" disabled aria-label="재생 위치"><button class="btn small" id="rpp10" disabled title="10초 앞으로 건너뛰기">+10초</button></div>
+          <div class="rpr rpt"><span class="num" id="rptime">–</span><span class="rpj">장 번호 <input type="number" id="rpjn" min="1" step="1" inputmode="numeric" aria-label="이동할 장 번호 (1부터)" disabled><button class="btn small" id="rpgo" disabled>이동</button></span></div>
+          <div class="minfo rpcm" id="rpcm"></div>
+        </div>
+        <div class="rpnum" id="rpnum" hidden>
+          <div class="rphd"><b id="rpnhd"></b><button class="btn small" id="rpnx" title="이 숫자를 닫기 (다음 재생을 시작하면 다시 나옵니다)">닫기</button></div>
+          <div class="rpmain" id="rpmain"></div>
+          <div class="rpold" id="rpold"></div>
+          <div class="rpfoot" id="rpfoot"></div>
+        </div>
+      </div>
+      <div class="hint">사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
+    </div>
+  </section>
+  <aside class="panel">
+    <section class="st">
+      <div class="sthead"><span class="sq" id="sq"></span><div class="status" id="s">대기 중</div></div>
+      <div class="ans" id="ans"></div>
+      <dl class="kv num"><dt>가로 오차</dt><dd id="ex">–</dd><dt>세로 오차</dt><dd id="ey">–</dd><dt>놓친 시간</dt><dd id="lt">–</dd></dl>
+      <div class="mobhint">사람을 톡 누르면 따라갑니다 · 빈 곳을 톡 누르면 멈춥니다 · 누른 채 끌면 그 방향으로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
+    </section>
+    <div class="secs">
+      <details class="sec" data-k="ctl">
+        <summary>짐벌 제어기</summary>
+        <div class="body ctl">
+          <!-- The values come from GET /rules (key gimbal_cfg = the options the server gave the gimbal program at start), drawn by gshow in js/12_rules_filter_values.js. Read only: the bridge has no live gain command yet. -->
+          <span id="gcfg">불러오는 중…</span>
+          <small>서버가 시작할 때 짐벌 프로그램에 넘긴 값입니다. 화면에서는 바꿀 수 없습니다. 바꾸려면 scripts/live.env (거기 없는 값은 scripts/run_real_gui.sh) 를 고치고 서버를 다시 시작합니다.</small>
+        </div>
+      </details>
+      <details class="sec" data-k="tree">
+        <summary>설정 (위에서 아래로 고르기)</summary>
+        <!-- v40: one tree for everything that used to be three sections (검출 모델 / Filter / Tracker). Rows run top to bottom in processing order; what is picked above opens or locks the nodes below. A click on a node is sent at once, the choice is kept on the server, and every open page reads it again each second. -->
+        <div class="body stack">
+          <div class="ot-leg"><span class="ot-n sel">선택됨</span><span class="ot-n">고를 수 있음</span><span class="ot-n lock"><svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg> 잠김</span><span>누르면 바로 적용 · 접속한 모든 화면이 같이 바뀝니다</span></div>
+          <div id="ot-tree"><div class="minfo" style="margin-top:0">설정을 불러오는 중…</div></div>
+          <div class="ot-hint" id="ot-hint" role="status"></div>
+          <div class="ot-sum">지금 조합: <span id="ot-sum">–</span></div>
+          <details class="fold" style="margin-top:0"><summary>지금 적용된 값</summary><div class="minfo" id="minfo">모델 목록을 불러오는 중…</div><div class="minfo" id="finfo">불러오는 중…</div><div class="minfo" id="rinfo">불러오는 중…</div></details>
+          <details class="fold" style="margin-top:0"><summary>검출 모델 설명</summary><dl class="legend">
+            <dt>고르기</dt><dd>"검출 모델" 줄에서 누르면 재시작 없이 다음 프레임부터 그 모델로 검출합니다. 실패하면 이전 모델로 되돌립니다.</dd>
+            <dt>640x480 · 640x640</dt><dd>모델 입력 크기. 카메라 영상(640x512)에서 가운데 480줄을 씁니다. 640x480 모델은 그대로 넣고, 640x640 모델은 위아래에 회색 띠를 붙여 넣습니다(계산량이 더 큼).</dd>
+            <dt>(자동 등록)</dt><dd>코드에 미리 적어 둔 모델이 아니라, 서버가 models/detect/ 폴더에서 스스로 찾아 올린 파일. 파일 이름과 상관없이 parse_model 로 입력 크기와 출력 모양을 읽어 맞는 검출 모델만 올립니다. 10초 넘게 변하지 않은 파일만 받습니다(복사 중인 파일 제외). 이름은 같은 이름 json 의 display_name, 없으면 파일 이름 그대로입니다.</dd>
+            <dt>[NMS-free]</dt><dd>후처리 경로 표시. 표시 없는 모델은 출력이 6개(상자 3 + 분류 3)라서 오렌지파이 CPU 가 상자를 복원하고 NMS(겹친 상자 지우기)를 합니다. NMS-free 모델은 출력 1개 [1,300,6] (x1,y1,x2,y2,점수,종류)이 이미 완성된 목록이라 그대로 씁니다. 서버가 파일의 출력 모양을 보고 경로를 자동으로 고릅니다.</dd>
+            <dt>주의</dt><dd>자동 등록 모델은 우리 카메라에서 오검출 검사를 거치지 않은 것일 수 있습니다. 기준 모델은 YOLO26m_(FLIR) 640x480 입니다.</dd>
+          </dl></details>
+          <details class="fold" style="margin-top:0"><summary>위치 기억 · 신뢰도 설명 (Kalman filter · GRU · Mamba)</summary><dl class="legend">
+            <dt>하는 일</dt><dd>사람을 놓친 동안(검출이 끊긴 프레임) 그 사람이 어디 있을지 추정합니다. 다시 검출되면 이 추정 위치와 겹치는 상자에 같은 번호를 잇습니다. 검출이 이어지는 동안의 상자와 Kalman filter 는 건드리지 않습니다.</dd>
+            <dt>Kalman filter (기본)</dt><dd>등속 모델 + 카메라 움직임 보정. 학습 모델 없음. 지금까지 쓰던 것과 완전히 같습니다.</dd>
+            <dt>GRU · Mamba</dt><dd>Kalman filter + 카메라 움직임 보정이 낸 예측 위치에 작은 보정값(중심 x,y · 폭 · 높이)을 더합니다. 보정값을 0 으로 두면 Kalman filter 와 같습니다. 자기 예측을 다음 프레임 입력으로 다시 넣는 방식(MambaTrack 논문의 autoregressive 규칙)으로 최대 60프레임까지 이어 갑니다.</dd>
+            <dt>입력 (프레임당 16개)</dt><dd>Kalman 속도 2 · 직전 검출과 예측의 차이 4 · 검출 있음 표시 1 · 카메라가 민 양 2 · 직전 두 프레임 사이 중심 이동 2 · 크기 변화 2 · log 높이 1 · 가로세로 비 1 · 놓친 프레임 수 1. 길이는 모두 예측 상자 높이로 나눈 값. 놓치기 전 최대 20프레임을 먼저 읽습니다.</dd>
+            <dt>출력</dt><dd>보정값 4개. 한 프레임에 중심은 상자 높이의 ±50%, 크기는 ±10% 를 넘지 못하게 막아 둠. 보정한 상자를 Kalman 상태의 위치·크기에 덮어씀(속도, 공분산은 그대로).</dd>
+            <dt>구조</dt><dd>GRU: GRU cell(은닉 40) → linear 4, 가중치 7,124개. Mamba: Mamba block 1개(d_model 32, expand 2, d_state 8, d_conv 4, Gu &amp; Dao 2023) → linear 4, 가중치 9,124개. 둘 다 numpy 로 오렌지파이 CPU 에서 계산(NPU 안 씀).</dd>
+            <dt>쓰는 조건</dt><dd>놓치기 전에 5프레임 이상 연속으로 본 사람만. 그보다 짧으면 그 사람은 Kalman filter 만 씁니다. 계산 오류가 20번 넘으면 자동으로 Kalman filter 로 돌아갑니다.</dd>
+            <dt>학습</dt><dd>우리 카메라 야외 영상(seq_*)의 사람 궤적에서 검출을 일부러 끊고, 끊긴 동안의 실제 위치를 맞히도록 학습. 가중치 파일은 tracker/motion/pos_gru.npz, pos_mamba.npz. 새 파일을 넣으면 재시작 없이 목록에 뜹니다.</dd>
+            <dt>신뢰도</dt><dd>지금 가중치는 신뢰도를 내지 않습니다(시험용 1 epoch). 0~1 신뢰도를 같이 내도록 다시 학습하는 것을 준비 중입니다. 신뢰도가 낮으면 Kalman filter 값을 쓰고 예측 상자를 그리지 않게 됩니다.</dd>
+            <dt>지금 상태</dt><dd id="pstat">서버 정보를 불러오는 중…</dd>
+            <dt>예측 상자 표시</dt><dd>"제어" 줄에서 켜면 짐벌이 따라가는 사람을 놓쳤을 때 그 사람의 추정 위치만, 같은 색 점선 상자와 "번호 predict" 로 화면에 그립니다(Kalman filter 일 때도 됨). 다른 사람의 추정 위치는 그리지 않습니다. 화면에만 그리고 짐벌에는 보내지 않습니다.</dd>
+            <dt>주의</dt><dd>추정 위치가 틀리면 다른 사람에게 번호가 넘어갈 수 있습니다. 검증된 가중치가 나오기 전에는 기본값(Kalman filter)을 쓰세요. 코드: pos_predict 함수, PosGRU · PosMamba 클래스.</dd>
+          </dl></details>
+          <details class="fold" style="margin-top:0"><summary>Tracker 설명 (고른 것)</summary><div id="rdoc"></div></details>
+        </div>
+      </details>
+      <details class="sec" data-k="rules">
+        <summary>Filter 값 (검출 뒤 · Warmth · Edge)</summary>
+        <!-- v40: only the numbers. Apply sends warm_min, warm_max, edge_birth and (11-11, when the server knows it) confirm_ms, nothing else; on / off of the warmth check is the "온도 Filter" node of the tree. -->
+        <div class="body stack">
+          <div class="row"><label class="lbl" for="rwarm" style="flex:1">Warmth range</label><input id="rwarm" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최소 (원시값)"><span class="lbl" style="flex:none">~</span><input id="rwarmx" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최대 (원시값, 0 = 제한 없음)"></div>
+          <div class="minfo" id="fhintw" style="margin-top:0">기본값 <b>45000 ~ 0</b> (위쪽 제한 없음). 이 카메라 측정(11-10): 천장 조명 43,397 이하 · 방 안 사람 47,749 이상 · 가까운 사람 60,170 이상 → 그 사이인 45000. 주의: 화면 끝에 잘린 사람은 40,387까지 내려가 버려질 수 있고, 따뜻한 벽 물체(49,155 이하)는 이 값으로 못 거릅니다.</div>
+          <div class="row"><label class="lbl" for="redge" style="flex:1">Edge confidence (0 = 제한 없음)</label><input id="redge" type="number" min="0" max="1" step="0.05" style="width:104px;flex:none" aria-label="Edge confidence"></div>
+          <div class="minfo" id="fhinte" style="margin-top:0">기본값 <b>0.5</b>. 측정으로 정한 값은 아닙니다(경험값, 검출 기본 점수 0.25의 두 배). 올리면 가장자리 오검출이 줄고, 화면에 들어오는 사람을 조금 늦게 잡습니다.</div>
+          <div class="row"><label class="lbl" for="rconf" style="flex:1">새 사람 확인 시간 ms (0 = 끔)</label><input id="rconf" type="number" min="0" max="1000" step="10" style="width:104px;flex:none" aria-label="새 사람 확인 시간 (ms)"></div>
+          <div class="minfo" id="fhintc" style="margin-top:0">기본값 <b>130</b>. 새 사람은 이 시간 동안 이어서 잡혀야 화면에 나옵니다. 장 수 = 값 × 초당 장 수 ÷ 1000 (반올림), 3장보다 작아지지 않습니다. 올리면 오검출이 줄고 새 사람이 조금 늦게 나옵니다. 측정으로 정한 값은 아닙니다(초당 25장의 3장에 맞춘 값).</div>
+          <div class="row"><div class="minfo" id="fmsg" style="margin-top:0;flex:1"></div><button class="btn accent small" id="rapply2">Apply</button></div>
+          <details class="fold" style="margin-top:0"><summary>Filter 설명</summary><dl class="legend">
+            <dt>Warmth range</dt><dd>상자 안의 따뜻한 부분(원시값 상위 5% 지점)이 최소 ~ 최대 안에 있을 때만 사람으로 인정합니다. 최소보다 차갑거나 최대보다 뜨거우면 버립니다. 카메라 16비트 원시값(0~65535) 기준. 최소 0 = 아래쪽 검사 끔, 최대 0 = 위쪽 제한 없음.</dd>
+            <dt>Edge confidence</dt><dd>화면 가장자리에 걸친 상자는 검출 점수가 이 값 이상일 때만 새 궤적으로 시작합니다. 이미 추적 중인 사람에게는 적용하지 않습니다. 0 이면 제한 없음.</dd>
+            <dt>새 사람 확인 시간</dt><dd>새로 나타난 상자는 이 시간만큼 연속으로 잡혀야 번호를 받고 화면에 나옵니다. 서버가 초당 장 수를 재서 장 수로 바꿉니다(130 ms = 초당 22~27장에서 3장, 28장을 넘으면 4장). 이미 화면에 나온 사람에게는 적용하지 않습니다. 0 이면 끄고 늘 3장으로 셉니다.</dd>
+            <dt>온도 Filter 끄기</dt><dd>설정의 "검출 뒤 Filter" 줄에서 "온도 Filter"를 끄면 Warmth 검사만 꺼지고 숫자는 서버가 기억합니다. 다시 켜면 그 숫자로 돌아옵니다. Edge confidence 는 그대로 적용됩니다.</dd>
+          </dl></details>
+        </div>
+      </details>
+      <details class="sec" data-k="sys">
+        <summary>System</summary>
+        <!-- v35: reset also power-cycles USB 5 V. v30: camera reset and board reboot. Both ask before doing anything. -->
+        <div class="body stack">
+          <div class="row"><button class="btn" id="camreset">카메라 초기화</button><button class="btn" id="sysreboot" style="background:var(--stop);border-color:var(--stop);color:#fff">오렌지파이 재부팅</button></div>
+          <div class="minfo" id="sysmsg" style="margin-top:0"></div>
+          <details class="fold" style="margin-top:0"><summary>System 설명</summary><dl class="legend">
+            <dt>카메라 초기화</dt><dd>카메라 프로그램(cam_pipe)을 정상 종료하고 다시 시작합니다. 영상이 안 들어오는 중이면 카메라 USB 초기화도 같이 합니다. 10~60초 걸립니다. USB 에 카메라가 아예 안 보이거나, 초기화하고 90초가 지나도 영상이 없어 다시 누르면 보드의 USB 전원(5V)을 3초 껐다 켭니다(케이블을 뽑았다 꽂는 것과 같음. 짐벌 USB 와 마우스도 같이 잠깐 끊김. USB 메모리·디스크가 꽂혀 있으면 전원을 끄지 않음).</dd>
+            <dt>오렌지파이 재부팅</dt><dd>짐벌을 멈추고 보드를 재부팅합니다. 1~2분 뒤 이 화면이 저절로 다시 뜹니다. 보드에서 돌던 다른 작업도 모두 끊깁니다. 부팅 후 5분 안에는 다시 눌러도 실행하지 않습니다.</dd>
+          </dl></details>
+        </div>
+      </details>
+      <details class="sec" data-k="replay" id="rpsec">
+        <summary>녹화 재생</summary>
+        <!-- 11-12: a stored recording of the label site instead of the camera. The gimbal does not move while it plays. -->
+        <div class="body stack">
+          <select id="rpsel" aria-label="녹화 고르기"><option value="">목록을 불러오는 중…</option></select>
+          <div class="row"><span class="lbl">초당 장 수</span><input type="number" id="rpfps" min="5" max="30" step="1" value="25" aria-label="초당 장 수 (재생 중에 바꾸면 바로 적용)"><label class="chk"><input type="checkbox" id="rploop" checked> 반복</label></div>
+          <div class="row"><button class="btn start" id="rpstart">재생 시작</button><button class="btn" id="rpstop" disabled>재생 멈춤 (카메라로)</button></div>
+          <div class="minfo rpnote" id="rpnote" style="margin-top:0"></div>
+          <div class="minfo" id="rpmsg" style="margin-top:0"></div>
+          <!-- 11-12: ground-truth comparison while a recording with reviewed labels plays (GET /replay -> eval, POST /replay/eval/reset, /replay/eval/draw) -->
+          <div class="rpev" id="rpev">
+            <div class="rtitle">정답과 비교</div>
+            <div class="minfo" id="rpevmsg" style="margin-top:0">재생을 시작하면, 검수한 정답 라벨이 있는 녹화는 여기에 1초마다 점수가 나옵니다.</div>
+            <table id="rpevt"></table>
+            <div class="row"><button class="btn small" id="rpevreset" disabled>숫자 처음부터</button><label class="chk"><input type="checkbox" id="rpevdraw"> 정답 상자 그리기</label></div>
+            <details class="fold"><summary>숫자 설명</summary><dl class="legend">
+              <dt>새 채점 · 옛 채점</dt><dd>같은 프레임을 두 규칙으로 셉니다. 새 채점은 무시 구역(라벨의 무시 상자, 가장자리에 걸친 좁은 사람)을 빼고, 옛 채점은 빼지 않습니다.</dd>
+              <dt>잘못 그린 상자</dt><dd>정답 사람과 짝이 없는 서버의 사람 상자 수. 있으면 안 되는 상자라 맨 위에 둡니다. 새 채점에서는 무시 구역 안에 반 넘게 든 상자는 세지 않습니다.</dd>
+              <dt>정답 사람</dt><dd>채점한 프레임들의 정답 사람 상자 수 (프레임마다 셈).</dd>
+              <dt>찾음</dt><dd>서버 상자와 짝이 된 정답 사람 수 (겹침 IoU 0.5 이상).</dd>
+              <dt>놓침</dt><dd>짝이 없는 정답 사람 수. "작은 사람"은 높이 32 px 미만 (놓쳐도 받아들일 수 있음), "그 밖"은 나머지.</dd>
+              <dt>찾은 비율</dt><dd>찾음 ÷ 정답 사람.</dd>
+              <dt>맞은 비율</dt><dd>찾음 ÷ (찾음 + 잘못 그린 상자).</dd>
+              <dt>번호 바뀜</dt><dd>정답 사람 하나에 붙은 서버 번호가 그 사람의 앞 번호와 달라진 횟수 (CLEAR MOT, Bernardin &amp; Stiefelhagen 2008).</dd>
+              <dt>IDF1</dt><dd>사람마다 번호를 얼마나 끝까지 지켰는지. 채점한 모든 프레임에 걸쳐 정답 번호와 서버 번호를 하나씩 짝지어 셈 (Ristani 외 2016). 100 이 가장 좋음.</dd>
+              <dt>MOTA</dt><dd>1 − (놓침 + 잘못 그린 상자 + 번호 바뀜) ÷ 정답 사람 (CLEAR MOT). 100 이 가장 좋고, 0 보다 작을 수도 있음.</dd>
+              <dt>무시 구역 상자</dt><dd>새 채점에서 무시 구역 안이라 세지 않은 서버 상자 수.</dd>
+              <dt>채점한 장</dt><dd>정답 라벨이 있고 검수한 프레임 가운데 서버가 화면에 낸 프레임. 재생 카메라나 서버가 건너뛴 프레임, 어느 PNG 인지 모르는 프레임, 일시정지 중에 되풀이한 프레임은 채점하지 않습니다.</dd>
+              <dt>바퀴 · 구간</dt><dd>반복 재생은 바퀴마다, 건너뛰기는 건너뛸 때마다 새 구간으로 계속 채점합니다. 구간 하나를 영상 하나처럼 보고 더합니다 (정답 번호와 서버 번호 모두 구간마다 새로 셈).</dd>
+            </dl></details>
+            <details class="fold"><summary>채점 규칙</summary><dl class="legend">
+              <dt>사람만</dt><dd>정답 클래스 0 과 서버가 내보낸 사람 상자 (화면에 보이고 짐벌에 가는 상자, 640x480 좌표).</dd>
+              <dt>짝짓기</dt><dd>CLEAR MOT 방식 (Bernardin &amp; Stiefelhagen 2008, py-motmetrics 와 같음): 겹침(IoU) 0.5 이상만, 하나는 하나와만. 앞 프레임에서 짝이었던 정답 사람과 서버 번호가 아직 IoU 0.5 이상이면 그대로 짝짓고, 나머지만 헝가리안 방법으로 짝짓습니다.</dd>
+              <dt>무시 구역</dt><dd>새 채점만: 라벨의 클래스 1 상자, 그리고 왼쪽·오른쪽 가장자리 4 px 안에 닿고 보이는 폭이 24 px 보다 좁은 사람. 짝이 없는 서버 상자가 무시 구역 하나 안에 반 이상 들어가면 잘못 그린 상자가 아님. 무시 구역은 놓침이 아님.</dd>
+              <dt>정답 라벨</dt><dd>tracks_edited_mot.txt (검수한 라벨)만 씁니다. 라벨에 있고 검수했다고 적힌 프레임만 채점. 자동 라벨(tracks_mot.txt)만 있는 녹화는 채점하지 않습니다.</dd>
+              <dt>프레임 짝</dt><dd>재생 카메라가 프레임마다 PNG 번호를 함께 보내고, 서버는 그 번호로 정답을 찾습니다.</dd>
+              <dt>그대로</dt><dd>재생 시작 직후 추적 기록이 없는 프레임도 넣어 셉니다. 숫자를 좋게 하려고 바꾼 것은 없습니다.</dd>
+              <dt>정답 상자</dt><dd>"정답 상자 그리기"는 이 화면 그림에만 그립니다 (흰 점선 = 사람, 분홍 점선 = 무시 구역). 짐벌에는 가지 않습니다.</dd>
+              <dt>결과 파일</dt><dd>재생을 멈추거나 바꾸면 서버 결과 폴더에 replay_eval_&lt;이름&gt;_&lt;시각&gt;.json 으로 남습니다. 파일에는 비교용으로 앞 프레임 짝을 보지 않고 프레임마다 헝가리안만으로 센 숫자(per_frame_hungarian)도 함께 적습니다.</dd>
+            </dl></details>
+          </div>
+          <details class="fold" style="margin-top:0"><summary>녹화 재생 설명</summary><dl class="legend">
+            <dt>하는 일</dt><dd>라벨 사이트의 녹화 폴더 하나를 카메라 대신 서버에 넣습니다. 검출·추적은 카메라 영상과 똑같이 돌고, 영상 맨 위 줄에 REPLAY 와 녹화 이름이 나옵니다.</dd>
+            <dt>짐벌</dt><dd>재생을 시작하면 짐벌을 멈추고, 재생 중에는 사람을 눌러도 손으로 움직여도 짐벌이 움직이지 않습니다. 재생을 멈춘 뒤에는 사람을 다시 누를 때까지 따라가지 않습니다.</dd>
+            <dt>카메라로</dt><dd>재생 멈춤을 누르면 카메라 프로그램을 다시 시작합니다. 영상은 10~60초 뒤에 나옵니다. "반복"을 끄면 한 번 끝까지 튼 뒤 저절로 카메라로 돌아갑니다.</dd>
+            <dt>8비트 녹화</dt><dd>값이 0~255 를 늘린 것이라 온도 Filter(16비트 값)가 맞지 않아 사람이 걸러질 수 있습니다. 볼 때만 설정의 "온도 Filter"를 잠시 끄세요. 서버가 Filter 를 스스로 바꾸지는 않습니다.</dd>
+            <dt>측정</dt><dd>재생 중에도 측정할 수 있습니다. 측정 결과(summary.json, README_KO.txt)에 재생한 녹화 이름이 적힙니다.</dd>
+            <dt>길이</dt><dd>길이 제한이 없습니다. 장면은 필요할 때 하나씩 읽습니다.</dd>
+            <dt>영상 아래 막대</dt><dd>재생 중에는 영상 바로 아래에 재생 위치 막대, 재생·일시정지, −10초·+10초, 장 번호로 이동이 나옵니다. 막대는 놓을 때 건너뜁니다. 시간은 위의 "초당 장 수" 기준입니다. 장 번호는 1부터 셉니다 (1 = 녹화의 첫 장면).</dd>
+            <dt>건너뛰면</dt><dd>건너뛴 뒤 약 1.2초는 영상이 멈춘 듯 보이고, 그 사이 추적은 새로 시작합니다 (사람 번호가 새로 붙음). 짐벌은 건너뛰는 중에도 움직이지 않습니다. 먼 곳이나 뒤로 건너뛰면 PNG 녹화는 이 1.2초 안쪽, 측정 녹화(raw.gz)는 파일을 앞에서부터 다시 풀어야 해서 몇 초 더 걸릴 수 있습니다.</dd>
+            <dt>일시정지</dt><dd>멈춘 동안 같은 장면을 초당 5장 되풀이해 보냅니다 (서버가 카메라가 죽었다고 보지 않게, 화면이 살아 있게). 되풀이한 장면은 정답과 비교에 세지 않습니다.</dd>
+            <dt>건너뛰고 숫자</dt><dd>건너뛸 때마다 새 구간이 시작되고, 이미 센 숫자는 지우지 않습니다. 되감아서 같은 장면을 다시 지나가면 새 구간의 장면으로 한 번 더 셉니다 (숫자에 그 장면이 두 번 들어감). "서로 다른 장면" 수를 함께 보여 줍니다. 처음부터 다시 세려면 "숫자 처음부터".</dd>
+          </dl></details>
+        </div>
+      </details>
+      <details class="sec" data-k="meas">
+        <summary>측정</summary>
+        <div class="body">
+          <div class="stack">
+            <input id="mname" maxlength="80" placeholder="측정 이름 (예: 사람 2명, 짐벌 추종)" aria-label="측정 이름">
+            <textarea id="mmemo" rows="1" maxlength="2000" placeholder="메모 (선택, 측정 중에도 고칠 수 있음)" aria-label="메모"></textarea>
+            <div class="row"><button class="btn start" id="mst">측정 시작</button><button class="btn" id="msp" disabled>측정 끝</button></div>
+            <label class="chk"><input type="checkbox" id="mvid" checked> 영상 저장 (16비트 원본 무손실, 1분 ≈ 400 MB)</label>
+          </div>
+          <div class="minfo" id="mi">시작을 누르면 그 순간부터 프레임마다 기록합니다.</div>
+          <div id="mr"></div>
+          <div id="mh"></div>
+        </div>
+      </details>
+      <details class="sec" data-k="keys">
+        <summary>단축키</summary>
+        <div class="body keys">
+          <kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> 짐벌 이동 (누르는 동안) &nbsp;·&nbsp; <kbd>Space</kbd> 정지<br>
+          영상 위 사람 클릭: 그 사람 따라가기 &nbsp;·&nbsp; 영상의 빈 곳 클릭 또는 Space: 정지 &nbsp;·&nbsp; 방향키 또는 W A S D: 짐벌 이동 &nbsp;·&nbsp; 입력칸에 글을 쓰는 동안에는 짐벌을 움직이지 않습니다
+        </div>
+      </details>
+    </div>
+  </aside>
+</main>
+<script>
+
+const $=id=>document.getElementById(id);
+const v=$('v'),S=$('s');
+function chip(d,t,cls,txt){$(d).className='dot '+cls;$(t).textContent=txt;}
+// section fold state (v25): desktop open, phone closed, remembered per browser
+const MOB=matchMedia('(max-width:900px)');
+let openSaved={};try{openSaved=JSON.parse(localStorage.getItem('lwir_live_open')||'{}')||{};}catch(_){openSaved={};}
+for(const d of document.querySelectorAll('details.sec')){const k=d.dataset.k;d.open=(k in openSaved)?!!openSaved[k]:!MOB.matches;
+  d.querySelector('summary').addEventListener('click',()=>setTimeout(()=>{openSaved[k]=d.open;try{localStorage.setItem('lwir_live_open',JSON.stringify(openSaved));}catch(_){}},0));}   // saved only on the user's click, never the default
+const poseOverlay = $('gimbal-position');
+const poseImage = $('v');
+let poseReceivedAt = 0;
+let poseImageAspect = 0;
+const poseAxes = [['pan', '좌우'], ['tilt', '상하']].map(([key, label]) => {
+  const axis = $('pose-' + key);
+  return {key, label, axis, marker: axis.querySelector('[data-marker]')};
+});
+
+function fitPoseOverlay() {
+  // Match the visible image when object-fit: contain leaves black bars.
+  poseImageAspect = poseImage.naturalWidth / poseImage.naturalHeight || 0;
+  if (!poseImageAspect) return;
+  const width = poseImage.clientWidth;
+  const height = poseImage.clientHeight;
+  const insetX = Math.max(0, (width - height * poseImageAspect) / 2);
+  const insetY = Math.max(0, (height - width / poseImageAspect) / 2);
+  poseOverlay.style.setProperty('--pose-x', insetX + 'px');
+  poseOverlay.style.setProperty('--pose-y', insetY + 'px');
+}
+
+if (typeof ResizeObserver === 'function') new ResizeObserver(fitPoseOverlay).observe(poseImage);
+else addEventListener('resize', fitPoseOverlay);
+poseImage.addEventListener('load', fitPoseOverlay);
+
+function renderGimbalPose(pose, estimate) {
+  if ((poseImage.naturalWidth / poseImage.naturalHeight || 0) !== poseImageAspect) fitPoseOverlay();
+  let any = false;
+  for (const {key, label, axis, marker} of poseAxes) {
+    const actual = pose && pose[key];
+    const useActual = actual && Number.isFinite(actual.deg) &&
+      Number.isFinite(actual.min_deg) && Number.isFinite(actual.max_deg) &&
+      actual.min_deg < actual.max_deg;
+    const value = useActual ? actual.deg : estimate && estimate[key];
+    const min = useActual ? actual.min_deg : 0;
+    const max = useActual ? actual.max_deg : 100;
+    const valid = Number.isFinite(value) && value >= min && value <= max;
+    axis.hidden = !valid;
+    if (!valid) continue;
+    any = true;
+    axis.setAttribute('aria-label', label + (useActual ? ' ' + value + '°' : ' 추정 ' + Math.round(value) + '%'));
+    marker.style.setProperty('--pose-position', (100 * (value - min) / (max - min)) + '%');
+  }
+  poseReceivedAt = any ? Date.now() : 0;
+}
+
+function expireGimbalPose() {
+  if (poseReceivedAt && Date.now() - poseReceivedAt >= 1500) renderGimbalPose(null);
+}
+// connection chip (v24): good = answers keep coming, yellow = nothing for 1.5 s, red = nothing for 4 s. One failed request never turns it red; time asleep (phone screen off) does not count (wake() restarts the clock).
+let lastOk=Date.now(),grace=Date.now(),camIdle=0,camFail=0,wasDown=false,sN=0;
+function openStream(){v.src='/stream?'+(++sN);}
+function netChip(){
+  const idle=Date.now()-Math.max(lastOk,grace);
+  expireGimbalPose();
+  if(idle>4000){wasDown=true;chip('cdot','ctext','bad','서버 연결 끊김');S.textContent='서버 연결 끊김';$('sq').className='sq bad';$('fps').textContent='–';hzPrev=null;return;}
+  if(idle>1500){wasDown=true;chip('cdot','ctext','warn','연결 불안정');return;}   // a 1.5 s+ gap may have cut the picture stream too
+  if(wasDown){wasDown=false;openStream();}   // the picture stream died with the connection: open it again
+  if(camFail>0){chip('cdot','ctext','bad','서버 연결됨 · 카메라 응답 없음 '+Math.round(camIdle)+'초 · 자동 복구 '+camFail+'회 실패 · USB 선과 전원을 확인하세요');return;}
+  chip('cdot','ctext',camIdle>3?'warn':'good',camIdle>3?'서버 연결됨 · 카메라 영상 '+Math.round(camIdle)+'초째 안 들어옴 (스스로 복구 중)':'서버 연결됨');}
+v.addEventListener('error',()=>setTimeout(openStream,2000));
+// v25: the bridge answers in English; shown in Korean
+const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
+let lostSince=null,autoNow=false,hzPrev=null;
+function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;netChip();
+  renderGimbalPose(t.pose, t.position_estimate);
+  let txt,cls='good',sq='';
+  if(!t.running){txt='짐벌 프로그램이 꺼져 있습니다';cls='bad';sq='bad';}
+  else if(t.error){txt='짐벌 오류: 서버를 다시 켜야 합니다';cls='bad';sq='bad';}
+  else if(t.lost){txt=t.id+'번 놓침, 잠시 기다립니다';cls='warn';sq='lost';}
+  else if(t.auto){txt=t.id+'번을 따라가는 중';sq='auto';}
+  else if(t.moving){txt='수동으로 움직이는 중';sq='man';}
+  else if(t.ready===false){txt='짐벌 준비 중';cls='';}
+  else{txt='대기 중 · 영상에서 사람을 클릭하세요';cls='';}
+  S.textContent=txt;$('sq').className='sq '+sq;$('ans').textContent=t.answer?(ANS[t.answer]||t.answer):'';
+  chip('gdot','gtext',cls,t.running?(t.auto?'추종 '+t.id+'번':t.moving?'수동 이동':'짐벌 대기'):'짐벌 꺼짐');
+  if(t.lost){if(lostSince==null)lostSince=Date.now();$('lt').textContent=((Date.now()-lostSince)/1000).toFixed(1)+' 초';}
+  else{lostSince=null;$('lt').textContent='–';}
+  autoNow=!!(t.running&&t.auto&&!t.lost);if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
+}
+function post(u,ka){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',keepalive:!!ka}).then(r=>r.json()).then(show).catch(()=>{S.textContent='명령이 전달되지 않았습니다';netChip();});}
+v.addEventListener('click',e=>{if(Date.now()<joyClickBlock)return;const r=v.getBoundingClientRect();   // v40: the click that ends a joystick drag picks nobody
+  // the image keeps 4:3 inside its box (object-fit: contain): map the click into the picture itself
+  const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
+  const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;
+  post('/gimbal/click?x='+x+'&y='+y);});
+const stopAll=()=>post('/gimbal/stop');
+// v40: no stop key on the page: a tap / click on an empty place of the picture stops (the server does it), and so does the space bar
+for(const el of [v]){el.addEventListener('contextmenu',e=>e.preventDefault());el.addEventListener('dragstart',e=>e.preventDefault());}
+addEventListener('dragstart',e=>{if(e.target&&e.target.tagName==='IMG')e.preventDefault();});
+const K={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,1],ArrowDown:[0,-1],KeyA:[-1,0],KeyD:[1,0],KeyW:[0,1],KeyS:[0,-1]};   // v34: W A S D move like the arrow keys (e.code, so it also works with the Korean keyboard on)
+let held=null;
+const typing=e=>{const t=e.target;return t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT');};   // keys typed into the boxes never move the gimbal
+addEventListener('keydown',e=>{if(typing(e))return;if(e.code==='Space'){e.preventDefault();held=null;post('/gimbal/stop');return;}const m=K[e.code];if(!m)return;if(e.ctrlKey||e.metaKey||e.altKey)return;e.preventDefault();if(e.repeat||held===e.code)return;held=e.code;post('/gimbal/move?x='+m[0]+'&y='+m[1]);});
+addEventListener('keyup',e=>{if(typing(e))return;if(e.code===held){held=null;post('/gimbal/move?x=0&y=0');}});
+let padDown=false,padBtn=null;
+function release(){let sent=false;if(held){held=null;sent=true;}if(padDown){padDown=false;if(padBtn)padBtn.classList.remove('on');padBtn=null;sent=true;}if(joyEnd())sent=true;if(sent)post('/gimbal/move?x=0&y=0',true);}   // keepalive: the stop still leaves when the page is being hidden
+addEventListener('blur',release);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)release();});addEventListener('pagehide',release);   // v25: screen off / app switched while a key is held: stop
+for(const b of document.querySelectorAll('#pad button[data-x]')){
+  const go=e=>{e.preventDefault();if(padDown)return;padDown=true;padBtn=b;b.classList.add('on');try{b.setPointerCapture&&b.setPointerCapture(e.pointerId);}catch(_){}try{if(e.pointerType==='touch'&&navigator.vibrate)navigator.vibrate(8);}catch(_){}post('/gimbal/move?x='+b.dataset.x+'&y='+b.dataset.y);};
+  const stop=e=>{if(!padDown)return;padDown=false;padBtn=null;b.classList.remove('on');post('/gimbal/move?x=0&y=0');};
+  b.addEventListener('pointerdown',go);for(const n of ['pointerup','pointercancel','pointerleave','lostpointercapture'])b.addEventListener(n,stop);b.addEventListener('contextmenu',e=>e.preventDefault());}
+// v40: phone joystick. A finger (or pen) pressed on the picture and dragged = virtual joystick; a mouse keeps click-to-pick. A short tap is still a click (pick a person).
+// 8 directions, same command as the arrow keys (/gimbal/move, -1 / 0 / 1 per axis); nothing is sent until the finger has left the dead zone, and lifting the finger sends the stop.
+const JOYB=$('joyb'),JOYK=$('joyk'),JOY={id:null,x0:0,y0:0,on:false,dx:0,dy:0,sent:false};let joyClickBlock=0;
+const JOY_START=14,JOY_DEAD=18,JOY_R=56,JOY_T=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
+function joyDir(ax,ay){if(Math.hypot(ax,ay)<JOY_DEAD)return [0,0];return JOY_T[((Math.round(Math.atan2(-ay,ax)/(Math.PI/4))%8)+8)%8];}   // screen y grows downwards; the gimbal's y = 1 is up
+function joyEnd(){if(JOY.id==null)return false;const was=JOY.on,sent=JOY.sent;try{v.releasePointerCapture(JOY.id);}catch(_){}JOY.id=null;JOY.on=false;JOY.sent=false;JOY.dx=JOY.dy=0;JOYB.style.display='none';JOYK.style.transform='';if(was)joyClickBlock=Date.now()+400;return sent;}   // true = a move was sent, so the caller must send the stop
+v.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'||JOY.id!=null)return;JOY.id=e.pointerId;JOY.x0=e.clientX;JOY.y0=e.clientY;JOY.on=false;JOY.sent=false;JOY.dx=JOY.dy=0;try{v.setPointerCapture(e.pointerId);}catch(_){}});
+v.addEventListener('pointermove',e=>{if(e.pointerId!==JOY.id)return;const ax=e.clientX-JOY.x0,ay=e.clientY-JOY.y0,d=Math.hypot(ax,ay);
+  if(!JOY.on){if(d<JOY_START)return;JOY.on=true;const r=v.parentNode.getBoundingClientRect();JOYB.style.left=(JOY.x0-r.left)+'px';JOYB.style.top=(JOY.y0-r.top)+'px';JOYB.style.display='block';try{if(navigator.vibrate)navigator.vibrate(8);}catch(_){}}
+  const k=d>JOY_R?JOY_R/d:1;JOYK.style.transform='translate('+(ax*k).toFixed(0)+'px,'+(ay*k).toFixed(0)+'px)';
+  const m=joyDir(ax,ay);if(m[0]===JOY.dx&&m[1]===JOY.dy)return;JOY.dx=m[0];JOY.dy=m[1];if(m[0]||m[1])JOY.sent=true;if(JOY.sent)post('/gimbal/move?x='+m[0]+'&y='+m[1]);});
+for(const n of ['pointerup','pointercancel','lostpointercapture'])v.addEventListener(n,e=>{if(e.pointerId!==JOY.id)return;if(joyEnd())post('/gimbal/move?x=0&y=0',true);});
+let pingBusy=false;   // one ping at a time, each with a 0.7 s limit, so requests never pile up behind a slow link. (11-10: was 1.5 s = the gimbal's heartbeat limit, so one lost ping already ended the session; now the next ping still fits inside the limit)
+function ping(){if(pingBusy)return;pingBusy=true;const c=new AbortController(),t=setTimeout(()=>c.abort(),700);
+  fetch('/gimbal/ping',{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',signal:c.signal}).then(r=>r.json()).then(show).catch(()=>{}).finally(()=>{clearTimeout(t);pingBusy=false;netChip();});}
+setInterval(ping,400);ping();setInterval(netChip,500);
+const pageT0=Date.now();
+function wake(){grace=Date.now();ping();if(Date.now()-pageT0>3000)openStream();}   // screen back on / tab shown / network back: the picture stream may have died while the page slept
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)wake();});addEventListener('pageshow',wake);addEventListener('online',wake);
+// v25: frame rate from /healthz (read only): frames_in difference / up difference over the last 2 s
+function hztick(){if(document.hidden)return;fetch('/healthz',{cache:'no-store'}).then(r=>r.json()).then(h=>{lastOk=Date.now();
+  if(hzPrev&&h.up>hzPrev.up){const f=(h.frames_in-hzPrev.frames_in)/(h.up-hzPrev.up);$('fps').textContent=f>0?f.toFixed(1):'0';}hzPrev=h;}).catch(()=>{});}
+setInterval(hztick,2000);hztick();
+// v25: aim error while following (read only): /gimbal/people gives the boxes; the bridge brings the point 0.3 of the box height below its top to the picture centre (gimbal_bridge_v25.cpp aimed(), --aim-y 0.3)
+const AIM_Y=0.08,PX=x=>(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(0)+' px';
+function etick(){if(document.hidden||!autoNow)return;fetch('/gimbal/people',{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();
+  const id=p.state&&p.state.id,b=(p.people||[]).find(q=>q.id===id);if(!b||!autoNow){$('ex').textContent='–';$('ey').textContent='–';return;}
+  $('ex').textContent=PX((b.x1+b.x2)/2-p.width/2);$('ey').textContent=PX(b.y1+AIM_Y*(b.y2-b.y1)-p.height/2);}).catch(()=>{});}
+setInterval(etick,500);
+// measurement
+const MI=$('mi'),MR=$('mr'),MH=$('mh'),MN=$('mname'),MM=$('mmemo');
+MM.addEventListener('input',()=>{MM.style.height='auto';MM.style.height=Math.min(MM.scrollHeight,140)+'px';});
+const f1=x=>x==null?'-':x.toFixed(1);
+const esc=t=>String(t==null?'':t).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const LEGEND='<details class="fold"><summary>항목 설명</summary><dl class="legend">'+
+  '<dt>입력→출력</dt><dd>카메라 프레임이 서버에 도착한 순간부터 그 프레임의 추적 결과가 나온 순간까지. 카메라 안에서 걸리는 시간은 빠져 있습니다.</dd>'+
+  '<dt>출력 간격</dt><dd>추적 결과가 나오는 간격. 카메라 프레임 간격(24 fps면 약 41 ms)보다 짧아질 수 없습니다.</dd>'+
+  '<dt>처리</dt><dd>한 프레임을 넣고 결과를 받기까지 서버 안에서 걸린 시간. 파이프라인을 켜면 다음 프레임을 기다리는 시간이 들어갑니다.</dd>'+
+  '<dt>NPU 대기</dt><dd>검출 모델(NPU) 결과를 받을 때까지 기다린 시간. NPU 계산 시간이 포함됩니다.</dd>'+
+  '<dt>트래커</dt><dd>박스를 이전 프레임과 이어 붙이는 추적 계산 시간.</dd>'+
+  '<dt>p50 · p95 · p99</dt><dd>프레임의 50% · 95% · 99%가 이 값 이하라는 뜻. 최대는 가장 느린 한 프레임입니다.</dd>'+
+  '<dt>&gt;33</dt><dd>33 ms(30 fps 한 프레임 시간)를 넘긴 프레임의 비율. 33 ms를 넘긴 칸은 노란색입니다.</dd></dl></details>';
+let sel=null, shownKey='', lastState=null, editing=false, miHold=0;
+const note=t=>{MI.textContent=t;miHold=Date.now()+4000;};
+const openState=(root,sel_)=>{const o={};root.querySelectorAll(sel_).forEach(d=>{if(d.dataset.k)o[d.dataset.k]=d.open;});return o;};
+const applyOpen=(root,sel_,o)=>{root.querySelectorAll(sel_).forEach(d=>{if(d.dataset.k in o)d.open=o[d.dataset.k];});};
+function table(r){
+  if(!r.frames)return '<div class="sum">기록된 프레임이 없습니다.</div>';
+  let h='<div class="sum">'+r.frames+'프레임 · '+r.seconds.toFixed(1)+'초 · 출력 '+f1(r.out_fps)+' fps · 카메라 '+f1(r.cam_fps)+' fps</div>';
+  h+='<table><tr><th>ms</th><th>p50</th><th>p95</th><th>p99</th><th>최대</th><th>&gt;33</th></tr>';
+  for(const [k,lab,sub] of [['delay','입력→출력','카메라 도착→결과'],['interval','출력 간격','결과 사이 시간'],['compute','처리','서버 안 계산'],['npu_wait','NPU 대기','검출 결과 대기'],['tracker','트래커','추적 계산']]){
+    const s=r[k];if(!s)continue;
+    h+='<tr><td>'+lab+'<small>'+sub+'</small></td>'+[s.p50,s.p95,s.p99,s.max].map(x=>'<td'+(x>33?' class="over"':'')+'>'+f1(x)+'</td>').join('')+'<td>'+f1(s.over33)+'%</td></tr>';}
+  return h+'</table>';}
+function render(r){
+  if(editing)return;
+  const keep=openState(MR,'details');
+  if(!r){MR.innerHTML='<div class="result"><div class="sum">아직 측정 결과가 없습니다.</div>'+LEGEND.replace('<details class="fold">','<details class="fold" data-k="legend">')+'</div>';applyOpen(MR,'details',keep);return;}
+  const vid=r.video?'영상 frames.raw.gz · '+r.video.frames+'장 · '+Math.round((r.video.gz_bytes||0)/1048576)+' MB'+(r.video.dropped?' · 놓침 '+r.video.dropped+'장':'')+'<br>우리 추적 결과 tracks.csv':'영상 저장 안 함';
+  MR.innerHTML='<div class="result"><div class="row" style="justify-content:space-between"><div class="rtitle">'+r.n+'회차 · '+(r.name?esc(r.name):'<span style="color:var(--mut)">이름 없음</span>')+'</div><button class="btn small" id="medit">고치기</button></div>'+
+    (r.memo?'<div class="rmemo">'+esc(r.memo)+'</div>':'')+table(r)+
+    '<details class="fold" data-k="file"><summary>저장 위치</summary><div class="file">'+esc(r.folder||r.file)+'<br>'+vid+'<br>엑셀용 timing.csv · 요약 summary.json</div></details>'+
+    LEGEND.replace('<details class="fold">','<details class="fold" data-k="legend">')+'</div>';
+  applyOpen(MR,'details',keep);
+  $('medit').onclick=()=>{editing=true;$('medit').closest('.row').outerHTML='<div class="edit"><input id="en" maxlength="80" value="'+esc(r.name)+'" placeholder="측정 이름"><textarea id="em" rows="3" maxlength="2000" placeholder="메모">'+esc(r.memo)+'</textarea><div class="row"><button class="btn accent small" id="esv">저장</button><button class="btn small" id="ecn">취소</button></div></div>';
+    $('ecn').onclick=()=>{editing=false;shownKey='';tick();};
+    $('esv').onclick=()=>fetch('/measure/note',{method:'POST',headers:{'X-Gimbal':'1','Content-Type':'application/json'},body:JSON.stringify({n:r.n,name:$('en').value,memo:$('em').value})})
+      .then(x=>{if(!x.ok)throw 0;editing=false;shownKey='';note(r.n+'회차 이름·메모를 저장했습니다.');return tick();}).catch(()=>{note('저장하지 못했습니다');});};}
+function history(m){
+  const hs=m.history||[];if(!hs.length){MH.innerHTML='';return;}
+  const keep=openState(MH,'details');
+  let h='<details class="fold hist" data-k="hist"><summary>지난 측정 '+hs.length+'회 · 입력→출력 p50 / p95</summary><div>';
+  for(const x of hs.slice().reverse()){const on=(sel==null?(m.last&&m.last.n===x.n):sel===x.n);
+    h+='<button data-n="'+x.n+'"'+(on?' class="sel"':'')+'><span class="hn">'+x.n+'회차 · '+(x.name?esc(x.name):'이름 없음')+'</span><span class="hv">'+f1(x.delay_p50)+' / '+f1(x.delay_p95)+' ms</span></button>';}
+  MH.innerHTML=h+'</div></details>';applyOpen(MH,'details',keep);
+  for(const b of MH.querySelectorAll('button'))b.onclick=()=>{const n=+b.dataset.n;sel=(m.last&&m.last.n===n)?null:n;shownKey='';tick();};}
+function mshow(m){if(m.available===false){$('mst').disabled=$('msp').disabled=true;MI.textContent=m.text||'측정 제어를 사용할 수 없습니다';return;}
+  lastState=m;$('mst').disabled=m.on;$('msp').disabled=!m.on;
+  if(m.on){chip('mdot','mtext','live','측정 중');MI.textContent=m.cur.n+'회차 측정 중'+(m.cur.name?' · '+m.cur.name:'')+' · '+m.frames+'프레임 · '+m.seconds.toFixed(0)+'초'+(m.video_frames!=null?' · 영상 '+m.video_frames+'장'+(m.video_dropped?' (놓침 '+m.video_dropped+')':''):'');}
+  else{chip('mdot','mtext',m.last?'good':'',m.last?'측정 '+m.last.n+'회차 완료':'측정 대기');if(Date.now()>miHold)MI.textContent=m.last?'측정 끝 · 시작을 누르면 새 측정이 시작됩니다':'시작을 누르면 그 순간부터 프레임마다 기록합니다.';}
+  history(m);
+  if(sel!=null){const key='h'+sel;if(shownKey!==key){shownKey=key;fetch('/measure/'+sel).then(x=>x.json()).then(render).catch(()=>{});}return;}
+  const key=m.last?('l'+m.last.n+'|'+m.last.name+'|'+m.last.memo):'none';if(shownKey!==key){shownKey=key;render(m.last);}}
+function tick(){if(document.hidden)return Promise.resolve();return fetch('/measure',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(mshow).catch(()=>{});}
+function mpost(u,body){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1','Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(r=>r.json()).then(m=>{sel=null;shownKey='';mshow(m);}).catch(()=>{note('서버 연결 끊김');});}
+$('mst').addEventListener('click',()=>mpost('/measure/start',{name:MN.value,memo:MM.value,video:$('mvid').checked}));
+$('msp').addEventListener('click',()=>mpost('/measure/stop',{memo:MM.value}).then(()=>{MN.value='';MM.value='';MM.style.height='';}));
+// v40: settings tree (user 11-10). Rows = processing order, top first; what is picked above opens or locks the nodes below.
+// A click on a node is one POST. The choice lives on the server and every open page reads /rules and /model again each second, so all connected pages show the same selection.
+const MIN=$('minfo'),RW=$('rwarm'),RE=$('redge'),RWX=$('rwarmx'),RC=$('rconf'),RA2=$('rapply2'),RI=$('rinfo'),FI=$('finfo'),PST=$('pstat'),FM=$('fmsg'),SM=$('sysmsg'),OT=$('ot-tree'),OH=$('ot-hint'),OS=$('ot-sum'),RD=$('rdoc');
+let rdirty=false,rdt=0,rlast=null,mlast=null,othtml='',otbusy=false,rdk=null,OTT=[],othint=null;   // othint (v41): [hint shown after an appearance-model pick, reid_last when the tile was pressed] -> the hint is cleared when reid_last moves
+for(const el of [RW,RWX,RE,RC])el.addEventListener('input',()=>{rdirty=true;clearTimeout(rdt);rdt=setTimeout(()=>{rdirty=false;},15000);});   // a number being typed is not overwritten by the 1 s refresh (until 15 s after the last key, or Apply)
+// v26: what each tracker preset is and how it is built here (text only; keys = /rules preset keys)
+/* v27 */ const TDC=[['입력 (매 프레임)','① 검출 모델이 낸 상자 목록: x1,y1,x2,y2,점수,종류 ② 앞 프레임 대비 화면 이동(optical flow 로 구한 2x3 행렬)'],
+ ['출력 (매 프레임)','확인된 궤적만: 상자 x1,y1,x2,y2 + 번호(ID) + 점수 + 종류. 확인 전 궤적은 내부에서만 유지하고 화면에 내지 않음'],
+ ['점수 기준','.10 이하는 버림 · .25 이상 = 높은 점수 상자 · .10~.25 = 낮은 점수 상자'],
+ ['위치 기억 · 신뢰도','Kalman filter (등속 모델. 상태 8개 = 중심 x,y · 폭 · 높이와 각각의 속도). 매 프레임 모든 궤적의 다음 위치를 예측. 놓친 사람의 위치는 "위치 기억 · 신뢰도" 줄에서 GRU 나 Mamba 를 고르면 그 모델이 보정 (어느 추적기에나 똑같이 붙음, 설명은 위 "위치 기억 · 신뢰도 설명")'],
+ ['카메라 움직임 보정','짐벌이 돌면 화면 전체가 밀리므로, 화면 이동 행렬로 예측 위치를 같이 옮김 (BoT-SORT 논문 방식, 항상 켜짐)'],
+ ['새 궤적 시작','어느 궤적과도 짝이 안 된 상자 중 점수 .25 이상이고 가장자리 규칙을 통과한 것만. 사람과 사람 아닌 것은 서로 잇지 않음'],
+ ['학습 모델을 쓰는 곳','① 검출 모델(NPU) ② KeepID 의 외형 모델 특징(NPU · KeepID 줄에서 고른 RepVGG / ViT-lite 모델) + 번호 잇기 판정기(기본 모델 RepVGG_distillation_(TMOT,CAMEL)_20261103 기준, 다른 모델에서는 미검증) ③ BoT-SORT 외형 비교(KeepID 와 같은 모델) ④ 위치 기억 · 신뢰도의 GRU · Mamba (골랐을 때만, CPU). 짝짓기 자체(IoU, Kalman filter)는 어느 추적기에서도 학습 모델이 아니라 계산식'],
+ ['재식별 (KeepID)','추적기 위에서 따로 동작. 상자는 건드리지 않고, 새 번호가 방금 잃은 번호와 같은 사람이면 번호만 이어 줌. KeepID 줄에서 켜고 끄고 외형 모델을 고름. 모델을 바꾸면 화면이 잠깐 멈추고 사람 번호가 새로 매겨짐. 어느 추적기를 골라도 똑같이 붙음']];
+const BT=['ByteTrack 처리 순서','Zhang et al., ECCV 2022. ① 모든 궤적 위치 예측 ② 1차: 궤적(추적 중 + 잃은 것) ↔ 높은 점수 상자. 비용 = 1 − IoU×점수, .8 이하만 짝 ③ 2차: 남은 추적 중 궤적 ↔ 낮은 점수 상자. IoU .5 이상만 — 가려져 점수가 떨어진 사람을 이어 가기 위함 ④ 그래도 짝 없는 궤적은 "잃음", 30프레임 지나면 삭제 ⑤ 확인 전 궤적 ↔ 남은 상자 ⑥ 남은 높은 점수 상자로 새 궤적 시작'];
+const TD={
+ confirm3:[['새 사람 확인','3프레임 확인 규칙 (학습 모델 없음, 기본)'],
+  BT,
+  ['3프레임 확인','새 궤적은 시작 프레임 포함 3번 연속 짝이 맞아야 화면에 냄. 그 전에 한 번이라도 놓치면 그 궤적은 버림. 학습 모델 없이 쓰는 규칙'],
+  ['측정','11-02 M1 측정(FLIR test)에서 1위였던 조합: HOTA 0.5649 · 오검출 908'],
+  ['코드','Tracker 클래스 (mode bytetrack, n_init 3)']],
+ rebind:[['무엇으로 구현했나','ByteTrack (Zhang et al., ECCV 2022) 을 그대로 쓰고, 그 뒤에 우리가 만든 재결합 단계 1개를 붙인 것입니다. 논문에 있는 추적기가 아닙니다. 재결합 = 놓친 사람(잃은 궤적)을 근처에 새로 나타난 상자에 같은 번호로 다시 붙이는 것'],
+  ['새 사람 확인','3프레임 확인 규칙 (학습 모델 없음)'],
+  BT,
+  ['추가된 재결합 단계','1차 짝짓기 뒤, 짝 없는 "잃은 궤적" ↔ 짝 없는 높은 점수 상자를 중심 거리로 짝지음. 거리가 궤적 높이의 2배 이내일 때만. 추적 중인 다른 궤적과 IoU .3 넘게 겹친 상자는 제외'],
+  ['보관 시간','잃은 궤적을 60프레임 보관 (ByteTrack 은 30)'],
+  ['주의','외형은 보지 않고 위치만 봄. 가까이 있던 다른 사람에게 번호가 넘어갈 수 있음. 새 궤적 3프레임 확인은 그대로 적용'],
+  ['코드','Tracker 클래스 (mode rebind). 위치 예측 = Kalman filter + 카메라 움직임 보정, 짝짓기 = Hungarian. 외형은 쓰지 않음']],
+ ocsort:[['새 사람 확인','3프레임 확인 규칙 (학습 모델 없음)'],
+  ['한 줄 요약','OC-SORT (Cao et al., CVPR 2023). Kalman 예측보다 "실제로 본 마지막 위치"를 더 믿는 추적기. 가려졌다 나오거나 방향이 급히 바뀔 때 번호를 지키려는 방식'],
+  ['추가로 기억하는 것','궤적마다 최근 관측 상자 8개(프레임 번호와 함께), 이동 방향, 마지막으로 본 순간의 Kalman 상태. 카메라가 움직이면 이것들도 같이 옮김'],
+  ['처리 순서','① 위치 예측 ② 1차: 비용 = 1 − (IoU + 0.2 × 방향 일치도 × 점수). 방향 일치도 = 궤적이 최근 3프레임 동안 움직인 방향과, 3프레임 전 위치에서 상자로 가는 방향의 각도 차. IoU .3 미만은 짝 안 지음 ③ 2차: 낮은 점수 상자(ByteTrack 과 같음) ④ 복구: 짝 없는 궤적의 "마지막으로 본 상자" ↔ 남은 높은 점수 상자, IoU .3 이상 ⑤ 잃었다가 찾은 궤적은 마지막 위치와 새 위치를 직선으로 이어 Kalman filter 를 그 구간만큼 다시 계산 ⑥ 잃음 처리·새 궤적은 ByteTrack 과 같음'],
+  ['코드','AltTracker 클래스 (kind ocsort, Tracker 상속)'],
+  ['주의','우리 카메라에서 아직 측정하지 않았습니다. 기본값이 아닙니다. 11-02 공개 데이터 비교에서는 채택되지 않았습니다.']],
+ botsort:[['새 사람 확인','2프레임 확인 규칙 (시작 프레임 포함 2번 짝이 맞으면 냄, 학습 모델 없음)'],
+  ['한 줄 요약','BoT-SORT (Aharon et al., 2022). ByteTrack 짝짓기 + 카메라 움직임 보정 + 폭·높이를 직접 쓰는 Kalman filter + 외형 비교(고른 외형 모델)'],
+  BT,
+  ['다른 추적기와의 차이','매 프레임 점수가 높은 사람 4명까지(높이 32 px 이상) 고른 외형 모델로 외형을 뽑아, 겹친 상자끼리 누가 누구인지 정할 때 외형이 더 닮은 쪽으로 짝짓습니다. 외형은 상자가 이미 절반 이상 겹칠 때만 씁니다 (논문 기본값 .25 / .5). 새 궤적 확인은 2프레임입니다'],
+  ['외형 비교 고르기','BoT-SORT 를 고르면 그 바로 아래에 "외형 비교" 칸이 열립니다 (다른 추적기에서는 보이지 않음). 끔, 또는 장치에 있는 RepVGG / ViT-lite 모델 중 하나. KeepID 와 같은 모델을 함께 쓰므로 여기서 모델을 바꾸면 KeepID 모델도 같이 바뀝니다. 끔이면 위치(IoU)만으로 짝짓습니다'],
+  ['코드','BotSortTracker 클래스 (외형 = KeepID 와 같은 모델, NPU core 2)'],
+  ['주의','우리 카메라에서 아직 측정하지 않았습니다. 기본값이 아닙니다.']],
+ sort:[['새 사람 확인','3프레임 확인 규칙 (학습 모델 없음)'],
+  ['한 줄 요약','SORT (Bewley et al., ICIP 2016). 가장 단순한 기준 추적기. Kalman filter 예측과 검출 상자의 겹침(IoU)만으로 짝짓기'],
+  ['처리 순서','① 위치 예측 ② 궤적 ↔ 높은 점수 상자를 IoU .3 이상일 때만 짝지음 ③ 낮은 점수 상자는 쓰지 않음 ④ 한 프레임 놓친 궤적은 다음 프레임까지만 기다리고 지움. 다시 나타나면 새 번호'],
+  ['코드','AltTracker 클래스 (kind sort, Tracker 상속)'],
+  ['주의','가려지거나 검출이 한두 프레임 끊기면 번호가 바뀝니다. 비교용입니다. 우리 카메라에서 아직 측정하지 않았습니다.']]};
+// names shown on the nodes (the server's long preset names are not printed)
+const OLDSRV='서버를 다시 켜야 열립니다',LK='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+const TN={confirm3:['ByteTrack + 3프레임 확인','기본'],rebind:['ByteTrack + 위치 재결합',''],botsort:['BoT-SORT','시험 안 함'],ocsort:['OC-SORT','시험 안 함'],sort:['SORT','시험 안 함']};
+const PN={kalman:['Kalman filter','기본 · 학습 모델 없음'],gru:['GRU_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음'],mamba:['Mamba_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음']};
+const DN={'bank:yolo26m_flir_inside_20261110_2020_640x480':'YOLO26m_fine-tuning_(실내)_20261110_2020 640x480','bank:yolo26m_flir_inside_20261110_1742_640x480':'YOLO26m_fine-tuning_(실내)_20261110_1742 640x480','bank:yolo26s_nmsfree_npu_640x640':'YOLO26s_NMS-free 640x640'};   // names shown without status words (user 11-11)
+const AN={off:'끔',repvgg:'RepVGG_distillation_(TMOT,CAMEL)_20261103',vit:'ViT-lite_distillation_(TMOT,CAMEL)_202610'};
+// folders (user 11-11): one big node per architecture, pressing it shows the models inside
+const FD='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 3.2a1 1 0 0 1 1-1h2.6l1.2 1.3H10a1 1 0 0 1 1 1V9.3a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z" fill="currentColor"/></svg>';
+const DNOTE={w480:'FLIR 공개 열화상으로 학습 · 카메라 크기 그대로 · 기본',m640:'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 비교용',s480:'작은 모델 · 카메라 크기 그대로',s6:'작은 모델 · 정사각형 입력(위아래 빈 띠) · 비교용','bank:yolo26m_flir_inside_20261110_2020_640x480':'우리 카메라 실내로 fine-tuning · 2026-11-10 20:20','bank:yolo26m_flir_inside_20261110_1742_640x480':'우리 카메라 실내로 fine-tuning · 2026-11-10 17:42','bank:yolo26s_nmsfree_npu_640x640':'NMS 없이 바로 상자 출력'};
+const dfold=s=>/yolox/i.test(s)?'YOLOX':/yolo ?v?8/i.test(s)?'YOLOv8':/yolo ?26/i.test(s)?'YOLO26':'기타';
+// second level inside a detector folder: model size (YOLO26m / YOLO26s ...); '' = no size in the name, the node stays directly in the folder
+const dsub=s=>{let m=/yolo ?26 ?([nsmlx])(?![a-z])/i.exec(s);if(m)return 'YOLO26'+m[1].toLowerCase();m=/yolox[-_ ]?(nano|tiny|s|m|l|x)(?![a-z])/i.exec(s);if(m)return 'YOLOX-'+m[1].toLowerCase();m=/yolo ?v?8 ?([nsmlx])(?![a-z])/i.exec(s);return m?'YOLOv8'+m[1].toLowerCase():'';};
+const AFOLD={repvgg:'RepVGG',vit:'ViT-lite'},PFOLD={kalman:'Kalman filter',gru:'GRU',mamba:'Mamba'};
+const otsub={};    // 'row|folder|size' -> opened (true) or closed (false) by the user; not set = open only when it holds the chosen node
+const otopen={};   // row index -> folder the user opened ('' = closed by the user); not set = the folder holding the chosen node
+const tname=k=>TN[k]?TN[k][0]:(rlast&&rlast.presets||[]).find(p=>String(p.key)===String(k))?.name||(k==='gate'?'없앤 이전 설정 (다른 Tracker를 고르세요)':String(k));
+const pend=(r,k)=>(r.pending&&r.pending[k]!=null)?r.pending[k]:r[k];   // a choice waiting for the next frame is shown as chosen
+function rdoc(k){if(k===rdk)return;rdk=k;const dl=a=>'<dl class="legend">'+a.map(x=>'<dt>'+esc(x[0])+'</dt><dd>'+esc(x[1])+'</dd>').join('')+'</dl>';
+  RD.innerHTML='<h4>'+esc(tname(k))+'</h4>'+(TD[k]?dl(TD[k]):'<dl class="legend"><dt>설명</dt><dd>아직 적어 두지 않았습니다.</dd></dl>')+'<h4>모든 추적기에 공통</h4>'+dl(TDC);}
+// node = {name, note, sel, lock (why it cannot be picked; '' = open), u (POST url), model (answer is /model state), info (hint only, nothing sent), ask (confirm text)}
+function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
+  const Q=q=>'/rules/set?'+q,trk=pend(r,'tracker'),rel=!!pend(r,'relabel'),prd=pend(r,'predictor')||'kalman',bot=trk==='botsort';
+  const warm=r.warm_on!=null?!!r.warm_on:(r.warm_min>0||(r.warm_max||0)>0);
+  T.push({lab:'전처리',sub:'여러 개 켜기',multi:1,n:[
+    {name:'흔들림 보정',note:'optical flow · 화면+검출 · 시험 안 함',sel:!!r.stab,lock:r.stab==null?OLDSRV:'',u:Q('stab='+(r.stab?0:1))}]});
+  const cat=(m&&m.catalog)||[];
+  const dfs=['YOLO26','YOLOX','YOLOv8'];if(cat.some(c=>dfold(String(c.det)+' '+String(c.name))==='기타'))dfs.push('기타');
+  T.push({lab:'검출 모델',sub:'구조 → 크기 순으로 펼침',f:m&&cat.length?dfs:null,fe:{YOLOX:'장치 목록에 YOLOX 모델이 없습니다 (모델뱅크에만 있음)',YOLOv8:'장치 목록에 YOLOv8 모델이 없습니다 (모델뱅크에만 있음)'},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
+    cat.map(c=>({g:dfold(String(c.det)+' '+String(c.name)),sg:dsub(String(c.det)+' '+String(c.name)),note:DNOTE[c.det]||'',name:DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim(),sel:c.id===(m.busy?m.pending:m.current),lock:!c.available?'장치에 모델 파일이 없습니다':m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1}))});
+  T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
+    {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:!warm&&!(r.warm_prev&&r.warm_prev.some(v=>v>0))?'아래 Filter 값에서 온도 범위를 먼저 입력하고 적용하세요':'',u:Q('warm_on='+(warm?0:1))},
+    {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,lock:!(r.edge_birth>0)&&!(r.edge_prev>0)?'아래 Filter 값에서 가장자리 점수를 먼저 입력하고 적용하세요':'',u:Q('edge_on='+(r.edge_birth>0?0:1))}]});
+  const ps=(r.presets||[]).map(p=>Array.isArray(p)?{key:p[0],name:p[1]}:p).filter(p=>p&&p.key&&p.key!=='gate');
+  T.push({lab:'Tracker',n:ps.map(p=>({key:p.key,name:TN[p.key]?TN[p.key][0]:p.name,note:TN[p.key]?TN[p.key][1]:'',sel:p.key===trk,lock:p.available===false?'장치에서 사용할 수 없습니다':'',u:Q('tracker='+encodeURIComponent(p.key))}))});
+  const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
+  // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
+  const hot=!!(r.reid_hot&&r.reids&&r.reids.length),rk=hot?(r.reid_pending||r.reid):'',fol=!!(r.gimbal&&r.gimbal.auto);
+  const JN='번호 잇기 판정기는 기본 모델 기준 · 미검증',FOLK='따라가기 중에는 외형 모델을 바꿀 수 없습니다. 멈춘 뒤 고르세요',SWAPH='외형 모델을 바꾸는 중 — 화면이 잠깐 멈추고 사람 번호가 새로 매겨집니다';
+  const NOVIT={g:'ViT-lite',name:'ViT-lite_distillation_(TMOT,CAMEL)_202610',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',lock:'장치에 파일이 없습니다. 올리고 추적 프로그램을 다시 켜야 합니다'};
+  const rn=(a,on,q,jn)=>({g:a.folder||'',name:a.name||a.key,note:(a.note||'')+(jn&&!a.judge_fit?(a.note?' · ':'')+JN:''),sel:on&&a.key===rk,lock:a.available===false?(a.why||'지금은 고를 수 없습니다'):(fol&&a.key!==rk)?FOLK:'',u:Q(q+'&reid='+encodeURIComponent(a.key)),hint:a.key!==rk?SWAPH:''});
+  if(hot)T.push({lab:'외형 비교',sub:'KeepID 와 같은 모델을 함께 씀',kidOf:3,kidKey:'botsort',show:bot,f:['RepVGG','ViT-lite'],n:[{name:'끔',note:'위치만으로 짝짓기',sel:bot&&app==='off',u:Q('app=off')}].concat(r.reids.map(a=>rn(a,bot&&app!=='off','app=repvgg',rel)),[NOVIT])});
+  else T.push({lab:'외형 비교',sub:'',kidOf:3,kidKey:'botsort',show:bot,f:['RepVGG','ViT-lite'],n:apps.map(a=>({g:AFOLD[a.key]||'',name:AN[a.key]||a.name||a.key,note:a.note||'',sel:bot&&a.key===app,lock:!bot?'BoT-SORT를 골라야 열립니다':!r.apps?OLDSRV:a.available===false?(a.note||'지금은 고를 수 없습니다'):'',u:Q('app='+encodeURIComponent(a.key))}))});
+  const pl=r.predictors||[{key:'kalman',available:true}];
+  T.push({lab:'위치 기억 · 신뢰도',sub:'놓친 사람 위치',f:['Kalman filter','GRU','Mamba'],fe:{GRU:'장치에 GRU 가중치 파일이 없습니다',Mamba:'장치에 Mamba 가중치 파일이 없습니다'},n:pl.map(p=>({g:PFOLD[p.key]||'',name:PN[p.key]?PN[p.key][0]:p.name,note:PN[p.key]?PN[p.key][1]:(p.note||''),sel:p.key===prd,lock:p.available===false?(p.note||'가중치 파일이 없습니다'):'',u:Q('predictor='+encodeURIComponent(p.key))}))});
+  const RST='장치에 파일은 있습니다. 쓰려면 추적 프로그램을 이 모델로 다시 켜야 합니다',VWAIT='PC에서 학습 중입니다. 끝나면 장치에 올립니다';
+  if(hot)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[{name:'끔',sel:!rel,u:Q('relabel=0')}].concat(r.reids.map(a=>rn(a,rel,'relabel=1',true)),[NOVIT])});
+  else T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[
+    {name:'끔',sel:!rel,u:Q('relabel=0')},
+    {g:'RepVGG',name:'RepVGG_distillation_(TMOT,CAMEL)_20261103',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',sel:rel,lock:!rel&&!r.relabel_available?'재식별 모델이 이 실행에 없습니다':'',u:Q('relabel=1')},
+    {g:'RepVGG',name:'RepVGG_distillation_(실내)_20261110',note:'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
+    {g:'RepVGG',name:'RepVGG_fine-tuning_(실내)_20261110',note:'우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
+    {g:'ViT-lite',name:'ViT-lite_distillation_(TMOT,CAMEL)_202610',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',lock:'장치에 파일이 없습니다. 올리고 추적 프로그램을 다시 켜야 합니다'},
+    {g:'ViT-lite',name:'ViT-lite_distillation_(실내)_20261111',note:'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
+    {g:'ViT-lite',name:'ViT-lite_fine-tuning_(실내)_20261111',note:'우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST}]});
+  const g=r.gimbal,lead=!!r.lead;window.OTFOL=g?!!g.auto:autoNow;   // following is started by tapping a person in the picture, so it has no tile
+  T.push({lab:'제어',sub:'여러 개 켜기',multi:1,n:[
+    {name:'예측 제어',note:'시험 안 함 · 따라갈 때만 작동 · 재시작하면 꺼짐',sel:lead,lock:r.lead==null?'이 Runtime은 예측 제어를 지원하지 않습니다':(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1)),ask:lead?'':'예측 제어는 아직 시험하지 않은 기능입니다.\n따라가는 동안 짐벌이 사람이 움직이는 쪽으로 조금 앞서 움직입니다.\n켤까요?'},
+    {name:'예측 상자 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.pred_show_supported?'':'이 Runtime은 예측 상자 표시를 지원하지 않습니다',u:Q('pred_show='+(r.pred_show?0:1))}]});
+  return T;}
+function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
+  const body=(t,i)=>{let h='';
+    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+esc(n.name)+(n.note?'<small>'+esc(n.note)+'</small>':'')+'</button>';
+    if(!t.f)t.n.forEach((n,j)=>{const ki=n.sel&&n.key?OTT.findIndex(c=>c.kidOf===i&&c.show&&c.kidKey===n.key):-1;   // v42: a chosen tile that owns a child row becomes one box with the child inside
+      if(ki<0){h+=btn(n,j);return;}const c=OTT[ki];
+      h+='<div class="ot-grp sel ot-own">'+btn(n,j)+'<div class="ot-kid" data-kid="'+ki+'"><div class="ot-kidlab">'+esc(c.lab)+(c.sub?'<small>'+esc(c.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(c,ki)+'</div></div></div>';});
+    else{t.n.forEach((n,j)=>{if(!n.g||!t.f.includes(n.g))h+=btn(n,j);});
+      const sg=(t.n.find(n=>n.sel&&n.g)||{}).g||'',op=(i in otopen)?otopen[i]:sg;
+      t.f.forEach((f,k)=>{const inn=t.n.filter(n=>n.g===f),s=inn.find(n=>n.sel),all=inn.length&&inn.every(n=>n.lock);
+        if(op===f)h+='<div class="ot-grp'+(s?' sel':'')+'">';
+        h+='<button type="button" class="ot-n ot-f'+(s?' sel':!inn.length||all?' lock':'')+(op===f?' open':'')+'" data-f="'+i+'.'+k+'" aria-expanded="'+(op===f?'true':'false')+'">'+FD+' '+esc(f)+' '+(op===f?'▾':'▸')+'<small>'+(s?'선택: '+esc(s.name):inn.length?'모델 '+inn.length+'개'+(all?' · 모두 잠김':''):'모델 없음')+'</small></button>';
+        if(op===f){let b='';const sz=[];inn.forEach(n=>{if(n.sg&&!sz.includes(n.sg))sz.push(n.sg);});   // the models sit inside the folder's own box
+          t.n.forEach((n,j)=>{if(n.g===f&&(sz.length<2||!n.sg))b+=btn(n,j);});
+          if(sz.length>1)sz.forEach(q=>{const si=inn.filter(n=>n.sg===q),ss=si.find(n=>n.sel),key=i+'|'+f+'|'+q,so=(key in otsub)?otsub[key]:!!ss;   // two or more sizes: one sub-folder per size
+            b+='<div class="ot-sg'+(ss?' sel':'')+'"><button type="button" class="ot-n ot-f ot-sf'+(ss?' sel':si.every(n=>n.lock)?' lock':'')+(so?' open':'')+'" data-s="'+esc(key)+'" aria-expanded="'+(so?'true':'false')+'">'+FD+' '+esc(q)+' '+(so?'▾':'▸')+'<small>'+(ss?'선택: '+esc(ss.name):'모델 '+si.length+'개')+'</small></button>';
+            if(so){b+='<div class="ot-sub">';t.n.forEach((n,j)=>{if(n.g===f&&n.sg===q)b+=btn(n,j);});b+='</div>';}
+            b+='</div>';});
+          h+='<div class="ot-sub">'+(b||'<span class="ot-none">'+esc((t.fe&&t.fe[f])||'이 안에 모델이 없습니다')+'</span>')+'</div></div>';}});}
+    return h;};
+  OTT.forEach((t,i)=>{if(t.kidOf!=null)return;   // v41: child rows are drawn inside their parent row
+    h+='<div class="ot-row'+(t.n.every(n=>n.lock)?' off':'')+'"><div class="ot-lab">'+esc(t.lab)+(t.sub?'<small>'+esc(t.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(t,i);
+    h+='</div></div>';});
+  if(h!==othtml){othtml=h;OT.innerHTML=h;}   // redrawn only when something changed (keeps focus and the pressed look between the 1 s refreshes)
+  const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(OTT[0]),flt=on(OTT[2]),ctl=(window.OTFOL?['따라가기']:[]).concat(on(OTT[7]));
+  const a=[pre.length?pre.join(' + '):'전처리 없음',one(OTT[1])||'검출 모델 –',flt.length?flt.join(' + '):'Filter 없음',one(OTT[3])||tname(trk)];
+  if(trk==='botsort')a.push('외형 '+(one(OTT[4])||'–'));
+  a.push(one(OTT[5])||'Kalman filter','KeepID '+(one(OTT[6])||'끔'),ctl.length?ctl.join(' + '):'수동');
+  OS.textContent=a.join(' → ');}
+OT.addEventListener('click',e=>{const sb=e.target.closest('.ot-sf'),fb=e.target.closest('.ot-f');
+  if(sb&&sb.dataset.s){otsub[sb.dataset.s]=sb.getAttribute('aria-expanded')!=='true';OH.textContent='';otdraw();return;}   // size sub-folder: open / close, nothing is sent
+  if(fb&&fb.dataset.f){const x=fb.dataset.f.split('.'),t=OTT[+x[0]],f=t&&t.f&&t.f[+x[1]];if(!f)return;
+    const sg=(t.n.find(n=>n.sel&&n.g)||{}).g||'',op=(+x[0] in otopen)?otopen[+x[0]]:sg;otopen[+x[0]]=op===f?'':f;OH.textContent='';otdraw();return;}
+  const b=e.target.closest('.ot-n');if(!b||!b.dataset.i)return;const ix=b.dataset.i.split('.'),t=OTT[+ix[0]],n=t&&t.n[+ix[1]];if(!n)return;
+  if(n.lock){OH.textContent=n.name+': '+n.lock;return;}
+  if(n.info){OH.textContent=n.info;return;}
+  if(!n.u||(!t.multi&&n.sel)){OH.textContent='';return;}   // the node already chosen in a pick-one row: nothing to send
+  if(otbusy)return;
+  if(n.ask&&!confirm(n.ask))return;
+  otbusy=true;OH.textContent='보내는 중…';othint=n.hint?[n.hint,JSON.stringify((rlast&&rlast.reid_last)||null)]:null;
+  fetch(n.u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store'}).then(x=>x.json().catch(()=>({ok:false,text:'서버 응답 '+x.status})))
+    .then(r=>{if(n.model){if(r&&r.catalog)mdl(r);}else if(r&&r.presets)rshow(r);OH.textContent=r&&r.ok===false?'적용 안 됨 — '+(r.text||''):(othint?othint[0]:'');if(r&&r.ok===false)othint=null;})
+    .catch(()=>{OH.textContent='서버 연결 끊김';}).finally(()=>{otbusy=false;});});
+// detector model (GET /model every second; the chip in the top bar and the first line of "지금 적용된 값")
+function mdl(m){if(m.ok===false){MIN.textContent='검출 모델 · '+(m.text||'Runtime 연결 오류');chip('mcdot','mctext','bad','모델 목록 오류');return;}mlast=m;const cat=m.catalog||[];
+  if(!cat.length){MIN.textContent='검출 모델 · 이 실행에서는 모델을 바꿀 수 없습니다.';chip('mcdot','mctext','','모델 고정');otdraw();return;}
+  const cur=cat.find(c=>c.id===m.current);
+  chip('mcdot','mctext',m.busy?'live':'good',m.busy?'모델 바꾸는 중':(cur?cur.name:'모델'));
+  let t=cur?'지금: '+cur.name:'';
+  if(m.busy){const p=cat.find(c=>c.id===m.pending);t='바꾸는 중'+(p?': '+p.name:'')+' · 카메라 영상이 들어오는 다음 프레임에 바뀝니다';}
+  else if(m.last){t+=' · '+m.last.at+' '+m.last.text+(m.last.seconds!=null?' ('+m.last.seconds+'초)':'');}
+  MIN.textContent='검출 모델 · '+t;otdraw();}
+function mtick(){if(document.hidden)return Promise.resolve();return fetch('/model',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(mdl).catch(()=>{});}
+setInterval(mtick,1000);mtick();
+// rules / tracker (GET /rules every second)
+function rshow(r){if(r.ok===false){RI.textContent='Tracker · '+(r.text||'Runtime 연결 오류');return;}rlast=r;
+  if(othint&&JSON.stringify(r.reid_last||null)!==othint[1]){if(OH.textContent===othint[0])OH.textContent='';othint=null;}   // v41: the change finished (done or failed) -> the status line below says which
+  const pl=r.predictors||null;
+  PST.textContent=pl?pl.filter(p=>p.key!=='kalman').map(p=>(PN[p.key]?PN[p.key][0]:p.name)+': '+(p.available?'고를 수 있음':'고를 수 없음')+(p.note?' — '+p.note:'')).join(' / '):'이 서버 버전에는 위치 기억 선택이 없습니다. 서버를 다시 켜면 열립니다.';
+  RWX.disabled=r.warm_max==null;   // v30: old server has no upper limit
+  RC.disabled=!('confirm' in r);   // 11-11: an older server has no confirm_ms
+  if(!rdirty){RW.value=r.warm_min;RWX.value=r.warm_max||0;RE.value=r.edge_birth;RC.value=r.confirm?r.confirm.ms:0;}
+  const wx=r.warm_max||0,wp=r.warm_prev;
+  let f='Filter · warmth '+(r.warm_min>0||wx>0?(r.warm_min>0?r.warm_min:'0')+' ~ '+(wx>0?wx:'제한 없음')+' 만 사람으로 인정':'검사 끔'+(wp&&(wp[0]>0||wp[1]>0)?' (켜면 '+wp[0]+' ~ '+(wp[1]>0?wp[1]:'제한 없음')+')':''))+' · 가장자리 새 궤적은 '+(r.edge_birth>0?'점수 '+r.edge_birth+' 이상':'제한 없음');
+  if(r.warm_dropped!=null)f+=' · warmth 범위 밖이라 버린 상자 '+r.warm_dropped+'개';
+  if(r.pending)f+=' · 다음 프레임에 적용';
+  FI.textContent=f;
+  const trk=pend(r,'tracker');
+  let t='Tracker · '+tname(trk)+' · KeepID '+(pend(r,'relabel')?'켜짐':'꺼짐');
+  if(r.confirm&&r.confirm.ms>0)t+=' · 새 사람 확인 '+r.confirm.ms+' ms = '+r.confirm.frames+'장'+(r.confirm.fps?' (지금 초당 '+r.confirm.fps+'장)':' (속도 재는 중)');   // 11-11 --confirm-ms
+  if(trk==='botsort')t+=' · 외형 비교 '+(r.reids&&r.reids.length?(r.app==='off'?'끔':'켜짐'):r.apps?(AN[r.app]||r.app||'끔'):AN.repvgg);
+  if(r.reids&&r.reids.length){const rc=r.reids.find(a=>a.key===r.reid),rp=r.reid_pending&&r.reids.find(a=>a.key===r.reid_pending),L=r.reid_last;   // v41
+    t+=' · 외형 모델 '+(rc?rc.name:(r.reid||'–'));
+    if(rp)t+=' → '+rp.name+' 로 바꾸는 중 (화면이 잠깐 멈춤)';
+    else if(L)t+=' ('+L.at+' '+(L.ok?'바뀜':'바꾸지 못함 — '+L.text)+(L.seconds!=null?' · '+L.seconds+'초':'')+')';}
+  if(pl){const pk=pend(r,'predictor');t+=' · 위치 기억 '+(PN[pk]?PN[pk][0]:pk);if(r.predictor!=='kalman')t+=' (놓친 사람 보정 '+r.pred_used+'회, 오류 '+r.pred_err+')';if(r.pred_show)t+=' · 예측 상자 표시';}
+  if(r.stab)t+=' · 흔들림 보정 켜짐'+(r.stab_ms!=null?' (계산 '+(+r.stab_ms).toFixed(1)+' ms'+(r.stab_resets?', 다시 시작 '+r.stab_resets+'회':'')+')':'');
+  if(r.stab_err)t+=' · 흔들림 보정 오류: '+r.stab_err;
+  if(r.lead)t+=' · 예측 제어 켜짐'+(r.lead_ms!=null?' ('+r.lead_ms+' ms 앞을 겨눔'+(r.lead_px?', 지금 '+r.lead_px+' px':'')+')':'');
+  if(r.pending)t+=' · 다음 프레임에 적용';
+  RI.textContent=t;
+  rdoc(trk);
+  if(r.cam_reset&&r.cam_reset.text&&!sysbusy&&(r.cam_reset.busy||r.cam_reset.at+'|'+r.cam_reset.text!==sysat)){sysat=r.cam_reset.at+'|'+r.cam_reset.text;SM.textContent='카메라 초기화 '+r.cam_reset.at+' — '+r.cam_reset.text;}
+  gshow(r.gimbal_cfg);
+  otdraw();}
+// 짐벌 제어기 구역: the options the server gave the gimbal program at start (GET /rules, key gimbal_cfg; read only). No key = older server, null = the server runs without a gimbal, a value that was not given = the program's own default.
+let glast=null;
+function gshow(g){const v=x=>x==null||x===''?'프로그램 기본값':'<b class="num">'+esc(isFinite(+x)?+x:x)+'</b>';let h;
+  if(g===undefined||(g&&g.error))h='서버에서 값을 받지 못함';
+  else if(g===null)h='짐벌 없이 실행 중입니다 (짐벌 프로그램을 띄우지 않음)';
+  else{const a=+g.aim_y,an={0.08:'머리',0.3:'가슴',0.5:'상자 가운데'}[a],ms=+g.reacquire_ms;
+    h='짐벌 프로그램 <b>'+esc(g.program||'–')+'</b> · 제어 방식 '+(g.controller?'<b>'+esc(String(g.controller).toUpperCase())+'</b>':'프로그램 기본값')+' · Kp '+v(g.kp)+' · Ki '+v(g.ki)+' · Kd '+v(g.kd)+' · 불감대 '+v(g.deadband)+' · 자동 속도 최대 '+v(g.speed_max)+' · 손으로 움직일 때 속도 '+v(g.manual_speed)
+      +' · 놓친 사람을 기다리는 시간 '+(g.reacquire_ms!=null&&isFinite(ms)?'<b class="num">'+ms/1000+'</b>초':v(g.reacquire_ms))+' · 겨누는 높이 '+v(g.aim_y)+(g.aim_y!=null?' (사람 상자 위에서부터의 비율'+(an?' · '+an:'')+')':'')+' · 그 밖의 옵션 '+(g.extra?'<b class="num">'+esc(g.extra)+'</b>':'없음');}
+  if(h!==glast){glast=h;$('gcfg').innerHTML=h;}}
+function rtick(){if(document.hidden)return Promise.resolve();return fetch('/rules',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(rshow).catch(()=>{});}
+// Filter numbers: Apply sends warm_min, warm_max, edge_birth and confirm_ms (11-11, only to a server that reports it) only. While 온도 Filter is off and both boxes still say 0, the warmth numbers are left out, so the numbers the server remembers are not wiped.
+RA2.addEventListener('click',()=>{RA2.disabled=true;FM.textContent='보내는 중…';
+  const woff=rlast&&rlast.warm_on===false&&!(+RW.value>0)&&!(+RWX.value>0);
+  const q=(woff?'':'warm_min='+encodeURIComponent(RW.value||0)+(rlast&&rlast.warm_max!=null?'&warm_max='+encodeURIComponent(RWX.value||0):'')+'&')+'edge_birth='+encodeURIComponent(RE.value||0)+(rlast&&'confirm' in rlast&&(+RC.value||0)!==(rlast.confirm?rlast.confirm.ms:0)?'&confirm_ms='+encodeURIComponent(RC.value||0):'');   // only when this box was changed: a value sent once is remembered and then wins over LWIR_CONFIRM_MS at the next start
+  fetch('/rules/set?'+q,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store'}).then(x=>x.json().catch(()=>({ok:false,text:'서버 응답 '+x.status})))
+    .then(r=>{if(r.ok!==false){rdirty=false;clearTimeout(rdt);}if(r.presets)rshow(r);FM.textContent=r.ok===false?'적용 안 됨: '+(r.text||''):'적용됨';})
+    .catch(()=>{FM.textContent='서버 연결 끊김';}).finally(()=>{RA2.disabled=false;});});
+// v30: System buttons
+let sysbusy=false,sysat=null;const CR=$('camreset'),SR=$('sysreboot');
+function syspost(url,busyText){sysbusy=true;CR.disabled=SR.disabled=true;SM.textContent=busyText;
+  return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:r.status===403||r.status===404?'서버 재시작 후 쓸 수 있습니다':'서버 응답 '+r.status}))).then(r=>{if(r.ok===false&&rlast&&rlast.cam_reset)sysat=rlast.cam_reset.at+'|'+rlast.cam_reset.text;SM.textContent=r.text||(r.ok?'완료':'실패');return r;}).catch(()=>{SM.textContent='서버 연결 끊김';return {ok:false};});}
+CR.addEventListener('click',()=>{if(!confirm('카메라를 초기화할까요?\n영상이 10~60초 끊깁니다.'))return;syspost('/camera/reset','카메라 초기화 요청 중…').finally(()=>{setTimeout(()=>{sysbusy=false;CR.disabled=SR.disabled=false;},3000);});});
+SR.addEventListener('click',()=>{if(!confirm('오렌지파이를 재부팅할까요?\n1~2분 동안 화면과 짐벌이 끊기고, 보드에서 돌던 다른 작업도 모두 끊깁니다.'))return;syspost('/system/reboot?confirm=REBOOT','재부팅 요청 중…').then(r=>{setTimeout(()=>{sysbusy=false;CR.disabled=SR.disabled=false;},r.ok?120000:3000);});});
+setInterval(rtick,1000);rtick();   // v40: 1 s, so a choice made on another page shows up here within a second
+setInterval(tick,1000);tick();
+// v26d: small speed / delay graphs on the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
+const PF={rows:[],span:60,off:0,busy:false,on:true};
+try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if(s_.on===false)PF.on=false;if([60,300,900].includes(s_.span))PF.span=s_.span;}catch(_){}
+const PFC=[{cv:$('pfc0'),s:[[1,'--c1',1.6],[2,'--c2',1.2]],min:30},{cv:$('pfc1'),s:[[4,'--c3',1],[5,'--c2',1.2],[3,'--c1',1.6]],min:100}];
+const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const nice=m=>{const p=Math.pow(10,Math.floor(Math.log10(m)));for(const k of [1,2,3,5,10])if(m<=k*p)return k*p;return 10*p;};
+function pfdraw(){
+  $('pfo').classList.toggle('off',!PF.on);$('pfbtn').classList.toggle('on',PF.on);$('pfbtn').setAttribute('aria-pressed',PF.on?'true':'false');$('pfspan').textContent=(PF.span/60)+'분';
+  if(!PF.on)return;
+  const now=Date.now()/1000+PF.off,t0=now-PF.span,vis=PF.rows.filter(r=>r[0]>=t0-2);
+  for(const c of PFC){const cv=c.cv,w=cv.clientWidth,h=cv.clientHeight;if(!w||!h)continue;const dpr=window.devicePixelRatio||1;
+    if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
+    const g=cv.getContext('2d');g.setTransform(dpr,0,0,dpr,0,0);g.clearRect(0,0,w,h);
+    const L=24,R=2,T=6,B=2,pw=w-L-R,ph=h-T-B;let mx=c.min;for(const r of vis)for(const s of c.s)if(r[s[0]]!=null&&r[s[0]]>mx)mx=r[s[0]];mx=nice(mx);
+    const X=t=>L+(t-t0)/PF.span*pw,Y=v=>T+ph-(v/mx)*ph;
+    g.font='9.5px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='middle';g.textAlign='right';g.lineWidth=1;
+    for(let i=0;i<=2;i++){const v=mx*i/2,y=Math.round(Y(v))-.5;g.strokeStyle=cssv('--line2');g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();if(i){g.fillStyle=cssv('--ink2');g.fillText(String(Math.round(v)),L-4,y+.5);}}
+    g.save();g.beginPath();g.rect(L,T-2,pw,ph+3);g.clip();g.lineJoin='round';
+    for(const s of c.s){g.strokeStyle=cssv(s[1]);g.lineWidth=s[2];g.beginPath();let pt=null;
+      for(const r of vis){if(r[s[0]]==null){pt=null;continue;}const x=X(r[0]),y=Y(r[s[0]]);if(pt===null||r[0]-pt>3)g.moveTo(x,y);else g.lineTo(x,y);pt=r[0];}   // no line across a gap of over 3 s (camera gave no frame)
+      g.stroke();}
+    g.restore();}
+  const last=PF.rows.length?PF.rows[PF.rows.length-1]:null,r=last&&now-last[0]<5?last:null;   // values older than 5 s are not shown as current
+  [[0,1],[1,2],[2,3],[3,4],[4,5]].forEach(([i,k])=>{$('pfv'+i).textContent=r&&r[k]!=null?r[k].toFixed(0):'–';});}
+function pftick(){if(document.hidden||!PF.on||PF.busy)return;PF.busy=true;const since=PF.rows.length?PF.rows[PF.rows.length-1][0]:0;
+  fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
+    if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
+    for(const r of p.rows)PF.rows.push(r);if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
+const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({on:PF.on,span:PF.span}));}catch(_){}};
+$('pfbtn').addEventListener('click',e=>{e.stopPropagation();PF.on=!PF.on;pfsave();pfdraw();pftick();});
+$('pfspan').addEventListener('click',e=>{e.stopPropagation();PF.span={60:300,300:900,900:60}[PF.span];pfsave();pfdraw();});
+addEventListener('resize',pfdraw);setInterval(pftick,1000);pfdraw();pftick();
+// 11-12: 녹화 재생 — a recording of the label site instead of the camera (GET /replay, POST /replay/start, /replay/stop). The server stops the gimbal and refuses moves while it plays.
+// 11-12 later: video-player controls under the picture (POST /replay/seek?pos=, /replay/pause, /replay/play, /replay/speed?fps=) and the comparison numbers under the picture, kept after the end.
+const RPSEC=$('rpsec'),RPSEL=$('rpsel'),RPFPS=$('rpfps'),RPLOOP=$('rploop'),RPST=$('rpstart'),RPSP=$('rpstop'),RPNOTE=$('rpnote'),RPMSG=$('rpmsg');
+let rpKeys='',rpList=[],rpBusy=false,rpLast=null;
+function rpItem(n){return rpList.find(x=>x.name===n)||null;}
+function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state;RPNOTE.textContent=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';}
+function rpShow(r){rpLast=r;
+  if(!r.available){RPSEL.innerHTML='<option value="">쓸 수 없음</option>';rpKeys='';rpList=[];RPST.disabled=RPSP.disabled=true;RPNOTE.textContent='';RPMSG.textContent=r.why||'쓸 수 없음';barShow(r);return;}
+  const keys=r.list.map(x=>x.name+'|'+x.frames+'|'+x.bits).join('\n');
+  if(keys!==rpKeys){const keep=RPSEL.value;rpKeys=keys;rpList=r.list;
+    RPSEL.innerHTML=r.list.length?r.list.map(x=>'<option value="'+esc(x.name)+'"'+(x.usable?'':' disabled')+'>'+esc(x.name)+' · '+x.frames+'장 · '+(x.bits?x.bits+'비트':'?')+(x.usable?'':' (쓸 수 없음)')+'</option>').join(''):'<option value="">녹화가 없습니다</option>';
+    if(keep&&rpItem(keep))RPSEL.value=keep;}
+  const st=r.state;
+  if(st.on&&document.activeElement!==RPSEL&&rpItem(st.name))RPSEL.value=st.name;
+  if(st.on&&document.activeElement!==RPFPS&&st.fps!=null)RPFPS.value=Math.round(st.fps);
+  RPST.disabled=rpBusy||st.busy||!r.list.length;RPSP.disabled=rpBusy||st.busy||!st.on;
+  let t=st.busy?'바꾸는 중…':st.on?'재생 중: '+st.name+' · '+st.fps+' fps · '+(st.loop?'반복':'한 번')+(st.pos!=null?(st.paused?' · 멈춤':'')+' · '+(st.pos+1)+' / '+st.total+'번째 장':' · 불러오는 중'):'꺼짐 (카메라 영상)';
+  if(st.msg)t+='\n'+st.msg.at+' '+st.msg.text;
+  RPMSG.style.whiteSpace='pre-line';RPMSG.textContent=t;rpNote();evShow(r.eval);barShow(r);}
+// 11-12: 정답과 비교 — numbers of the two scorings (새 채점 = with ignore regions, 옛 채점 = without), false boxes first
+const EVMSG=$('rpevmsg'),EVT=$('rpevt'),EVRS=$('rpevreset'),EVDR=$('rpevdraw');let evDrawT=0;
+function evN(v,p){return v==null?'–':p?Number(v).toFixed(1)+'%':String(v);}
+function evShow(e){if(!e)return;
+  if(Date.now()-evDrawT>3000)EVDR.checked=!!e.draw;
+  EVRS.disabled=!(e.on&&e.scoring);
+  if(!e.name){EVMSG.textContent='재생을 시작하면, 검수한 정답 라벨이 있는 녹화는 여기에 1초마다 점수가 나옵니다.';EVT.innerHTML='';return;}
+  const c=e.counts||{},head=(e.on?'':'끝난 재생: ')+e.name;
+  if(!e.scoring){EVMSG.textContent=head+' · '+(e.why||'채점하지 않음');EVT.innerHTML='';return;}
+  let m=head+' · 정답 '+(e.label_file||'')+'\n'+(e.review||'')+'\n채점한 장 '+c.scored+(e.scored_unique!=null&&e.scored_unique!==c.scored?' (서로 다른 장면 '+e.scored_unique+')':'')+(e.passes>1?' (구간 '+e.passes+')':'')+' · 멈춘 동안 되풀이 '+(c.repeats||0)+' (안 셈) · 재생 카메라가 건너뜀 '+c.cam_skipped+' · 서버가 건너뜀 '+c.server_skipped+(c.untagged?' · PNG 번호 모름 '+c.untagged:'')+'\n'+e.since+' 부터'+(e.file?'\n결과 파일: '+e.file:'');
+  EVMSG.style.whiteSpace='pre-line';EVMSG.textContent=m;
+  const n=e.new||{},o=e.old||{};
+  const rows=[['fp','잘못 그린 상자','false',0],['','정답 사람','gt',0],['','찾음','found',0],['','놓침','missed',0],['sub','작은 사람 (<32px)','missed_small',0],['sub','그 밖','missed_other',0],
+    ['','찾은 비율','recall',1],['','맞은 비율','precision',1],['','번호 바뀜','idsw',0],['','IDF1','idf1',1],['','MOTA','mota',1],['','무시 구역 상자','ignored_out',0]];
+  EVT.innerHTML='<tr><th></th><th>새 채점</th><th>옛 채점</th></tr>'+rows.map(([k,l,f,p])=>'<tr'+(k==='fp'?' class="fp"':'')+'><td'+(k==='sub'?' class="sub"':'')+'>'+l+'</td><td>'+evN(n[f],p)+'</td><td>'+(f==='ignored_out'?'–':evN(o[f],p))+'</td></tr>').join('');}
+EVRS.addEventListener('click',()=>{if(!confirm('정답과 비교 숫자를 지금부터 다시 셀까요?'))return;rppost('/replay/eval/reset');});
+EVDR.addEventListener('change',()=>{evDrawT=Date.now();fetch('/replay/eval/draw?on='+(EVDR.checked?1:0),{method:'POST',headers:{'X-Gimbal':'1'}}).catch(()=>{});});
+// ---- under the picture: seek bar (one copy) and the comparison strip (same data as the block above: GET /replay -> eval)
+const RB=$('rpbar'),RSK=$('rpseek'),RPL=$('rpplay'),RM10=$('rpm10'),RP10=$('rpp10'),RSL=$('rpslider'),RTM=$('rptime'),RJN=$('rpjn'),RGO=$('rpgo'),RCM=$('rpcm'),RNUM=$('rpnum'),RNHD=$('rpnhd'),RNX=$('rpnx'),RMAIN=$('rpmain'),ROLD=$('rpold'),RFOOT=$('rpfoot');
+let rpDrag=false,rpHold=null,rpHoldT=0,rpClosed='',rpCmT=0;
+const REASON={ended:'끝까지 재생함',stopped:'사용자가 멈춤',switched:'다른 녹화로 바꿈','server stopped':'서버가 꺼짐'};
+function fmtT(s){s=Math.max(0,Math.round(s));const m=Math.floor(s/60),x=s%60;return (m<10?'0':'')+m+':'+(x<10?'0':'')+x;}
+function nchip(l,v,cls){return '<span class="rpc'+(cls?' '+cls:'')+'">'+l+' <b>'+v+'</b></span>';}
+function barShow(r){
+  const st=r.state||{},e=r.eval||{};
+  // seek bar: only while a recording plays (one copy; the slider follows state.pos, which comes from the frame header)
+  const on=!!(st.on&&st.total>0);RSK.hidden=!on;
+  if(on){const tot=st.total,fps=st.fps||25,pos=st.pos;
+    RSL.max=Math.max(0,tot-1);
+    if(rpHold!=null&&(Date.now()-rpHoldT>5000||(!st.seeking&&st.pos!=null&&Date.now()-rpHoldT>1500)))rpHold=null;
+    const shown=rpDrag?Number(RSL.value):rpHold!=null?rpHold:st.seeking&&st.seek_to!=null?st.seek_to:pos;
+    if(!rpDrag&&shown!=null)RSL.value=shown;
+    const dis=st.busy||st.pos==null;
+    RSL.disabled=RM10.disabled=RP10.disabled=RPL.disabled=RGO.disabled=RJN.disabled=dis;
+    RPL.textContent=st.paused?'재생':'일시정지';
+    RJN.max=tot;if(document.activeElement!==RJN)RJN.placeholder=shown!=null?String(Number(shown)+1):'';
+    RTM.textContent=shown==null?'불러오는 중…':fmtT(shown/fps)+' / '+fmtT((tot-1)/fps)+' · '+(Number(shown)+1)+' / '+tot+'번째 장'+(st.paused?' · 멈춤':'')+(st.seeking?' · 건너뛰는 중':'')+(st.pass>1?' · 구간 '+st.pass:'');
+    if(rpCmT&&Date.now()>rpCmT){RCM.textContent='';rpCmT=0;}
+  }
+  // numbers: live while replaying, kept (labelled) after it ended, until the next replay or 닫기
+  const key=e.name?e.name+'|'+(e.ended||'live'):'';
+  if(!e.name||(!e.on&&key===rpClosed)){RNUM.hidden=true;}
+  else{RNUM.hidden=false;
+    const hd=e.on?'정답과 비교':'재생 끝, 최종 '+(e.ended?e.ended.slice(11,19):'')+' · '+(REASON[e.end_reason]||e.end_reason||'');
+    RNHD.textContent=hd+' · '+e.name;RNX.hidden=!!e.on;
+    if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'영상 아래 막대로 어느 곳이든 건너뛸 수 있습니다.':'';}
+    else{const n=e.new||{},o=e.old||{},c=e.counts||{};
+      const f=(x)=>x||{};
+      RMAIN.innerHTML=nchip('오검출',evN(n.false),'fp'+(n.false?'':' zero'))+nchip('찾음',evN(n.found)+' / '+evN(n.gt)+' 정답 사람')+nchip('놓침',evN(n.missed)+' (작은 사람 '+evN(n.missed_small)+')')+nchip('recall',evN(n.recall,1))+nchip('precision',evN(n.precision,1))+nchip('번호 바뀜',evN(n.idsw))+nchip('IDF1',evN(n.idf1,1))+nchip('MOTA',evN(n.mota,1));
+      ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
+      RFOOT.textContent='새 채점 (무시 구역 뺌) · 채점한 장 '+c.scored+(e.scored_unique!=null&&e.scored_unique!==c.scored?' (서로 다른 장면 '+e.scored_unique+')':'')+' · 구간 '+(e.passes||1)+(c.repeats?' · 멈춘 동안 되풀이 '+c.repeats+' (안 셈)':'')+((e.seeks||e.passes>1)?' · 건너뛰거나 되감은 뒤 다시 지난 장면은 새 구간으로 한 번 더 셈 (숫자를 처음부터 다시 세려면 옆 패널의 "숫자 처음부터")':'');}
+  }
+  RB.hidden=RSK.hidden&&RNUM.hidden;
+}
+RNX.addEventListener('click',()=>{const e=rpLast&&rpLast.eval;if(e&&e.name){rpClosed=e.name+'|'+(e.ended||'live');barShow(rpLast);}});
+function rpMsgBar(t){RCM.textContent=t||'';rpCmT=t?Date.now()+6000:0;}
+function rpctl(url){return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:'서버 응답 '+r.status}))).then(r=>{if(!r.ok)rpMsgBar(r.text||'실패');return r;}).catch(()=>{rpMsgBar('서버 연결 끊김');return {ok:false};}).finally(()=>setTimeout(()=>rptick(true),250));}
+function rpSeek(pos){const st=rpLast&&rpLast.state;if(!st||!st.on)return;pos=Math.min(Math.max(0,Math.round(pos)),st.total-1);rpHold=pos;rpHoldT=Date.now();RSL.value=pos;rpctl('/replay/seek?pos='+pos);}
+RSL.addEventListener('pointerdown',()=>{rpDrag=true;});
+RSL.addEventListener('input',()=>{const st=rpLast&&rpLast.state;if(st&&st.on)RTM.textContent=fmtT(Number(RSL.value)/(st.fps||25))+' / '+fmtT((st.total-1)/(st.fps||25))+' · '+(Number(RSL.value)+1)+' / '+st.total+'번째 장 (놓으면 건너뜀)';});
+RSL.addEventListener('change',()=>{rpDrag=false;rpSeek(Number(RSL.value));});   // sent only when released
+addEventListener('pointerup',()=>{if(rpDrag){rpDrag=false;}});
+RPL.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on)rpctl(st.paused?'/replay/play':'/replay/pause');});
+RM10.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on&&st.pos!=null)rpSeek((rpHold!=null?rpHold:st.pos)-10*(st.fps||25));});
+RP10.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on&&st.pos!=null)rpSeek((rpHold!=null?rpHold:st.pos)+10*(st.fps||25));});
+function rpGo(){const st=rpLast&&rpLast.state;if(!st||!st.on)return;const n=Math.round(Number(RJN.value));if(!(n>=1&&n<=st.total)){rpMsgBar('장 번호는 1 ~ '+st.total);return;}RJN.value='';rpSeek(n-1);}
+RGO.addEventListener('click',rpGo);RJN.addEventListener('keydown',e=>{if(e.key==='Enter')rpGo();});
+if(window.ResizeObserver)new ResizeObserver(()=>document.documentElement.style.setProperty('--rbh',(RB.hidden?0:Math.ceil(RB.getBoundingClientRect().height)+6)+'px')).observe(RB);
+let rpTick=0;
+function rptick(force){if(!force){const on=rpLast&&rpLast.state&&rpLast.state.on;if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;}fetch('/replay'+(force==='refresh'?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()).then(rpShow).catch(()=>{});}
+function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=true;
+  return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:r.status===403||r.status===404?'서버 재시작 후 쓸 수 있습니다':'서버 응답 '+r.status}))).then(r=>{RPMSG.textContent=r.text||(r.ok?'완료':'실패');}).catch(()=>{RPMSG.textContent='서버 연결 끊김';}).finally(()=>{rpBusy=false;setTimeout(()=>rptick(true),300);});}
+RPSEL.addEventListener('change',rpNote);
+RPFPS.addEventListener('change',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}rpctl('/replay/speed?fps='+f);});
+RPST.addEventListener('click',()=>{const n=RPSEL.value;if(!n)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}
+  if(!confirm('녹화 "'+n+'" 를 카메라 대신 재생할까요?\n카메라 영상은 멈추고, 재생 중에는 짐벌이 움직이지 않습니다.'))return;
+  rpClosed='';rppost('/replay/start?seq='+encodeURIComponent(n)+'&fps='+f+'&loop='+(RPLOOP.checked?1:0));});
+RPSP.addEventListener('click',()=>rppost('/replay/stop'));
+RPSEC.addEventListener('toggle',()=>{if(RPSEC.open)rptick('refresh');});
+setInterval(rptick,500);rptick(true);
+</script>
+</body></html>

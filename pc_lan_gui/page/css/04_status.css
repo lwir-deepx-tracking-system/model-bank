@@ -1,0 +1,10 @@
+/* status block */
+.st{padding:14px 16px 12px;border-bottom:1px solid var(--line)}
+.sthead{display:flex;align-items:center;gap:10px}
+.sq{width:12px;height:12px;border-radius:2px;border:1.5px solid var(--mut);flex:none}
+.sq.auto{background:var(--acc);border-color:var(--acc)}.sq.lost{background:transparent;border-color:var(--acc)}.sq.man{background:var(--ink2);border-color:var(--ink2)}.sq.bad{background:var(--bad);border-color:var(--bad)}
+.status{font-size:15px;font-weight:700;margin:0;min-height:22px;line-height:1.3}
+.ans{font-size:12px;color:var(--mut);margin:3px 0 0 22px;min-height:16px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 14px;margin:10px 0 0 22px;font-size:12.5px}
+.kv dt{color:var(--mut)}.kv dd{margin:0;color:var(--ink);text-align:right}
+.mobhint{display:none;font-size:12px;color:var(--mut);margin-top:8px}

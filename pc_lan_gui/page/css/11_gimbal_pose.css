@@ -1,0 +1,60 @@
+/* Position rulers sit on the image edge and leave clicks and drags to the video. */
+.pose {
+  position:absolute;
+  inset:var(--pose-y,0px) var(--pose-x,0px);
+  pointer-events:none;
+  z-index:1;
+  --pose-rail:rgba(21,23,25,.86);
+  --pose-baseline:rgba(213,217,221,.38);
+  --pose-major:#c6cacf;
+  --pose-mid:#93999f;
+  --pose-minor:#626970;
+  --pose-pointer:#e8b16e;
+}
+.pose [hidden] {display:none}
+.pose-axis {
+  position:absolute;
+  background-color:var(--pose-rail);
+  background-repeat:no-repeat;
+}
+.pose-pan {
+  top:0; left:0; right:0; height:9px;
+  background-image:
+    linear-gradient(var(--pose-major),var(--pose-major)),
+    repeating-linear-gradient(to right,var(--pose-major) 0 1px,transparent 1px 10%),
+    repeating-linear-gradient(to right,var(--pose-mid) 0 1px,transparent 1px 5%),
+    repeating-linear-gradient(to right,var(--pose-minor) 0 1px,transparent 1px 2.5%),
+    linear-gradient(var(--pose-baseline),var(--pose-baseline));
+  background-size:1px 7px,100% 7px,100% 5px,100% 3px,100% 1px;
+  background-position:right top,left top,left top,left top,left top;
+}
+.pose-tilt {
+  top:0; right:0; bottom:0; width:9px;
+  background-image:
+    linear-gradient(var(--pose-major),var(--pose-major)),
+    repeating-linear-gradient(to top,var(--pose-major) 0 1px,transparent 1px 10%),
+    repeating-linear-gradient(to top,var(--pose-mid) 0 1px,transparent 1px 5%),
+    repeating-linear-gradient(to top,var(--pose-minor) 0 1px,transparent 1px 2.5%),
+    linear-gradient(var(--pose-baseline),var(--pose-baseline));
+  background-size:7px 1px,7px 100%,5px 100%,3px 100%,1px 100%;
+  background-position:right top,right bottom,right bottom,right bottom,right top;
+}
+.pose [data-marker] {
+  position:absolute;
+  z-index:1;
+  background:var(--pose-pointer);
+}
+.pose-pan [data-marker] {
+  top:0;
+  left:clamp(6px,var(--pose-position),calc(100% - 6px));
+  width:11px; height:9px;
+  transform:translateX(-50%);
+  clip-path:polygon(0 0,100% 0,50% 100%);
+}
+.pose-tilt [data-marker] {
+  right:0;
+  bottom:clamp(6px,var(--pose-position),calc(100% - 6px));
+  width:9px; height:11px;
+  transform:translateY(50%);
+  clip-path:polygon(100% 0,100% 100%,0 50%);
+}

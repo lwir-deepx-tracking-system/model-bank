@@ -1,0 +1,5 @@
+// v40: settings tree (user 11-10). Rows = processing order, top first; what is picked above opens or locks the nodes below.
+// A click on a node is one POST. The choice lives on the server and every open page reads /rules and /model again each second, so all connected pages show the same selection.
+const MIN=$('minfo'),RW=$('rwarm'),RE=$('redge'),RWX=$('rwarmx'),RC=$('rconf'),RA2=$('rapply2'),RI=$('rinfo'),FI=$('finfo'),PST=$('pstat'),FM=$('fmsg'),SM=$('sysmsg'),OT=$('ot-tree'),OH=$('ot-hint'),OS=$('ot-sum'),RD=$('rdoc');
+let rdirty=false,rdt=0,rlast=null,mlast=null,othtml='',otbusy=false,rdk=null,OTT=[],othint=null;   // othint (v41): [hint shown after an appearance-model pick, reid_last when the tile was pressed] -> the hint is cleared when reid_last moves
+for(const el of [RW,RWX,RE,RC])el.addEventListener('input',()=>{rdirty=true;clearTimeout(rdt);rdt=setTimeout(()=>{rdirty=false;},15000);});   // a number being typed is not overwritten by the 1 s refresh (until 15 s after the last key, or Apply)
