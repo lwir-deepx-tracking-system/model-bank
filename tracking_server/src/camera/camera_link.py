@@ -97,7 +97,11 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
         if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s' % ('connected' if gu_['client'] else 'no client')
         APP.cv2.putText(img_, gtxt_, (8, 44), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
     ok_, jb_ = APP.cv2.imencode('.jpg', img_, [APP.cv2.IMWRITE_JPEG_QUALITY, 80])
-    with APP.LIVE.jcond: APP.LIVE.jpeg = jb_.tobytes(); APP.LIVE.seq += 1; APP.LIVE.jcond.notify_all()
+    with APP.LIVE.jcond:
+        APP.LIVE.jpeg = jb_.tobytes()
+        APP.LIVE.jpeg_frame_t = None
+        APP.LIVE.seq += 1
+        APP.LIVE.jcond.notify_all()
 
 
 def lv_to8(raw_):

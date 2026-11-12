@@ -16,7 +16,7 @@
     {"file": "css/11_gimbal_pose.css", "what": "영상 위쪽 좌우 눈금과 오른쪽 상하 눈금"},
     {"file": "html/2_body.html", "what": "화면에 보이는 뼈대 전부 — 맨 위 줄, 영상과 그래프 상자, 상태 칸, Filter 값 · 짐벌 제어기 · 설정 · System · 녹화 재생 · 측정 · 단축키 구역과 그 안의 설명 글. </style> 로 시작하고 <script> 로 끝남"},
     {"file": "js/01_helpers.js", "what": "공통 도우미 — 요소 찾기($), 상태 점 바꾸기(chip), 접는 구역의 열림 · 닫힘 기억"},
-    {"file": "js/gimbal_pose.js", "what": "영상 테두리에 짐벌 추정 위치 눈금과 빨간 삼각형을 표시"},
+    {"file": "js/gimbal_pose.js", "what": "실시간 영상 테두리에 짐벌 추정 위치 눈금과 삼각형을 표시"},
     {"file": "js/02_connection_status.js", "what": "연결 표시와 상태 글자 — 서버 연결 점, 영상 다시 열기, '따라가는 중 / 놓침 / 대기' 글자"},
     {"file": "js/03_gimbal_control.js", "what": "짐벌 조작 — 명령 보내기(post), 영상 누르기(사람 고르기 · 멈춤), 키보드(방향키 · W A S D · Space), 손을 떼면 정지, 휴대폰 끌기"},
     {"file": "js/04_ping_fps_aim.js", "what": "주기적으로 서버에 묻기 — 0.4초마다 상태 받기, 화면이 다시 켜지면 영상 다시 열기, fps 숫자, 가로 · 세로 오차"},

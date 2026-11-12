@@ -37,6 +37,14 @@ def frozen_check(raw_):
     return same_
 
 
+def live_gimbal_position():
+    """Return position only when the published JPEG is from the current live camera."""
+    frame_t = getattr(APP.LIVE, 'jpeg_frame_t', None)
+    if frame_t is None or replay_link.frame_blocked(frame_t):
+        return dict(pose=None, position_estimate=None)
+    return dict(pose=gb_sample('pose_sample'), position_estimate=gb_sample('position_sample'))
+
+
 def live_publish(g_, rows_, row_):
     now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if APP.LIVE.arr else now_
     raw16_ = APP.LIVE.raws.popleft() if APP.LIVE.raws else None   # v20
@@ -109,7 +117,11 @@ def live_publish(g_, rows_, row_):
             if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s: sent %d, failed %d' % ('connected' if gu_['client'] else 'no client', gu_['sent'], gu_['failed'])   # v20
             APP.cv2.rectangle(img_, (0, 26), (img_.shape[1], 50), (0, 0, 0), -1); APP.cv2.putText(img_, gtxt_, (8, 44), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255) if st_['auto'] else (255, 255, 255), 1)
         ok_, jb_ = APP.cv2.imencode('.jpg', img_, [APP.cv2.IMWRITE_JPEG_QUALITY, 80])
-        with APP.LIVE.jcond: APP.LIVE.jpeg = jb_.tobytes(); APP.LIVE.seq += 1; APP.LIVE.jcond.notify_all()
+        with APP.LIVE.jcond:
+            APP.LIVE.jpeg = jb_.tobytes()
+            APP.LIVE.jpeg_frame_t = t_in
+            APP.LIVE.seq += 1
+            APP.LIVE.jcond.notify_all()
     td_ = time.perf_counter()
     with APP.LIVE.dlock: APP.LIVE.delays.append((td_, (td_ - t_in) * 1000.0))   # v26b: camera frame arrival -> picture ready for the page, kept for /healthz
     if time.monotonic() - APP.LIVE.t0 > APP.args.live_seconds or (APP.LIVE.cam_lost and APP.args.live_wait): APP.LIVE.stopped = True
@@ -219,7 +231,7 @@ def make_lv_Handler():
                 elif u_.path != '/gimbal/ping': self.send_error(404); return
             except (KeyError, ValueError, IndexError): self.send_error(400); return
             try:
-                b_ = json.dumps(dict(APP.GB.state, pose=gb_sample('pose_sample'), position_estimate=gb_sample('position_sample'), cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n)).encode()   # v24: cam_idle = seconds since the last camera frame; v24d: cam_fail = cam_pipe failures in a row (0 = fine or repairing)
+                b_ = json.dumps(dict(APP.GB.state, **live_gimbal_position(), cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n)).encode()   # v24: cam_idle = seconds since the last camera frame; v24d: cam_fail = cam_pipe failures in a row (0 = fine or repairing)
                 self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
             except (BrokenPipeError, ConnectionResetError, OSError): pass
         def do_GET(self):
@@ -241,7 +253,7 @@ def make_lv_Handler():
                     finally:
                         with APP.LIVE.jcond: APP.LIVE.viewers -= 1
                 elif self.path.startswith('/gimbal/people') and APP.GB is not None:   # v19: read only
-                    b_ = json.dumps(dict(state=APP.GB.state, pose=gb_sample('pose_sample'), position_estimate=gb_sample('position_sample'), people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()
+                    b_ = json.dumps(dict(state=APP.GB.state, **live_gimbal_position(), people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/rules'):   # v24g
                     b_ = json.dumps(APP.rules_state(), ensure_ascii=False).encode()
