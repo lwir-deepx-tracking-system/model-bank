@@ -295,6 +295,19 @@ int main(int argc, char** argv)
   if(const char* e = std::getenv("LWIR_CAM_READ_PERIOD_US")) { char* end = nullptr; const long v = std::strtol(e, &end, 10); if(end != e && v >= 0 && v <= 1000000) read_period_us = v; }
   std::fprintf(stderr, "READ_PACING period=%ld us (0 = off)\n", read_period_us);
   bool last_read_ok = false; auto last_read_start = clk::now();
+  // v2.8 (11-13): REPEATED FRAMES. The engine itself sends the same picture again, byte for byte, for 1 to 3 frames (seldom up to
+  // 8) about once a second, and for about 40 frames (1.3 s) during the shutter calibration at an open. Measured with every read
+  // logged (paced, 25-30 s each): repeats arrive on schedule exactly like new frames (same 33.5 ms spacing, same call time), with
+  // the SDK's AGC on (9.7 %) and off (9.6 %), and in shutter modes TEMP, MANUAL (11.4 %) and TIME (7.8 %); without the long run
+  // at the open it is 2-6 %. So it is not the read timing and cannot be removed here. The server takes an identical frame for a
+  // frozen camera, logs it and gives the gimbal no people for that frame. Short repeats are therefore not sent on: the first
+  // drop_dup_max repeats in a row are held back and the pacing just continues. A picture that stays the same longer is passed on
+  // from then, so the server's frozen-picture handling and the stall repair see a real freeze as before.
+  // LWIR_CAM_DROP_DUP sets the limit (0 = send every frame, the behaviour up to v2.7).
+  long drop_dup_max = 3;
+  if(const char* e = std::getenv("LWIR_CAM_DROP_DUP")) { char* end = nullptr; const long v = std::strtol(e, &end, 10); if(end != e && v >= 0 && v <= 1000) drop_dup_max = v; }
+  std::vector<unsigned short> prev_frame; long dup_run = 0, dups_dropped = 0, dups_passed = 0;
+  std::fprintf(stderr, "DUPLICATE_FILTER holds back up to %ld repeated frames in a row (0 = off)\n", drop_dup_max);
   while(!g_stop && since(t0) < seconds)
   {
     // v2.7 (11-13): start each read one frame period after the START of the last successful read (see the note above the loop).
@@ -307,6 +320,12 @@ int main(int argc, char** argv)
     ++codes[r];
     if(r == 1)
     {
+      if(drop_dup_max > 0)
+      {
+        const bool same = prev_frame.size() == buf.size() && std::memcmp(prev_frame.data(), buf.data(), buf.size() * sizeof(unsigned short)) == 0;
+        if(same) { ++dup_run; if(dup_run <= drop_dup_max) { ++dups_dropped; continue; } ++dups_passed; }
+        else { dup_run = 0; prev_frame = buf; }
+      }
       auto now = clk::now();
       maxgap = std::max(maxgap, std::chrono::duration<double>(now - tprev).count()); tprev = now;
       t_frame = now; frame_since_open = true; failed_recoveries = 0;
@@ -358,6 +377,7 @@ int main(int argc, char** argv)
     t_open = clk::now(); frame_since_open = false; tprev = t_open; tl = t_open; okl = 0; ok_open = ok;
   }
   double secs = since(t0);
+  std::fprintf(stderr, "DUPLICATE_FRAMES held back %ld, passed on %ld\n", dups_dropped, dups_passed);
   std::fprintf(stderr, "FRAMES %ld in %.2f s = %.2f fps, longest gap %.0f ms, resets %d, return codes:", ok, secs, ok / secs, maxgap * 1000, recoveries);
   for(auto& kv : codes) std::fprintf(stderr, " %d x%ld", kv.first, kv.second);
   std::fprintf(stderr, "\n");
