@@ -316,10 +316,10 @@ int main(int argc, char** argv)
   // second at 15:09:33, longest gaps of 0.49 and 0.56 s in earlier runs) and nothing said why. Every time GAP_LOG_MS or more
   // passes between two frames taken from the engine, an INPUT_GAP line says how the time was spent: how many reads came back
   // empty (the engine had no frame: camera or USB), the longest single read (a read that hung), the longest wait between two
-  // reads (this program was not given the CPU), whether the frame after the gap is a repeat, and where the last long run of
+  // reads (this program was not given the CPU), how long the read that ended the gap took and how long sending the frame before it to the server took (a full pipe = the server was slow to take it), whether the frame after the gap is a repeat, and where the last long run of
   // repeats (shutter) was. Only log lines are added; frames, pacing and the duplicate filter are as in v2.8.
   const double GAP_LOG_MS = 150.0;
-  bool gp_have = false; auto gp_last_ok = clk::now(), gp_prev_end = clk::now(); long gp_fail = 0, gp_empty = 0; double gp_max_call = 0, gp_max_wait = 0;
+  bool gp_have = false; auto gp_last_ok = clk::now(), gp_prev_end = clk::now(); long gp_fail = 0, gp_empty = 0; double gp_max_call = 0, gp_max_wait = 0, gp_call = 0, gp_wait = 0, gp_write = 0;
   std::fprintf(stderr, "DUPLICATE_FILTER holds back up to %ld repeated frames in a row (0 = off)\n", drop_dup_max);
   while(!g_stop && since(t0) < seconds)
   {
@@ -330,7 +330,8 @@ int main(int argc, char** argv)
     const auto read_end = clk::now();
     {   // v2.10: what happens between two frames
       const double call_ms = std::chrono::duration<double, std::milli>(read_end - read_start).count();
-      if(gp_fail > 0) gp_max_wait = std::max(gp_max_wait, std::chrono::duration<double, std::milli>(read_start - gp_prev_end).count());
+      gp_call = call_ms; gp_wait = std::chrono::duration<double, std::milli>(read_start - gp_prev_end).count();   // this read, and the time since the read before it ended (sending that frame on + the pacing wait)
+      if(gp_fail > 0) gp_max_wait = std::max(gp_max_wait, gp_wait);
       gp_prev_end = read_end;
       if(r != 1) { ++gp_fail; if(r == 4) ++gp_empty; gp_max_call = std::max(gp_max_call, call_ms); }
     }
@@ -349,11 +350,12 @@ int main(int argc, char** argv)
           char repb[96] = "no long run of repeats yet";
           if(dup_run > 0) std::snprintf(repb, sizeof repb, "inside a run of repeats (%ld before the gap)", dup_run);
           else if(rep_seen) std::snprintf(repb, sizeof repb, "last long run of repeats ended %.1f s before", std::chrono::duration<double>(gp_last_ok - rep_end).count());
-          std::fprintf(stderr, "INPUT_GAP %.0f ms between frames: %ld reads without a frame (%ld empty), longest of them %.0f ms, longest wait between reads %.1f ms, frame after the gap is %s, %s, %.1f s after this open, at %s\n",
-                       gap_ms, gp_fail, gp_empty, gp_max_call, gp_max_wait, drop_dup_max > 0 ? (same ? "a repeat" : "new") : "not compared", repb, since(t_open), hms().c_str());
+          std::fprintf(stderr, "INPUT_GAP %.0f ms between frames: the read that brought this frame took %.0f ms and began %.0f ms after the read before it ended (sending the frame before to the server took %.0f ms); "
+                       "reads without a frame in between %ld (%ld empty), longest of them %.0f ms, longest wait between them %.1f ms; frame after the gap is %s, %s, %.1f s after this open, at %s\n",
+                       gap_ms, gp_call, gp_wait, gp_write, gp_fail, gp_empty, gp_max_call, gp_max_wait, drop_dup_max > 0 ? (same ? "a repeat" : "new") : "not compared", repb, since(t_open), hms().c_str());
         }
       }
-      gp_have = true; gp_last_ok = read_end; gp_fail = 0; gp_empty = 0; gp_max_call = 0; gp_max_wait = 0;
+      gp_have = true; gp_last_ok = read_end; gp_fail = 0; gp_empty = 0; gp_max_call = 0; gp_max_wait = 0; gp_write = 0;
       if(drop_dup_max > 0)
       {
         if(same) { ++dup_run; if(dup_run == 1) rep_start = clk::now(); if(dup_run <= drop_dup_max) { ++dups_dropped; continue; } ++dups_passed; }
@@ -370,9 +372,11 @@ int main(int argc, char** argv)
       auto now = clk::now();
       maxgap = std::max(maxgap, std::chrono::duration<double>(now - tprev).count()); tprev = now;
       t_frame = now; frame_since_open = true; failed_recoveries = 0;
+      const auto gp_w0 = clk::now();
       if(g_stamp) { if(!send_stamped(buf.data(), w, h, t_rx)) break; }
       else
       if(!write_all(buf.data(), buf.size() * sizeof(unsigned short))) break;
+      gp_write = std::chrono::duration<double, std::milli>(clk::now() - gp_w0).count();
       ++ok; ++okl;
       if(g_shutter.own_period_s > 0 && since(g_t_cal) >= g_shutter.own_period_s)   // v2.5 (setting mN): the engine is in MANUAL mode, the calibration is ours and it is in the log
       {
