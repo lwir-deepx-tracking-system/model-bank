@@ -9,6 +9,9 @@
 //   --predictive-brake <0|1>   near-deadband horizontal braking (default 0; requires OBS 1)
 //   --observation-grace-ms <ms> hold the last output for one validated live detector miss (0 = off, maximum 100)
 //   --aim-screen-y <0.1..0.9>   screen height (fraction from the top) at which the aim point is held (default 0.5 = centre)
+//   --far-gain <1..4>           multiply the speed demand up to this much for a large error (default 1 = off)
+//   --far-start-px / --far-full-px <px>  the error (640-wide picture) where the far gain starts / is complete (64 / 160)
+//   --brake-px-per-spd <px>     cap the speed at (|error| - deadband) / this, to slow down before arriving (default 0 = off)
 //
 // Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
 // All control decisions, safety stops and serial output stay in the team's GimbalCommandExecutor; the PC wire format stays in the team's
@@ -213,6 +216,10 @@ Options parse(int argc, char** argv)
         else if (name == "--reacquire-ms") c.automatic.reacquire_timeout_ms = std::stoi(value);
         // v27: motion smoothing (defaults = v25 behaviour)
         else if (name == "--deadband-exit") { s.deadband_exit_x = s.deadband_exit_y = std::stod(value); if (!(s.deadband_exit_x >= 0.0)) throw std::invalid_argument("--deadband-exit must be >= 0"); }
+        else if (name == "--far-gain") { s.far_gain = std::stod(value); if (!(s.far_gain >= 1.0 && s.far_gain <= 4.0)) throw std::invalid_argument("--far-gain must be within 1..4"); }
+        else if (name == "--far-start-px") { s.far_start_px = std::stod(value); if (!(s.far_start_px >= 0.0 && s.far_start_px <= 320.0)) throw std::invalid_argument("--far-start-px must be within 0..320"); }
+        else if (name == "--far-full-px") { s.far_full_px = std::stod(value); if (!(s.far_full_px >= 1.0 && s.far_full_px <= 640.0)) throw std::invalid_argument("--far-full-px must be within 1..640"); }
+        else if (name == "--brake-px-per-spd") { s.brake_px_per_spd = std::stod(value); if (!(s.brake_px_per_spd >= 0.0 && s.brake_px_per_spd <= 50.0)) throw std::invalid_argument("--brake-px-per-spd must be within 0..50"); }
         else if (name == "--aim-screen-y") { s.aim_screen_y = std::stod(value); if (!(s.aim_screen_y >= 0.1 && s.aim_screen_y <= 0.9)) throw std::invalid_argument("--aim-screen-y must be within 0.1..0.9"); }
         else if (name == "--stop-rate") { s.stop_rate = std::stod(value); if (!(s.stop_rate >= 0.0)) throw std::invalid_argument("--stop-rate must be >= 0"); }
         else if (name == "--axis-reversal") {

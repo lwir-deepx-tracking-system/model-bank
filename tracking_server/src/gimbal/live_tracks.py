@@ -4,6 +4,7 @@ The tracker computes boxes/IDs. This adapter only shares those results; it
 does not implement a second tracker or change the camera control law.
 """
 import math
+import os
 import time
 
 import numpy as np
@@ -71,6 +72,67 @@ def _bridge_aim_y(gb):
     return value if value is not None and 0.0 <= value <= 1.0 else None
 
 
+# 11-13 (user): FOLLOW HANDOFF. A person close to the camera who moves fast is often split by the detector (a whole-body box and a
+# part box, then only the part) and the tracker gives the remaining box a new id. The gimbal follows an id, so it waited for
+# the old one and following was dropped (recording run3 of 11-13: id 471 gone at 0.40 s, id 472 in the same place, following
+# dropped at 2.0 s). With LWIR_FOLLOW_HANDOFF=1 (off by default): when the followed id has been missing for HANDOFF_MISS_S and
+# one other box has stood in its last place (IoU >= HANDOFF_IOU with the last box, centre within HANDOFF_GATE of its width)
+# for HANDOFF_HOLD_S without a change of id, following moves to that id (the same 'A id' a click sends). A person who only
+# walks in front and leaves again does not stay that long in the same place; on the 11-13 recordings this rule changed id once,
+# in the case above, and never while the old id came back later (two cases of a passer-by and a short gap were not taken).
+HANDOFF_IOU, HANDOFF_GATE, HANDOFF_MISS_S, HANDOFF_HOLD_S, HANDOFF_MAX_S = .3, .5, .8, .5, 5.
+
+
+def _iou(a, b):
+    w_ = min(a[2], b[2]) - max(a[0], b[0]); h_ = min(a[3], b[3]) - max(a[1], b[1])
+    if w_ <= 0 or h_ <= 0: return 0.
+    i_ = w_ * h_; u_ = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i_
+    return i_ / u_ if u_ > 0 else 0.
+
+
+def _handoff_locked(gb, selected, frame_t):
+    """Called with gb.wcond held, after gb.people is set for this frame. Returns the id following moved to, else 0."""
+    if os.environ.get('LWIR_FOLLOW_HANDOFF') != '1':
+        return 0
+    if (not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0) or getattr(gb, 'mover', None)
+            or getattr(gb, 'selection_reset', False) or not gb.people):
+        if not selected or not gb.state.get('auto'): gb.handoff = None
+        return 0
+    h = getattr(gb, 'handoff', None)
+    if h is None or h['sel'] != selected:
+        h = gb.handoff = dict(sel=selected, box=None, t=0., cand=0, cand_t=0.)
+    mine = next((p for p in gb.people if int(p[0]) == selected), None)
+    if mine is not None:
+        h.update(box=tuple(float(v) for v in mine[1:5]), t=frame_t, cand=0)
+        return 0
+    lb = h['box']
+    if lb is None or not 0 < frame_t - h['t'] <= HANDOFF_MAX_S:
+        return 0
+    w, lcx = lb[2] - lb[0], (lb[0] + lb[2]) / 2.
+    best = None
+    for p in gb.people:
+        if int(p[0]) == selected: continue
+        b = tuple(float(v) for v in p[1:5]); o = _iou(b, lb)
+        if o >= HANDOFF_IOU and abs((b[0] + b[2]) / 2. - lcx) <= HANDOFF_GATE * w and (best is None or o > best[1]):
+            best = (int(p[0]), o)
+    if best is None:
+        h['cand'] = 0
+        return 0
+    if best[0] != h['cand']:
+        h['cand'], h['cand_t'] = best[0], frame_t
+    if frame_t - h['t'] < HANDOFF_MISS_S or frame_t - h['cand_t'] < HANDOFF_HOLD_S or len(gb.wq) >= 62:
+        return 0
+    reset_lead()
+    gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
+    if gb.wframe is not None:   # the bridge sees the new id in a frame before it is selected (as for a click)
+        gb.wq.append(without_lead(gb.wframe)); gb.wframe = None
+    gb.wq.append(('A %d\n' % best[0]).encode())
+    gb.handoff = dict(sel=best[0], box=None, t=0., cand=0, cand_t=0.)
+    gb.handoff_n = getattr(gb, 'handoff_n', 0) + 1
+    print('FOLLOW handoff %d -> %d (IoU %.2f with its last box, %.2f s after it was last seen)' % (selected, best[0], best[1], frame_t - h['t']), flush=True)
+    return best[0]
+
+
 def publish(people, correction, frame_t, raw16, source, blocked=False, *, healthy_live=False):
     """Publish the same IDs as the drawn boxes, with existing coordinate rules."""
     gb = APP.GB
@@ -110,6 +172,7 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                 # barrier must reach the bridge first, without clearing the selected ID.
                 gb.observation_barrier = f'F {gb.frame} {captured_ns} 0 OBS 0\n'.encode()
         selected = 0 if gb.selection_reset else int(gb.state.get('id', 0))
+        _handoff_locked(gb, selected, frame_t)   # 11-13: LWIR_FOLLOW_HANDOFF=1 only
         real = stab_people_real(gb.people, correction, float(APP.LIVE_W), float(APP.LIVE_H))
         rows = [' %d %.1f %.1f %.1f %.1f %.3f' %
                 (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real]

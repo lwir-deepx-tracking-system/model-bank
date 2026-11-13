@@ -85,6 +85,26 @@ void test_aim_screen_y()
     check(!mid.stop() && std::fabs(mid.error_y - (240 - 160) / 240.0) < 1e-6, "aim-screen-y 1/3: aim point at the centre is 80 px below the target");
 }
 
+// ---------- 6: --far-gain / --brake-px-per-spd shape the speed demand; defaults leave it unchanged
+void test_far_gain_and_brake()
+{
+    const auto speed = [](double far_gain, double brake, double ex_px) {
+        SmoothingConfig s; s.far_gain = far_gain; s.brake_px_per_spd = brake;
+        AutoControlConfig a = control_config(); a.speed_max = 100;
+        AutoTrackingController c(a, s);
+        FrameMetadata m; m.frame_id = 1; m.captured_at = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+        return c.calculate(person(ex_px / 320.0, 0.0), 640, 480, m).speed;
+    };
+    const double p150 = 30.0 * 150.0 / 320.0;   // the PD demand of a first frame (no D yet) at 150 px
+    check(std::fabs(speed(1.0, 0.0, 150) - p150) < 1e-9, "far gain / brake off: speed = PD demand (team rule)");
+    check(std::fabs(speed(2.0, 0.0, 50) - 30.0 * 50 / 320.0) < 1e-9, "far gain 2: no change below far_start (64 px)");
+    check(std::fabs(speed(2.0, 0.0, 200) - 2.0 * 30.0 * 200 / 320.0) < 1e-9, "far gain 2: full gain beyond far_full (160 px)");
+    check(std::fabs(speed(2.0, 0.0, 112) - 1.5 * 30.0 * 112 / 320.0) < 1e-9, "far gain 2: half way at 112 px");
+    check(std::fabs(speed(1.0, 4.0, 150) - std::min(p150, (150 - 19.2) / 4.0)) < 1e-9, "brake 4: no cap where the cap is above the demand");
+    check(std::fabs(speed(4.0, 4.0, 150) - (150 - 19.2) / 4.0) < 1e-9, "far gain 4 + brake 4: capped at (|e| - deadband) / 4");
+    check(speed(4.0, 40.0, 40) >= 1.0, "brake never asks less than the minimum speed while moving");
+}
+
 // ---------- executor with a recording fake device
 struct Command { int x, y, speed; bool stop; std::chrono::steady_clock::time_point at{}; };
 struct Recorder {
@@ -213,6 +233,7 @@ int main()
     test_reversal();
     test_soft_stop();
     test_aim_screen_y();
+    test_far_gain_and_brake();
     std::printf(failures ? "FAILED %d\n" : "ALL OK\n", failures);
     return failures ? 1 : 0;
 }
