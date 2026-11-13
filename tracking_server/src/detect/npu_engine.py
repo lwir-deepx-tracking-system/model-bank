@@ -4,7 +4,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE, anchors
-from ..detect.model_scan import BANK, E2E_KEYS
+from ..detect.model_scan import BANK, E2E_KEYS, RAW_KEYS, raw_shape
 
 
 def join_tiles(left, right, out=None):   # = tile_compact_17/runtime.py join_tiles (copied so that the module's torch import is not needed)
@@ -35,6 +35,10 @@ class Engine:
             H, W = APP.det_shape[model]; assert self.in_shape == (1, H, W, 3), i
             assert len(outs) == 1 and tuple(int(d) for d in outs[0]['shape']) == (1, 300, 6), outs
             self.slots = [np.empty((1, 300, 6), np.float32)]
+        elif model in RAW_KEYS:   # 11-13: one decoded output over all anchors, [1,20,N] (YOLOv8 form) or [1,N,21] (YOLOX form); the host only does NMS (detect_frame.raw_decoded)
+            H, W = APP.det_shape[model]; shp_ = raw_shape(RAW_KEYS[model], anchors(H, W)); assert self.in_shape == (1, H, W, 3), i
+            assert len(outs) == 1 and tuple(int(d) for d in outs[0]['shape']) == shp_, outs
+            self.slots = [np.empty(shp_, np.float32)]
         elif model in APP.det_shape:
             H, W = APP.det_shape[model]; self.n = anchors(H, W); assert self.in_shape == (1, H, W, 3), i
             if APP.args.split6:

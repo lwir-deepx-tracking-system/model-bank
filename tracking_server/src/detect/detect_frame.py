@@ -3,7 +3,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import PERSON_CLS
-from ..detect.model_scan import S6_DETS, W480_DETS, E2E_DETS
+from ..detect.model_scan import S6_DETS, W480_DETS, E2E_DETS, RAW_DETS
 
 
 def avg_merge(ra, rb):   # claude_tt75_deploy_01 AvgMerge: element-wise average of the two towers' raw boxes / score logits
@@ -11,9 +11,25 @@ def avg_merge(ra, rb):   # claude_tt75_deploy_01 AvgMerge: element-wise average 
     return APP.mrg_out
 
 
+RAW_BUF = {}   # anchors N -> [1,20,N] work buffer of raw_decoded (used by the frame-loop thread only, like the Decoder buffers)
+def raw_decoded(kind, out):
+    """11-13 (user): the one output of a 'v8' / 'yolox' model (model_scan.RAW_DETS) -> the float32 C-contiguous [1,20,N] array that fast_nms reads
+    (rows 0..3 = cx,cy,w,h in model pixels, rows 4..19 = 16 class scores in 0..1) = the same form Decoder gives for a six-head model, so the score threshold and NMS are shared.
+    'v8' [1,20,N]: already that form (the file's own CPU part did the box decode and the sigmoid). 'yolox' [1,N,21]: per anchor cx,cy,w,h, objectness, 16 class scores
+    (pixels and 0..1 already); score = objectness x class score (the YOLOX rule)."""
+    if kind == 'v8': return np.ascontiguousarray(out, np.float32).reshape(1, 20, -1)
+    o = np.asarray(out, np.float32).reshape(-1, 21); n = o.shape[0]; y = RAW_BUF.get(n)
+    if y is None: y = RAW_BUF[n] = np.empty((1, 20, n), np.float32)
+    y[0, :4] = o[:, :4].T; np.multiply(o[:, 5:].T, o[:, 4], out=y[0, 4:])
+    return y
+
+
 def _detect(ra, rb):     # raw NPU outputs -> NMS detections in FRAME coordinates (512x640), columns x1,y1,x2,y2,conf,cls
     if APP.args.det in E2E_DETS:   # v30: end-to-end head; rows are x1,y1,x2,y2,score,class in model pixels, already one box per object (no host NMS)
         p_ = ra[0].reshape(-1, 6); p_ = p_[(p_[:, 4] > .001) & (p_[:, 2] > p_[:, 0]) & (p_[:, 3] > p_[:, 1])].astype(np.float32); p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
+        return p_
+    if APP.args.det in RAW_DETS:   # 11-13: one decoded output (YOLOv8 / YOLOX form) -> the same host NMS as the six-head models, model y -> frame y
+        p_ = APP.fast_nms(raw_decoded(RAW_DETS[APP.args.det], ra[0])).copy(); p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
         return p_
     if APP.args.det == 's640':   # v16: outputs by name (boxes, scores), model y -> frame y
         p_ = APP.fast_nms(APP.dec_s(ra if APP.a.names[0] == 'boxes' else ra[::-1])).copy(); p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
