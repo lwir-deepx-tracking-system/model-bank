@@ -132,14 +132,169 @@ class PartialCrop:
         return labels
 
 
-def add_partial_crop(dataset, p=0.5, zoom=(1.4, 4.0), seed=None):
-    """Insert PartialCrop right after the first block of the training transforms (Mosaic / CopyPaste / RandomPerspective)."""
+class Occlude:
+    """Objects in front of a person (experiment C, user 2026-11-13: "물체가 가려진 경우"). With probability p one person gets an occluder:
+      bottom (50 %): a desk-like band from somewhere between the chest and the hips down past the box bottom, a bit wider than the person;
+      side   (25 %): the left or right 30-60 % of the person, full height (a door frame, a pillar, another person);
+      block  (25 %): a rectangle of 20-50 % of the box area inside the box.
+    The occluder is a patch of the SAME picture taken where no person is (thermal background: walls, desks), so the texture is real; if no such place
+    is found in 12 tries it is the picture's median grey plus noise. Every keypoint of every person under the occluder that was visible (flag 2) becomes
+    "labelled, not visible" (flag 1) with its position kept. Boxes are not changed (in body-box mode the box is the whole body anyway). A person with no
+    visible keypoint left in the picture is dropped (nothing of them can be seen any more)."""
+
+    BANK_MAX = 300
+
+    def __init__(self, p=0.5):
+        # v2: most pictures of the public set are filled by the person, so a person-free patch of the same picture is rare and the first version
+        # mostly pasted flat grey. Textured person-free patches (std > 8, not the grey padding) are now collected from every picture into a small
+        # per-worker bank and used, resized, when the current picture has no free place. Flat grey + noise is the last fallback only.
+        self.p = p; self.bank = []
+
+    def _collect(self, img, clip):
+        import random as _r
+        h, w = img.shape[:2]
+        for _ in range(3):
+            pw, ph = _r.randint(24, max(24, w // 3)), _r.randint(24, max(24, h // 3))
+            if pw >= w or ph >= h: return
+            sx, sy = _r.randrange(0, w - pw), _r.randrange(0, h - ph)
+            s = np.array([sx, sy, sx + pw, sy + ph], np.float32)
+            if len(clip):
+                iw = np.clip(np.minimum(s[2], clip[:, 2]) - np.maximum(s[0], clip[:, 0]), 0, None); ih = np.clip(np.minimum(s[3], clip[:, 3]) - np.maximum(s[1], clip[:, 1]), 0, None)
+                if (iw * ih).max(initial=0) > 0.02 * pw * ph: continue
+            p_ = img[sy:sy + ph, sx:sx + pw]
+            if float(p_.std()) < 8 or float(np.mean(np.abs(p_.astype(np.float32) - 114) < 2)) > 0.3: continue
+            if len(self.bank) >= self.BANK_MAX: self.bank[_r.randrange(self.BANK_MAX)] = p_.copy()
+            else: self.bank.append(p_.copy())
+            return
+
+    def __call__(self, labels):
+        import random as _r
+        inst = labels.get('instances')
+        if inst is None or inst.keypoints is None: return labels
+        if not inst.normalized and len(inst):
+            inst.convert_bbox(format='xyxy')
+            c0 = inst.bboxes.astype(np.float32).copy(); hh, ww = labels['img'].shape[:2]
+            c0[:, [0, 2]] = c0[:, [0, 2]].clip(0, ww); c0[:, [1, 3]] = c0[:, [1, 3]].clip(0, hh)
+            self._collect(labels['img'], c0)
+        if len(inst) == 0 or _r.random() >= self.p:
+            return labels
+        assert not inst.normalized and inst.keypoints.shape[-1] == 3
+        inst.convert_bbox(format='xyxy')
+        img = labels['img']; h, w = img.shape[:2]
+        box = inst.bboxes.astype(np.float32); kp = inst.keypoints.astype(np.float32).copy()
+        clip = box.copy(); clip[:, [0, 2]] = clip[:, [0, 2]].clip(0, w); clip[:, [1, 3]] = clip[:, [1, 3]].clip(0, h)
+        ok = np.flatnonzero(((clip[:, 2] - clip[:, 0]) > 12) & ((clip[:, 3] - clip[:, 1]) > 12))
+        if not len(ok): return labels
+        i = int(ok[_r.randrange(len(ok))]); x1, y1, x2, y2 = clip[i]; bw, bh = x2 - x1, y2 - y1
+        # v3 (user 2026-11-13, a person behind a monitor with only the top of the head showing): half of the occluders are HEAVY and leave only
+        # 10-40 % of the person (head top, a shoulder), the other half cover 20-50 % as before.
+        heavy = _r.random() < 0.5
+        mode = _r.random()
+        if mode < 0.5:
+            top = y1 + (_r.uniform(0.10, 0.40) if heavy else _r.uniform(0.25, 0.7)) * bh
+            r = (x1 - _r.uniform(0, 0.2) * bw, top, x2 + _r.uniform(0, 0.2) * bw, y2 + 0.1 * bh)
+        elif mode < 0.75:
+            f = _r.uniform(0.6, 0.9) if heavy else _r.uniform(0.3, 0.6)
+            r = (x1 - 2, y1 - 2, x1 + f * bw, y2 + 2) if _r.random() < 0.5 else (x2 - f * bw, y1 - 2, x2 + 2, y2 + 2)
+        else:
+            a = (_r.uniform(0.6, 0.85) if heavy else _r.uniform(0.2, 0.5)) * bw * bh; asp = _r.uniform(0.5, 2.0)
+            rw, rh = min(bw, (a * asp) ** 0.5), min(bh, (a / asp) ** 0.5)
+            ox, oy = x1 + _r.uniform(0, bw - rw), y1 + _r.uniform(0, bh - rh)
+            r = (ox, oy, ox + rw, oy + rh)
+        rx1, ry1 = int(max(0, r[0])), int(max(0, r[1])); rx2, ry2 = int(min(w, r[2])), int(min(h, r[3]))
+        if rx2 - rx1 < 4 or ry2 - ry1 < 4: return labels
+        pw, ph = rx2 - rx1, ry2 - ry1
+        patch = None
+        for _ in range(12):
+            sx, sy = _r.randrange(0, max(1, w - pw + 1)), _r.randrange(0, max(1, h - ph + 1))
+            s = np.array([sx, sy, sx + pw, sy + ph], np.float32)
+            iw = np.clip(np.minimum(s[2], clip[:, 2]) - np.maximum(s[0], clip[:, 0]), 0, None); ih = np.clip(np.minimum(s[3], clip[:, 3]) - np.maximum(s[1], clip[:, 1]), 0, None)
+            if (iw * ih).max(initial=0) < 0.05 * pw * ph:
+                cand = img[sy:sy + ph, sx:sx + pw]
+                if float(cand.std()) >= 8 and float(np.mean(np.abs(cand.astype(np.float32) - 114) < 2)) <= 0.3:
+                    patch = cand.copy(); break
+        if patch is None and self.bank:
+            import cv2
+            b_ = self.bank[_r.randrange(len(self.bank))]
+            patch = cv2.resize(b_, (pw, ph), interpolation=cv2.INTER_LINEAR)
+            if patch.ndim == 2 and img.ndim == 3: patch = patch[..., None].repeat(img.shape[2], 2)
+            if patch.ndim == 3 and img.ndim == 3 and patch.shape[2] != img.shape[2]: patch = patch[..., :1].repeat(img.shape[2], 2)
+        if patch is None:
+            med = np.median(img.reshape(-1, img.shape[-1] if img.ndim == 3 else 1), 0)
+            noise = np.random.default_rng(_r.randrange(1 << 30)).normal(0, 6, (ph, pw) + img.shape[2:])
+            patch = np.clip(med + noise, 0, 255).astype(img.dtype)
+        img = img.copy(); img[ry1:ry2, rx1:rx2] = patch; labels['img'] = img
+        under = (kp[..., 0] >= rx1) & (kp[..., 0] <= rx2) & (kp[..., 1] >= ry1) & (kp[..., 1] <= ry2) & (kp[..., 2] == 2)
+        kp[..., 2][under] = HIDDEN
+        seen = ((kp[..., 2] == 2) & ~_outside(kp[..., 0], kp[..., 1], w, h)).any(1)
+        # v3: also keep a person whose keypoints are all hidden while at least 10 % of the visible box is still uncovered (hair, a shoulder):
+        # the model has to find people from such a remnant too.
+        ow = np.clip(np.minimum(rx2, clip[:, 2]) - np.maximum(rx1, clip[:, 0]), 0, None); oh = np.clip(np.minimum(ry2, clip[:, 3]) - np.maximum(ry1, clip[:, 1]), 0, None)
+        area = np.maximum((clip[:, 2] - clip[:, 0]) * (clip[:, 3] - clip[:, 1]), 1e-6)
+        left = 1 - ow * oh / area
+        seen = seen | ((left >= 0.10) & ((kp[..., 2] > 0).sum(1) >= 2))
+        from ultralytics.utils.instance import Instances
+        labels['instances'] = Instances(box[seen], inst.segments[seen] if len(inst.segments) == len(seen) else inst.segments[:0], kp[seen], bbox_format='xyxy', normalized=False)
+        labels['cls'] = labels['cls'][seen]
+        return labels
+
+
+class ThermalLook:
+    """Picture-quality changes of a thermal camera (user 2026-11-13: "가우시안 블러 등도 적용해"). Pixels only; labels are not changed.
+    Applied after the geometric steps, each with its own probability, in this order:
+      defocus blur  p .30  Gaussian, sigma 0.5-2.5 px      (close people are often out of focus on our camera)
+      motion blur   p .15  line kernel 5-15 px, any angle  (gimbal turning, person walking)
+      low resolution p .15 down to 40-80 %, back up        (small or far people, cheap optics)
+      gain / level  p .50  contrast x0.7-1.3, level +-25, gamma 0.7-1.4   (the 16->8 bit stretch changes with the scene)
+      sensor noise  p .30  Gaussian, sigma 2-8 grey levels
+      stripe noise  p .10  per-column offset, sigma 1-5    (thermal column pattern)
+    The grey padding outside the picture (value 114) is left as it is."""
+
+    def __call__(self, labels):
+        import random as _r
+        import cv2
+        img = labels['img']
+        pad = np.all(img == 114, axis=-1) if img.ndim == 3 else (img == 114)
+        x = img.astype(np.float32)
+        h, w = x.shape[:2]
+        if _r.random() < 0.30:
+            x = cv2.GaussianBlur(x, (0, 0), _r.uniform(0.5, 2.5))
+        if _r.random() < 0.15:
+            k = _r.randrange(5, 16, 2); ker = np.zeros((k, k), np.float32); ker[k // 2, :] = 1.0
+            M = cv2.getRotationMatrix2D((k / 2 - 0.5, k / 2 - 0.5), _r.uniform(0, 180), 1.0)
+            ker = cv2.warpAffine(ker, M, (k, k)); ker /= max(ker.sum(), 1e-6)
+            x = cv2.filter2D(x, -1, ker)
+        if _r.random() < 0.15:
+            f = _r.uniform(0.4, 0.8)
+            x = cv2.resize(cv2.resize(x, (max(8, int(w * f)), max(8, int(h * f))), interpolation=cv2.INTER_AREA), (w, h), interpolation=cv2.INTER_LINEAR)
+        if x.ndim == 2: x = x[..., None]
+        if _r.random() < 0.50:
+            g = _r.uniform(0.7, 1.4)
+            x = 255.0 * np.power(np.clip(x / 255.0, 0, 1), g)
+            x = (x - 128.0) * _r.uniform(0.7, 1.3) + 128.0 + _r.uniform(-25, 25)
+        if _r.random() < 0.30:
+            x = x + np.random.default_rng(_r.randrange(1 << 30)).normal(0, _r.uniform(2, 8), (h, w, 1)).astype(np.float32)
+        if _r.random() < 0.10:
+            x = x + np.random.default_rng(_r.randrange(1 << 30)).normal(0, _r.uniform(1, 5), (1, w, 1)).astype(np.float32)
+        out = np.clip(x, 0, 255).astype(np.uint8)
+        if out.shape[-1] != img.shape[-1] if img.ndim == 3 else False: out = np.repeat(out[..., :1], img.shape[-1], -1)
+        if img.ndim == 2: out = out[..., 0]
+        out[pad] = img[pad]
+        labels['img'] = out
+        return labels
+
+
+def add_partial_crop(dataset, p=0.5, zoom=(1.4, 4.0), seed=None, occlude_p=0.0, thermal_look=False):
+    """Insert PartialCrop (and, if occlude_p > 0, Occlude after it) right after the first block of the training transforms."""
     from ultralytics.data.augment import Compose, RandomPerspective
     t = dataset.transforms
     assert isinstance(t, Compose) and isinstance(t.transforms[0], Compose) and any(isinstance(x, RandomPerspective) for x in t.transforms[0].transforms), \
         'unexpected transform layout: %r' % (t,)
     assert not any(isinstance(x, PartialCrop) for x in t.transforms)
     t.insert(1, PartialCrop(p=p, zoom=zoom, seed=seed))
+    k = 2
+    if occlude_p > 0: t.insert(k, Occlude(p=occlude_p)); k += 1
+    if thermal_look: t.insert(k, ThermalLook())
     return dataset
 
 
@@ -243,7 +398,7 @@ def add_body_box_val(dataset):
     return dataset
 
 
-def make_trainer(partial_p=0.5, zoom=(1.4, 4.0), body_box_template=None):
+def make_trainer(partial_p=0.5, zoom=(1.4, 4.0), body_box_template=None, occlude_p=0.0, thermal_look=False):
     """PoseTrainer whose training dataset has PartialCrop. The saved checkpoint is a stock PoseModel (no dependency on this file).
     body_box_template = path of template_points.npy switches body-box mode on (see BODY above)."""
     install()
@@ -255,7 +410,7 @@ def make_trainer(partial_p=0.5, zoom=(1.4, 4.0), body_box_template=None):
             ds = super().build_dataset(img_path, mode, batch)
             if mode == 'train':
                 assert float(self.args.mosaic) == 0.0 and int(self.args.close_mosaic) == 0, 'run with mosaic=0 close_mosaic=0 (see module text)'
-                add_partial_crop(ds, p=partial_p, zoom=zoom)
+                add_partial_crop(ds, p=partial_p, zoom=zoom, occlude_p=occlude_p, thermal_look=thermal_look)
             else:
                 add_body_box_val(ds)
             return ds

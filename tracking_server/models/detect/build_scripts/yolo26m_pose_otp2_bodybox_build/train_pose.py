@@ -34,6 +34,8 @@ def main():
     ap.add_argument('--fast', type=int, default=1); ap.add_argument('--patience', type=int, default=15)
     # body-box mode (user, 11-13): --template <template_points.npy> makes the box label the unclipped body box (pose_partial.BODY)
     ap.add_argument('--template', default=None)
+    ap.add_argument('--occlude-p', type=float, default=0.0)        # experiment C: objects in front of people (pose_partial.Occlude)
+    ap.add_argument('--thermal-look', type=int, default=0)         # blur / noise / gain changes (pose_partial.ThermalLook)
     # Fine-tuning settings. The first run (optimizer=auto -> AdamW 0.002, warmup_bias_lr 0.1 for 3 epochs) fell from pose mAP 0.79 to 0.20 after
     # epoch 1 and needed 12 epochs to get back to 0.65. Lower rate, short warm-up, no bias boost.
     ap.add_argument('--lr0', type=float, default=0.0005); ap.add_argument('--warmup-epochs', type=float, default=1.0)
@@ -47,17 +49,18 @@ def main():
     settings.update(wandb=a.wandb == 'on')
     run = Path(a.project) / a.name
     if run.exists(): raise SystemExit('run folder already exists: %s (use a new --name)' % run)
-    Trainer = pose_partial.make_trainer(partial_p=a.partial_p, body_box_template=a.template)
+    Trainer = pose_partial.make_trainer(partial_p=a.partial_p, body_box_template=a.template, occlude_p=a.occlude_p, thermal_look=bool(a.thermal_look))
     over = dict(model=a.weights, data=a.data, epochs=a.epochs, batch=a.batch, imgsz=a.imgsz, device=a.device, workers=a.workers, seed=a.seed,
                 project=a.project, name=a.name, exist_ok=False, fraction=a.fraction, plots=True, save_period=10, patience=a.patience,
                 amp=True, deterministic=not a.fast, cache='ram' if a.fast else False,
                 optimizer='AdamW', lr0=a.lr0, lrf=0.1, warmup_epochs=a.warmup_epochs, warmup_bias_lr=0.0,
-                mosaic=0.0, close_mosaic=0, mixup=0.0, copy_paste=0.0, scale=0.5, translate=0.2, degrees=5.0, fliplr=0.5, hsv_h=0.0, hsv_s=0.0, hsv_v=0.4)
+                mosaic=0.0, close_mosaic=0, mixup=0.0, copy_paste=0.0, scale=0.5, translate=0.2, degrees=5.0, fliplr=0.5, hsv_h=0.0, hsv_s=0.0,
+                hsv_v=0.0 if a.thermal_look else 0.4)          # ThermalLook does the brightness changes itself
     t = Trainer(overrides=over)
     manifest = dict(started=time.strftime('%Y-%m-%d %H:%M:%S'), args=vars(a), overrides=over, ultralytics=ultralytics.__version__, torch=torch.__version__,
                     cuda=torch.version.cuda, gpu=torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
                     sha256=dict(weights=sha(a.weights), train_pose=sha(__file__), pose_partial=sha(Path(__file__).with_name('pose_partial.py')), data_yaml=sha(a.data)),
-                    patches=dict(hidden_flag=pose_partial.HIDDEN, area_thr=pose_partial.AREA_THR))
+                    patches=dict(hidden_flag=pose_partial.HIDDEN, area_thr=pose_partial.AREA_THR, occlude_p=a.occlude_p, body_box=a.template is not None, thermal_look=bool(a.thermal_look)))
     t.save_dir.mkdir(parents=True, exist_ok=True)
     (t.save_dir / 'RUN_MANIFEST.json').write_text(json.dumps(manifest, indent=1))
     t.train()
