@@ -72,6 +72,7 @@ while :; do
   tracker_pid=$!
   wait "$tracker_pid"
   status=$?
+  printf 'TRACKING SERVER EXIT pid=%s status=%s\n' "$tracker_pid" "$status" >> real_gui_1.out
   tracker_pid=
   [ "$status" -eq 75 ] || exit "$status"
   if pgrep -x lwir_benchmark >/dev/null || fuser "$GIMBAL_DEV" >/dev/null 2>&1; then

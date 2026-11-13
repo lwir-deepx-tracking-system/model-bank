@@ -1,7 +1,7 @@
 #!/bin/bash
 # LWIR live server keep-alive v2 (2026-11-09). User requirement: once started, the tracker must never go off or stop.
 # Runs forever; cron starts it every minute under flock, so there is never a second copy and a dead copy is replaced within a minute:
-#   * * * * * flock -n $HOME/.lwir_keepalive.lock bash <clone>/tracking_server/scripts/keepalive.sh >> $HOME/lwir_keepalive.log 2>&1
+#   * * * * * flock -n --close $HOME/.lwir_keepalive.lock bash <clone>/tracking_server/scripts/keepalive.sh >> $HOME/lwir_keepalive.log 2>&1
 # Every 5 s it reads GET /healthz of the live server (read-only; it never POSTs /gimbal/ping, which is the web page's safety heartbeat) and restarts the server when
 #   - the python server process is missing (crash, killed, board rebooted),
 #   - /healthz does not answer for 30 s (6 checks in a row),
