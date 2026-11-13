@@ -106,6 +106,7 @@ function rpLoadFinal(){rpEvalSetMode('final');rpEvalFinal=null;rpEvalPending=tru
 EVDR.addEventListener('change',()=>{evDrawT=Date.now();fetch('/replay/eval/draw?on='+(EVDR.checked?1:0),{method:'POST',headers:{'X-Gimbal':'1'}}).catch(()=>{});});
 // ---- under the picture: seek bar (one copy) and the comparison strip (same data as the block above: GET /replay -> eval)
 const RB=$('rpbar'),RSK=$('rpseek'),RPL=$('rpplay'),RRETURN=$('rpreturn'),RM10=$('rpm10'),RP10=$('rpp10'),RSL=$('rpslider'),RTM=$('rptime'),RJN=$('rpjn'),RGO=$('rpgo'),RCM=$('rpcm'),RNUM=$('rpnum'),RNHD=$('rpnhd'),RMAIN=$('rpmain'),ROLD=$('rpold'),RFOOT=$('rpfoot'),RIDS=$('rpids');
+const RSTEP=$('rpstep');
 let rpDrag=false,rpHold=null,rpHoldT=0,rpCmT=0;
 function fmtT(s){s=Math.max(0,Math.round(s));const m=Math.floor(s/60),x=s%60;return (m<10?'0':'')+m+':'+(x<10?'0':'')+x;}
 function nchip(l,v,cls){return '<span class="rpc'+(cls?' '+cls:'')+'">'+l+' <b>'+v+'</b></span>';}
@@ -122,6 +123,7 @@ function barShow(r,viewEval){
     if(!rpDrag&&shown!=null)RSL.value=shown;
     const dis=st.busy||st.pos==null;
     RSL.disabled=RM10.disabled=RP10.disabled=RPL.disabled=RGO.disabled=RJN.disabled=dis;
+    RSTEP.disabled=dis||!st.paused||rpEnded(st)||!!st.seeking;
     RPL.textContent=rpEnded(st)?'처음부터':st.paused?'재생':'일시정지';
     RJN.max=tot;if(document.activeElement!==RJN)RJN.placeholder=shown!=null?String(Number(shown)+1):'';
     RTM.textContent=shown==null?'불러오는 중…':fmtT(shown/fps)+' / '+fmtT((tot-1)/fps)+' · '+(Number(shown)+1)+' / '+tot+'번째 장'+(st.paused?' · 멈춤':'')+(st.seeking?' · 건너뛰는 중':'')+(st.pass>1?' · 구간 '+st.pass:'');
@@ -157,6 +159,7 @@ addEventListener('pointerup',()=>{if(rpDrag){rpDrag=false;}});
 RPL.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on){if(st.paused||rpEnded(st)){rpEvalSetMode('live');rpRenderEval(rpLast||{});rpctl('/replay/play');}else rpctl('/replay/pause');}});
 RM10.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on&&st.pos!=null)rpSeek((rpHold!=null?rpHold:st.pos)-10*(st.fps||25));});
 RP10.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on&&st.pos!=null)rpSeek((rpHold!=null?rpHold:st.pos)+10*(st.fps||25));});
+RSTEP.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(st&&st.on&&st.paused){rpEvalSetMode('live');rpctl('/replay/step');}});
 function rpGo(){const st=rpLast&&rpLast.state;if(!st||!st.on)return;const n=Math.round(Number(RJN.value));if(!(n>=1&&n<=st.total)){rpMsgBar('장 번호는 1 ~ '+st.total);return;}RJN.value='';rpSeek(n-1);}
 RGO.addEventListener('click',rpGo);RJN.addEventListener('keydown',e=>{if(e.key==='Enter')rpGo();});
 if(window.ResizeObserver)new ResizeObserver(()=>{

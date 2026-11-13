@@ -262,6 +262,9 @@ class Control:
     def __init__(self, say):
         self.lk, self.ev, self.say = threading.Lock(), threading.Event(), say
         self.seek = self.paused = self.speed = None
+        self.step = 0
+        self.clear_steps = False
+        self.step_paused = False
         self.n = self.bad = 0
 
     def start(self):
@@ -278,12 +281,20 @@ class Control:
                     with self.lk:
                         if k == 'SEEK' and (len(f) == 2 or (len(f) == 3 and f[2].upper() == 'PAUSE')):
                             self.seek = int(f[1])
+                            self.step = 0
+                            self.clear_steps = True
                             if len(f) == 3:
-                                self.paused = True
+                                self.paused = self.step_paused = True
                         elif k == 'SPEED' and len(f) == 2:
                             self.speed = float(f[1])
                         elif k in ('PAUSE', 'PLAY') and len(f) == 1:
-                            self.paused = k == 'PAUSE'
+                            self.paused = self.step_paused = k == 'PAUSE'
+                            if not self.paused:
+                                self.step = 0
+                                self.clear_steps = True
+                        elif k == 'STEP' and len(f) == 1:
+                            if self.step_paused:
+                                self.step += 1
                         else:
                             self.bad += 1
                             continue
@@ -297,8 +308,10 @@ class Control:
 
     def take(self):
         with self.lk:
-            c = (self.seek, self.paused, self.speed)
+            c = (self.seek, self.paused, self.speed, self.step, self.clear_steps)
             self.seek = self.paused = self.speed = None
+            self.step = 0
+            self.clear_steps = False
             self.ev.clear()
         return c
 
@@ -428,6 +441,8 @@ def main():
         next_rep = 0.0
         seq = 0
         t_prev_ns = 0
+        steps_left = 0
+        stepping = False
 
         def emit(b, p, png, repeat):
             nonlocal seq, t_prev_ns
@@ -446,7 +461,11 @@ def main():
 
         while True:
             if ctl is not None:
-                c_seek, c_paused, c_speed = ctl.take()
+                c_seek, c_paused, c_speed, c_step, c_clear_steps = ctl.take()
+                if c_clear_steps:
+                    steps_left = 0
+                    if stepping:
+                        first = stepping = False
                 if c_speed is not None and 0.1 <= c_speed <= 240:
                     fps = c_speed
                     period = 1.0 / fps
@@ -474,6 +493,17 @@ def main():
                     elif not first:
                         due = clock()
                     say('REPLAY CMD %s at %d' % ('pause' if paused else 'play', cur_pos))
+                if paused and not seek_wait and not at_end:
+                    steps_left += c_step
+            if not paused or at_end or seek_wait or pos >= total:
+                steps_left = 0
+                if stepping:
+                    first = stepping = False
+            elif not first and steps_left > 0:
+                steps_left -= 1
+                first = stepping = True  # 다음 한 장만 보통 프레임으로 보낸다 (되풀이 표시 없음).
+                due = clock()
+                say('REPLAY CMD step %d -> %d' % (cur_pos, pos))
             if (paused or at_end) and not first:   # 멈춤: 같은 프레임을 되풀이로 (조종 줄이 오면 바로 깬다)
                 d = next_rep - clock()
                 if d > 0:
@@ -543,7 +573,7 @@ def main():
             sent += 1
             pos += 1
             due = next_deadline(due, clock(), period, no_skip=a.no_skip, pacing=a.pacing)
-            first = False
+            first = stepping = False
             if hold_at_end and pos == total:
                 at_end = True
                 say('REPLAY END: holding final frame')
