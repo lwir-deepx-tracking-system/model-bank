@@ -80,7 +80,7 @@
   - 공개 자료 검증(PC, INT8 아님): 자세 mAP50-95 0.815 (시작 가중치 0.79)
   - 장치 녹화 재생 1회(`rec_inside_20261110_170437`, 107장, 15fps): 가까운 사람 1명을 107장 내내 같은 번호, 번호 바뀜 0. recall 22%·precision 60%는 정답이 보이는 부분 상자라 정의가 달라서이고, 뒤쪽의 작게 보이는 사람은 거의 못 찾습니다(근거리 자료로만 학습).
   - 조준: 얼굴과 가슴 사이를 가운데에 두려면 `LWIR_GIMBAL_AIM_Y=0.37` (몸 네모 위에서 37%)
-  - 보정 97장(우리 카메라), ema, opt 1. 만든 스크립트 `build_scripts/yolo26m_bodybox_close_build/`
+  - 보정 97장(우리 카메라), ema, opt 1. 만든 스크립트 `build_scripts/yolo26m_pose_otp2_bodybox_build/`
   - 상태: 근거리 시험용. 장치 INT8 정확도와 실카메라 성능 미측정
 - **실내 fine-tuning patch 판 (11-11) · YOLO26m_(FLIR) 640x480**
   - 파일 `yolo26m/yolo26m_flir_inside_20261111_patch_640x480.dxnn`
