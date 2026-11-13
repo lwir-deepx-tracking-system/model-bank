@@ -312,6 +312,14 @@ int main(int argc, char** argv)
   // last such run was relative to the last frame. Two stalls so far (11-12 15:49, 11-13 14:45) came 279 s and 238 s after an
   // open with nothing in the log to tell whether the shutter had just closed; the next one will show it. Nothing else changes.
   bool rep_seen = false; long rep_len = 0; auto rep_start = clk::now(), rep_end = clk::now();
+  // v2.10 (11-13): TIMES WITHOUT ANY FRAME, IN THE LOG. Now and then the camera input drops for a moment (15.7 fps in one
+  // second at 15:09:33, longest gaps of 0.49 and 0.56 s in earlier runs) and nothing said why. Every time GAP_LOG_MS or more
+  // passes between two frames taken from the engine, an INPUT_GAP line says how the time was spent: how many reads came back
+  // empty (the engine had no frame: camera or USB), the longest single read (a read that hung), the longest wait between two
+  // reads (this program was not given the CPU), whether the frame after the gap is a repeat, and where the last long run of
+  // repeats (shutter) was. Only log lines are added; frames, pacing and the duplicate filter are as in v2.8.
+  const double GAP_LOG_MS = 150.0;
+  bool gp_have = false; auto gp_last_ok = clk::now(), gp_prev_end = clk::now(); long gp_fail = 0, gp_empty = 0; double gp_max_call = 0, gp_max_wait = 0;
   std::fprintf(stderr, "DUPLICATE_FILTER holds back up to %ld repeated frames in a row (0 = off)\n", drop_dup_max);
   while(!g_stop && since(t0) < seconds)
   {
@@ -319,15 +327,35 @@ int main(int argc, char** argv)
     if(last_read_ok && read_period_us > 0) std::this_thread::sleep_until(last_read_start + std::chrono::microseconds(read_period_us));
     const auto read_start = clk::now();
     int r = te->RecvImage(buf.data(), true);
+    const auto read_end = clk::now();
+    {   // v2.10: what happens between two frames
+      const double call_ms = std::chrono::duration<double, std::milli>(read_end - read_start).count();
+      if(gp_fail > 0) gp_max_wait = std::max(gp_max_wait, std::chrono::duration<double, std::milli>(read_start - gp_prev_end).count());
+      gp_prev_end = read_end;
+      if(r != 1) { ++gp_fail; if(r == 4) ++gp_empty; gp_max_call = std::max(gp_max_call, call_ms); }
+    }
     last_read_ok = (r == 1); if(last_read_ok) last_read_start = read_start;
     if(g_stamp) t_rx = mono_ns();
     if(test_stall_at > 0 && !test_done && since(t0) > test_stall_at) { test_done = true; std::fputs("TEST: simulated stall", stderr); std::fputc(10, stderr); nap(STALL_S + 1.0); r = 4; }
     ++codes[r];
     if(r == 1)
     {
+      const bool same = drop_dup_max > 0 && prev_frame.size() == buf.size() && std::memcmp(prev_frame.data(), buf.data(), buf.size() * sizeof(unsigned short)) == 0;
+      if(gp_have)   // v2.10
+      {
+        const double gap_ms = std::chrono::duration<double, std::milli>(read_end - gp_last_ok).count();
+        if(gap_ms >= GAP_LOG_MS)
+        {
+          char repb[96] = "no long run of repeats yet";
+          if(dup_run > 0) std::snprintf(repb, sizeof repb, "inside a run of repeats (%ld before the gap)", dup_run);
+          else if(rep_seen) std::snprintf(repb, sizeof repb, "last long run of repeats ended %.1f s before", std::chrono::duration<double>(gp_last_ok - rep_end).count());
+          std::fprintf(stderr, "INPUT_GAP %.0f ms between frames: %ld reads without a frame (%ld empty), longest of them %.0f ms, longest wait between reads %.1f ms, frame after the gap is %s, %s, %.1f s after this open, at %s\n",
+                       gap_ms, gp_fail, gp_empty, gp_max_call, gp_max_wait, drop_dup_max > 0 ? (same ? "a repeat" : "new") : "not compared", repb, since(t_open), hms().c_str());
+        }
+      }
+      gp_have = true; gp_last_ok = read_end; gp_fail = 0; gp_empty = 0; gp_max_call = 0; gp_max_wait = 0;
       if(drop_dup_max > 0)
       {
-        const bool same = prev_frame.size() == buf.size() && std::memcmp(prev_frame.data(), buf.data(), buf.size() * sizeof(unsigned short)) == 0;
         if(same) { ++dup_run; if(dup_run == 1) rep_start = clk::now(); if(dup_run <= drop_dup_max) { ++dups_dropped; continue; } ++dups_passed; }
         else
         {
@@ -391,7 +419,7 @@ int main(int argc, char** argv)
     te = open_camera(&w, &h);
     if(!te) { std::fprintf(stderr, "REOPEN_FAILED\n"); exit_code = 3; break; }
     if(static_cast<size_t>(w) * h != buf.size()) buf.assign(static_cast<size_t>(w) * h, 0);
-    t_open = clk::now(); frame_since_open = false; tprev = t_open; tl = t_open; okl = 0; ok_open = ok;
+    t_open = clk::now(); frame_since_open = false; tprev = t_open; tl = t_open; okl = 0; ok_open = ok; gp_have = false; gp_fail = 0; gp_empty = 0; gp_max_call = 0; gp_max_wait = 0;
   }
   double secs = since(t0);
   std::fprintf(stderr, "DUPLICATE_FRAMES held back %ld, passed on %ld\n", dups_dropped, dups_passed);
