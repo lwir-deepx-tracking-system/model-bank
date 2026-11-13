@@ -304,12 +304,12 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'relabel', 'predictor', 'pred_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead_ms', 'reid', 'confirm_ms') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead_ms', 'reid', 'confirm_ms') if k_ in sv_})
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass
         qs_ = [{k_: [str(APP.SEL[k_])] for k_ in ('warm_min', 'warm_max', 'edge_birth', 'edge_px') if k_ in APP.SEL}]
-        if 'tracker' in APP.SEL: qs_.append({'tracker': [str(APP.SEL['tracker'])]})
+        if 'tracker' in APP.SEL: qs_.append(dict({'tracker': [str(APP.SEL['tracker'])]}, **({'engine': ['python']} if APP.SEL.get('engine') == 'python' else {})))   # 11-13: a saved Python engine choice comes back; everything else starts C++ first
         if 'relabel' in APP.SEL: qs_.append({'relabel': ['1' if APP.SEL['relabel'] else '0']})
         if 'predictor' in APP.SEL: qs_.append({'predictor': [str(APP.SEL['predictor'])]})
         if 'pred_show' in APP.SEL: qs_.append({'pred_show': ['1' if APP.SEL['pred_show'] else '0']})
@@ -608,8 +608,9 @@ def main():
                 with APP.RULES['lock']: pd_ = APP.RULES['pending']; APP.RULES['pending'] = None
                 if 'relabel' in pd_: APP.RULES['relabel'] = pd_['relabel']
                 if 'predictor' in pd_: pos_select(pd_['predictor'])   # v32
-                if 'tracker' in pd_ and pd_['tracker'] != APP.RULES['tracker']:
+                if 'tracker' in pd_ and (pd_['tracker'] != APP.RULES['tracker'] or pd_.get('engine', APP.RULES.get('engine', 'auto')) != APP.RULES.get('engine', 'auto')):   # 11-13: an engine change (C++ / Python) on the same tracker also makes a new tracker
                     old_ = APP.RULES['tracker']; APP.RULES['tracker'] = pd_['tracker']
+                    if 'engine' in pd_: APP.RULES['engine'] = pd_['engine']
                     for k_, a_ in (('motion', 'rebinds_motion'), ('appearance', 'rebinds_app'), ('cand_frames', 'cand_frames'), ('cand_crops', 'cand_crops'), ('sync_frames', 'sync_frames'), ('sync_crops', 'sync_crops')):
                         reb_tot[k_] += getattr(APP.tracker, a_, 0)
                     if APP.relabeler is not None: APP.relabeler.reset()

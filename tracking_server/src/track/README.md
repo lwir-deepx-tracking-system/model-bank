@@ -77,6 +77,7 @@ cd tracking_server && python3 -m unittest src.track.test_native_trackers
 
 - 빌드에는 `g++`와 `python3-config`만 씁니다. numpy 헤더는 필요 없습니다.
 - 빌드된 확장이 있으면 서버를 다시 시작한 뒤 Tracker 메뉴의 SORT·OC-SORT·BoT-SORT가 C++로 표시되고 그 구현을 씁니다. `setup.sh`도 이 빌드를 실행합니다.
+- **화면에서 고르기:** 추적기 줄을 누르면 C++로 시작합니다. 고른 추적기 아래의 엔진 줄에서 Python을 고를 수 있고, 그 선택은 저장됩니다.
 - **끄는 법:** 서버 환경에 `LWIR_NATIVE_TRACKERS=0`을 넣으면 확장이 있어도 Python을 씁니다.
 - `native_tracker_core.hpp`가 확장보다 새 파일이면 다시 빌드할 때까지 Python을 씁니다.
 - 시험은 확장이 없으면 건너뜁니다. 건너뛴 결과를 통과로 적지 않습니다.

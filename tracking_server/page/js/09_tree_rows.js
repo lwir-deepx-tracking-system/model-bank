@@ -22,7 +22,8 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const camCppControl=camCpp&&camNative.control_supported===true;
   const cpp=camCpp||replayCpp, btSelected=BT_KEYS.includes(trk)||cpp||camTransition;
   const engine=replayCpp?(replayErr?'C++ 오류 (녹화)':'C++ (녹화)'):r.tracker_backend||'미보고';
-  const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(p.backend||'백엔드 미보고'),note:p.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':TN[p.key]?TN[p.key][1]:'',sel:!cpp&&!camTransition&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
+  const eng=pend(r,'engine')||'auto',curEngine=p=>p.key===trk&&!cpp&&!camTransition;
+  const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(curEngine(p)&&eng==='python'?'Python':(p.backend||'백엔드 미보고')),note:p.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':TN[p.key]?TN[p.key][1]:'',sel:!cpp&&!camTransition&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key)+'&engine=auto')}));
   if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack · '+(camNative?.available?'C++':'Python'),note:camNative?.available?'C++ 라이브러리가 있어 C++로 시작합니다. Python은 아래 ByteTrack 옵션에서 고릅니다':'',sel:btSelected,u:Q('tracker='+encodeURIComponent(bt.key)+'&engine=auto')});
   const trackerSummary=camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
   T.push({lab:'Tracker',sub:trackerSummary,n:tn});
@@ -66,4 +67,11 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
        u:Q('tracker='+encodeURIComponent(trk==='rebind'?bt.key:'rebind'))}
     ]});
   }
+  // 11-13: engine row of the chosen SORT / OC-SORT / BoT-SORT. The tile itself starts C++ when it is built; Python is picked here.
+  ps.filter(p=>!BT_KEYS.includes(p.key)&&'engine' in r).forEach(p=>{
+    const hasNative=p.backend==='C++',python=eng==='python'||!hasNative;
+    T.push({lab:tname(p.key)+' 엔진',kidOf:3,kidKey:p.key,show:curEngine(p),n:[
+      {name:'C++',note:hasNative?'기본':'',sel:!python,lock:hasNative?'':(p.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 빌드가 없습니다'),u:Q('tracker='+encodeURIComponent(p.key)+'&engine=auto')},
+      {name:'Python',sel:python,u:Q('tracker='+encodeURIComponent(p.key)+'&engine=python')}]});
+  });
   return T;}

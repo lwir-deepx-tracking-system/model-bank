@@ -48,11 +48,20 @@ def sel_det_late(dv_, tries_=30, gap_=2.0):
     print('LAST selection model %s -> not taken (%s)' % (dv_, why_), flush=True)
 
 
+ENGINE_KINDS = ('ocsort', 'botsort', 'sort')   # trackers whose engine (C++ first, or Python) is chosen on the page
+
+
+def tracker_engine():
+    """'auto' = C++ when its extension is built (the default click), 'python' = the operator chose Python."""
+    return APP.RULES.get('engine', 'auto')
+
+
 def mk_tracker_(kind_):
+    use_native = not (kind_ in ENGINE_KINDS and tracker_engine() == 'python')
     alternative = {'ocsort': OCSortTracker, 'sort': SortTracker}.get(kind_)
     if alternative is not None:
         kwargs = dict(n_init=max(3, APP.args.n_init), class_gate=APP.args.class_gate, radius=APP.args.radius)
-        return native_backend.create(kind_, kind_, kwargs, lambda: alternative(**kwargs))
+        return native_backend.create(kind_, kind_, kwargs, lambda: alternative(**kwargs), native=use_native)
     cls = BotSortTracker if kind_ == 'botsort' else ByteTrackTracker
     py_mode = 'rebind' if kind_ == 'rebind' else 'bytetrack'
     native_mode = 'botsort' if kind_ == 'botsort' else py_mode
@@ -60,7 +69,7 @@ def mk_tracker_(kind_):
                   motion_fallback=not APP.args.no_motion_fallback, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h,
                   hybrid=True, sync_k=APP.args.sync_k, hybrid_fallback=False, radius=APP.args.radius,
                   n_init=APP.args.n_init, class_gate=APP.args.class_gate)
-    return native_backend.create(kind_, native_mode, kwargs, lambda: cls(py_mode, **kwargs))
+    return native_backend.create(kind_, native_mode, kwargs, lambda: cls(py_mode, **kwargs), native=use_native)
 
 
 def ctl_state():
@@ -90,7 +99,7 @@ def rules_state():
                     server_restart=bool(getattr(APP.LIVE, 'restart_supported', False)),
                     npu_feed=npu_feed_state(),
                     restart_pending=bool(getattr(APP.LIVE, 'restart_pending', False)), warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
-                    gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker),
+                    gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker), engine=tracker_engine(),
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
                     predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state())   # v32. v40: app / lead / gimbal / warm_on
@@ -172,6 +181,8 @@ def rules_request(q_):
         if tk_ == 'gate': return False, 'GRU 확인은 없앰 (11-10)'   # v40
         if tk_ not in ('confirm3', 'rebind', 'ocsort', 'botsort', 'sort'): return False, '없는 추적기 종류'
         pend_['tracker'] = tk_
+        if tk_ in ENGINE_KINDS:   # 11-13: the plain click means C++ first; the engine row can ask for Python
+            pend_['engine'] = 'python' if q_.get('engine', [''])[0] == 'python' else 'auto'
     if 'relabel' in q_:
         if not APP.args.relabel and q_['relabel'][0] in ('1', 'true', 'on'): return False, '재식별 모델이 이 실행에 없음'
         pend_['relabel'] = q_['relabel'][0] in ('1', 'true', 'on')

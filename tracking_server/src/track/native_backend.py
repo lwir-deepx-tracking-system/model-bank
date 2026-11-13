@@ -245,12 +245,18 @@ def _warn_once(kind: str, reason: str) -> None:
         _LOG.warning("tracker %s: using Python backend (%s)", kind, reason)
 
 
-def create(kind: str, mode: str, kwargs: dict, fallback: Callable[[], object]):
+def create(kind: str, mode: str, kwargs: dict, fallback: Callable[[], object], native: bool = True):
     """Create the same-name native tracker when valid, otherwise use fallback.
 
     ``fallback`` is always called with zero arguments. ``kwargs`` is copied
     before it reaches the native extension so the caller's mapping is untouched.
+    ``native=False`` is the operator's explicit Python choice: no extension is tried.
     """
+    if not native:
+        instance = fallback()
+        if instance is None:
+            raise RuntimeError("Python fallback factory returned None")
+        return _tag(instance, "Python")
     module, reason = _load_module(kind)
     native_mode = _native_mode(kind, mode)
     if module is not None:

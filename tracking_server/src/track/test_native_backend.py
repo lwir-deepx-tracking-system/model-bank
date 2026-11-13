@@ -119,6 +119,16 @@ class NativeBackendTests(unittest.TestCase):
         os.utime(binary, ns=(newer, newer))
         self.assertEqual(backend.backend_label("sort"), "C++")
 
+    def test_explicit_python_choice_skips_a_working_extension(self):
+        factory = Mock(return_value=FakeTracker())
+        module = self.install("ocsort", {"ocsort"}, factory)
+        with patch.object(backend, "_load_module", return_value=(module, None)) as load:
+            tracker = backend.create("ocsort", "ocsort", {"n_init": 3}, FakeTracker, native=False)
+            self.assertEqual(backend.backend_label("ocsort"), "C++")
+        self.assertEqual(backend.backend_of(tracker), "Python")
+        factory.assert_not_called()
+        load.assert_called_once()   # only by backend_label
+
     def test_missing_extension_uses_python(self):
         _, binary = self.extension_files("sort")
         binary.unlink()
