@@ -21,10 +21,12 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
     h+='<div class="ot-row'+(t.n.every(n=>n.lock)?' off':'')+'"><div class="ot-lab">'+esc(t.lab)+(t.sub?'<small>'+esc(t.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(t,i);
     h+='</div></div>';});
   if(h!==othtml){othtml=h;OT.innerHTML=h;}   // redrawn only when something changed (keeps focus and the pressed look between the 1 s refreshes)
-  const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(OTT[0]),flt=on(OTT[2]),ctl=(window.OTFOL?['따라가기']:[]).concat(on(OTT[7]));
-  const a=[pre.length?pre.join(' + '):'전처리 없음',one(OTT[1])||'검출 모델 –',flt.length?flt.join(' + '):'Filter 없음',one(OTT[3])||tname(trk)];
-  if(trk==='botsort')a.push('외형 '+(one(OTT[4])||'–'));
-  a.push(one(OTT[5])||'Kalman filter','KeepID '+(one(OTT[6])||'끔'),ctl.length?ctl.join(' + '):'수동');
+  const R=l=>OTT.find(t=>t.lab===l)||{n:[]};   // 11-13: rows by name (the '외형 모델' row moved the numbers)
+  const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(R('전처리')),flt=on(R('검출 뒤 Filter')),ctl=(window.OTFOL?['따라가기']:[]).concat(on(R('제어')));
+  const am=one(R('외형 모델')),ap=one(R('외형 비교')),kp=one(R('KeepID'));
+  const a=[pre.length?pre.join(' + '):'전처리 없음',one(R('검출 모델'))||'검출 모델 –',flt.length?flt.join(' + '):'Filter 없음',one(R('Tracker'))||tname(trk)];
+  if(trk==='botsort')a.push('외형 '+(ap==='끔'?'끔':(am||ap||'–')));
+  a.push(one(R('위치 기억 · 신뢰도'))||'Kalman filter','KeepID '+(kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'),ctl.length?ctl.join(' + '):'수동');
   OS.textContent=a.join(' → ');}
 OT.addEventListener('click',e=>{const sb=e.target.closest('.ot-sf'),fb=e.target.closest('.ot-f');
   if(sb&&sb.dataset.s){otsub[sb.dataset.s]=sb.getAttribute('aria-expanded')!=='true';OH.textContent='';otdraw();return;}   // size sub-folder: open / close, nothing is sent

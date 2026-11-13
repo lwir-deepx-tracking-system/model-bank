@@ -935,12 +935,14 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const JN='번호 잇기 판정기는 기본 모델 기준 · 미검증',FOLK='따라가기 중에는 외형 모델을 바꿀 수 없습니다. 멈춘 뒤 고르세요',SWAPH='외형 모델을 바꾸는 중 — 화면이 잠깐 멈추고 사람 번호가 새로 매겨집니다';
   const NOVIT={g:'ViT-lite',name:'ViT-lite_distillation_(TMOT,CAMEL)_202610',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',lock:'장치에 파일이 없습니다. 올리고 추적 프로그램을 다시 켜야 합니다'};
   const rn=(a,on,q,jn)=>({g:a.folder||'',name:a.name||a.key,note:(a.note||'')+(jn&&!a.judge_fit?(a.note?' · ':'')+JN:''),sel:on&&a.key===rk,lock:a.available===false?(a.why||'지금은 고를 수 없습니다'):(fol&&a.key!==rk)?FOLK:'',u:Q(q+'&reid='+encodeURIComponent(a.key)),hint:a.key!==rk?SWAPH:''});
-  if(hot)T.push({lab:'외형 비교',sub:'KeepID 와 같은 모델을 함께 씀',kidOf:3,kidKey:'botsort',show:bot,f:['RepVGG','ViT-lite'],n:[{name:'끔',note:'위치만으로 짝짓기',sel:bot&&app==='off',u:Q('app=off')}].concat(r.reids.map(a=>rn(a,bot&&app!=='off','app=repvgg',rel)),[NOVIT])});
+  // 11-13 (user): one appearance model serves both uses, so the list is drawn once (row '외형 모델' below); here only on / off
+  const rname=(r.reids&&(r.reids.find(a=>a.key===rk)||{}).name)||'';
+  if(hot)T.push({lab:'외형 비교',sub:'사람 생김새로도 짝짓기 · 모델은 아래 외형 모델',kidOf:3,kidKey:'botsort',show:bot,n:[{name:'끔',note:'위치만으로 짝짓기',sel:bot&&app==='off',u:Q('app=off')},{name:'켬',note:rname,sel:bot&&app!=='off',u:Q('app=repvgg')}]});
   else T.push({lab:'외형 비교',sub:'',kidOf:3,kidKey:'botsort',show:bot,f:['RepVGG','ViT-lite'],n:apps.map(a=>({g:AFOLD[a.key]||'',name:AN[a.key]||a.name||a.key,note:a.note||'',sel:bot&&a.key===app,lock:!bot?'BoT-SORT를 골라야 열립니다':!r.apps?OLDSRV:a.available===false?(a.note||'지금은 고를 수 없습니다'):'',u:Q('app='+encodeURIComponent(a.key))}))});
   const pl=r.predictors||[{key:'kalman',available:true}];
   T.push({lab:'위치 기억 · 신뢰도',sub:'놓친 사람 위치',f:['Kalman filter','GRU','Mamba'],fe:{GRU:'장치에 GRU 가중치 파일이 없습니다',Mamba:'장치에 Mamba 가중치 파일이 없습니다'},n:pl.map(p=>({g:PFOLD[p.key]||'',name:PN[p.key]?PN[p.key][0]:p.name,note:PN[p.key]?PN[p.key][1]:(p.note||''),sel:p.key===prd,lock:p.available===false?(p.note||'가중치 파일이 없습니다'):'',u:Q('predictor='+encodeURIComponent(p.key))}))});
   const RST='장치에 파일은 있습니다. 쓰려면 추적 프로그램을 이 모델로 다시 켜야 합니다',VWAIT='PC에서 학습 중입니다. 끝나면 장치에 올립니다';
-  if(hot&&!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[{name:'끔',sel:!rel,u:Q('relabel=0')}].concat(r.reids.map(a=>rn(a,rel,'relabel=1',true)),[NOVIT])});
+  if(hot&&!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람에게 예전 번호',n:[{name:'끔',sel:!rel,u:Q('relabel=0')},{name:'켬',note:rname,sel:rel,u:Q('relabel=1')}]});
   else if(!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[
     {name:'끔',sel:!rel,u:Q('relabel=0')},
     {g:'RepVGG',name:'RepVGG_distillation_(TMOT,CAMEL)_20261103',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',sel:rel,lock:!rel&&!r.relabel_available?'재식별 모델이 이 실행에 없습니다':'',u:Q('relabel=1')},
@@ -949,9 +951,11 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {g:'ViT-lite',name:'ViT-lite_distillation_(TMOT,CAMEL)_202610',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',lock:'장치에 파일이 없습니다. 올리고 추적 프로그램을 다시 켜야 합니다'},
     {g:'ViT-lite',name:'ViT-lite_distillation_(실내)_20261111',note:'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
     {g:'ViT-lite',name:'ViT-lite_fine-tuning_(실내)_20261111',note:'우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST}]});
+  const kid=rel&&!camCppControl&&!replayCpp;
+  if(hot&&((bot&&app!=='off')||kid))T.push({lab:'외형 모델',sub:(bot&&app!=='off'&&kid?'BoT-SORT 외형 비교와 KeepID가 함께 씀':bot&&app!=='off'?'BoT-SORT 외형 비교가 씀':'KeepID가 씀'),f:['RepVGG','ViT-lite'],n:r.reids.map(a=>rn(a,true,'',true)).concat([NOVIT])});
   const g=r.gimbal,lead=!!r.lead;window.OTFOL=g?!!g.auto:autoNow;   // following is started by tapping a person in the picture, so it has no tile
   T.push({lab:'제어',sub:'여러 개 켜기',multi:1,n:[
-    {name:'예측 제어',note:'시험 안 함 · 따라갈 때만 작동 · 재시작하면 꺼짐',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1)),ask:lead?'':'예측 제어는 아직 시험하지 않은 기능입니다.\n따라가는 동안 짐벌이 사람이 움직이는 쪽으로 조금 앞서 움직입니다.\n켤까요?'},
+    {name:'예측 제어',note:'따라갈 때만 작동 · 재시작해도 유지',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1)),ask:lead?'':'예측 제어는 아직 시험하지 않은 기능입니다.\n따라가는 동안 짐벌이 사람이 움직이는 쪽으로 조금 앞서 움직입니다.\n켤까요?'},
     {name:'예측 상자 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.predictors?'':OLDSRV,u:Q('pred_show='+(r.pred_show?0:1))}]});
   if(bt){
     const switching=!!rpLast?.state?.busy;
@@ -1000,10 +1004,12 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
     h+='<div class="ot-row'+(t.n.every(n=>n.lock)?' off':'')+'"><div class="ot-lab">'+esc(t.lab)+(t.sub?'<small>'+esc(t.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(t,i);
     h+='</div></div>';});
   if(h!==othtml){othtml=h;OT.innerHTML=h;}   // redrawn only when something changed (keeps focus and the pressed look between the 1 s refreshes)
-  const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(OTT[0]),flt=on(OTT[2]),ctl=(window.OTFOL?['따라가기']:[]).concat(on(OTT[7]));
-  const a=[pre.length?pre.join(' + '):'전처리 없음',one(OTT[1])||'검출 모델 –',flt.length?flt.join(' + '):'Filter 없음',one(OTT[3])||tname(trk)];
-  if(trk==='botsort')a.push('외형 '+(one(OTT[4])||'–'));
-  a.push(one(OTT[5])||'Kalman filter','KeepID '+(one(OTT[6])||'끔'),ctl.length?ctl.join(' + '):'수동');
+  const R=l=>OTT.find(t=>t.lab===l)||{n:[]};   // 11-13: rows by name (the '외형 모델' row moved the numbers)
+  const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(R('전처리')),flt=on(R('검출 뒤 Filter')),ctl=(window.OTFOL?['따라가기']:[]).concat(on(R('제어')));
+  const am=one(R('외형 모델')),ap=one(R('외형 비교')),kp=one(R('KeepID'));
+  const a=[pre.length?pre.join(' + '):'전처리 없음',one(R('검출 모델'))||'검출 모델 –',flt.length?flt.join(' + '):'Filter 없음',one(R('Tracker'))||tname(trk)];
+  if(trk==='botsort')a.push('외형 '+(ap==='끔'?'끔':(am||ap||'–')));
+  a.push(one(R('위치 기억 · 신뢰도'))||'Kalman filter','KeepID '+(kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'),ctl.length?ctl.join(' + '):'수동');
   OS.textContent=a.join(' → ');}
 OT.addEventListener('click',e=>{const sb=e.target.closest('.ot-sf'),fb=e.target.closest('.ot-f');
   if(sb&&sb.dataset.s){otsub[sb.dataset.s]=sb.getAttribute('aria-expanded')!=='true';OH.textContent='';otdraw();return;}   // size sub-folder: open / close, nothing is sent
