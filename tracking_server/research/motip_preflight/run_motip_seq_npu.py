@@ -66,6 +66,11 @@ ap.add_argument("--save-every", type=int, default=25, help="frames between track
 ap.add_argument("--expect-sha256", default="", help="refuse to run if the checkpoint hash differs")
 ap.add_argument("--npu-backbone", default="", help="backbone_480x640.dxnn: ResNet-50 body on the DX-M1 NPU")
 ap.add_argument("--npu-core", type=int, default=1, help="NPU core (the tracking server uses core 0 for detection)")
+ap.add_argument("--profile", action="store_true", help="time the parts of the model (forward hooks) and print a table")
+ap.add_argument("--qlinear", choices=["none", "enc", "transformer"], default="none",
+                help="dynamic int8 Linear layers (oneDNN) in the encoder or the whole transformer (changes the numbers slightly)")
+ap.add_argument("--msda", choices=["reference", "cpp"], default="reference",
+                help="deformable attention sampling: official PyTorch reference, or msda_cpu.cpp (same arithmetic, faster)")
 args = ap.parse_args()
 
 os.environ["OMP_NUM_THREADS"] = str(args.threads)
@@ -83,13 +88,33 @@ import models.ops.functions.ms_deform_attn_func as msda_func  # noqa: E402
 import models.ops.modules.ms_deform_attn as msda_mod  # noqa: E402
 
 MSDA_CALLS = [0]
+PROF = {}
+MSDA_EXT, MSDA_CHECK = [None], []
+if args.msda == "cpp":
+    from torch.utils.cpp_extension import load as _load
+    _here = os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(os.path.join(_here, "build_msda"), exist_ok=True)
+    MSDA_EXT[0] = _load(name="msda_cpu", sources=[os.path.join(_here, "msda_cpu.cpp")], extra_cflags=["-O3", "-mcpu=native", "-fopenmp"],
+                        extra_ldflags=["-fopenmp"], build_directory=os.path.join(_here, "build_msda"), verbose=False)
 
 
 class PureTorchMSDA:
     @staticmethod
     def apply(value, spatial_shapes, level_start_index, sampling_locations, attention_weights, im2col_step):
         MSDA_CALLS[0] += 1
-        return msda_func.ms_deform_attn_core_pytorch(value, spatial_shapes, sampling_locations, attention_weights)
+        _t = time.perf_counter()
+        if MSDA_EXT[0] is None:
+            _o = msda_func.ms_deform_attn_core_pytorch(value, spatial_shapes, sampling_locations, attention_weights)
+        else:
+            _o = MSDA_EXT[0].forward(value, spatial_shapes, level_start_index, sampling_locations, attention_weights)
+            if not MSDA_CHECK:
+                _r = msda_func.ms_deform_attn_core_pytorch(value, spatial_shapes, sampling_locations, attention_weights)
+                MSDA_CHECK.append(float((_r - _o).abs().max()))
+                log("msda cpp vs reference, first call: max abs diff %.2e" % MSDA_CHECK[0])
+                if MSDA_CHECK[0] > 1e-3:
+                    raise SystemExit("msda cpp differs from the reference")
+        PROF["msda_core(" + ("enc" if value.shape[1] > 1000 and sampling_locations.shape[1] == value.shape[1] else "dec") + ")"] = PROF.get("msda_core(" + ("enc" if value.shape[1] > 1000 and sampling_locations.shape[1] == value.shape[1] else "dec") + ")", 0.0) + time.perf_counter() - _t
+        return _o
 
 
 msda_mod.MSDeformAttnFunction = PureTorchMSDA
@@ -183,6 +208,50 @@ if strict_error or missing or unexpected:
         json.dump(dict(status="failed_load", load=load_info), fh, indent=1)
     raise SystemExit("strict load failed: %s" % (strict_error or (missing, unexpected)))
 del state
+
+if args.profile:
+    import re as _re
+    _T0 = {}
+
+    def _cat(name):
+        n = _re.sub(r"\.\d+", ".*", name)
+        for pat, lab in ((r"backbone$", "backbone (NPU body + position)"), (r"input_proj\.\*$", "input_proj"),
+                         (r"encoder\.layers\.\*\.self_attn$", "enc self_attn (MSDeformAttn)"),
+                         (r"encoder\.layers\.\*\.self_attn\.(value_proj|sampling_offsets|attention_weights|output_proj)$", "enc attn linears"),
+                         (r"encoder\.layers\.\*\.(linear1|linear2)$", "enc FFN linears"),
+                         (r"encoder\.layers\.\*\.(norm1|norm2)$", "enc norms"),
+                         (r"encoder$", "encoder total"), (r"decoder$", "decoder total"),
+                         (r"decoder\.layers\.\*\.cross_attn$", "dec cross_attn"), (r"decoder\.layers\.\*\.self_attn$", "dec self_attn"),
+                         (r"decoder\.layers\.\*\.(linear1|linear2)$", "dec FFN linears"),
+                         (r"transformer$", "transformer total"), (r"^detr$", "detr total"),
+                         (r"id_decoder$", "id_decoder"), (r"trajectory_modeling$", "trajectory_modeling")):
+            if _re.search(pat, n):
+                return lab
+        return None
+
+    for _name, _m in model.named_modules():
+        _c = _cat(_name)
+        if _c is None:
+            continue
+        def _pre(m, a, _k=_name):
+            _T0[_k] = time.perf_counter()
+        def _post(m, a, o, _k=_name, _c=_c):
+            PROF[_c] = PROF.get(_c, 0.0) + time.perf_counter() - _T0.pop(_k, time.perf_counter())
+        _m.register_forward_pre_hook(_pre)
+        _m.register_forward_hook(_post)
+    log("profile hooks on", sum(1 for n, _ in model.named_modules() if _cat(n)), "modules")
+
+if args.qlinear != "none":
+    torch.backends.quantized.engine = "onednn"
+    _tr = [m for n, m in model.named_modules() if n.endswith("detr.transformer") or n == "detr.transformer"][0]
+    _target = _tr.encoder if args.qlinear == "enc" else _tr
+    _q = torch.ao.quantization.quantize_dynamic(_target, {torch.nn.Linear}, dtype=torch.qint8)
+    if args.qlinear == "enc":
+        _tr.encoder = _q
+    else:
+        _par = [m for n, m in model.named_modules() if n.endswith("detr") and hasattr(m, "transformer")][0]
+        _par.transformer = _q
+    log("dynamic int8 Linear layers:", args.qlinear)
 
 # ---- NPU body (only with --npu-backbone) -----------------------------------------------------------
 NPU = dict(raw=None, ms=0.0, calls=0, sha=None, names=None)
@@ -342,7 +411,8 @@ meta = dict(
                   if args.npu_backbone else None),
     motip_commit=git_head(MOTIP), checkpoint=os.path.basename(args.ckpt), checkpoint_sha256=ckpt_sha,
     load=load_info, settings=settings,
-    attention="official pure PyTorch reference ms_deform_attn_core_pytorch (grid_sample); CUDA extension not built",
+    attention=("msda_cpu.cpp (C++ CPU kernel, same arithmetic as the official CUDA kernel; checked against the reference on the first call of the run: msda_check_max_abs)"
+               if args.msda == "cpp" else "official pure PyTorch reference ms_deform_attn_core_pytorch (grid_sample); CUDA extension not built"),
     resize=dict(official="shorter side 800, longer side capped at 1440 (640x480 -> 1066x800)",
                 applied="shorter side %d, longer side capped at %d" % (args.shorter, args.longer),
                 is_official=(args.shorter == 800 and args.longer == cfg["INFERENCE_MAX_LONGER"])),
@@ -388,7 +458,7 @@ def summary(status, error=None):
                               read_pre_mean=mean("pre_ms"), npu_backbone_mean=(mean("npu_ms") if args.npu_backbone else None),
                               seconds_per_frame_mean=round(sum(tot) / len(tot) / 1e3, 3) if tot else None,
                               wall_sum_s=round(sum(tot) / 1e3, 1)),
-               mot_file=os.path.basename(MOT), mot_sha256=sha256_file(MOT) if os.path.exists(MOT) else None,
+               msda_check_max_abs=(MSDA_CHECK[0] if MSDA_CHECK else None), msda=args.msda, qlinear=args.qlinear, mot_file=os.path.basename(MOT), mot_sha256=sha256_file(MOT) if os.path.exists(MOT) else None,
                written=time.strftime("%Y-%m-%d %H:%M:%S"))
     with open(SIDE + ".tmp", "w") as fh:
         json.dump(out, fh, indent=1)
@@ -452,5 +522,9 @@ s = summary(status, error)
 log("status", status, error or "", "frames_processed", s["frames_processed"], "of", len(all_png),
     "whole sequence:", s["covers_whole_sequence"])
 log(json.dumps(s["timing_ms"]))
+if args.profile and s["frames_processed"]:
+    nf = s["frames_processed"]
+    for k, v in sorted(PROF.items(), key=lambda kv: -kv[1]):
+        log("PROFILE %-34s %8.1f ms/frame" % (k, v * 1e3 / nf))
 if status.startswith("failed"):
     sys.exit(2)

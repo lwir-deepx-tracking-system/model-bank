@@ -191,7 +191,8 @@ function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=RRETURN.disabled=tr
 async function rpUseTracker(backend){
   const st=rpLast?.state;
   if(rpBusy||!st?.on||st.busy||!rpLast.backends?.some(b=>b.id===backend))return;
-  if(!confirm('이 녹화를 ByteTrack '+(backend==='cpp_bytetrack'?'C++':'Python')+'으로 처음부터 다시 재생할까요?'))return;
+  const stored=String(backend).startsWith('pre:');   // 11-14: a stored result (MOTIP) is picked without a question, like '재생 시작'
+  if(!stored&&!confirm('이 녹화를 ByteTrack '+(backend==='cpp_bytetrack'?'C++':'Python')+'으로 처음부터 다시 재생할까요?'))return;
   if(backend==='python'&&!BT_KEYS.includes(pend(rlast,'tracker'))){
     const preset=rlast.presets.find(p=>(p.key||p[0])==='confirm3'||(p.key||p[0])==='bytetrack');
     if(!preset)return;
@@ -209,7 +210,7 @@ async function rpUseTracker(backend){
   rpEvalSetMode('live');
   const query=new URLSearchParams({seq:st.name,fps:String(st.fps),loop:st.loop?'1':'0',backend});
   const result=await rppost('/replay/start?'+query);
-  OH.textContent=result.ok?'선택한 엔진으로 녹화를 다시 시작합니다.':result.text||'재생을 시작하지 못했습니다';
+  OH.textContent=result.ok?(stored?'미리 계산한 결과로 녹화를 처음부터 다시 재생합니다 · 지표도 처음부터 셉니다':'선택한 엔진으로 녹화를 다시 시작합니다.'):result.text||'재생을 시작하지 못했습니다';
 }
 RPSEL.addEventListener('change',()=>{rpNote();if(rpLast)rpFillBackends(rpLast);});
 RPBACK.addEventListener('change',()=>{const b=RPBACK.value,o=RPBACK.selectedOptions[0];if(rpLast&&rpLast.state&&rpLast.state.on)RPMSG.textContent='선택한 추적기는 다음 재생부터 적용됩니다: '+(o&&o.textContent||rpBackendLabel(b,rpLast));});
