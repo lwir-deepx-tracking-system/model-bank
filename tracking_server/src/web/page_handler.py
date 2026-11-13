@@ -97,8 +97,11 @@ def _record_perf(live, now, frame_t, fps, compute_ms):
         avg_delay = round(acc[2] / paired, 1) if paired else None
         max_delay = round(acc[3], 1) if paired else None
         with live.dlock:
+            # 11-13: frame arrival -> page picture ready, mean of the pictures published in this window (None = no picture was made)
+            pictures = [ms for ready, ms in getattr(live, 'delays', ()) if ready >= acc[0]]
+            picture_delay = round(sum(pictures) / len(pictures), 1) if pictures else None
             live.perf.append((round(time.time(), 1), round(fps, 1), round(float(live.cam_fps), 1),
-                              avg_delay, max_delay, round(acc[4] / acc[1], 1), paired))
+                              avg_delay, max_delay, round(acc[4] / acc[1], 1), paired, picture_delay))
         live.perf_acc = [now, 0, 0.0, 0.0, 0.0]
         live.perf_paired_n = 0
 
@@ -451,7 +454,7 @@ def make_lv_Handler():
                     try: since_ = float(pq3_(us3_(self.path).query).get('since', ['0'])[0])   # the page asks only for the samples after the last one it has
                     except ValueError: since_ = 0.0
                     with APP.LIVE.dlock: pr_ = [r_ for r_ in APP.LIVE.perf if r_[0] > since_]
-                    b_ = json.dumps(dict(now=round(time.time(), 1), delay_kind='tracker_output', cols=['t', 'track_fps', 'cam_fps', 'delay_ms', 'delay_max_ms', 'compute_ms', 'paired_n'], rows=pr_)).encode()
+                    b_ = json.dumps(dict(now=round(time.time(), 1), delay_kind='tracker_output', cols=['t', 'track_fps', 'cam_fps', 'delay_ms', 'delay_max_ms', 'compute_ms', 'paired_n', 'picture_delay_ms'], rows=pr_)).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/healthz'):   # v24d: read-only liveness for the keep-alive supervisor (never POST /gimbal/ping from a script: that is the page's safety heartbeat)
                     now_ = time.monotonic(); last_out_ = APP.LIVE.done_ts[-1] if APP.LIVE.done_ts else None

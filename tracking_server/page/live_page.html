@@ -129,7 +129,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .rpids:empty{display:none}.rpids b{color:var(--ink);font-weight:700}
 @media(max-width:560px){.rpc{font-size:12px;padding:2px 6px}.rpc.fp b{font-size:17px}.rpj input{width:70px}}
 /* Performance graphs below the video and replay controls. */
-:root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--pf-grid:#465363;--pf-label:#e1e8f2}
+:root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--c5:#ffc46b;--c6:#ff8f8f;--pf-grid:#465363;--pf-label:#e1e8f2}
 .pfo{margin-top:8px;width:min(460px,100%);font-size:13px;line-height:1.35;color:var(--pf-label)}
 .pfo .pfb{display:flex;gap:4px}
 .pfo .pfb button{font:inherit;font-weight:600;height:24px;padding:0 8px;border:1px solid #667385;border-radius:var(--r);background:#161b23;color:var(--pf-label);cursor:pointer}
@@ -146,7 +146,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .pfl i.dash{height:0;border-top:3px dashed currentColor;background:none}
 .pfo .pfaxis{display:flex;justify-content:space-between;padding-left:30px;color:#9fb0c3;font-size:11px}
 .pfo .pfnote{margin:6px 0 0;color:#9fb0c3;font-size:11px;line-height:1.4}
-.pfo .pfx #pfc1{margin-bottom:0}
+.pfo .pfx #pfc2{margin-bottom:0}
 .pfo .pf-overflow{margin:3px 0 0;color:var(--c3);font-weight:600;overflow-wrap:anywhere}
 @media (max-width:900px){
   .pfo{width:100%;font-size:13px}
@@ -380,8 +380,11 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
           <div class="pft">한 장에 걸린 시간 <span>ms · 낮을수록 좋음</span></div>
           <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 그 장의 추적 결과가 나올 때까지. 기다린 시간 + 검출 + 추적. 1초 평균"><i style="background:var(--c1)"></i>도착→결과 <b class="num" id="pfv2">–</b></span><span class="pfl" title="같은 1초 안에서 가장 오래 걸린 장"><i class="dash" style="color:var(--c3)"></i>가장 느린 장 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 장을 계산하는 데만 든 시간(검출 준비부터 추적·ID 유지까지). 기다린 시간은 빠짐. 1초 평균"><i style="background:var(--c4)"></i>계산만 <b class="num" id="pfv4">–</b></span></div>
           <canvas id="pfc1"></canvas>
+          <div class="pft">화면까지 보내는 시간 <span>ms · 낮을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="추적 결과가 나온 뒤 화면에 보낼 그림(박스를 그린 JPEG)이 준비될 때까지. 서버에서 잰 1초 평균"><i style="background:var(--c5)"></i>그림 만들기 <b class="num" id="pfv5">–</b></span><span class="pfl" title="이 기기가 서버에 그림 한 장을 요청해서 다 받을 때까지. 2초마다 이 기기에서 직접 잰 값이라 보는 기기와 통신 상태에 따라 다릅니다"><i style="background:var(--c6)"></i>이 기기로 전송 <b class="num" id="pfv6">–</b></span></div>
+          <canvas id="pfc2"></canvas>
           <div class="pfaxis"><span id="pfago">1분 전</span><span>지금</span></div>
-          <p class="pfnote">오렌지파이 서버 안에서 잰 값입니다. 카메라 촬영·전송, 화면 그림을 만들어 보내는 시간, 짐벌이 움직이는 시간은 들어 있지 않습니다.</p>
+          <p class="pfnote">위 두 그래프와 "그림 만들기"는 오렌지파이 서버 안에서 잰 값입니다. "이 기기로 전송"만 지금 보는 기기에서 잽니다. 카메라가 찍어서 서버에 보내는 시간, 브라우저가 화면에 그리는 시간, 짐벌이 움직이는 시간은 어디에도 들어 있지 않습니다.</p>
         </div></div>
     </div>
   </section>
@@ -1178,7 +1181,13 @@ const PF_LATENCY_LIMIT=100;
 const PFC=[
   {cv:$('pfc0'),series:[[2,'--c2',1.8],[1,'--c1',2.5]],min:30},
   {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c4',2],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT},
+  {cv:$('pfc2'),series:[[8,'--c5',2.2],[9,'--c6',2.2]],min:50},   // 8 = picture making (server), 9 = transfer to this device (measured here)
 ];
+// 11-13: transfer time to this device = one /snap.jpg request until its last byte, every 2 s while the graphs are shown.
+const PFNET={ms:null,at:0,busy:false};
+function pfnet(){if(document.hidden||!PF.on||PFNET.busy)return;PFNET.busy=true;const t0=performance.now();
+  fetch('/snap.jpg?pf='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.arrayBuffer():Promise.reject()).then(()=>{PFNET.ms=performance.now()-t0;PFNET.at=Date.now();}).catch(()=>{PFNET.ms=null;}).finally(()=>{PFNET.busy=false;});}
+setInterval(pfnet,2000);pfnet();
 const pfOverflow=document.createElement('p');
 pfOverflow.className='pf-overflow';pfOverflow.hidden=true;
 $('pfago').parentNode.after(pfOverflow);
@@ -1238,11 +1247,12 @@ function pfdraw(){
   pfOverflow.hidden=peak<=PF_LATENCY_LIMIT;
   pfOverflow.textContent=pfOverflow.hidden?'':`▲ ${PF_LATENCY_LIMIT} ms 초과 · 기간 최대 ${peak.toFixed(1)} ms`;
   const last=PF.rows.length?PF.rows[PF.rows.length-1]:null,r=last&&now-last[0]<5?last:null;   // values older than 5 s are not shown as current
-  [[0,1],[1,2],[2,3],[3,4],[4,5]].forEach(([i,k])=>{$('pfv'+i).textContent=r&&Number.isFinite(r[k])?r[k].toFixed(0):'–';});}
+  [[0,1],[1,2],[2,3],[3,4],[4,5],[5,8],[6,9]].forEach(([i,k])=>{$('pfv'+i).textContent=r&&Number.isFinite(r[k])?r[k].toFixed(0):'–';});}
 function pftick(){if(document.hidden||!PF.on||PF.busy)return;PF.busy=true;const since=PF.rows.length?PF.rows[PF.rows.length-1][0]:0;
   fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
-    for(const r of p.rows)PF.rows.push(r);if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
+    for(const r of p.rows){const pic=Number.isFinite(r[7])&&Number.isFinite(r[3])?Math.max(0,r[7]-r[3]):null;   // picture making = (arrival -> picture ready) - (arrival -> track result)
+      r[8]=pic;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&PFNET.ms!=null&&Date.now()-PFNET.at<5000?PFNET.ms:null;PF.rows.push(r);}   // history loaded in one go has no transfer samples of its ownif(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
 const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({on:PF.on,span:PF.span}));}catch(_){}};
 $('pfbtn').addEventListener('click',e=>{e.stopPropagation();PF.on=!PF.on;pfsave();pfdraw();pftick();});
 $('pfspan').addEventListener('click',e=>{e.stopPropagation();PF.span={60:300,300:900,900:60}[PF.span];pfsave();pfdraw();});

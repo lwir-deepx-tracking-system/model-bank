@@ -1,5 +1,5 @@
 /* Performance graphs below the video and replay controls. */
-:root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--pf-grid:#465363;--pf-label:#e1e8f2}
+:root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--c5:#ffc46b;--c6:#ff8f8f;--pf-grid:#465363;--pf-label:#e1e8f2}
 .pfo{margin-top:8px;width:min(460px,100%);font-size:13px;line-height:1.35;color:var(--pf-label)}
 .pfo .pfb{display:flex;gap:4px}
 .pfo .pfb button{font:inherit;font-weight:600;height:24px;padding:0 8px;border:1px solid #667385;border-radius:var(--r);background:#161b23;color:var(--pf-label);cursor:pointer}
@@ -16,7 +16,7 @@
 .pfl i.dash{height:0;border-top:3px dashed currentColor;background:none}
 .pfo .pfaxis{display:flex;justify-content:space-between;padding-left:30px;color:#9fb0c3;font-size:11px}
 .pfo .pfnote{margin:6px 0 0;color:#9fb0c3;font-size:11px;line-height:1.4}
-.pfo .pfx #pfc1{margin-bottom:0}
+.pfo .pfx #pfc2{margin-bottom:0}
 .pfo .pf-overflow{margin:3px 0 0;color:var(--c3);font-weight:600;overflow-wrap:anywhere}
 @media (max-width:900px){
   .pfo{width:100%;font-size:13px}
