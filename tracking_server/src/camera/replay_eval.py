@@ -161,9 +161,10 @@ class Eval:
         self.uniq = set()
         self.log = []; self.since = time.strftime('%Y-%m-%d %H:%M:%S'); self.ver = 0; self._sum = None
 
-    def tag(self, ta, rid, slot, flags=2):   # 재생 카메라 읽기 스레드
+    def tag(self, ta, rid, slot, flags=2, *, blocking=True):   # 재생 카메라 읽기 스레드
         png, pss = rid & 0xFFFFF, (rid >> 20) + 1
-        with self.lock:
+        if not self.lock.acquire(blocking=blocking): return False
+        try:
             self.pos_in = slot
             if flags & 4:   # 멈춘 동안의 되풀이: 센 수만 남기고 채점 표에는 넣지 않는다
                 self.n['repeats'] += 1; self._sum = None; self.rep[ta] = (png, pss, slot)
@@ -171,12 +172,15 @@ class Eval:
                     _RT[ta] = 1
                     if len(_RT) > REP_KEEP: _RT.popitem(last=False)
                 if len(self.rep) > REP_KEEP: self.rep.popitem(last=False)
-                return
+                return True
             self.n['received'] += 1
             if self.last_pass == pss and self.last_k is not None and slot > self.last_k + 1: self.n['cam_skipped'] += slot - self.last_k - 1
             self.last_k = slot; self.last_pass = pss; self.passes = max(self.passes, pss)
             self.tags[ta] = (png, pss, slot)
             if len(self.tags) > TAG_KEEP: self.tags.popitem(last=False); self.n['tag_evicted'] += 1
+            return True
+        finally:
+            self.lock.release()
 
     def _shown(self, t_in, slot, pss):
         self.pos_shown = slot; self.pass_shown = pss; self.pos_t = t_in
@@ -436,9 +440,9 @@ def activate(ev, src_t, reason, sync=False):   # 재생 바꾸기 (cam_lock 안)
         else: threading.Thread(target=_write, args=(old, reason)).start()   # daemon 이 아님: 서버가 끝나도 다 쓴 뒤 끝난다
 
 
-def tag(p, ta, rid, slot, flags=2):   # camera_extra._reader: 재생 카메라의 프레임 하나 (flags 2, 되풀이는 4 도)
+def tag(p, ta, rid, slot, flags=2, *, blocking=True):   # camera_extra._reader: flags 2, 되풀이는 4 도
     ev = getattr(p, 'lwir_eval', None)
-    if ev is not None: ev.tag(ta, rid, slot, flags)
+    return ev is None or ev.tag(ta, rid, slot, flags, blocking=blocking)
 
 
 def lossless(p=None):

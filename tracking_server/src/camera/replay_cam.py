@@ -45,6 +45,7 @@
   --gap <초>                            LWIR_REPLAY_GAP   (기본 1.2)  SEEK 뒤 첫 프레임 전의 빈 시간
   --rep-fps <숫자>                      LWIR_REPLAY_REP_FPS (기본 5)  멈춘 동안 되풀이 프레임의 초당 장 수
   --control                             LWIR_REPLAY_CONTROL=1  표준 입력의 조종 줄을 읽는다
+  --prepare-frame                       LWIR_REPLAY_PREPARE_FRAME=1  --no-skip 재생에서 다음 한 장을 내보내기 전에 읽는다
   --tag                                 LWIR_REPLAY_TAG=1  (정답 비교용) 머리를 붙일 때(LWIR_CAM_STAMP=1) 어느 프레임인지 적는다:
                                         flags 2 번 비트(값 2)를 켠다. 멈춘 동안 되풀이하는 프레임은 flags 값 4 도 켠다. slot = 녹화 안의 프레임 번호(0 부터, 폴더도 .raw 도 같다),
                                         ring_id = PNG 번호(파일 이름의 숫자, 아래 20 비트) + 바퀴 번호(0 부터, 위 12 비트; 4095 에서 멈춘다),
@@ -207,6 +208,7 @@ class Ahead(threading.Thread):
     def __init__(self, src):
         super().__init__(daemon=True)
         self.src, self.cv, self.want, self.cache, self.done = src, threading.Condition(), [], {}, False
+        self.reading = None
 
     def run(self):
         while True:
@@ -218,11 +220,13 @@ class Ahead(threading.Thread):
                     if todo is not None:
                         break
                     self.cv.wait()
+                self.reading = todo
             try:
                 b = self.src.read(todo)
             except Exception:
                 b = None
             with self.cv:
+                self.reading = None
                 if todo in self.want:
                     self.cache[todo] = b
                 for k in [k for k in self.cache if k not in self.want]:
@@ -238,6 +242,16 @@ class Ahead(threading.Thread):
 
     def get(self, i):
         with self.cv:
+            if i in self.cache:
+                return self.cache.pop(i)
+        return self.src.read(i)
+
+    def prepare(self, i):
+        with self.cv:
+            # Reuse an in-flight read of this frame. If another frame is in
+            # flight, claim this one so the worker won't also decode it.
+            self.cv.wait_for(lambda: self.reading != i)
+            self.want = [wanted for wanted in self.want if wanted != i]
             if i in self.cache:
                 return self.cache.pop(i)
         return self.src.read(i)
@@ -274,10 +288,10 @@ class Control:
                             self.bad += 1
                             continue
                         self.n += 1
+                        self.ev.set()
                 except ValueError:
                     self.bad += 1
                     continue
-                self.ev.set()
         except (OSError, ValueError, AttributeError):   # 표준 입력이 없거나 닫힘
             pass
 
@@ -328,6 +342,9 @@ def main():
     ap.add_argument('--pacing', choices=['legacy', 'deadline'],
                     default=os.environ.get('LWIR_REPLAY_PACING', 'legacy'),
                     help='lossless replay timing; deadline includes read/write work in the frame period')
+    ap.add_argument('--prepare-frame', action='store_true',
+                    default=os.environ.get('LWIR_REPLAY_PREPARE_FRAME') == '1',
+                    help='read one frame before its scheduled release during lossless replay')
     a = ap.parse_args()
     if a.pacing not in ('legacy', 'deadline'):
         ap.error('LWIR_REPLAY_PACING must be legacy or deadline')
@@ -348,6 +365,7 @@ def main():
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
     stamp = os.environ.get('LWIR_CAM_STAMP') == '1'
+    prepare_frame = a.prepare_frame and a.no_skip
     ctl = Control(say) if a.control else None
     hold_at_end = ctl is not None and stamp and a.tag and a.loops == 1
     if ctl is not None and not (os.path.isfile(a.dir) and a.dir.lower().endswith(('.raw', '.raw.gz'))):
@@ -375,6 +393,8 @@ def main():
         tag = stamp and a.tag
         say('REPLAY %d frames (%s), %d skipped files, %g fps, loops %s, time stamps %s, png numbers %s, control %s' % (total, src.kind, src.bad, a.fps, a.loops or 'endless', 'on' if stamp else 'off', 'on' if tag else 'off', 'on' if ctl else 'off'))
         say('REPLAY pacing %s, lossless %s' % (a.pacing, 'on' if a.no_skip else 'off'))
+        if prepare_frame:
+            say('REPLAY frame preparation on')
         if stamp and os.environ.get('LWIR_CAM_SHM') == '1':
             say('SHM_RING not used by replay_cam: pictures go through the pipe')
         fd = sys.stdout.fileno()
@@ -384,7 +404,9 @@ def main():
         if isinstance(src, PngSource):
             ahead = Ahead(src)
             ahead.start()
-        get = ahead.get if ahead is not None else src.read
+        get = src.read
+        if ahead is not None:
+            get = ahead.prepare if prepare_frame else ahead.get
         clock = time.perf_counter
         fps = a.fps
         period = 1.0 / fps
@@ -401,6 +423,7 @@ def main():
         paused = False
         at_end = False
         cur = None                 # 마지막으로 보낸 새 프레임 (멈춘 동안 되풀이)
+        prepared = None            # 아직 보내지 않은 (위치, 이미지). SEEK 이 오면 버린다.
         cur_pos = cur_png = 0
         next_rep = 0.0
         seq = 0
@@ -434,6 +457,7 @@ def main():
                 if c_seek is not None:
                     at_end = False
                     pos = min(max(c_seek, 0), total - 1)
+                    prepared = None
                     if not seek_wait:
                         pass_no += 1
                     seek_wait = True
@@ -463,6 +487,11 @@ def main():
                     repeats += 1
                 next_rep = max(next_rep + rep_period, clock() + rep_period * 0.5)
                 continue
+            if prepare_frame and (pos < total or a.loops <= 0 or wraps + 1 < a.loops):
+                prepare_pos = pos % total
+                if prepared is None or prepared[0] != prepare_pos:
+                    prepared = (prepare_pos, get(prepare_pos))
+                    continue  # Recheck controls before committing the frame or wrap.
             d = due - clock()
             if not a.no_skip and not first and d < -period:   # 한 칸 넘게 늦었다: 지나간 칸은 건너뛴다 (몰아서 보내지 않는다)
                 jump = int(-d / period)
@@ -483,6 +512,8 @@ def main():
                     time.sleep(d - SPIN_S)
             while clock() < due:
                 pass
+            if prepare_frame and ctl is not None and ctl.ev.is_set():
+                continue
             while pos >= total:   # 끝에서 처음으로
                 wraps += 1
                 if a.loops > 0 and wraps >= a.loops:
@@ -497,7 +528,11 @@ def main():
                         emit(cur, cur_pos, cur_png, True)
                         repeats += 1
                 break
-            b = get(pos)
+            if prepare_frame:
+                _, b = prepared
+                prepared = None
+            else:
+                b = get(pos)
             if b is None:   # 못 읽은 프레임은 건너뛴다 (시간은 쓰지 않는다)
                 src.bad += 1
                 pos += 1

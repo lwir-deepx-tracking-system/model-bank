@@ -304,6 +304,7 @@ def install_producer(process):
     with live.cond:
         set_preview_producer(live, process, before=time.perf_counter())
         live.proc = process
+        live.proc_replay_src_t = getattr(live, 'replay_src_t', None)
         live.cam_lost = False
         live.proc_t0 = time.monotonic()
         live.cond.notify_all()
@@ -383,6 +384,15 @@ def reader(p_):   # lv_reader 의 시간표 판. 예상하지 못한 오류가 �
 
 
 def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 같다
+    live = APP.LIVE
+    ev_ = getattr(p_, 'lwir_eval', None)
+    lossless_ = replay_eval.lossless(p_)
+
+    def current_source(tagged):
+        # Replay switching can retire this source before installing the next process.
+        return (not live.stopped and p_ is live.proc
+                and (not tagged or live.proc_replay_src_t == getattr(live, 'replay_src_t', None)))
+
     n_ = APP.LIVE_W * APP.LIVE_H * 2; buf_ = bytearray(n_); cnt_ = 0; tl_ = time.monotonic()
     mv_ = memoryview(buf_); hb_ = bytearray(HDR_N); hv_ = memoryview(hb_); pend_ = bytearray(); ring_ = None; last_seq_ = 0; good_ = 0
     cs_ = APP.LIVE.cam_stamp; recent_ = APP.LIVE.cam_stamp_recent
@@ -437,30 +447,37 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
             if last_tag_t is not None and ta_ <= last_tag_t:
                 ta_ = math.nextafter(last_tag_t, math.inf)
             last_tag_t = ta_
-        scored_replay = bool(flags_ & 2) and replay_eval.lossless(p_)
-        with APP.LIVE.cond:
-            if APP.LIVE.stopped or p_ is not APP.LIVE.proc:
-                continue
-            if scored_replay and flags_ & 4:
-                # Pause keeps the same displayed frame without advancing tracker state.
-                replay_eval.tag(p_, ta_, rid_, slot_, flags_)
-                APP.LIVE.last_frame_t = time.monotonic()
-                continue
-            if scored_replay:
-                while len(APP.LIVE.q) == APP.LIVE.q.maxlen and not APP.LIVE.stopped and p_ is APP.LIVE.proc:
-                    APP.LIVE.cond.wait(timeout=0.1)
-                if APP.LIVE.stopped or p_ is not APP.LIVE.proc:
-                    continue
-            if flags_ & 2:
-                replay_eval.tag(p_, ta_, rid_, slot_, flags_)
-            if len(APP.LIVE.q) == APP.LIVE.q.maxlen: APP.LIVE.q_drop += 1
-            APP.LIVE.q.append((ta_, raw_))
-            cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
-            if now_ - tl_ >= 1.0: APP.LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
-            if scored_replay:
-                APP.LIVE.cond.notify_all()
-            else:
-                APP.LIVE.cond.notify()
+        tagged = bool(flags_ & 2)
+        scored_replay = tagged and lossless_
+        hold_frame = scored_replay and flags_ & 4
+        enqueued = False
+        while True:
+            with live.cond:
+                while current_source(tagged) and scored_replay and not hold_frame and len(live.q) == live.q.maxlen:
+                    live.cond.wait(timeout=0.1)
+                if not current_source(tagged):
+                    break
+                # The tag must exist before consumers see the frame. Never wait for scoring here.
+                if not tagged or replay_eval.tag(p_, ta_, rid_, slot_, flags_, blocking=False):
+                    if hold_frame:
+                        # Pause keeps the same displayed frame without advancing tracker state.
+                        live.last_frame_t = time.monotonic()
+                        break
+                    if len(live.q) == live.q.maxlen: live.q_drop += 1
+                    live.q.append((ta_, raw_))
+                    cnt_ += 1; now_ = time.monotonic(); live.last_frame_t = now_; live.cam_fail_n = 0; live.cam_unrec_n = 0; live.frames_in += 1
+                    if now_ - tl_ >= 1.0: live.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
+                    if scored_replay:
+                        live.cond.notify_all()
+                    else:
+                        live.cond.notify()
+                    enqueued = True
+                    break
+            # Wait outside the input condition. Release before retrying to preserve the lock order used by seek.
+            if ev_.lock.acquire(timeout=0.1):
+                ev_.lock.release()
+        if not enqueued:
+            continue
         rc_ = APP.LIVE.rec
         if rc_ is not None:
             with rc_['cond']:
