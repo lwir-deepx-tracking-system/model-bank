@@ -173,40 +173,28 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     # v26c: track output timing, independent of whether a JPEG is made.
     _record_perf(APP.LIVE, now_, t_in if paired_stamp_ else None, fps_, float(row_.get('frame_total_ms', 0.0)))
     sc_ = APP.args.live_scale
-    # 11-12: boxes are collected first and drawn after the gimbal line below has gone out (the page picture takes about 6 ms on the board)
-    npers_ = 0; gb_people_ = []; gb_id_ = APP.GB.state['id'] if APP.GB is not None else 0; draw_ = []
+    # Send the gimbal frame before preparing any preview annotations.
+    has_gimbal_ = APP.GB is not None
+    npers_, gb_id_, gb_people_ = 0, 0, []
     for r_ in display_rows:
-        x1_, y1_, x2_, y2_ = [float(v_) for v_ in r_[:4]]; tid_, cls_ = int(r_[4]), int(r_[6]); y1_ -= 16; y2_ -= 16
-        if cls_ != 0: continue   # v16: people only
-        col_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_); npers_ += 1
-        if APP.GB is not None and len(gb_people_) < 60: gb_people_.append((tid_, x1_, y1_, x2_, y2_, float(r_[5])))
-        if gb_id_ and tid_ != gb_id_: continue   # v39 (user 11-10): while one person is followed only that person's box is drawn
-        draw_.append(((int(x1_ * sc_), int(y1_ * sc_)), (int(x2_ * sc_), int(y2_ * sc_)), col_, tid_))
+        if int(r_[6]) != 0: continue   # v16: people only
+        npers_ += 1
+        if has_gimbal_ and len(gb_people_) < 60:
+            x1_, y1_, x2_, y2_ = map(float, r_[:4])
+            gb_people_.append((int(r_[4]), x1_, y1_ - 16, x2_, y2_ - 16, float(r_[5])))
     healthy_ = False
-    if APP.GB is not None:
+    if has_gimbal_:
         source_ = ('replay',) if replay_link.frame_blocked(t_in) else live_tracks.current_source()
         healthy_ = (paired_stamp_ and tracker_detections is not None and raw_valid_
                     and not rep_ and not frozen_ and not replay_link.frame_blocked(t_in)
                     and not any(getattr(APP.LIVE, flag, False) for flag in ('cam_lost', 'cam_hold', 'stopped', 'restart_stop', 'restart_pending')))
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
                                     frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_)
-        # The same live rows now drive the picture, click list and PTZ input.
-        draw_ = [((int(r[0] * sc_), int((r[1] - 16) * sc_)),
-                  (int(r[2] * sc_), int((r[3] - 16) * sc_)),
-                  (0, 220, 255) if gb_id_ and int(r[4]) == gb_id_ else track_color(int(r[4])), int(r[4]))
-                 for r in display_rows if int(r[6]) == 0 and (not gb_id_ or int(r[4]) == gb_id_)]
     preview_receipt = []
     receipt_args = {'preview_receipt': preview_receipt} if async_replay_ else {}
-    gtd_, replay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections,
-                                            tracker_detections, **receipt_args)
+    gtd_, overlay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections,
+                                             tracker_detections, **receipt_args)
     position = preview_receipt[0] if preview_receipt else None
-    overlay_rows = replay_rows
-    if overlay_rows is not None:
-        rows_ = overlay_rows
-        draw_ = [((int(r[0] * sc_), int((r[1] - 16) * sc_)),
-                  (int(r[2] * sc_), int((r[3] - 16) * sc_)), track_color(int(r[4])), int(r[4]))
-                 for r in rows_ if int(r[6]) == 0]
-        npers_ = len(draw_)
     # 11-12: the page picture only when somebody can see it: every frame while /stream has a viewer, otherwise once a second (/snap.jpg at most 1 s old)
     # and every frame for 3 s after a /snap.jpg request. Nothing else reads this picture (tracking, gimbal, measurement and the PC GUI use the frame itself).
     preview_allowed_ = (token_ is not None if worker_ is not None else
@@ -214,6 +202,27 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     required = async_replay_ and worker_.replay_required(position, replay_.get('frames') or 0)
     if preview_allowed_ and (required or APP.LIVE.viewers > 0
             or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0):
+        # Replay overlays use their own rows and colors. Live boxes use the ID returned by publish.
+        preview_rows_, selected_ = display_rows, gb_id_
+        if overlay_rows is not None:
+            rows_ = preview_rows_ = overlay_rows
+            selected_ = 0
+        float_coords_ = not has_gimbal_ and overlay_rows is None
+        draw_ = []
+        for r_ in preview_rows_:
+            if int(r_[6]) != 0: continue
+            tid_ = int(r_[4])
+            if selected_ and tid_ != selected_: continue
+            coords_ = r_[:4]
+            if float_coords_:
+                # Keep the original gimbal-free live rounding at integer pixel boundaries.
+                coords_ = map(float, coords_)
+            x1_, y1_, x2_, y2_ = coords_
+            col_ = (0, 220, 255) if selected_ else track_color(tid_)
+            draw_.append(((int(x1_ * sc_), int((y1_ - 16) * sc_)),
+                          (int(x2_ * sc_), int((y2_ - 16) * sc_)), col_, tid_))
+        if overlay_rows is not None:
+            npers_ = len(draw_)
         click_people, click_ticket = None, None
         if async_live_ and healthy_ and overlay_rows is None:
             click_people, click_ticket = live_tracks.preview_people(t_in, {d[3] for d in draw_})

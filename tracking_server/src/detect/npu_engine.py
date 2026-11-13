@@ -1,4 +1,5 @@
 """NPU 엔진 다루기: 모델 올리기, 그림 넣기·결과 받기(Engine, AsyncEmbedder), 검출기 출력 풀기(Decoder), 두 타일 결과 합치기(join_tiles)."""
+from collections import deque
 import time
 import numpy as np
 from ..common.state import APP
@@ -76,17 +77,68 @@ class AsyncEmbedder:
         i_ = self.b.get_input_tensors_info()[0]; self.H, self.W = int(i_['shape'][1]), int(i_['shape'][2])
         self.outs = [np.empty(self.b.get_output_tensor_sizes()[0] // 4, np.float32) for _ in range(n)]
         self.ins = [np.zeros((1, self.H, self.W, 3), np.uint8) for _ in range(n)]; self.sub_ms = []; self.col_ms = []; self.inflight = 0
+        self.quarantined = False
+
+    def _require_usable(self):
+        if self.quarantined:
+            raise RuntimeError('ReID async engine quarantined after an SDK failure')
+
+    def _submit_slot(self, slot):
+        self._require_usable()
+        try:
+            job = self.b.run_async(self.ins[slot], user_arg=None, output_buffer=self.outs[slot])
+        except BaseException:
+            self.quarantined = True
+            raise
+        self.inflight += 1
+        return job
+
+    def _wait_slot(self, job):
+        self._require_usable()
+        try:
+            outputs = self.b.wait(job)
+        except BaseException:
+            self.quarantined = True
+            raise
+        self.inflight -= 1
+        return outputs
+
+    def _drain_known(self, jobs):
+        # Cleanup may finish other known jobs after quarantine. The failed job is never retried.
+        for job in jobs:
+            try:
+                self.b.wait(job)
+            except BaseException:
+                self.quarantined = True
+            else:
+                self.inflight -= 1
+
     def submit(self, ks, g_, boxes):
-        t_ = time.perf_counter_ns(); jobs = []; extra = APP.rl_embed(list(ks[self.n:]), g_, boxes) if len(ks) > self.n else {}
-        for s_, k_ in enumerate(ks[:self.n]):
-            x1, y1, x2, y2 = boxes[k_]; a_, b_, c_, d_ = int(max(0, x1)), int(max(0, y1)), int(min(640, x2)), int(min(512, y2))
-            if c_ - a_ < 2 or d_ - b_ < 2: continue
-            self.ins[s_][0] = APP.cv2.cvtColor(APP.cv2.resize(g_[b_:d_, a_:c_], (self.W, self.H), interpolation=APP.cv2.INTER_LINEAR), APP.cv2.COLOR_GRAY2RGB)
-            jobs.append((k_, self.b.run_async(self.ins[s_], user_arg=None, output_buffer=self.outs[s_])))
-        self.inflight = len(jobs); self.sub_ms.append((time.perf_counter_ns() - t_) / 1e6)
+        self._require_usable()
+        if self.inflight:
+            raise RuntimeError('ReID async slots still have pending work')
+        t_ = time.perf_counter_ns(); jobs = deque(); extra = APP.rl_embed(list(ks[self.n:]), g_, boxes) if len(ks) > self.n else {}
+        try:
+            for s_, k_ in enumerate(ks[:self.n]):
+                x1, y1, x2, y2 = boxes[k_]; a_, b_, c_, d_ = int(max(0, x1)), int(max(0, y1)), int(min(640, x2)), int(min(512, y2))
+                if c_ - a_ < 2 or d_ - b_ < 2: continue
+                self.ins[s_][0] = APP.cv2.cvtColor(APP.cv2.resize(g_[b_:d_, a_:c_], (self.W, self.H), interpolation=APP.cv2.INTER_LINEAR), APP.cv2.COLOR_GRAY2RGB)
+                jobs.append((k_, self._submit_slot(s_)))
+        except BaseException:
+            self._drain_known(job for _, job in jobs)
+            raise
+        self.sub_ms.append((time.perf_counter_ns() - t_) / 1e6)
+
         def collect():
+            self._require_usable()
             t2 = time.perf_counter_ns(); got = dict(extra)
-            for k_, job in jobs:
-                e = np.asarray(self.b.wait(job)[0], np.float32).ravel(); got[k_] = e / max(np.linalg.norm(e), 1e-12)
-            self.inflight = 0; self.col_ms.append((time.perf_counter_ns() - t2) / 1e6); return got
+            try:
+                while jobs:
+                    k_, job = jobs.popleft()
+                    e = np.asarray(self._wait_slot(job)[0], np.float32).ravel(); got[k_] = e / max(np.linalg.norm(e), 1e-12)
+            except BaseException:
+                self._drain_known(job for _, job in jobs)
+                jobs.clear()
+                raise
+            self.col_ms.append((time.perf_counter_ns() - t2) / 1e6); return got
         return collect
