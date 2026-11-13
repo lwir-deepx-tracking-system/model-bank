@@ -227,19 +227,7 @@ addEventListener('keydown',e=>{if(e.key==='Escape'&&!e.repeat&&!e.isComposing&&r
 RPSEC.addEventListener('toggle',()=>{if(RPSEC.open)rptick('refresh');});
 setInterval(rptick,500);rptick(true);
 // 11-13 (design review, pass 2): 'advanced' open/closed shows the engineering controls (body.adv); stop button and hint over
-// the picture; aim marker at the bridge's --aim-screen-y; quick model / tracker choice from the settings tree's own rows.
+// the picture; aim marker at the bridge's --aim-screen-y. (Model / tracker are chosen in the settings tree, kept in the main panel.)
 const ADV=$('advsec');function advSync(){document.body.classList.toggle('adv',!!ADV.open);}ADV.addEventListener('toggle',advSync);advSync();
 $('vstop').addEventListener('click',()=>post('/gimbal/stop'));
-setInterval(()=>{$('vhint').hidden=autoNow;const ex=((rlast&&rlast.gimbal_cfg&&rlast.gimbal_cfg.extra)||'').match(/--aim-screen-y\s+([0-9.]+)/),ay=ex?Number(ex[1]):0.5;$('camera-center').style.top=(ay>0&&ay<1?ay*100:50)+'%';qfill();},500);
-let qkey='';const QM=$('qmodel'),QT=$('qtracker'),QMSG=$('qmsg');
-function qopts(sel,t){const ns=(t&&t.n||[]).filter(n=>!n.info);if(!ns.length)return false;const k=ns.map(n=>n.name+(n.sel?'*':'')+(n.lock?'!':'')).join('|');
-  if(sel.dataset.k===k)return true;if(document.activeElement===sel)return true;sel.dataset.k=k;
-  sel.innerHTML=ns.map((n,j)=>'<option value="'+j+'"'+(n.sel?' selected':'')+(n.lock?' disabled':'')+'>'+esc(n.name)+'</option>').join('');
-  if(!ns.some(n=>n.sel))sel.selectedIndex=-1;sel._ns=ns;return true;}
-function qfill(){if(!OTT||!OTT.length)return;qopts(QM,OTT[1]);qopts(QT,OTT[3]);}
-function qsend(sel){const n=sel._ns&&sel._ns[+sel.value];if(!n||n.sel)return;if(n.lock){QMSG.textContent=n.name+': '+n.lock;return;}
-  if(n.replayBackend){rpUseTracker(n.replayBackend);return;}if(!n.u||otbusy)return;if(n.ask&&!confirm(n.ask)){sel.dataset.k='';qfill();return;}
-  otbusy=true;QMSG.textContent='바꾸는 중…';fetch(n.u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store'}).then(x=>x.json().catch(()=>({ok:false,text:'서버 응답 '+x.status})))
-  .then(j=>{QMSG.textContent=j&&j.ok===false?(j.text||'바꾸지 못했습니다'):'';}).catch(()=>{QMSG.textContent='전달되지 않았습니다';})
-  .finally(()=>{otbusy=false;sel.dataset.k='';if(typeof rtick==='function')rtick();if(typeof mtick==='function')mtick();});}
-QM.addEventListener('change',()=>qsend(QM));QT.addEventListener('change',()=>qsend(QT));
+setInterval(()=>{$('vhint').hidden=autoNow;const ex=((rlast&&rlast.gimbal_cfg&&rlast.gimbal_cfg.extra)||'').match(/--aim-screen-y\s+([0-9.]+)/),ay=ex?Number(ex[1]):0.5;$('camera-center').style.top=(ay>0&&ay<1?ay*100:50)+'%';},500);
