@@ -60,6 +60,20 @@ def lv_spawn():   # v21: open (or reopen) the camera process and its reader
     camera_extra.log_start()   # camera_events.log: cam_pipe's lines and the server's camera lines, kept over restarts (LWIR_CAM_LOG=0 turns it off)
 
 
+def replay_holds_picture(now_):
+    """11-13: True while a replay program is alive, still sending (pause or end-of-recording hold packets, 5 a second) and
+    its picture is the one on the page. For a labelled recording those packets are not queued (camera_extra: "Pause keeps
+    the same displayed frame"), so the frame loop's 10 s input wait expires although nothing is wrong. The no-frame
+    placeholder must not replace the held picture then: it also cleared the replay position, which locked the page controls.
+    A replay that has shown nothing yet, went silent, or ended keeps the placeholder and the recovery below."""
+    live = APP.LIVE
+    if getattr(live, 'replay', None) is None or live.cam_lost: return False
+    # 5 s: a seek keeps the replay program silent for 1.2 s per request, so a few quick seeks must not look like a stall.
+    # A dead program is caught by cam_lost above; a hung one is only looked at every 10 s anyway.
+    if live.last_frame_t <= live.proc_t0 or now_ - live.last_frame_t >= 5.0: return False
+    return getattr(live, 'jpeg_frame_t', None) is not None   # a frame picture is current, not a placeholder
+
+
 def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimbal link up. v24: cam_pipe repairs a stalled camera itself (ResetMainBoard + reopen, about 30 s), so the server only restarts it when it ended on its own or stayed silent for 240 s. (v21-v23 restarted a healthy cam_pipe after any 10 s gap once it was older than 180 s; the next open then often stayed dead.)
     now_ = time.monotonic(); since_ = now_ - APP.LIVE.t0; idle_ = now_ - max(APP.LIVE.last_frame_t, APP.LIVE.proc_t0)
     if since_ > APP.args.live_seconds: APP.LIVE.stopped = True; raise RuntimeError('no camera frame within --live-seconds (%.0f s)' % since_)
@@ -92,6 +106,7 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
             try: APP.LIVE.proc.wait(5)   # v26: the killed process must be gone (camera lock released) before the next one starts
             except Exception: pass
         camera_extra.say('LIVE camera: no frame for %.0f s from a live cam_pipe, restarting it' % idle_); APP.LIVE.cam_next_spawn = None; APP.lv_spawn()
+    if replay_holds_picture(now_): return
     token_ = invalidate_preview(APP.LIVE)
     img_ = np.zeros((480, 640, 3), np.uint8)
     APP.cv2.putText(img_, 'NO CAMERA FRAME  %.0f s' % idle_, (90, 230), APP.cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)

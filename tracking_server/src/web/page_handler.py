@@ -432,13 +432,18 @@ def make_lv_Handler():
                     try:   # v26b: a slow viewer must get the newest picture, not a queue of old ones: small send buffer (about 2 pictures), no Nagle delay; a viewer that takes nothing for 30 s is closed (the page opens the stream again)
                         self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.setsockopt(APP.lv_sock.SOL_SOCKET, APP.lv_sock.SO_SNDBUF, 65536); self.connection.settimeout(30)
                     except OSError: pass
-                    last_ = 0
+                    last_ = 0; fresh_ = False
                     with APP.LIVE.jcond: APP.LIVE.viewers += 1   # 11-12: pictures are made for every frame while this is above 0
                     try:
                      while not APP.LIVE.stopped:
                          with APP.LIVE.jcond:
-                             APP.LIVE.jcond.wait_for(lambda: APP.LIVE.seq != last_ or APP.LIVE.stopped, timeout=2)
-                             if APP.LIVE.seq == last_: continue
+                             APP.LIVE.jcond.wait_for(lambda: APP.LIVE.seq != last_ or APP.LIVE.stopped, timeout=0.25 if fresh_ else 2)
+                             # 11-13: nothing new (paused or held replay, single step, stalled camera): send the current picture again,
+                             # once 0.25 s after a new picture and then every 2 s. A browser may draw a multipart picture only when the
+                             # next part starts, and a page opened during a pause must get the held frame. With live video the short
+                             # wait never expires (a new picture comes within about 40 ms), so nothing extra is sent.
+                             if APP.LIVE.seq == last_ and (APP.LIVE.stopped or not APP.LIVE.jpeg): fresh_ = False; continue
+                             fresh_ = APP.LIVE.seq != last_
                              last_ = APP.LIVE.seq; jb_ = APP.LIVE.jpeg
                          self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n' % len(jb_) + jb_ + b'\r\n')
                     finally:
