@@ -145,8 +145,13 @@ function barShow(r,viewEval){
     RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+(e.backend_label||rpBackendLabel(e.backend,r)):'');
     if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';}
     else{const n=e.new||{},o=e.old||{},c=e.counts||{};
-      RMAIN.innerHTML=nchip('HOTA',metricText(e,n.hota))+nchip('사람 mAP50:95 (검출 후보)',apText(e,n.map))+nchip('사람 AP50 (검출 후보)',apText(e,n.ap50))+nchip('오검출',evN(n.false),'fp'+(n.false?'':' zero'))+nchip('찾음',evN(n.found)+' / '+evN(n.gt)+' 정답 사람')+nchip('놓침',evN(n.missed)+' (작은 사람 '+evN(n.missed_small)+')')+nchip('recall',evN(n.recall,1))+nchip('precision',evN(n.precision,1))+nchip('번호 바뀜',evN(n.idsw))+nchip('IDF1',evN(n.idf1,1))+nchip('MOTA',evN(n.mota,1));
-      ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
+      const big=(k,v,sub,cls)=>'<span class="rpbig'+(cls?' '+cls:'')+'"><small>'+esc(k)+'</small><b>'+esc(v)+'</b>'+(sub?'<i>'+esc(sub)+'</i>':'')+'</span>';   // 11-13 (design review)
+      const x=(k,v,cls)=>nchip(k,v,cls).replace('class="rpc','class="rpx rpc');
+      RMAIN.innerHTML=big('찾은 비율',evN(n.recall,1),evN(n.found)+' / '+evN(n.gt)+'명')+big('잘못 찾음',evN(n.false),'상자 수','fp'+(n.false?'':' zero'))+big('번호 바뀜',evN(n.idsw),'번')+'<button type="button" class="rpmorebtn">'+(rpMore?'접기':'자세히')+'</button>'
+        +x('놓침',evN(n.missed)+' (작은 사람 '+evN(n.missed_small)+')')+x('맞은 비율 (precision)',evN(n.precision,1))+x('HOTA',metricText(e,n.hota))+x('IDF1',evN(n.idf1,1))+x('MOTA',evN(n.mota,1))+x('사람 mAP50:95 (검출 후보)',apText(e,n.map))+x('사람 AP50 (검출 후보)',apText(e,n.ap50));
+      RMAIN.classList.toggle('more',rpMore);
+      const same=['false','found','gt','missed','idsw'].every(k=>o[k]===n[k]);
+      if(same)ROLD.textContent='';else ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
       const total=e.sequence_frames,pass=e.pass_frames,scorable=e.scorable_frames;
       RFOOT.textContent=(evPhase(e)||'재생 채점')+' · 첫 재생 채점 '+(c.scored==null?'–':c.scored)+'장'+(pass!=null&&total!=null?' · 진행 '+pass+' / '+total+'장':'')+(scorable!=null?' · 정답 비교 가능 '+scorable+'장':'')+' · HOTA / mAP '+evMetricStatus(e)+(e.phase==='interrupted'?' · 다시 처음부터 재생해야 완주 결과가 나옵니다.':'');
       RIDS.innerHTML=evSwitches(e);
@@ -154,6 +159,8 @@ function barShow(r,viewEval){
   }
   RB.hidden=RNUM.hidden&&EVBAR.hidden;
 }
+let rpMore=false;   // 11-13: the 'more' state of the replay score survives the re-render every 0.5 s
+RMAIN.addEventListener('click',e=>{const b=e.target.closest('.rpmorebtn');if(!b)return;rpMore=!rpMore;RMAIN.classList.toggle('more',rpMore);b.textContent=rpMore?'접기':'자세히';});
 function rpMsgBar(t){RCM.textContent=t||'';rpCmT=t?Date.now()+6000:0;}
 function rpctl(url){return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:'서버 응답 '+r.status}))).then(r=>{if(!r.ok)rpMsgBar(r.text||'실패');return r;}).catch(()=>{rpMsgBar('서버 연결 끊김');return {ok:false};}).finally(()=>setTimeout(()=>rptick(true),250));}
 function rpSeek(pos){const st=rpLast&&rpLast.state;if(!st||!st.on)return;pos=Math.min(Math.max(0,Math.round(pos)),st.total-1);rpHold=pos;rpHoldT=Date.now();RSL.value=pos;if(!rpLast.result_views){rpctl('/replay/seek?pos='+pos);return;}const request=rpBeginPrefix(pos);if(!request)return;

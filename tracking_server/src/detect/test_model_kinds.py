@@ -4,6 +4,7 @@ NPU 없이 돈다. parse_model 의 글과 NPU 출력은 지어낸 값이다 (실
 'v8' = 출력 하나 [1,20,N], 'yolox' = 출력 하나 [1,N,21] (model_scan.RAW_DETS 의 설명)."""
 import ctypes
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -245,7 +246,10 @@ class ListingTests(AppCase):
         files = json.loads((HERE / 'models' / 'MANIFEST.json').read_text(encoding='utf-8'))['_files']
         text = (HERE / 'models' / 'README.md').read_text(encoding='utf-8')
         detect = sorted(k[len('detect/'):] for k in files if k.startswith('detect/') and k.endswith('.dxnn'))
-        self.assertEqual(len(detect), 13)   # 4 linked by MANIFEST _links + 9 found by the scan; the top-level README states this count
+        top = (HERE.parent / 'README.md').read_text(encoding='utf-8')   # 11-13: the count the top-level README states, not a fixed number (models are added)
+        stated = re.search(r'[|] 검출 [|][^|]*[|] *([0-9]+)개 *[|]', top)
+        self.assertIsNotNone(stated, 'top-level README has no detection model count')
+        self.assertEqual(len(detect), int(stated.group(1)))
         for rel in detect: self.assertIn('`%s`' % rel, text)
         # the side files hide the calibration folder ('<YOUR_PATH>'); the .dxnn files name it, so the README must not call it unknown
         for word in ('<YOUR_PATH>', 'calibration_train_only', 'yolox_nano_canonical_canvas_dxnn_20261020_v2', 'yolox_s_canonical_canvas_dxnn_20261020_v2'):

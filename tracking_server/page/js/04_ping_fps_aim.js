@@ -7,7 +7,10 @@ function wake(){grace=Date.now();ping();if(Date.now()-pageT0>3000)openStream();}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)wake();});addEventListener('pageshow',wake);addEventListener('online',wake);
 // v25: frame rate from /healthz (read only): frames_in difference / up difference over the last 2 s
 function hztick(){if(document.hidden)return;fetch('/healthz',{cache:'no-store'}).then(r=>r.json()).then(h=>{lastOk=Date.now();
-  if(hzPrev&&h.up>hzPrev.up){const f=(h.frames_in-hzPrev.frames_in)/(h.up-hzPrev.up);$('fps').textContent=f>0?f.toFixed(1):'0';}hzPrev=h;}).catch(()=>{});}
+  const r0=v=>Number.isFinite(v)?Math.round(v):'–';$('fps').textContent='카메라 '+r0(h.cam_fps)+' · 추적 '+r0(h.track_fps);hzPrev=h;   // 11-13: the server's speeds
+  const rs=(typeof rpLast!=='undefined'&&rpLast&&rpLast.state)||{},vc=$('vchip');   // 11-13: picture chip (was a text bar drawn into the picture)
+  if(vc){const rp=!!rs.on;vc.className='vchip num'+(rp?' replay':'');vc.textContent=(rp?'녹화 재생 · '+(rs.name||''):'실시간')+' · 추적 '+r0(h.track_fps)+' fps'+(Number.isFinite(h.delay_p50)?' · 지연 '+Math.round(h.delay_p50)+' ms':'');vc.hidden=false;}
+  }).catch(()=>{});}
 setInterval(hztick,2000);hztick();
 // Match the bridge's configured reference height when displaying framing error.
 const PX=x=>(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(0)+' px';

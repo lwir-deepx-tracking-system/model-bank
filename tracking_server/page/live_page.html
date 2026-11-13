@@ -14,10 +14,10 @@ button,select,summary{touch-action:manipulation;font-family:inherit}
 /* top bar */
 header{height:var(--bar-h);flex:none;display:flex;align-items:center;gap:18px;padding:0 16px;background:var(--bar);border-bottom:1px solid var(--line)}
 header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:.2px;margin-right:auto;white-space:nowrap}
-.chip{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink2);max-width:360px;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:7px;font-size:13px;color:var(--ink);max-width:420px;white-space:nowrap;padding:3px 11px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.035)}
 .chip span:last-child{overflow:hidden;text-overflow:ellipsis}
-.dot{width:8px;height:8px;border-radius:1px;background:transparent;border:1px solid var(--mut);flex:none}
-.dot.good{background:var(--ink2);border-color:var(--ink2)}.dot.warn{background:var(--warn);border-color:var(--warn)}.dot.bad{background:var(--bad);border-color:var(--bad)}.dot.live{background:var(--bad);border-color:var(--bad);animation:blink 1s infinite}
+.dot{width:8px;height:8px;border-radius:50%;background:transparent;border:1px solid var(--mut);flex:none}
+.dot.good{background:#5fb36f;border-color:#5fb36f}.dot.warn{background:var(--warn);border-color:var(--warn)}.dot.bad{background:var(--bad);border-color:var(--bad)}.dot.live{background:var(--bad);border-color:var(--bad);animation:blink 1s infinite}
 @keyframes blink{50%{opacity:.25}}
 /* layout */
 main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--pan-w);gap:0;width:100%}
@@ -135,6 +135,14 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .rpids{margin-top:5px;padding-top:5px;border-top:1px solid var(--line);font-size:12px;line-height:1.55;color:var(--ink2);overflow-wrap:anywhere}
 .rpids:empty{display:none}.rpids b{color:var(--ink);font-weight:700}
 @media(max-width:560px){.rpc{font-size:12px;padding:2px 6px}.rpc.fp b{font-size:17px}.rpj input{width:70px}}
+/* 11-13 (design review): picture chip instead of the burned-in text bar */
+.vchip{position:absolute;left:8px;top:8px;z-index:2;pointer-events:none;background:rgba(10,10,10,.62);color:#eee;font-size:12.5px;line-height:1.3;padding:3px 10px;border-radius:999px;max-width:calc(100% - 16px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vchip[hidden]{display:none}.vchip.replay{box-shadow:inset 3px 0 0 var(--acc)}
+/* 11-13 (design review): replay score = three big numbers, the rest behind 'more' */
+.rpbig{display:inline-flex;flex-direction:column;gap:1px;min-width:118px;padding:6px 12px;border:1px solid var(--line2);border-radius:6px;background:var(--field)}
+.rpbig small{font-size:12px;color:var(--ink2)}.rpbig b{font-size:22px;line-height:1.15;color:var(--ink);font-variant-numeric:tabular-nums}.rpbig i{font-style:normal;font-size:12px;color:var(--mut)}.rpbig.fp b{color:var(--warn)}.rpbig.fp.zero b{color:var(--ink)}
+.rpmorebtn{align-self:center;background:none;border:1px solid var(--line2);border-radius:999px;color:var(--ink2);font-size:12px;padding:3px 10px;cursor:pointer}
+.rpmain .rpx{display:none;align-self:center}.rpmain.more .rpx{display:inline-flex}
 /* Performance graphs below the video and replay controls. */
 :root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--c5:#ffc46b;--c6:#ff8f8f;--pf-grid:#465363;--pf-label:#e1e8f2}
 .pfo{margin-top:8px;width:min(460px,100%);font-size:13px;line-height:1.35;color:var(--pf-label)}
@@ -210,6 +218,8 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
   .secs{grid-column:1/3;grid-row:3;border-top:1px solid var(--line)}
   .stopbar{display:none}
 }
+/* 11-13 (design review): the pill chips must fit the phone header */
+@media(max-width:560px){header{gap:8px;padding:0 10px}.chip{padding:2px 8px;font-size:12px;gap:5px}.hbtn{padding:4px 8px}}
 /* v40: settings tree. One row per step, top row first; a row whose nodes are all locked is drawn with a dashed line. Orange = selected (same meaning as elsewhere on the page). */
 .ot-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;padding:10px 0 10px 14px;border-left:2px solid var(--line2);position:relative;margin-left:6px}
 .ot-row:before{content:"";position:absolute;left:-6px;top:16px;width:10px;height:10px;border-radius:50%;background:var(--key);border:2px solid var(--line2)}
@@ -353,6 +363,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
         <span class="feedinfo"><span id="npu-feed-state" role="status">상태를 확인하는 중…</span> <span class="num" id="npu-feed-counts"></span> <span id="npu-feed-hint" role="status"></span></span>
       </div>
       <div class="frame"><img id="v" src="/stream" alt="실시간 영상" draggable="false">
+        <div class="vchip num" id="vchip" aria-live="polite" hidden></div>
         <div id="camera-center" class="camera-center" aria-hidden="true" hidden></div>
         <div class="pose" id="gimbal-position">
           <div class="pose-axis pose-pan" id="pose-pan" role="img" hidden><i data-marker></i></div>
@@ -717,7 +728,10 @@ function wake(){grace=Date.now();ping();if(Date.now()-pageT0>3000)openStream();}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)wake();});addEventListener('pageshow',wake);addEventListener('online',wake);
 // v25: frame rate from /healthz (read only): frames_in difference / up difference over the last 2 s
 function hztick(){if(document.hidden)return;fetch('/healthz',{cache:'no-store'}).then(r=>r.json()).then(h=>{lastOk=Date.now();
-  if(hzPrev&&h.up>hzPrev.up){const f=(h.frames_in-hzPrev.frames_in)/(h.up-hzPrev.up);$('fps').textContent=f>0?f.toFixed(1):'0';}hzPrev=h;}).catch(()=>{});}
+  const r0=v=>Number.isFinite(v)?Math.round(v):'–';$('fps').textContent='카메라 '+r0(h.cam_fps)+' · 추적 '+r0(h.track_fps);hzPrev=h;   // 11-13: the server's speeds
+  const rs=(typeof rpLast!=='undefined'&&rpLast&&rpLast.state)||{},vc=$('vchip');   // 11-13: picture chip (was a text bar drawn into the picture)
+  if(vc){const rp=!!rs.on;vc.className='vchip num'+(rp?' replay':'');vc.textContent=(rp?'녹화 재생 · '+(rs.name||''):'실시간')+' · 추적 '+r0(h.track_fps)+' fps'+(Number.isFinite(h.delay_p50)?' · 지연 '+Math.round(h.delay_p50)+' ms':'');vc.hidden=false;}
+  }).catch(()=>{});}
 setInterval(hztick,2000);hztick();
 // Match the bridge's configured reference height when displaying framing error.
 const PX=x=>(x>0?'+':x<0?'−':'')+Math.abs(x).toFixed(0)+' px';
@@ -1448,8 +1462,13 @@ function barShow(r,viewEval){
     RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+(e.backend_label||rpBackendLabel(e.backend,r)):'');
     if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';}
     else{const n=e.new||{},o=e.old||{},c=e.counts||{};
-      RMAIN.innerHTML=nchip('HOTA',metricText(e,n.hota))+nchip('사람 mAP50:95 (검출 후보)',apText(e,n.map))+nchip('사람 AP50 (검출 후보)',apText(e,n.ap50))+nchip('오검출',evN(n.false),'fp'+(n.false?'':' zero'))+nchip('찾음',evN(n.found)+' / '+evN(n.gt)+' 정답 사람')+nchip('놓침',evN(n.missed)+' (작은 사람 '+evN(n.missed_small)+')')+nchip('recall',evN(n.recall,1))+nchip('precision',evN(n.precision,1))+nchip('번호 바뀜',evN(n.idsw))+nchip('IDF1',evN(n.idf1,1))+nchip('MOTA',evN(n.mota,1));
-      ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
+      const big=(k,v,sub,cls)=>'<span class="rpbig'+(cls?' '+cls:'')+'"><small>'+esc(k)+'</small><b>'+esc(v)+'</b>'+(sub?'<i>'+esc(sub)+'</i>':'')+'</span>';   // 11-13 (design review)
+      const x=(k,v,cls)=>nchip(k,v,cls).replace('class="rpc','class="rpx rpc');
+      RMAIN.innerHTML=big('찾은 비율',evN(n.recall,1),evN(n.found)+' / '+evN(n.gt)+'명')+big('잘못 찾음',evN(n.false),'상자 수','fp'+(n.false?'':' zero'))+big('번호 바뀜',evN(n.idsw),'번')+'<button type="button" class="rpmorebtn">'+(rpMore?'접기':'자세히')+'</button>'
+        +x('놓침',evN(n.missed)+' (작은 사람 '+evN(n.missed_small)+')')+x('맞은 비율 (precision)',evN(n.precision,1))+x('HOTA',metricText(e,n.hota))+x('IDF1',evN(n.idf1,1))+x('MOTA',evN(n.mota,1))+x('사람 mAP50:95 (검출 후보)',apText(e,n.map))+x('사람 AP50 (검출 후보)',apText(e,n.ap50));
+      RMAIN.classList.toggle('more',rpMore);
+      const same=['false','found','gt','missed','idsw'].every(k=>o[k]===n[k]);
+      if(same)ROLD.textContent='';else ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
       const total=e.sequence_frames,pass=e.pass_frames,scorable=e.scorable_frames;
       RFOOT.textContent=(evPhase(e)||'재생 채점')+' · 첫 재생 채점 '+(c.scored==null?'–':c.scored)+'장'+(pass!=null&&total!=null?' · 진행 '+pass+' / '+total+'장':'')+(scorable!=null?' · 정답 비교 가능 '+scorable+'장':'')+' · HOTA / mAP '+evMetricStatus(e)+(e.phase==='interrupted'?' · 다시 처음부터 재생해야 완주 결과가 나옵니다.':'');
       RIDS.innerHTML=evSwitches(e);
@@ -1457,6 +1476,8 @@ function barShow(r,viewEval){
   }
   RB.hidden=RNUM.hidden&&EVBAR.hidden;
 }
+let rpMore=false;   // 11-13: the 'more' state of the replay score survives the re-render every 0.5 s
+RMAIN.addEventListener('click',e=>{const b=e.target.closest('.rpmorebtn');if(!b)return;rpMore=!rpMore;RMAIN.classList.toggle('more',rpMore);b.textContent=rpMore?'접기':'자세히';});
 function rpMsgBar(t){RCM.textContent=t||'';rpCmT=t?Date.now()+6000:0;}
 function rpctl(url){return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:'서버 응답 '+r.status}))).then(r=>{if(!r.ok)rpMsgBar(r.text||'실패');return r;}).catch(()=>{rpMsgBar('서버 연결 끊김');return {ok:false};}).finally(()=>setTimeout(()=>rptick(true),250));}
 function rpSeek(pos){const st=rpLast&&rpLast.state;if(!st||!st.on)return;pos=Math.min(Math.max(0,Math.round(pos)),st.total-1);rpHold=pos;rpHoldT=Date.now();RSL.value=pos;if(!rpLast.result_views){rpctl('/replay/seek?pos='+pos);return;}const request=rpBeginPrefix(pos);if(!request)return;
