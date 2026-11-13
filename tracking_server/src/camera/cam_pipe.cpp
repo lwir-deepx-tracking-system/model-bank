@@ -282,9 +282,26 @@ int main(int argc, char** argv)
   auto t_open = t0, t_frame = t0; bool frame_since_open = false; int failed_recoveries = 0, recoveries = 0; int exit_code = 0; long ok_open = 0;
   const bool no_recover = std::getenv("CAM_NO_RECOVER") != nullptr, telemetry = std::getenv("CAM_TELEMETRY") != nullptr;   // experiment switches (11-09): no_recover = log the stall and exit with code 7; telemetry = FPA and shutter temperature in the CAMFPS line (read once per 2 s)
   const double test_stall_at = std::getenv("CAM_PIPE_TEST_STALL_AT") ? std::atof(std::getenv("CAM_PIPE_TEST_STALL_AT")) : 0; bool test_done = false;   // test hook: pretend the stream stopped once at this time (tests ResetMainBoard + reopen on a healthy camera)
+  // v2.7 (11-13): READ PACING. The engine sends 30 frames a second (GetSetting frameRate 0). RecvImage waits at most about 26 ms
+  // for a frame and returns 4 when none completed in that time, and a read that takes a frame returns after 17 ms (no AGC) to
+  // 27 ms (AGC). Calling it again at once therefore starts a second read in the middle of the frame period: that read times
+  // out just before the next frame is complete, the frame is lost, and the loop falls into a take-one / miss-one rhythm
+  // (gaps of about 25 and 52 ms, 22.8 fps measured over 30 s: 684 frames, 486 empty reads). Starting each read one frame
+  // period (33.333 ms) after the START of the last successful read keeps the read window on the frame: 29.0 fps over 30 s
+  // (871 frames, 22 empty reads), same pictures (AGC unchanged). After an empty read the loop does not wait, so it finds the
+  // phase again by itself. LWIR_CAM_READ_PERIOD_US changes the period in microseconds (40000 for an engine set to 25 fps);
+  // 0 = no pacing, the behaviour up to v2.6.
+  long read_period_us = 33333;
+  if(const char* e = std::getenv("LWIR_CAM_READ_PERIOD_US")) { char* end = nullptr; const long v = std::strtol(e, &end, 10); if(end != e && v >= 0 && v <= 1000000) read_period_us = v; }
+  std::fprintf(stderr, "READ_PACING period=%ld us (0 = off)\n", read_period_us);
+  bool last_read_ok = false; auto last_read_start = clk::now();
   while(!g_stop && since(t0) < seconds)
   {
+    // v2.7 (11-13): start each read one frame period after the START of the last successful read (see the note above the loop).
+    if(last_read_ok && read_period_us > 0) std::this_thread::sleep_until(last_read_start + std::chrono::microseconds(read_period_us));
+    const auto read_start = clk::now();
     int r = te->RecvImage(buf.data(), true);
+    last_read_ok = (r == 1); if(last_read_ok) last_read_start = read_start;
     if(g_stamp) t_rx = mono_ns();
     if(test_stall_at > 0 && !test_done && since(t0) > test_stall_at) { test_done = true; std::fputs("TEST: simulated stall", stderr); std::fputc(10, stderr); nap(STALL_S + 1.0); r = 4; }
     ++codes[r];
