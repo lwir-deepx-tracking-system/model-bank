@@ -1,0 +1,11 @@
+# Experiment D: OpenThermalPose2 (thermal) + COCO person keypoints as grey pictures (real occluded keypoints, flag 1). Validation = OTP2 val only.
+path: <folder holding otp2_dataset/ and coco_gray/>
+train:
+  - otp2_dataset/train/images
+  - coco_gray/train/images
+val: otp2_dataset/val/images
+
+kpt_shape: [17, 3]
+flip_idx: [0, 2, 1, 4, 3, 6, 5, 8, 7, 10, 9, 12, 11, 14, 13, 16, 15]
+names:
+  0: person
