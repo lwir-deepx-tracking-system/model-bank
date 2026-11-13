@@ -146,7 +146,7 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
         return std::atan(normalized * std::tan(fov * radians / 2));
     };
     const double x = double(t.x) + double(t.width) / 2 - width / 2.0;
-    const double y = observed_y(t, aim_y) - height / 2.0;
+    const double y = observed_y(t, aim_y) - height * smoothing_.aim_screen_y;   // 0.5 = picture centre (default)
     const double measured_x = error(x, width / 2.0, config_.fov_x_deg);
     const double measured_y = error(y, height / 2.0, config_.fov_y_deg);
     GimbalDemand d;

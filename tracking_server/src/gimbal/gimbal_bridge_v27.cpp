@@ -8,6 +8,7 @@
 //   --catchup-speed <0..7>      speed for confirmed outward motion (default 0 = off; requires OBS 1)
 //   --predictive-brake <0|1>   near-deadband horizontal braking (default 0; requires OBS 1)
 //   --observation-grace-ms <ms> hold the last output for one validated live detector miss (0 = off, maximum 100)
+//   --aim-screen-y <0.1..0.9>   screen height (fraction from the top) at which the aim point is held (default 0.5 = centre)
 //
 // Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
 // All control decisions, safety stops and serial output stay in the team's GimbalCommandExecutor; the PC wire format stays in the team's
@@ -212,6 +213,7 @@ Options parse(int argc, char** argv)
         else if (name == "--reacquire-ms") c.automatic.reacquire_timeout_ms = std::stoi(value);
         // v27: motion smoothing (defaults = v25 behaviour)
         else if (name == "--deadband-exit") { s.deadband_exit_x = s.deadband_exit_y = std::stod(value); if (!(s.deadband_exit_x >= 0.0)) throw std::invalid_argument("--deadband-exit must be >= 0"); }
+        else if (name == "--aim-screen-y") { s.aim_screen_y = std::stod(value); if (!(s.aim_screen_y >= 0.1 && s.aim_screen_y <= 0.9)) throw std::invalid_argument("--aim-screen-y must be within 0.1..0.9"); }
         else if (name == "--stop-rate") { s.stop_rate = std::stod(value); if (!(s.stop_rate >= 0.0)) throw std::invalid_argument("--stop-rate must be >= 0"); }
         else if (name == "--axis-reversal") {
             if (value == "0") s.axis_reversal = false;

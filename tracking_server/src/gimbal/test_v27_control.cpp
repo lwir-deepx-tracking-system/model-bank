@@ -67,6 +67,24 @@ void test_hysteresis()
     }
 }
 
+// ---------- 5: --aim-screen-y: the aim point is held at that height of the picture instead of the centre
+void test_aim_screen_y()
+{
+    const auto demand = [](double screen_y, double head_y_px) {
+        SmoothingConfig s; s.aim_screen_y = screen_y;
+        AutoTrackingController c(control_config(), s);
+        Track t; t.track_id = 7; t.width = 40; t.height = 80; t.confidence = 0.9f; t.x = 300; t.y = float(head_y_px - 0.5 * 80);   // aim_y 0.5: the aim point is the box centre
+        FrameMetadata m; m.frame_id = 1; m.captured_at = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+        return c.calculate(t, 640, 480, m);
+    };
+    check(demand(0.5, 240).stop(), "aim-screen-y default 0.5: a box centred on the picture centre is at rest (team rule)");
+    const auto low = demand(0.5, 160);
+    check(!low.stop() && std::fabs(low.error_y - (160 - 240) / 240.0) < 1e-6, "aim-screen-y 0.5: aim point at 160 px is 80 px above the target");
+    check(demand(1.0 / 3.0, 160).stop(), "aim-screen-y 1/3: a box whose aim point is at 160 px (one third) is at rest");
+    const auto mid = demand(1.0 / 3.0, 240);
+    check(!mid.stop() && std::fabs(mid.error_y - (240 - 160) / 240.0) < 1e-6, "aim-screen-y 1/3: aim point at the centre is 80 px below the target");
+}
+
 // ---------- executor with a recording fake device
 struct Command { int x, y, speed; bool stop; std::chrono::steady_clock::time_point at{}; };
 struct Recorder {
@@ -194,6 +212,7 @@ int main()
     test_hysteresis();
     test_reversal();
     test_soft_stop();
+    test_aim_screen_y();
     std::printf(failures ? "FAILED %d\n" : "ALL OK\n", failures);
     return failures ? 1 : 0;
 }

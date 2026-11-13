@@ -28,4 +28,8 @@ struct SmoothingConfig {
     int catchup_speed = 0;
     // Predict a near-term horizontal deadband entry during a validated approach.
     bool predictive_brake = false;
+    // Where on the screen the aim point of the followed box is held, as a fraction of the picture
+    // height from the top. 0.5 = the centre (the team rule). 0.333 puts the head on the upper third,
+    // so more of the body stays in the picture. Horizontal aiming stays on the centre.
+    double aim_screen_y = 0.5;
 };
