@@ -456,6 +456,33 @@ def restart_request():
     return start_request(query)
 
 
+def restart_after_change(why, *, tries=20, wait_s=0.5, start=None):
+    """11-13 (user): the detector model changed while a recording plays -> play it again from the first frame, so the
+    numbers are counted with one model only. Same recording, speed, repeat, tracker. Runs in its own thread (the caller is
+    the frame loop, which must not wait for the camera switch). -> the thread, or None when no recording plays."""
+    live_ = getattr(APP, 'LIVE', None)
+    target = getattr(live_, 'replay', None) if live_ is not None else None
+    if target is None:
+        return None
+    query = {'seq': [target['name']], 'fps': [str(target['fps'])], 'loop': ['1' if target.get('loop') else '0'],
+             'backend': [target.get('backend', 'python')]}
+    for k_ in ('preview', 'pacing'):
+        if k_ in target:
+            query[k_] = [target[k_]]
+    start = start or start_request
+
+    def run():
+        for _ in range(tries):   # 409 = another camera switch is still going: wait and try again
+            code_, text_ = start(query)
+            if code_ != 409:
+                break
+            time.sleep(wait_s)
+        print('REPLAY restart from the first frame (%s): %s %s' % (why, code_, text_), flush=True)
+    th_ = threading.Thread(target=run, daemon=True)
+    th_.start()
+    return th_
+
+
 def stop_request():
     L_ = APP.LIVE
     with L_.sys_lock, L_.cam_lock:

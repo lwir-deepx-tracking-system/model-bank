@@ -1034,7 +1034,9 @@ OT.addEventListener('click',e=>{const sb=e.target.closest('.ot-sf'),fb=e.target.
   if(n.ask&&!confirm(n.ask))return;
   otbusy=true;OH.textContent='보내는 중…';othint=n.hint?[n.hint,JSON.stringify((rlast&&rlast.reid_last)||null)]:null;
   fetch(n.u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store'}).then(x=>x.json().catch(()=>({ok:false,text:'서버 응답 '+x.status})))
-    .then(r=>{if(n.model){if(r&&r.catalog)mdl(r);}else if(r&&r.presets)rshow(r);OH.textContent=r&&r.ok===false?'적용 안 됨 — '+(r.text||''):(othint?othint[0]:'');if(r&&r.ok===false)othint=null;})
+    .then(r=>{if(n.model){if(r&&r.catalog)mdl(r);}else if(r&&r.presets)rshow(r);OH.textContent=r&&r.ok===false?'적용 안 됨 — '+(r.text||''):(othint?othint[0]:'');if(r&&r.ok===false)othint=null;
+      // 11-13 (user): a model change during a replay plays the recording again from the first frame (server), so the numbers start over
+      if(n.model&&!(r&&r.ok===false)&&rpLast&&rpLast.state&&rpLast.state.on){rpEvalSetMode('live');RPMSG.textContent='모델을 바꿔서 녹화를 처음부터 다시 재생하고 지표도 처음부터 다시 셉니다';OH.textContent=RPMSG.textContent;}})
     .catch(()=>{OH.textContent='서버 연결 끊김';}).finally(()=>{otbusy=false;});});
 // detector model (GET /model every second; the chip in the top bar and the first line of "지금 적용된 값")
 function mdl(m){mlast=m;const cat=m.catalog||[];

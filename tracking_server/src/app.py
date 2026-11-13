@@ -607,6 +607,8 @@ def main():
                     APP.MODEL['last'] = dict(id=rq_['id'], result=code_, text=APP.MODEL_TEXT.get(code_, '?'), at=time.strftime('%H:%M:%S'), seconds=round(time.time() - rq_['t'], 1))
                     APP.MODEL['history'].append(dict(APP.MODEL['last'], det=rq_['det'], frame=i))
                 if code_ == 0: APP.sel_save(det=APP.args.det)   # v36
+                if code_ == 0 and APP.LIVE is not None and getattr(APP.LIVE, 'replay', None) is not None:   # 11-13 (user): numbers start again with the new model
+                    from .camera import replay_link as rl_; rl_.restart_after_change('detector model %s' % rq_['det'])
                 if rq_['req'] is not None and APP.GB is not None: APP.gb_send('N %d %d' % (rq_['req'], code_))
                 if code_ == 5: raise RuntimeError('detector model could not be restored')
             if APP.RULES['pending'] is not None and APP.tracker is not None:   # v24g: tracker preset / relabel switch between two frames
