@@ -36,7 +36,26 @@ server_pid() { pgrep -f 'python3 -B [s]tart_tracking_server.py' | head -1; }
 # address the page binds to: LWIR_LIVE_BIND, else the Tailscale IPv4 address (empty until Tailscale is up)
 bind_addr() { if [ -n "${LWIR_LIVE_BIND:-}" ]; then echo "$LWIR_LIVE_BIND"; else ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1; fi; }
 probe_addr() { local a; a=$(bind_addr); [ "$a" = "0.0.0.0" ] && a=127.0.0.1; echo "$a"; }
-health() { local a; a=$(probe_addr); [ -n "$a" ] && curl -s -m 4 "http://$a:$PORT/healthz"; }
+get_page() { local a; a=$(probe_addr); [ -n "$a" ] && curl -s -m 4 "http://$a:$PORT/$1"; }
+health() { get_page healthz; }
+replay_holding() {
+  local replay; replay=$(get_page replay) || return 1
+  printf '%s\n' "$replay" | python3 -I -c '
+import json, sys
+
+try:
+    state = json.load(sys.stdin)["state"]
+    total, pos = state.get("total"), state.get("pos")
+    at_end = (state.get("loop") is False and type(total) is int and total > 0
+              and type(pos) is int and pos == total - 1)
+    holding = (state.get("on") is True and state.get("name") == sys.argv[1]
+               and state.get("busy") is False and state.get("seeking") is False
+               and (state.get("paused") is True or at_end))
+except (AttributeError, KeyError, TypeError, ValueError):
+    holding = False
+raise SystemExit(0 if holding else 1)
+' "$1"
+}
 jget() { echo "$1" | python3 -I -c "import json,sys
 try: d=json.load(sys.stdin); v=d.get('$2'); print('' if v is None else (int(v) if isinstance(v,bool) else v))
 except Exception: print('')" 2>/dev/null; }
@@ -87,11 +106,12 @@ crash_note() {   # reason + last lines of the dying server for the record
 }
 
 log "keepalive v2 started (pid $$)"
-fails=0; gbfails=0; hung=0; restarts=()
+fails=0; gbfails=0; hung=0; restarts=(); previous_replay_frames=
 while true; do
   sleep 5
-  if [ -e "$PAUSE" ]; then fails=0; gbfails=0; hung=0; continue; fi
+  if [ -e "$PAUSE" ]; then fails=0; gbfails=0; hung=0; previous_replay_frames=; continue; fi
   reason=""; reboot=0
+  replay_frames=
   pid=$(server_pid)
   if [ -z "$pid" ]; then
     # The launcher retains its lock while it waits for DXRT between children.
@@ -104,8 +124,20 @@ while true; do
       sup=$(jget "$h" up); cam_idle=$(jget "$h" cam_idle); out_idle=$(jget "$h" out_idle); cam_fail=$(jget "$h" cam_fail); gb=$(jget "$h" gimbal_alive)
       sup=${sup%.*}; cam_idle=${cam_idle%.*}; out_idle=${out_idle%.*}
       if [ -n "$sup" ] && [ "$sup" -gt $START_GRACE ]; then
-        # frames flow but nothing is published: the tracker loop is stuck
-        if [ -n "$cam_idle" ] && [ -n "$out_idle" ] && [ "$cam_idle" -lt 5 ] && [ "$out_idle" -gt 30 ]; then hung=$((hung + 1)); else hung=0; fi
+        # Hold packets keep cam_idle low but don't enter the tracker queue or advance frames_in.
+        if [ -n "$cam_idle" ] && [ -n "$out_idle" ] && [ "$cam_idle" -lt 5 ] && [ "$out_idle" -gt 30 ]; then
+          hung=$((hung + 1))
+          replay_name=$(jget "$h" replay)
+          if [ -n "$replay_name" ] && [ "$replay_name" != None ]; then
+            replay_frames=$(jget "$h" frames_in)
+            if [ -n "$replay_frames" ] && [ "$replay_frames" = "$previous_replay_frames" ] &&
+               [ "$(jget "$h" q_len)" = 0 ] && replay_holding "$replay_name"; then
+              hung=0
+            fi
+          fi
+        else
+          hung=0
+        fi
         [ $hung -ge 2 ] && reason="tracker published nothing for ${out_idle} s while frames arrive"
         if [ -z "$reason" ]; then
           if [ "$gb" = "0" ]; then gbfails=$((gbfails + 1)); else gbfails=0; fi
@@ -124,6 +156,7 @@ while true; do
       [ $fails -ge 6 ] && reason="no answer from /healthz for 30 s"
     fi
   fi
+  previous_replay_frames=$replay_frames
   [ -z "$reason" ] && continue
   if [ $reboot = 0 ] && [ -n "$reason" ] && npu_busy_other; then   # 팀 NPU 측정이 끝날 때까지 기다림 (다시 켜기 횟수에 넣지 않음)
     [ $(( $(up) % 60 )) -lt 5 ] && log "waiting: the team NPU benchmark is running ($reason)"
@@ -147,5 +180,5 @@ while true; do
   log "restart: $reason"; crash_note "restart: $reason"
   stop_server
   if start_server; then log "server is up again (/healthz answers)"; else log "server gave no /healthz answer within 90 s after the start"; fi
-  fails=0; gbfails=0; hung=0
+  fails=0; gbfails=0; hung=0; previous_replay_frames=
 done
