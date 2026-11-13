@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 from .common import settings
 from .common.state import APP
+from .common import frame_records   # 11-13: compact per-frame records (fewer objects for the garbage collector)
 from .common.shared_values import (
     HERE, ROOT, SHAPE, SHAPE_TT, SHAPE_RT480, SHAPE_W480, CORE, DET, PERSON_CLS, TARGET, sha, anchors, LOST, REMOVED)
 from .detect.model_scan import BANK_T
@@ -835,13 +836,14 @@ def main():
                 t_prev_emit = t5
             APP.rows.append(row)
             pc = p.copy(); pc[:, 1] += 64.0 - APP.FRAME_DY[0]; pc[:, 3] += 64.0 - APP.FRAME_DY[0]
-            APP.preds.append(dict(image_id=row['image_id'], xyxy=np.round(pc[:, :4], 2).tolist(), conf=np.round(pc[:, 4], 5).tolist(), cls=pc[:, 5].astype(int).tolist()))
+            xyxy_, conf_, cls_ = frame_records.pred_arrays(pc)   # 11-13: arrays, turned into the old lists only when the file is written
+            APP.preds.append(dict(image_id=row['image_id'], xyxy=xyxy_, conf=conf_, cls=cls_))
             if zoom_eng is not None: APP.preds[-1]['zoom'] = zoom_flags if zoom_flags is not None else [0] * len(p)   # v9: 1 = zoom re-detection (appended rows)
             APP.tracks_out.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
-                                   tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (APP.FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in tr_rows]))
+                                   tracks_xyxy_id_conf_class_detectionindex=frame_records.track_array(tr_rows, APP.FRAME_DY[0])))
             if APP.relabeler is not None:
                 APP.tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
-                                        tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (APP.FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in base_rows]))
+                                        tracks_xyxy_id_conf_class_detectionindex=frame_records.track_array(base_rows, APP.FRAME_DY[0])))
             if APP.LIVE is not None: live_publish(g, tr_rows, row, detections=p, tracker_detections=arr)
             if APP.TIMING is not None: APP.TIMING.frame(i, t0, t1, t2, t4, rl_ms, t5)
             prev_gray = g
@@ -864,13 +866,13 @@ def main():
         if APP.relabeler is not None: APP.relabeler.reset()          # v7: drains an asynchronous refresh still in flight
         if APP.gmc_pool is not None: APP.gmc_pool.shutdown(wait=True)
         with (APP.out / 'TRACKS.jsonl').open('w', encoding='utf-8', newline='\n') as fh:
-            for r in APP.tracks_out: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
+            for r in APP.tracks_out: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
         with (APP.out / ({'rt480': 'PRED_NEWMRT480.jsonl', 'w480': 'PRED_NEWMRW480.jsonl', 's640': 'PRED_S640.jsonl', 'm640': 'PRED_M640.jsonl', 's6': 'PRED_S6.jsonl', 's480': 'PRED_S480.jsonl', 'ft1': 'PRED_FT1.jsonl', 'ft9': 'PRED_FT9.jsonl'}.get(APP.args.det, 'PRED_DRT512.jsonl'))).open('w', encoding='utf-8', newline='\n') as fh:
-            for r in APP.preds: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
+            for r in APP.preds: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
         (APP.out / 'RAW_TIMINGS.json').write_text(json.dumps(APP.rows)); (APP.out / 'UTIL_SAMPLES.json').write_text(json.dumps(util)); (APP.out / 'REBIND_LOG.json').write_text(json.dumps(rebind_log))
         if APP.relabeler is not None:
             with (APP.out / 'TRACKS_BASE.jsonl').open('w', encoding='utf-8', newline='\n') as fh:
-                for r in APP.tracks_base: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
+                for r in APP.tracks_base: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
             (APP.out / 'RELABEL_LOG.json').write_text(json.dumps(APP.relabeler.events))
         summ = result_summary.summ
         secs = time.monotonic() - t_start
