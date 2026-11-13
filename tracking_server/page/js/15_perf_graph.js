@@ -4,11 +4,11 @@ try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if(s_.on
 const PF_LATENCY_LIMIT=100;
 const PFC=[
   {cv:$('pfc0'),series:[[2,'--c2',1.8],[1,'--c1',2.5]],min:30},
-  {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c2',1.8],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT},
+  {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c4',2],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT},
 ];
 const pfOverflow=document.createElement('p');
 pfOverflow.className='pf-overflow';pfOverflow.hidden=true;
-$('pfc1').after(pfOverflow);
+$('pfago').parentNode.after(pfOverflow);
 const nice=m=>{const p=Math.pow(10,Math.floor(Math.log10(m)));for(const k of [1,2,3,5,10])if(m<=k*p)return k*p;return 10*p;};
 function pfplot(chart,rows,t0,style){
   const cv=chart.cv,w=cv.clientWidth,h=cv.clientHeight;
@@ -27,7 +27,7 @@ function pfplot(chart,rows,t0,style){
   }
   const xFor=t=>L+(t-t0)/PF.span*pw;
   const yFor=v=>T+ph*(1-Math.min(v,max)/max);
-  g.font='600 10px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='middle';g.textAlign='right';
+  g.font='600 11px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='middle';g.textAlign='right';
   g.lineWidth=1;g.strokeStyle=color('--pf-grid');g.fillStyle=color('--pf-label');
   for(const value of [0,max/2,max]){
     const y=Math.round(yFor(value))+.5;
@@ -55,7 +55,7 @@ function pfplot(chart,rows,t0,style){
   g.restore();
 }
 function pfdraw(){
-  $('pfo').classList.toggle('off',!PF.on);$('pfbtn').classList.toggle('on',PF.on);$('pfbtn').setAttribute('aria-pressed',PF.on?'true':'false');$('pfspan').textContent=(PF.span/60)+'분';
+  $('pfo').classList.toggle('off',!PF.on);$('pfbtn').classList.toggle('on',PF.on);$('pfbtn').setAttribute('aria-pressed',PF.on?'true':'false');$('pfspan').textContent=(PF.span/60)+'분';$('pfago').textContent=(PF.span/60)+'분 전';
   if(!PF.on)return;
   const now=Date.now()/1000+PF.off,t0=now-PF.span,vis=PF.rows.filter(r=>r[0]>=t0-2);
   const style=getComputedStyle(document.documentElement);

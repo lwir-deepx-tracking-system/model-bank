@@ -47,10 +47,14 @@
       <div class="hint camera-only">실시간 카메라에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
       <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
         <div class="pfx">
-          <div class="pfh"><span class="pfl" title="추적 결과가 나오는 초당 횟수 (TRACK)"><i style="background:var(--c1)"></i>추적 <b class="num" id="pfv0">–</b></span><span class="pfl" title="카메라가 보낸 초당 프레임 수 (CAM)"><i style="background:var(--c2)"></i>카메라 <b class="num" id="pfv1">–</b></span><span>fps</span></div>
+          <div class="pft">1초에 몇 장 <span>fps · 높을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="서버로 영상이 들어오는 초당 장 수. 녹화 재생 중에는 재생 속도"><i style="background:var(--c2)"></i>들어온 영상 <b class="num" id="pfv1">–</b></span><span class="pfl" title="추적 결과(박스와 ID)가 나오는 초당 장 수. 들어온 영상보다 낮으면 처리가 밀리는 중"><i style="background:var(--c1)"></i>추적 결과 <b class="num" id="pfv0">–</b></span></div>
           <canvas id="pfc0"></canvas>
-          <div class="pfh"><span class="pfl" title="프레임이 서버에 도착한 뒤 추적 결과가 나올 때까지, 1초 평균 (delay)"><i style="background:var(--c1)"></i>지연 <b class="num" id="pfv2">–</b></span><span class="pfl" title="그 1초 중 가장 느린 프레임"><i style="background:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 프레임의 서버 안 계산 시간, 1초 평균 (compute)"><i style="background:var(--c2)"></i>처리 <b class="num" id="pfv4">–</b></span><span>ms</span></div>
+          <div class="pft">한 장에 걸린 시간 <span>ms · 낮을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 그 장의 추적 결과가 나올 때까지. 기다린 시간 + 검출 + 추적. 1초 평균"><i style="background:var(--c1)"></i>도착→결과 <b class="num" id="pfv2">–</b></span><span class="pfl" title="같은 1초 안에서 가장 오래 걸린 장"><i class="dash" style="color:var(--c3)"></i>가장 느린 장 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 장을 계산하는 데만 든 시간(검출 준비부터 추적·ID 유지까지). 기다린 시간은 빠짐. 1초 평균"><i style="background:var(--c4)"></i>계산만 <b class="num" id="pfv4">–</b></span></div>
           <canvas id="pfc1"></canvas>
+          <div class="pfaxis"><span id="pfago">1분 전</span><span>지금</span></div>
+          <p class="pfnote">오렌지파이 서버 안에서 잰 값입니다. 카메라 촬영·전송, 화면 그림을 만들어 보내는 시간, 짐벌이 움직이는 시간은 들어 있지 않습니다.</p>
         </div></div>
     </div>
   </section>

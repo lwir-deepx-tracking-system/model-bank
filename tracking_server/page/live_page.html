@@ -129,30 +129,35 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .rpids:empty{display:none}.rpids b{color:var(--ink);font-weight:700}
 @media(max-width:560px){.rpc{font-size:12px;padding:2px 6px}.rpc.fp b{font-size:17px}.rpj input{width:70px}}
 /* Performance graphs below the video and replay controls. */
-:root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--pf-grid:#465363;--pf-label:#e1e8f2}
-.pfo{margin-top:8px;width:min(320px,100%);font-size:12px;line-height:1.3;color:var(--pf-label)}
+:root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--pf-grid:#465363;--pf-label:#e1e8f2}
+.pfo{margin-top:8px;width:min(460px,100%);font-size:13px;line-height:1.35;color:var(--pf-label)}
 .pfo .pfb{display:flex;gap:4px}
 .pfo .pfb button{font:inherit;font-weight:600;height:24px;padding:0 8px;border:1px solid #667385;border-radius:var(--r);background:#161b23;color:var(--pf-label);cursor:pointer}
 .pfo .pfb button.on{color:#fff;border-color:var(--c1)}
 .pfo .pfx{margin-top:4px;padding:6px 8px;background:rgba(15,20,28,.96);border:1px solid #536174;border-radius:var(--r)}
 .pfo.off .pfx,.pfo.off #pfspan{display:none}
-.pfo .pfh{display:flex;flex-wrap:wrap;gap:2px 9px;align-items:center}
-.pfh>span:last-child{margin-left:auto;color:var(--pf-label)}
+.pfo .pfh{display:flex;flex-wrap:wrap;gap:2px 14px;align-items:center}
 .pfl{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
-.pfl i{width:11px;height:3px;border-radius:2px;display:inline-block}
+.pfl i{width:14px;height:4px;border-radius:2px;display:inline-block}
 .pfl b{color:#fff;font-weight:700}
-.pfo .pfx canvas{display:block;width:100%;height:52px;margin:2px 0 5px}
+.pfo .pfx canvas{display:block;width:100%;height:76px;margin:3px 0 8px}
+.pfo .pft{font-weight:700;color:#fff;margin-bottom:2px}
+.pfo .pft span{font-weight:400;color:#9fb0c3;margin-left:4px}
+.pfl i.dash{height:0;border-top:3px dashed currentColor;background:none}
+.pfo .pfaxis{display:flex;justify-content:space-between;padding-left:30px;color:#9fb0c3;font-size:11px}
+.pfo .pfnote{margin:6px 0 0;color:#9fb0c3;font-size:11px;line-height:1.4}
 .pfo .pfx #pfc1{margin-bottom:0}
 .pfo .pf-overflow{margin:3px 0 0;color:var(--c3);font-weight:600;overflow-wrap:anywhere}
 @media (max-width:900px){
-  .pfo{width:min(260px,100%);font-size:11px}
+  .pfo{width:100%;font-size:13px}
   .pfo .pfb button{height:26px;padding:0 9px}
   .pfo .pfx{padding:5px 6px}
-  .pfo .pfh{column-gap:6px}
-  .pfo .pfx canvas{height:40px}
+  .pfo .pfh{column-gap:12px}
+  .pfo .pfx canvas{height:68px}
 }
 @media (max-width:900px) and (max-height:400px) and (orientation:landscape){
-  .pfo .pfx canvas{height:36px}
+  .pfo .pfx canvas{height:40px}
+  .pfo .pfnote{display:none}
 }
 /* phone, portrait */
 @media (max-width:900px){
@@ -369,10 +374,14 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
       <div class="hint camera-only">실시간 카메라에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
       <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
         <div class="pfx">
-          <div class="pfh"><span class="pfl" title="추적 결과가 나오는 초당 횟수 (TRACK)"><i style="background:var(--c1)"></i>추적 <b class="num" id="pfv0">–</b></span><span class="pfl" title="카메라가 보낸 초당 프레임 수 (CAM)"><i style="background:var(--c2)"></i>카메라 <b class="num" id="pfv1">–</b></span><span>fps</span></div>
+          <div class="pft">1초에 몇 장 <span>fps · 높을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="서버로 영상이 들어오는 초당 장 수. 녹화 재생 중에는 재생 속도"><i style="background:var(--c2)"></i>들어온 영상 <b class="num" id="pfv1">–</b></span><span class="pfl" title="추적 결과(박스와 ID)가 나오는 초당 장 수. 들어온 영상보다 낮으면 처리가 밀리는 중"><i style="background:var(--c1)"></i>추적 결과 <b class="num" id="pfv0">–</b></span></div>
           <canvas id="pfc0"></canvas>
-          <div class="pfh"><span class="pfl" title="프레임이 서버에 도착한 뒤 추적 결과가 나올 때까지, 1초 평균 (delay)"><i style="background:var(--c1)"></i>지연 <b class="num" id="pfv2">–</b></span><span class="pfl" title="그 1초 중 가장 느린 프레임"><i style="background:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 프레임의 서버 안 계산 시간, 1초 평균 (compute)"><i style="background:var(--c2)"></i>처리 <b class="num" id="pfv4">–</b></span><span>ms</span></div>
+          <div class="pft">한 장에 걸린 시간 <span>ms · 낮을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 그 장의 추적 결과가 나올 때까지. 기다린 시간 + 검출 + 추적. 1초 평균"><i style="background:var(--c1)"></i>도착→결과 <b class="num" id="pfv2">–</b></span><span class="pfl" title="같은 1초 안에서 가장 오래 걸린 장"><i class="dash" style="color:var(--c3)"></i>가장 느린 장 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 장을 계산하는 데만 든 시간(검출 준비부터 추적·ID 유지까지). 기다린 시간은 빠짐. 1초 평균"><i style="background:var(--c4)"></i>계산만 <b class="num" id="pfv4">–</b></span></div>
           <canvas id="pfc1"></canvas>
+          <div class="pfaxis"><span id="pfago">1분 전</span><span>지금</span></div>
+          <p class="pfnote">오렌지파이 서버 안에서 잰 값입니다. 카메라 촬영·전송, 화면 그림을 만들어 보내는 시간, 짐벌이 움직이는 시간은 들어 있지 않습니다.</p>
         </div></div>
     </div>
   </section>
@@ -1168,11 +1177,11 @@ try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if(s_.on
 const PF_LATENCY_LIMIT=100;
 const PFC=[
   {cv:$('pfc0'),series:[[2,'--c2',1.8],[1,'--c1',2.5]],min:30},
-  {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c2',1.8],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT},
+  {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c4',2],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT},
 ];
 const pfOverflow=document.createElement('p');
 pfOverflow.className='pf-overflow';pfOverflow.hidden=true;
-$('pfc1').after(pfOverflow);
+$('pfago').parentNode.after(pfOverflow);
 const nice=m=>{const p=Math.pow(10,Math.floor(Math.log10(m)));for(const k of [1,2,3,5,10])if(m<=k*p)return k*p;return 10*p;};
 function pfplot(chart,rows,t0,style){
   const cv=chart.cv,w=cv.clientWidth,h=cv.clientHeight;
@@ -1191,7 +1200,7 @@ function pfplot(chart,rows,t0,style){
   }
   const xFor=t=>L+(t-t0)/PF.span*pw;
   const yFor=v=>T+ph*(1-Math.min(v,max)/max);
-  g.font='600 10px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='middle';g.textAlign='right';
+  g.font='600 11px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='middle';g.textAlign='right';
   g.lineWidth=1;g.strokeStyle=color('--pf-grid');g.fillStyle=color('--pf-label');
   for(const value of [0,max/2,max]){
     const y=Math.round(yFor(value))+.5;
@@ -1219,7 +1228,7 @@ function pfplot(chart,rows,t0,style){
   g.restore();
 }
 function pfdraw(){
-  $('pfo').classList.toggle('off',!PF.on);$('pfbtn').classList.toggle('on',PF.on);$('pfbtn').setAttribute('aria-pressed',PF.on?'true':'false');$('pfspan').textContent=(PF.span/60)+'분';
+  $('pfo').classList.toggle('off',!PF.on);$('pfbtn').classList.toggle('on',PF.on);$('pfbtn').setAttribute('aria-pressed',PF.on?'true':'false');$('pfspan').textContent=(PF.span/60)+'분';$('pfago').textContent=(PF.span/60)+'분 전';
   if(!PF.on)return;
   const now=Date.now()/1000+PF.off,t0=now-PF.span,vis=PF.rows.filter(r=>r[0]>=t0-2);
   const style=getComputedStyle(document.documentElement);
