@@ -141,7 +141,7 @@
    LWIR_GIMBAL_BRIDGE=src/gimbal/gimbal_bridge_v27
    ```
 
-3. 현장에 사람이 짐벌 옆에 있고 카메라와 짐벌을 사용할 수 있을 때, [기존 서버를 정상 종료](#8-꺼지면-다시-켜기-끄기)한 뒤 저장소 최상위 폴더에서 실행합니다.
+3. 카메라와 짐벌을 사용할 수 있을 때, [기존 서버를 정상 종료](#8-꺼지면-다시-켜기-끄기)한 뒤 저장소 최상위 폴더에서 실행합니다.
 
    ```bash
    bash tracking_server/scripts/run_real_gui.sh
