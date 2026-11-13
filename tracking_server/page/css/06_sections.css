@@ -89,3 +89,8 @@ body:not(.adv) .adv-only{display:none!important}
 .vhint[hidden]{display:none}.vstop{margin-left:auto;background:var(--stop);border-color:var(--stop);color:#fff;font-weight:700;padding:7px 14px}
 .vstop kbd{margin-left:4px;font-size:11px;opacity:.85}body.replay-mode .vfol{display:none}
 .chip[hidden]{display:none}.vstop.btn{flex:none;width:auto}
+/* 11-13 (pass 4): camera-not-answering note and follow notes over the picture */
+.vdead{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;max-width:86%;text-align:center;background:rgba(20,20,20,.86);border:1px solid var(--bad);border-radius:10px;padding:14px 18px;pointer-events:none}
+.vdead[hidden]{display:none}.vdead b{font-size:19px;color:#fff}.vdead span{font-size:13.5px;color:#ddd;line-height:1.5}.vdead.wait{border-color:var(--warn)}
+.vtoast{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:3;background:rgba(20,20,20,.82);color:#fff;font-size:14px;font-weight:700;padding:6px 14px;border-radius:999px;border:1px solid var(--acc);pointer-events:none;white-space:nowrap}
+.vtoast[hidden]{display:none}.vtoast.lost{border-color:var(--warn)}body.replay-mode .vtoast,body.replay-mode .vdead{display:none}

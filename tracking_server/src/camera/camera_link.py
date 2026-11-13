@@ -5,7 +5,7 @@ import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
 from ..track.stabilizer import STAB, stab_live, stab_off
-from ..web.preview_worker import invalidate_preview, publish_jpeg_locked
+from ..web.preview_worker import invalidate_preview, publish_jpeg_locked, PICTURE_BANNER
 from . import replay_link   # 11-12: recording replay from the page (does nothing until it is used)
 from . import camera_extra   # 2026-11-11: 지워지지 않는 카메라 기록(기본 켜짐), 프레임 시간표와 공유 메모리(환경 변수로만 켜짐)
 from . import stall_diag   # 2026-11-13: 서버가 잠깐 멈춘 까닭을 찾는 기록 (LWIR_STALL_DIAG=1 일 때만. 기본 꺼짐)
@@ -112,12 +112,12 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
     if replay_holds_picture(now_): return
     token_ = invalidate_preview(APP.LIVE)
     img_ = np.zeros((480, 640, 3), np.uint8)
-    APP.cv2.putText(img_, 'NO CAMERA FRAME  %.0f s' % idle_, (90, 230), APP.cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
-    if APP.LIVE.cam_fail_n: APP.cv2.putText(img_, 'CAMERA FAILED: %d restarts without a frame - check the USB cable / power' % APP.LIVE.cam_fail_n, (20, 275), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
-    else: APP.cv2.putText(img_, 'the camera restarts itself (about 30 s); page and gimbal keys stay live', (20, 275), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+    if PICTURE_BANNER: APP.cv2.putText(img_, 'NO CAMERA FRAME  %.0f s' % idle_, (90, 230), APP.cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 255), 2)
+    if PICTURE_BANNER and APP.LIVE.cam_fail_n: APP.cv2.putText(img_, 'CAMERA FAILED: %d restarts without a frame - check the USB cable / power' % APP.LIVE.cam_fail_n, (20, 275), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
+    elif PICTURE_BANNER: APP.cv2.putText(img_, 'the camera restarts itself (about 30 s); page and gimbal keys stay live', (20, 275), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
     rp_ = getattr(APP.LIVE, 'replay', None)
-    if rp_ is not None or getattr(APP.LIVE, 'replay_busy', False): APP.cv2.putText(img_, (replay_link.top_text(rp_) + ': loading the frames') if rp_ is not None else 'REPLAY: switching the picture source', (20, 320), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 1)   # 11-12
-    if APP.GB is not None:
+    if PICTURE_BANNER and (rp_ is not None or getattr(APP.LIVE, 'replay_busy', False)): APP.cv2.putText(img_, (replay_link.top_text(rp_) + ': loading the frames') if rp_ is not None else 'REPLAY: switching the picture source', (20, 320), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 1)   # 11-12
+    if PICTURE_BANNER and APP.GB is not None:   # 11-13: the page shows the gimbal and camera state in Korean
         st_ = APP.GB.state; gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle'
         if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s' % ('connected' if gu_['client'] else 'no client')
         APP.cv2.putText(img_, gtxt_, (8, 44), APP.cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)

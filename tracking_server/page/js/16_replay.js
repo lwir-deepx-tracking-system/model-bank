@@ -230,4 +230,18 @@ setInterval(rptick,500);rptick(true);
 // the picture; aim marker at the bridge's --aim-screen-y. (Model / tracker are chosen in the settings tree, kept in the main panel.)
 const ADV=$('advsec');function advSync(){document.body.classList.toggle('adv',!!ADV.open);}ADV.addEventListener('toggle',advSync);advSync();
 $('vstop').addEventListener('click',()=>post('/gimbal/stop'));
-setInterval(()=>{$('vhint').hidden=autoNow;const ex=((rlast&&rlast.gimbal_cfg&&rlast.gimbal_cfg.extra)||'').match(/--aim-screen-y\s+([0-9.]+)/),ay=ex?Number(ex[1]):0.5;$('camera-center').style.top=(ay>0&&ay<1?ay*100:50)+'%';},500);
+setInterval(()=>{$('vhint').hidden=autoNow||camIdle>3;const ex=((rlast&&rlast.gimbal_cfg&&rlast.gimbal_cfg.extra)||'').match(/--aim-screen-y\s+([0-9.]+)/),ay=ex?Number(ex[1]):0.5;$('camera-center').style.top=(ay>0&&ay<1?ay*100:50)+'%';},500);
+// 11-13 (pass 4): camera-not-answering note (Korean, with what to do) and follow notes over the picture
+setInterval(()=>{const d=$('vdead'),live=!document.body.classList.contains('replay-mode');
+  if(!live||camIdle<=3){d.hidden=true;return;}const s=Math.round(camIdle);d.hidden=false;d.classList.toggle('wait',!(camFail>0));
+  $('vdeadt').textContent=camFail>0?'카메라 USB 응답 없음':'카메라 영상을 기다리는 중';
+  $('vdeads').textContent=camFail>0?'카메라 USB 케이블을 뽑았다가 다시 꽂으세요 · '+s+'초째 영상 없음 (자동 복구 '+camFail+'회 실패)':s+'초째 영상 없음 · 카메라가 스스로 다시 연결하는 중 (보통 30초 안)';},500);
+let fnPrev=null,fnT=0;
+function fnShow(txt,cls,ms){const v=$('vtoast');v.textContent=txt;v.className='vtoast'+(cls?' '+cls:'');v.hidden=false;fnT=ms?Date.now()+ms:0;}
+function followNote(t){const p=fnPrev||{auto:0,id:0,lost:0,h:t.handoffs||0};fnPrev={auto:t.auto,id:t.id,lost:t.lost,h:t.handoffs||0};
+  if(t.auto&&t.lost){fnShow(t.id+'번 놓침 · 다시 찾는 중'+(lostSince?' '+((Date.now()-lostSince)/1000).toFixed(0)+'초':''),'lost',0);return;}
+  if(p.auto&&t.auto&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}
+  if(!p.auto&&t.auto)fnShow(t.id+'번 따라가기 시작','',2000);
+  else if(p.auto&&!t.auto)fnShow('따라가기 멈춤','',2000);
+  else if(p.lost&&!t.lost&&t.auto)fnShow(t.id+'번 다시 찾음','',2000);
+  if(fnT&&Date.now()>fnT){$('vtoast').hidden=true;fnT=0;}else if(!fnT&&!(t.auto&&t.lost))$('vtoast').hidden=true;}

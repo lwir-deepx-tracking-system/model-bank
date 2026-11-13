@@ -210,7 +210,7 @@ def rules_request(q_):
     if 'tracker' in pend_ and cam_tracker is not None:
         cam_tracker.select(prefer_cpp_bytetrack(q_, pend_['tracker'], cam_tracker))
     print('RULES set warm_min %d warm_max %d edge_birth %.2f pending %s' % (settings.WARM_MIN, settings.WARM_MAX, settings.EDGE_BIRTH, pend_), flush=True)
-    APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), app=APP.CTL['app'], lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **(dict(confirm_ms=APP.CONFIRM.ms) if cm_ is not None else {}), **pend_)   # v36. v40: lead itself is not kept (comes back OFF)
+    APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), app=APP.CTL['app'], lead=bool(APP.CTL['lead']), lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **(dict(confirm_ms=APP.CONFIRM.ms) if cm_ is not None else {}), **pend_)   # v36. 11-13 (user): the prediction switch (lead) is kept too
     return True, '적용됨' if not (pend_ or rk_ is not None) else '다음 프레임에 적용'
 
 

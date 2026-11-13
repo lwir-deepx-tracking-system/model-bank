@@ -425,7 +425,7 @@ def make_lv_Handler():
                 elif u_.path != '/gimbal/ping': self.send_error(404); return
             except (KeyError, ValueError, IndexError): self.send_error(400); return
             try:
-                b_ = json.dumps(dict(APP.GB.state, **live_gimbal_position(), cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n)).encode()   # v24: cam_idle = seconds since the last camera frame; v24d: cam_fail = cam_pipe failures in a row (0 = fine or repairing)
+                b_ = json.dumps(dict(APP.GB.state, **live_gimbal_position(), cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n, handoffs=getattr(APP.GB, 'handoff_n', 0))).encode()   # v24: cam_idle = seconds since the last camera frame; v24d: cam_fail = cam_pipe failures in a row (0 = fine or repairing)
                 self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
             except (BrokenPipeError, ConnectionResetError, OSError): pass
         def do_GET(self):

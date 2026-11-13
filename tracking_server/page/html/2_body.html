@@ -13,6 +13,8 @@
     <div class="vbox">
       <div class="frame"><img id="v" src="/stream" alt="실시간 영상" draggable="false">
         <div class="vchip num" id="vchip" aria-live="polite" hidden></div>
+        <div class="vdead" id="vdead" role="alert" hidden><b id="vdeadt"></b><span id="vdeads"></span></div>
+        <div class="vtoast" id="vtoast" role="status" hidden></div>
         <div class="vfol camera-only" id="vfol"><span class="vhint" id="vhint">사람을 누르면 따라갑니다</span><button class="btn vstop" id="vstop" type="button" title="따라가기·이동 멈춤 (Space)">■ 멈춤 <kbd>Space</kbd></button></div>
         <div id="camera-center" class="camera-center" aria-hidden="true" hidden></div>
         <div class="pose" id="gimbal-position">
