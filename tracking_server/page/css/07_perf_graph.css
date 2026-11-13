@@ -12,7 +12,7 @@
 .pfl b{color:#fff;font-weight:700}
 .pfo .pfx canvas{display:block;width:100%;height:76px;margin:3px 0 8px}
 .pfo .pft{font-weight:700;color:#fff;margin-bottom:2px}
-.pfo .pft span{font-weight:400;color:#9fb0c3;margin-left:4px}
+.pfo .pft span{display:block;font-weight:400;font-size:11px;color:#9fb0c3}
 .pfl i.dash{height:0;border-top:3px dashed currentColor;background:none}
 .pfo .pfaxis{display:flex;justify-content:space-between;padding-left:30px;color:#9fb0c3;font-size:11px}
 .pfo .pfnote{margin:6px 0 0;color:#9fb0c3;font-size:11px;line-height:1.4}

@@ -48,17 +48,17 @@
       <div class="hint camera-only">실시간 카메라에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
       <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
         <div class="pfx">
-          <div class="pft">1초에 몇 장 <span>fps · 높을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="서버로 영상이 들어오는 초당 장 수. 녹화 재생 중에는 재생 속도"><i style="background:var(--c2)"></i>들어온 영상 <b class="num" id="pfv1">–</b></span><span class="pfl" title="추적 결과(박스와 ID)가 나오는 초당 장 수. 들어온 영상보다 낮으면 처리가 밀리는 중"><i style="background:var(--c1)"></i>추적 결과 <b class="num" id="pfv0">–</b></span></div>
+          <div class="pft">속도 (FPS) <span>1초 동안 처리한 영상 수 · 높을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="서버로 영상이 들어오는 초당 장 수. 녹화 재생 중에는 재생 속도"><i style="background:var(--c2)"></i>카메라 입력 <b class="num" id="pfv1">–</b></span><span class="pfl" title="추적 결과(박스와 ID)가 나오는 초당 장 수. 들어온 영상보다 낮으면 처리가 밀리는 중"><i style="background:var(--c1)"></i>추적 출력 <b class="num" id="pfv0">–</b></span></div>
           <canvas id="pfc0"></canvas>
-          <div class="pft">한 장에 걸린 시간 <span>ms · 낮을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 그 장의 추적 결과가 나올 때까지. 기다린 시간 + 검출 + 추적. 1초 평균"><i style="background:var(--c1)"></i>도착→결과 <b class="num" id="pfv2">–</b></span><span class="pfl" title="같은 1초 안에서 가장 오래 걸린 장"><i class="dash" style="color:var(--c3)"></i>가장 느린 장 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 장을 계산하는 데만 든 시간(검출 준비부터 추적·ID 유지까지). 기다린 시간은 빠짐. 1초 평균"><i style="background:var(--c4)"></i>계산만 <b class="num" id="pfv4">–</b></span></div>
+          <div class="pft">지연 (ms) <span>영상이 들어와서 추적이 끝날 때까지 · 낮을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 그 장의 추적 결과가 나올 때까지. 기다린 시간 + 검출 + 추적. 1초 평균"><i style="background:var(--c1)"></i>평균 <b class="num" id="pfv2">–</b></span><span class="pfl" title="같은 1초 안에서 가장 오래 걸린 장"><i class="dash" style="color:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 장을 계산하는 데만 든 시간(검출 준비부터 추적·ID 유지까지). 기다린 시간은 빠짐. 1초 평균"><i style="background:var(--c4)"></i>계산 시간 <b class="num" id="pfv4">–</b></span></div>
           <canvas id="pfc1"></canvas>
-          <div class="pft">화면까지 보내는 시간 <span>ms · 낮을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="추적 결과가 나온 뒤 화면에 보낼 그림(박스를 그린 JPEG)이 준비될 때까지. 서버에서 잰 1초 평균"><i style="background:var(--c5)"></i>그림 만들기 <b class="num" id="pfv5">–</b></span><span class="pfl" title="이 기기가 서버에 그림 한 장을 요청해서 다 받을 때까지. 2초마다 이 기기에서 직접 잰 값이라 보는 기기와 통신 상태에 따라 다릅니다"><i style="background:var(--c6)"></i>이 기기로 전송 <b class="num" id="pfv6">–</b></span></div>
+          <div class="pft">화면 전송 (ms) <span>추적이 끝나고 이 화면에 오기까지 · 낮을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="추적 결과가 나온 뒤 화면에 보낼 그림(박스를 그린 JPEG)이 준비될 때까지. 서버에서 잰 1초 평균"><i style="background:var(--c5)"></i>그림 만들기 <b class="num" id="pfv5">–</b></span><span class="pfl" title="이 기기가 서버에 그림 한 장을 요청해서 다 받을 때까지. 2초마다 이 기기에서 직접 잰 값이라 보는 기기와 통신 상태에 따라 다릅니다"><i style="background:var(--c6)"></i>네트워크 전송 <b class="num" id="pfv6">–</b></span></div>
           <canvas id="pfc2"></canvas>
           <div class="pfaxis"><span id="pfago">1분 전</span><span>지금</span></div>
-          <p class="pfnote">위 두 그래프와 "그림 만들기"는 오렌지파이 서버 안에서 잰 값입니다. "이 기기로 전송"만 지금 보는 기기에서 잽니다. 카메라가 찍어서 서버에 보내는 시간, 브라우저가 화면에 그리는 시간, 짐벌이 움직이는 시간은 어디에도 들어 있지 않습니다.</p>
+          <p class="pfnote">속도·지연과 "그림 만들기"는 오렌지파이 서버 안에서 잰 값입니다. "네트워크 전송"만 지금 보는 기기에서 잽니다. "계산 시간"은 지연 중 기다린 시간을 뺀 순수 계산입니다. 카메라가 찍어서 서버에 보내는 시간, 브라우저가 화면에 그리는 시간, 짐벌이 움직이는 시간은 어디에도 들어 있지 않습니다.</p>
         </div></div>
     </div>
   </section>

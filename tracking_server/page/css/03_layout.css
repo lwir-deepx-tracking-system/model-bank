@@ -16,6 +16,6 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--
 body:not(.verbose) .hint,body:not(.verbose) .mobhint,body:not(.verbose) .pfnote,body:not(.verbose) .ot-leg,
 body:not(.verbose) .ot-n:not(.ot-f) small,body:not(.verbose) .ot-lab small,body:not(.verbose) .ot-kidlab small,
 body:not(.verbose) details.fold,body:not(.verbose) small.more,body:not(.verbose) #rpevalview,body:not(.verbose) .rpold,
-body:not(.verbose) .rpfoot,body:not(.verbose) #npu-feed-counts,body:not(.verbose) #rconf-msg,body:not(.verbose) .pft span{display:none}
+body:not(.verbose) .rpfoot,body:not(.verbose) #npu-feed-counts,body:not(.verbose) #rconf-msg{display:none}
 .hbtn{font:inherit;font-size:12px;font-weight:600;height:26px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r);background:transparent;color:var(--ink2);cursor:pointer;white-space:nowrap}
 .hbtn[aria-pressed="true"]{color:#fff;border-color:var(--c1)}
