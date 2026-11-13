@@ -5,9 +5,9 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   T.push({lab:'전처리',sub:'여러 개 켜기',multi:1,n:[
     {name:'흔들림 보정',note:'optical flow · 화면+검출 · 시험 안 함',sel:!!r.stab,lock:r.stab==null?OLDSRV:'',u:Q('stab='+(r.stab?0:1))}]});
   const cat=(m&&m.catalog)||[];
-  const dfs=['YOLO26','YOLOX','YOLOv8'];if(cat.some(c=>dfold(String(c.det)+' '+String(c.name))==='기타'))dfs.push('기타');
-  T.push({lab:'검출 모델',sub:'구조 → 크기 순으로 펼침',f:m&&cat.length?dfs:null,fe:{YOLOX:'장치 목록에 YOLOX 모델이 없습니다 (모델뱅크에만 있음)',YOLOv8:'장치 목록에 YOLOv8 모델이 없습니다 (모델뱅크에만 있음)'},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
-    cat.map(c=>({g:dfold(String(c.det)+' '+String(c.name)),sg:dsub(String(c.det)+' '+String(c.name)),note:DNOTE[c.det]||'',name:DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim(),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1}))});
+  const dk=c=>String(c.det)+' '+String(c.name),dfs=DUSE.filter(f=>cat.some(c=>duse(dk(c))===f));   // 11-13: folders by use, only the ones that have models
+  T.push({lab:'검출 모델',sub:'어디서 쓰는지에 따라 묶음',f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
+    cat.map(c=>({g:duse(dk(c)),sg:duse(dk(c))==='다른 구조 (비교용)'?dsub(dk(c)):'',rec:REC.includes(c.det),note:DNOTE[c.det]||'',name:DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim(),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1}))});
   T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});

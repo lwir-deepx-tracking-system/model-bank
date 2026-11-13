@@ -285,6 +285,11 @@ body:not(.adv) .adv-only{display:none!important}
 .ot-sum{border-top:1px solid var(--line);padding-top:8px;font-size:13px;color:var(--ink2);-webkit-user-select:text;user-select:text}
 #ot-sum{color:var(--ink)}
 @media(max-width:560px){.ot-row{grid-template-columns:1fr;gap:6px}.ot-lab{padding-top:0}.ot-lab small{display:inline;margin-left:6px}}
+/* 11-13 (design review): recommended tag, lock reason in the node, the 'now' line on top */
+.ot-rec{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid #5fb36f;color:#7fd08e;font-size:11px;line-height:1.5;vertical-align:1px}
+.ot-n small.ot-why{color:var(--warn)}
+.ot-sumtop{margin:0 0 8px;padding:6px 9px;border:1px solid var(--acc);border-radius:6px;background:rgba(224,122,36,.08);color:var(--ink)}
+body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is locked shows even in the brief view */
 /* v40: phone joystick. A finger pressed on the picture and dragged moves the gimbal; the ring is drawn where the finger went down. The picture no longer scrolls the page under a finger (touch-action). */
 #v{touch-action:none}
 .joy{position:absolute;display:none;width:112px;height:112px;margin:-56px 0 0 -56px;border-radius:50%;border:1px solid var(--line2);background:rgba(24,24,24,.45);pointer-events:none;z-index:3}
@@ -404,7 +409,7 @@ body:not(.adv) .adv-only{display:none!important}
         </div>
       </div>
       <div class="hint camera-only">실시간 카메라에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
-      <div class="pfo adv-only" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
+      <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
         <div class="pfx">
           <div class="pft">속도 (FPS) <span>1초 동안 처리한 영상 수 · 높을수록 좋음</span></div>
           <div class="pfh"><span class="pfl" title="서버로 영상이 들어오는 초당 장 수. 녹화 재생 중에는 재생 속도"><i style="background:var(--c2)"></i>카메라 입력 <b class="num" id="pfv1">–</b></span><span class="pfl" title="추적 결과(박스와 ID)가 나오는 초당 장 수. 들어온 영상보다 낮으면 처리가 밀리는 중"><i style="background:var(--c1)"></i>추적 출력 <b class="num" id="pfv0">–</b></span></div>
@@ -431,10 +436,11 @@ body:not(.adv) .adv-only{display:none!important}
     <section class="st replay-only"><div class="status" id="rpstatus" role="status">녹화 재생</div></section>
     <div class="secs">
       <details class="sec" data-k="tree">
-        <summary>설정</summary>
+        <summary>트래커 · 모델</summary>
         <!-- v40: one tree for everything that used to be three sections (검출 모델 / Filter / Tracker). Rows run top to bottom in processing order; what is picked above opens or locks the nodes below. A click on a node is sent at once, the choice is kept on the server, and every open page reads it again each second. -->
         <div class="body stack">
           <div class="ot-leg"><span class="ot-n sel">선택됨</span><span class="ot-n">고를 수 있음</span><span class="ot-n lock"><svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg> 잠김</span><span>누르면 바로 적용 · 접속한 모든 화면이 같이 바뀝니다</span></div>
+          <div class="ot-sum ot-sumtop">지금: <span id="ot-sum">–</span></div>
           <div id="ot-tree"><div class="minfo" style="margin-top:0">설정을 불러오는 중…</div></div>
           <div class="ot-hint" id="ot-hint" role="status"></div>
           <div class="stack" id="bt-confirm" hidden>
@@ -445,7 +451,6 @@ body:not(.adv) .adv-only{display:none!important}
             </div>
             <div class="minfo" id="rconf-msg" role="status" style="margin-top:0">0이면 추가 확인 시간을 끕니다.</div>
           </div>
-          <div class="ot-sum">지금 조합: <span id="ot-sum">–</span></div>
           <details class="fold" style="margin-top:0"><summary>지금 적용된 값</summary><div class="minfo" id="minfo">모델 목록을 불러오는 중…</div><div class="minfo" id="finfo">불러오는 중…</div><div class="minfo" id="rinfo">불러오는 중…</div></details>
           <details class="fold" style="margin-top:0"><summary>검출 모델 설명</summary><dl class="legend">
             <dt>고르기</dt><dd>"검출 모델" 줄에서 누르면 재시작 없이 다음 프레임부터 그 모델로 검출합니다. 실패하면 이전 모델로 되돌립니다.</dd>
@@ -871,7 +876,7 @@ const TD={
 // names shown on the nodes (the server's long preset names are not printed)
 const OLDSRV='서버를 다시 켜야 열립니다',LK='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 const BT_KEYS=['bytetrack','confirm3','rebind'];
-const TN={bytetrack:['ByteTrack',''],botsort:['BoT-SORT','시험 안 함'],ocsort:['OC-SORT','시험 안 함'],sort:['SORT','시험 안 함']};
+const TN={bytetrack:['ByteTrack','가볍고 빠름 · 기본'],botsort:['BoT-SORT','외형·카메라 움직임까지 봄 · 무거움 · 시험 안 함'],ocsort:['OC-SORT','가려졌다 나와도 번호를 잘 이어감 · 시험 안 함'],sort:['SORT','가장 단순 · 시험 안 함']};   // 11-13: one line on what each is for
 const PN={kalman:['Kalman filter','기본 · 학습 모델 없음'],gru:['GRU_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음'],mamba:['Mamba_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음']};
 const DN={'bank:yolo26m_pose_otp2_20261113_bodybox_640x480':'YOLO26m-pose_fine-tuning_(OTP2)_20261113_bodybox 640x480','bank:yolo26m_flir_inside_20261110_2020_640x480':'YOLO26m_fine-tuning_(실내)_20261110_2020 640x480','bank:yolo26s_nmsfree_npu_640x640':'YOLO26s_NMS-free 640x640','bank:yolov8n_nms_640x640':'YOLOv8n_(FLIR) 640x640','bank:yolov8s_nms_640x640':'YOLOv8s_(FLIR) 640x640','bank:yolox_nano_nms_640x640':'YOLOX-nano_(FLIR) 640x640','bank:yolox_s_nms_640x640':'YOLOX-s_(FLIR) 640x640'};   // names shown without status words (user 11-11)
 const AN={off:'끔',repvgg:'RepVGG_distillation_(TMOT,CAMEL)_20261103',vit:'ViT-lite_distillation_(TMOT,CAMEL)_202610'};
@@ -879,6 +884,10 @@ const AN={off:'끔',repvgg:'RepVGG_distillation_(TMOT,CAMEL)_20261103',vit:'ViT-
 const FD='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 3.2a1 1 0 0 1 1-1h2.6l1.2 1.3H10a1 1 0 0 1 1 1V9.3a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z" fill="currentColor"/></svg>';
 const DNOTE={w480:'FLIR 공개 열화상으로 학습 · 카메라 크기 그대로 · 기본',m640:'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 비교용',s480:'작은 모델 · 카메라 크기 그대로',s6:'작은 모델 · 정사각형 입력(위아래 빈 띠) · 비교용','bank:yolo26m_flir_inside_20261110_2020_640x480':'우리 카메라 실내로 fine-tuning · 2026-11-10 20:20','bank:yolo26s_nmsfree_npu_640x640':'NMS 없이 바로 상자 출력','bank:yolo26m_pose_otp2_20261113_bodybox_640x480':'공개 열화상 자세(OTP2)로 학습 · 상자 = 몸 네모(머리~골반, 화면 밖까지) · 근거리 시험용 · AIM_Y 0.37','bank:yolov8n_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolov8s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_nano_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정'};
 const dfold=s=>/yolox/i.test(s)?'YOLOX':/yolo ?v?8/i.test(s)?'YOLOv8':/yolo ?26/i.test(s)?'YOLO26':'기타';
+// 11-13 (design review): detector folders by use. Names stay the team's full names; the folder says where the model is for.
+const DUSE=['실내','실외','근거리','기본 (공개 데이터)','다른 구조 (비교용)'];
+const duse=s=>/inside|실내/i.test(s)?'실내':/outside|실외/i.test(s)?'실외':/bodybox|근거리|pose/i.test(s)?'근거리':/yolox|yolo ?v?8|yolo ?26 ?x|nmsfree|nms-free/i.test(s)?'다른 구조 (비교용)':'기본 (공개 데이터)';
+const REC=['bank:yolo26m_flir_inside_20261110_2020_640x480'];   // 11-13: models marked '추천' (the team's current pick per use); edit this list
 // second level inside a detector folder: model size (YOLO26m / YOLO26s ...); '' = no size in the name, the node stays directly in the folder
 const dsub=s=>{let m=/yolo ?26 ?([nsmlx])(?![a-z])/i.exec(s);if(m)return 'YOLO26'+m[1].toLowerCase();m=/yolox[-_ ]?(nano|tiny|s|m|l|x)(?![a-z])/i.exec(s);if(m)return 'YOLOX-'+m[1].toLowerCase();m=/yolo ?v?8 ?([nsmlx])(?![a-z])/i.exec(s);return m?'YOLOv8'+m[1].toLowerCase():'';};
 /* 11-13 (user): size sub-folders are listed smallest first. A name that does not end in a size keeps its place after the sized ones. */
@@ -897,9 +906,9 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   T.push({lab:'전처리',sub:'여러 개 켜기',multi:1,n:[
     {name:'흔들림 보정',note:'optical flow · 화면+검출 · 시험 안 함',sel:!!r.stab,lock:r.stab==null?OLDSRV:'',u:Q('stab='+(r.stab?0:1))}]});
   const cat=(m&&m.catalog)||[];
-  const dfs=['YOLO26','YOLOX','YOLOv8'];if(cat.some(c=>dfold(String(c.det)+' '+String(c.name))==='기타'))dfs.push('기타');
-  T.push({lab:'검출 모델',sub:'구조 → 크기 순으로 펼침',f:m&&cat.length?dfs:null,fe:{YOLOX:'장치 목록에 YOLOX 모델이 없습니다 (모델뱅크에만 있음)',YOLOv8:'장치 목록에 YOLOv8 모델이 없습니다 (모델뱅크에만 있음)'},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
-    cat.map(c=>({g:dfold(String(c.det)+' '+String(c.name)),sg:dsub(String(c.det)+' '+String(c.name)),note:DNOTE[c.det]||'',name:DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim(),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1}))});
+  const dk=c=>String(c.det)+' '+String(c.name),dfs=DUSE.filter(f=>cat.some(c=>duse(dk(c))===f));   // 11-13: folders by use, only the ones that have models
+  T.push({lab:'검출 모델',sub:'어디서 쓰는지에 따라 묶음',f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
+    cat.map(c=>({g:duse(dk(c)),sg:duse(dk(c))==='다른 구조 (비교용)'?dsub(dk(c)):'',rec:REC.includes(c.det),note:DNOTE[c.det]||'',name:DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim(),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1}))});
   T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
@@ -970,7 +979,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   return T;}
 function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const body=(t,i)=>{let h='';
-    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+esc(n.name)+(n.note?'<small>'+esc(n.note)+'</small>':'')+'</button>';
+    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+esc(n.name)+(n.rec?'<span class="ot-rec">추천</span>':'')+(n.note?'<small>'+esc(n.note)+'</small>':'')+(n.lock&&n.lock!==n.note?'<small class="ot-why">'+esc(n.lock)+'</small>':'')+'</button>';   // 11-13: why a node is locked, shown in it
     if(!t.f)t.n.forEach((n,j)=>{const ki=n.sel&&n.key?OTT.findIndex(c=>c.kidOf===i&&c.show&&c.kidKey===n.key):-1;   // v42: a chosen tile that owns a child row becomes one box with the child inside
       if(ki<0){h+=btn(n,j);return;}const c=OTT[ki];
       h+='<div class="ot-grp sel ot-own">'+btn(n,j)+'<div class="ot-kid" data-kid="'+ki+'"><div class="ot-kidlab">'+esc(c.lab)+(c.sub?'<small>'+esc(c.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(c,ki)+'</div></div></div>';});

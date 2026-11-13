@@ -1,7 +1,7 @@
 // names shown on the nodes (the server's long preset names are not printed)
 const OLDSRV='서버를 다시 켜야 열립니다',LK='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 const BT_KEYS=['bytetrack','confirm3','rebind'];
-const TN={bytetrack:['ByteTrack',''],botsort:['BoT-SORT','시험 안 함'],ocsort:['OC-SORT','시험 안 함'],sort:['SORT','시험 안 함']};
+const TN={bytetrack:['ByteTrack','가볍고 빠름 · 기본'],botsort:['BoT-SORT','외형·카메라 움직임까지 봄 · 무거움 · 시험 안 함'],ocsort:['OC-SORT','가려졌다 나와도 번호를 잘 이어감 · 시험 안 함'],sort:['SORT','가장 단순 · 시험 안 함']};   // 11-13: one line on what each is for
 const PN={kalman:['Kalman filter','기본 · 학습 모델 없음'],gru:['GRU_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음'],mamba:['Mamba_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음']};
 const DN={'bank:yolo26m_pose_otp2_20261113_bodybox_640x480':'YOLO26m-pose_fine-tuning_(OTP2)_20261113_bodybox 640x480','bank:yolo26m_flir_inside_20261110_2020_640x480':'YOLO26m_fine-tuning_(실내)_20261110_2020 640x480','bank:yolo26s_nmsfree_npu_640x640':'YOLO26s_NMS-free 640x640','bank:yolov8n_nms_640x640':'YOLOv8n_(FLIR) 640x640','bank:yolov8s_nms_640x640':'YOLOv8s_(FLIR) 640x640','bank:yolox_nano_nms_640x640':'YOLOX-nano_(FLIR) 640x640','bank:yolox_s_nms_640x640':'YOLOX-s_(FLIR) 640x640'};   // names shown without status words (user 11-11)
 const AN={off:'끔',repvgg:'RepVGG_distillation_(TMOT,CAMEL)_20261103',vit:'ViT-lite_distillation_(TMOT,CAMEL)_202610'};
@@ -9,6 +9,10 @@ const AN={off:'끔',repvgg:'RepVGG_distillation_(TMOT,CAMEL)_20261103',vit:'ViT-
 const FD='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 3.2a1 1 0 0 1 1-1h2.6l1.2 1.3H10a1 1 0 0 1 1 1V9.3a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z" fill="currentColor"/></svg>';
 const DNOTE={w480:'FLIR 공개 열화상으로 학습 · 카메라 크기 그대로 · 기본',m640:'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 비교용',s480:'작은 모델 · 카메라 크기 그대로',s6:'작은 모델 · 정사각형 입력(위아래 빈 띠) · 비교용','bank:yolo26m_flir_inside_20261110_2020_640x480':'우리 카메라 실내로 fine-tuning · 2026-11-10 20:20','bank:yolo26s_nmsfree_npu_640x640':'NMS 없이 바로 상자 출력','bank:yolo26m_pose_otp2_20261113_bodybox_640x480':'공개 열화상 자세(OTP2)로 학습 · 상자 = 몸 네모(머리~골반, 화면 밖까지) · 근거리 시험용 · AIM_Y 0.37','bank:yolov8n_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolov8s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_nano_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정'};
 const dfold=s=>/yolox/i.test(s)?'YOLOX':/yolo ?v?8/i.test(s)?'YOLOv8':/yolo ?26/i.test(s)?'YOLO26':'기타';
+// 11-13 (design review): detector folders by use. Names stay the team's full names; the folder says where the model is for.
+const DUSE=['실내','실외','근거리','기본 (공개 데이터)','다른 구조 (비교용)'];
+const duse=s=>/inside|실내/i.test(s)?'실내':/outside|실외/i.test(s)?'실외':/bodybox|근거리|pose/i.test(s)?'근거리':/yolox|yolo ?v?8|yolo ?26 ?x|nmsfree|nms-free/i.test(s)?'다른 구조 (비교용)':'기본 (공개 데이터)';
+const REC=['bank:yolo26m_flir_inside_20261110_2020_640x480'];   // 11-13: models marked '추천' (the team's current pick per use); edit this list
 // second level inside a detector folder: model size (YOLO26m / YOLO26s ...); '' = no size in the name, the node stays directly in the folder
 const dsub=s=>{let m=/yolo ?26 ?([nsmlx])(?![a-z])/i.exec(s);if(m)return 'YOLO26'+m[1].toLowerCase();m=/yolox[-_ ]?(nano|tiny|s|m|l|x)(?![a-z])/i.exec(s);if(m)return 'YOLOX-'+m[1].toLowerCase();m=/yolo ?v?8 ?([nsmlx])(?![a-z])/i.exec(s);return m?'YOLOv8'+m[1].toLowerCase():'';};
 /* 11-13 (user): size sub-folders are listed smallest first. A name that does not end in a size keeps its place after the sized ones. */

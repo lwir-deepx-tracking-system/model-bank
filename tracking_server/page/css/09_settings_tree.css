@@ -48,3 +48,8 @@
 .ot-sum{border-top:1px solid var(--line);padding-top:8px;font-size:13px;color:var(--ink2);-webkit-user-select:text;user-select:text}
 #ot-sum{color:var(--ink)}
 @media(max-width:560px){.ot-row{grid-template-columns:1fr;gap:6px}.ot-lab{padding-top:0}.ot-lab small{display:inline;margin-left:6px}}
+/* 11-13 (design review): recommended tag, lock reason in the node, the 'now' line on top */
+.ot-rec{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid #5fb36f;color:#7fd08e;font-size:11px;line-height:1.5;vertical-align:1px}
+.ot-n small.ot-why{color:var(--warn)}
+.ot-sumtop{margin:0 0 8px;padding:6px 9px;border:1px solid var(--acc);border-radius:6px;background:rgba(224,122,36,.08);color:var(--ink)}
+body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is locked shows even in the brief view */
