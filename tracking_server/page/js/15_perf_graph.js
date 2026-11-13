@@ -76,7 +76,7 @@ function pftick(){if(document.hidden||!PF.on||PF.busy)return;PF.busy=true;const 
   fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
     for(const r of p.rows){const pic=Number.isFinite(r[7])&&Number.isFinite(r[3])?Math.max(0,r[7]-r[3]):null;   // picture making = (arrival -> picture ready) - (arrival -> track result)
-      r[8]=pic;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&PFNET.ms!=null&&Date.now()-PFNET.at<5000?PFNET.ms:null;PF.rows.push(r);}   // history loaded in one go has no transfer samples of its ownif(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
+      r[8]=pic;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&PFNET.ms!=null&&Date.now()-PFNET.at<5000?PFNET.ms:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
 const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({on:PF.on,span:PF.span}));}catch(_){}};
 $('pfbtn').addEventListener('click',e=>{e.stopPropagation();PF.on=!PF.on;pfsave();pfdraw();pftick();});
 $('pfspan').addEventListener('click',e=>{e.stopPropagation();PF.span={60:300,300:900,900:60}[PF.span];pfsave();pfdraw();});

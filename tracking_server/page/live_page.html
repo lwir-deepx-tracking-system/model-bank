@@ -33,6 +33,13 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--
 .frame img{display:block;width:100%;height:100%;object-fit:contain;cursor:crosshair;background:#000}
 .hint{font-size:12px;color:var(--mut);margin-top:6px}
 .panel{min-height:0;background:var(--pan);border-left:1px solid var(--line);overflow-y:auto}
+/* 11-13 brief view (default): explanations are hidden. The 설명 보기 button in the top bar adds body.verbose and shows them again. */
+body:not(.verbose) .hint,body:not(.verbose) .mobhint,body:not(.verbose) .pfnote,body:not(.verbose) .ot-leg,
+body:not(.verbose) .ot-n:not(.ot-f) small,body:not(.verbose) .ot-lab small,body:not(.verbose) .ot-kidlab small,
+body:not(.verbose) details.fold,body:not(.verbose) small.more,body:not(.verbose) #rpevalview,body:not(.verbose) .rpold,
+body:not(.verbose) .rpfoot,body:not(.verbose) #npu-feed-counts,body:not(.verbose) #rconf-msg,body:not(.verbose) .pft span{display:none}
+.hbtn{font:inherit;font-size:12px;font-weight:600;height:26px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r);background:transparent;color:var(--ink2);cursor:pointer;white-space:nowrap}
+.hbtn[aria-pressed="true"]{color:#fff;border-color:var(--c1)}
 /* status block */
 .st{padding:14px 16px 12px;border-bottom:1px solid var(--line)}
 .sthead{display:flex;align-items:center;gap:10px}
@@ -333,6 +340,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
   <span class="chip desk camera-only"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
   <span class="chip desk"><span class="dot" id="mcdot"></span><span id="mctext">모델</span></span>
   <span class="chip"><span class="dot" id="mdot"></span><span id="mtext">측정 대기</span></span>
+  <button class="hbtn" id="verbose-btn" aria-pressed="false" title="설명 글 보이기 / 숨기기">설명 보기</button>
 </header>
 <main>
   <section class="view">
@@ -402,11 +410,11 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
         <div class="body ctl">
           <!-- The values come from GET /rules (key gimbal_cfg = the options the server gave the gimbal program at start), drawn by gshow in js/12_rules_filter_values.js. Read only: the bridge has no live gain command yet. -->
           <span id="gcfg">불러오는 중…</span>
-          <small>서버가 시작할 때 짐벌 프로그램에 넘긴 값입니다. 화면에서는 바꿀 수 없습니다. 바꾸려면 scripts/live.env (거기 없는 값은 scripts/run_real_gui.sh) 를 고치고 서버를 다시 시작합니다.</small>
+          <small class="more">서버가 시작할 때 짐벌 프로그램에 넘긴 값입니다. 화면에서는 바꿀 수 없습니다. 바꾸려면 scripts/live.env (거기 없는 값은 scripts/run_real_gui.sh) 를 고치고 서버를 다시 시작합니다.</small>
         </div>
       </details>
       <details class="sec" data-k="tree">
-        <summary>설정 (위에서 아래로 고르기)</summary>
+        <summary>설정</summary>
         <!-- v40: one tree for everything that used to be three sections (검출 모델 / Filter / Tracker). Rows run top to bottom in processing order; what is picked above opens or locks the nodes below. A click on a node is sent at once, the choice is kept on the server, and every open page reads it again each second. -->
         <div class="body stack">
           <div class="ot-leg"><span class="ot-n sel">선택됨</span><span class="ot-n">고를 수 있음</span><span class="ot-n lock"><svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg> 잠김</span><span>누르면 바로 적용 · 접속한 모든 화면이 같이 바뀝니다</span></div>
@@ -447,7 +455,7 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
         </div>
       </details>
       <details class="sec" data-k="rules">
-        <summary>Filter 값 (검출 뒤 · Warmth · Edge)</summary>
+        <summary>Filter 값</summary>
         <div class="body stack">
           <div class="row"><label class="lbl" for="rwarm" style="flex:1">Warmth range</label><input id="rwarm" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최소 (원시값)"><span class="lbl" style="flex:none">~</span><input id="rwarmx" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최대 (원시값, 0 = 제한 없음)"></div>
           <div class="minfo" id="fhintw" style="margin-top:0">기본값 <b>45000 ~ 0</b> (위쪽 제한 없음). 이 카메라 측정(11-10): 천장 조명 43,397 이하 · 방 안 사람 47,749 이상 · 가까운 사람 60,170 이상 → 그 사이인 45000. 주의: 화면 끝에 잘린 사람은 40,387까지 내려가 버려질 수 있고, 따뜻한 벽 물체(49,155 이하)는 이 값으로 못 거릅니다.</div>
@@ -911,7 +919,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   return T;}
 function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const body=(t,i)=>{let h='';
-    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+esc(n.name)+(n.note?'<small>'+esc(n.note)+'</small>':'')+'</button>';
+    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+esc(n.name)+(n.note?'<small>'+esc(n.note)+'</small>':'')+'</button>';
     if(!t.f)t.n.forEach((n,j)=>{const ki=n.sel&&n.key?OTT.findIndex(c=>c.kidOf===i&&c.show&&c.kidKey===n.key):-1;   // v42: a chosen tile that owns a child row becomes one box with the child inside
       if(ki<0){h+=btn(n,j);return;}const c=OTT[ki];
       h+='<div class="ot-grp sel ot-own">'+btn(n,j)+'<div class="ot-kid" data-kid="'+ki+'"><div class="ot-kidlab">'+esc(c.lab)+(c.sub?'<small>'+esc(c.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(c,ki)+'</div></div></div>';});
@@ -1174,6 +1182,12 @@ SR.addEventListener('click',()=>{
 });
 setInterval(rtick,1000);rtick();   // v40: 1 s, so a choice made on another page shows up here within a second
 setInterval(tick,1000);tick();
+// 11-13: brief view by default; the 설명 보기 button shows the explanations (hints, notes on the choices, legends, old scoring line) and remembers the choice on this device.
+const verboseButton=$('verbose-btn');
+function verboseSet(on){document.body.classList.toggle('verbose',on);verboseButton.setAttribute('aria-pressed',on?'true':'false');verboseButton.textContent=on?'설명 숨기기':'설명 보기';dispatchEvent(new Event('resize'));}
+let verboseSaved=false;try{verboseSaved=localStorage.getItem('lwir_verbose')==='1';}catch(_){}
+verboseSet(verboseSaved);
+verboseButton.addEventListener('click',()=>{const on=!document.body.classList.contains('verbose');verboseSet(on);try{localStorage.setItem('lwir_verbose',on?'1':'0');}catch(_){}});
 // v26d: small speed / delay graphs below the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
 const PF={rows:[],span:60,off:0,busy:false,on:true};
 try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if(s_.on===false)PF.on=false;if([60,300,900].includes(s_.span))PF.span=s_.span;}catch(_){}
@@ -1252,7 +1266,7 @@ function pftick(){if(document.hidden||!PF.on||PF.busy)return;PF.busy=true;const 
   fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
     for(const r of p.rows){const pic=Number.isFinite(r[7])&&Number.isFinite(r[3])?Math.max(0,r[7]-r[3]):null;   // picture making = (arrival -> picture ready) - (arrival -> track result)
-      r[8]=pic;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&PFNET.ms!=null&&Date.now()-PFNET.at<5000?PFNET.ms:null;PF.rows.push(r);}   // history loaded in one go has no transfer samples of its ownif(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
+      r[8]=pic;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&PFNET.ms!=null&&Date.now()-PFNET.at<5000?PFNET.ms:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
 const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({on:PF.on,span:PF.span}));}catch(_){}};
 $('pfbtn').addEventListener('click',e=>{e.stopPropagation();PF.on=!PF.on;pfsave();pfdraw();pftick();});
 $('pfspan').addEventListener('click',e=>{e.stopPropagation();PF.span={60:300,300:900,900:60}[PF.span];pfsave();pfdraw();});

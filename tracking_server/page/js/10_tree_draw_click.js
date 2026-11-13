@@ -1,6 +1,6 @@
 function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const body=(t,i)=>{let h='';
-    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+esc(n.name)+(n.note?'<small>'+esc(n.note)+'</small>':'')+'</button>';
+    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+esc(n.name)+(n.note?'<small>'+esc(n.note)+'</small>':'')+'</button>';
     if(!t.f)t.n.forEach((n,j)=>{const ki=n.sel&&n.key?OTT.findIndex(c=>c.kidOf===i&&c.show&&c.kidKey===n.key):-1;   // v42: a chosen tile that owns a child row becomes one box with the child inside
       if(ki<0){h+=btn(n,j);return;}const c=OTT[ki];
       h+='<div class="ot-grp sel ot-own">'+btn(n,j)+'<div class="ot-kid" data-kid="'+ki+'"><div class="ot-kidlab">'+esc(c.lab)+(c.sub?'<small>'+esc(c.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(c,ki)+'</div></div></div>';});

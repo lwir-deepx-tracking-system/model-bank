@@ -12,3 +12,10 @@ main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--
 .frame img{display:block;width:100%;height:100%;object-fit:contain;cursor:crosshair;background:#000}
 .hint{font-size:12px;color:var(--mut);margin-top:6px}
 .panel{min-height:0;background:var(--pan);border-left:1px solid var(--line);overflow-y:auto}
+/* 11-13 brief view (default): explanations are hidden. The 설명 보기 button in the top bar adds body.verbose and shows them again. */
+body:not(.verbose) .hint,body:not(.verbose) .mobhint,body:not(.verbose) .pfnote,body:not(.verbose) .ot-leg,
+body:not(.verbose) .ot-n:not(.ot-f) small,body:not(.verbose) .ot-lab small,body:not(.verbose) .ot-kidlab small,
+body:not(.verbose) details.fold,body:not(.verbose) small.more,body:not(.verbose) #rpevalview,body:not(.verbose) .rpold,
+body:not(.verbose) .rpfoot,body:not(.verbose) #npu-feed-counts,body:not(.verbose) #rconf-msg,body:not(.verbose) .pft span{display:none}
+.hbtn{font:inherit;font-size:12px;font-weight:600;height:26px;padding:0 10px;border:1px solid var(--line);border-radius:var(--r);background:transparent;color:var(--ink2);cursor:pointer;white-space:nowrap}
+.hbtn[aria-pressed="true"]{color:#fff;border-color:var(--c1)}
