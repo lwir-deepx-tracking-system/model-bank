@@ -1,7 +1,9 @@
 /* layout */
 main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) var(--pan-w);gap:0;width:100%}
 .view{min-height:0;display:flex;align-items:flex-start;justify-content:center;padding:12px;overflow-y:auto}
-.vbox{width:min(100%,calc(max(160px,100dvh - var(--bar-h) - 24px - var(--video-below,58px)) * 4 / 3))}
+.vbox{width:min(100%,calc(max(160px,100dvh - var(--bar-h) - 24px - var(--video-above,34px) - var(--video-below,58px)) * 4 / 3))}
+.feedbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;min-height:30px;margin-bottom:4px;font-size:12px}
+.feedbar .feedinfo{color:var(--mut);min-width:0}
 .replay-mode .vbox{--video-below:var(--replay-controls-height,110px)}
 .replay-mode .frame img{cursor:default}
 .replay-only,.replay-mode .camera-only{display:none}

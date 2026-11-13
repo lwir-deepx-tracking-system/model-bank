@@ -23,7 +23,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const cpp=camCpp||replayCpp, btSelected=BT_KEYS.includes(trk)||cpp||camTransition;
   const engine=replayCpp?(replayErr?'C++ 오류 (녹화)':'C++ (녹화)'):r.tracker_backend||'미보고';
   const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(p.backend||'백엔드 미보고'),note:p.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':TN[p.key]?TN[p.key][1]:'',sel:!cpp&&!camTransition&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key))}));
-  if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack',sel:btSelected,u:Q('tracker='+encodeURIComponent(bt.key))});
+  if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack · '+(camNative?.available?'C++':'Python'),note:camNative?.available?'C++ 라이브러리가 있어 C++로 시작합니다. Python은 아래 ByteTrack 옵션에서 고릅니다':'',sel:btSelected,u:Q('tracker='+encodeURIComponent(bt.key)+'&engine=auto')});
   const trackerSummary=camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
   T.push({lab:'Tracker',sub:trackerSummary,n:tn});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance

@@ -22,10 +22,10 @@ function syncSystemButtons(){
   feedApply.disabled=feedToggle.disabled||feed?.can_toggle!==true||
     (selectedMode===feed.requested&&selectedMode===feed.mode);
 
-  let state='NPU 교대 투입 상태를 확인하는 중…';
-  if(rlast&&!feed)state='이 서버에서는 NPU 교대 투입 설정을 제공하지 않습니다.';
+  let state='상태를 확인하는 중…';
+  if(rlast&&!feed)state='이 서버에는 이 설정이 없습니다.';
   if(feed){
-    state='현재 동작 · 교대 투입 '+(feed.active?'켜짐':'꺼짐');
+    state='지금 '+(feed.active?'번갈아 쓰는 중':'NPU 0만 쓰는 중');
     if(switching)state='전환 중 · '+state;
     else{
       if(requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
@@ -95,7 +95,7 @@ feedApply.addEventListener('click',async()=>{
   if(feedApply.disabled)return;
   const mode=feedToggle.checked?'arrival':'normal';
   try{
-    const result=await syspost('/system/npu-feed?mode='+mode,'NPU 교대 투입 전환을 요청하는 중…','');
+    const result=await syspost('/system/npu-feed?mode='+mode,'검출 NPU 사용 방식을 바꾸는 중…','');
     if(result.ok)await rtick();
   }finally{
     finishSystemRequest();

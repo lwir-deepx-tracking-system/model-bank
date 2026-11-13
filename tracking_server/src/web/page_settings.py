@@ -100,6 +100,23 @@ def rules_state_2():
     return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg())   # gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
 
 
+def prefer_cpp_bytetrack(q_, tracker_key, cam_tracker):
+    """11-13: `engine=auto` on the ByteTrack menu row asks for C++ when it can fully replace Python on the camera:
+    library installed, camera (not a recording) on screen, nobody being followed, and a gimbal bridge that takes the
+    C++ IDs (or no gimbal). Every other request, including the explicit Python option, keeps the Python engine."""
+    if q_.get('engine', [''])[0] != 'auto' or tracker_key != 'confirm3': return False
+    try:
+        from ..camera import replay_link
+        if replay_link.blocking(): return False
+        try: gb_ = APP.GB
+        except NameError: gb_ = None   # server started without a gimbal
+        if gb_ is not None and (gb_.state.get('auto') or not getattr(gb_, 'track_control_supported', False)): return False
+        return bool(cam_tracker.state().get('available'))
+    except Exception as e_:
+        print('RULES engine auto -> Python (%s)' % repr(e_)[:120], flush=True)
+        return False
+
+
 def rules_request(q_):
     """q_: dict of lists from parse_qs. Thresholds change at once; tracker / relabel are queued for the frame boundary. Returns (ok, text)."""
     if 'app' in q_:   # v40: everything new is checked before anything changes
@@ -180,7 +197,7 @@ def rules_request(q_):
         APP.RULES['changes'] += 1; APP.RULES['last'] = dict(at=time.strftime('%H:%M:%S'), warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, queued=sorted(pend_.keys()))
     cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
     if 'tracker' in pend_ and cam_tracker is not None:
-        cam_tracker.select(False)
+        cam_tracker.select(prefer_cpp_bytetrack(q_, pend_['tracker'], cam_tracker))
     print('RULES set warm_min %d warm_max %d edge_birth %.2f pending %s' % (settings.WARM_MIN, settings.WARM_MAX, settings.EDGE_BIRTH, pend_), flush=True)
     APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), app=APP.CTL['app'], lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **(dict(confirm_ms=APP.CONFIRM.ms) if cm_ is not None else {}), **pend_)   # v36. v40: lead itself is not kept (comes back OFF)
     return True, '적용됨' if not (pend_ or rk_ is not None) else '다음 프레임에 적용'

@@ -27,13 +27,13 @@
 @media (max-width:900px) and (orientation:landscape){
   main{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-rows:min-content 1fr min-content}
   .view{grid-column:1;grid-row:1/3;align-items:center}
-  .vbox{width:min(100%,calc((100dvh - var(--bar-h)) * 4 / 3))}
+  .vbox{width:min(100%,calc((100dvh - var(--bar-h) - var(--video-above,34px)) * 4 / 3))}
   .frame{border:0;border-radius:0}
   .panel{display:contents}
   .st{grid-column:2;grid-row:1;border-bottom:0;width:300px;padding-bottom:4px}
   .replay-mode main{display:flex}
   .replay-mode .view{padding:0 8px;align-items:flex-start}
-  .replay-mode .vbox{width:min(100%,calc(max(160px,100dvh - var(--bar-h) - var(--video-below)) * 4 / 3))}
+  .replay-mode .vbox{width:min(100%,calc(max(160px,100dvh - var(--bar-h) - var(--video-above,34px) - var(--video-below)) * 4 / 3))}
   .kv{grid-template-columns:auto 1fr;gap:2px 14px}
   .mobhint{display:none}
   .padsec{grid-column:2;grid-row:2;align-self:end;padding-top:4px;border-bottom:0}
