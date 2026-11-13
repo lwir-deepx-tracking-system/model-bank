@@ -248,6 +248,7 @@ class Control:
     def __init__(self, say):
         self.lk, self.ev, self.say = threading.Lock(), threading.Event(), say
         self.seek = self.paused = self.speed = None
+        self.step = 0
         self.n = self.bad = 0
 
     def start(self):
@@ -270,6 +271,8 @@ class Control:
                             self.speed = float(f[1])
                         elif k in ('PAUSE', 'PLAY') and len(f) == 1:
                             self.paused = k == 'PAUSE'
+                        elif k == 'STEP' and len(f) == 1:
+                            self.step += 1
                         else:
                             self.bad += 1
                             continue
@@ -283,8 +286,9 @@ class Control:
 
     def take(self):
         with self.lk:
-            c = (self.seek, self.paused, self.speed)
+            c = (self.seek, self.paused, self.speed, self.step)
             self.seek = self.paused = self.speed = None
+            self.step = 0
             self.ev.clear()
         return c
 
@@ -405,6 +409,7 @@ def main():
         next_rep = 0.0
         seq = 0
         t_prev_ns = 0
+        steps_left = 0
 
         def emit(b, p, png, repeat):
             nonlocal seq, t_prev_ns
@@ -423,7 +428,8 @@ def main():
 
         while True:
             if ctl is not None:
-                c_seek, c_paused, c_speed = ctl.take()
+                c_seek, c_paused, c_speed, c_step = ctl.take()
+                steps_left += c_step
                 if c_speed is not None and 0.1 <= c_speed <= 240:
                     fps = c_speed
                     period = 1.0 / fps
@@ -450,6 +456,20 @@ def main():
                     elif not first:
                         due = clock()
                     say('REPLAY CMD %s at %d' % ('pause' if paused else 'play', cur_pos))
+            if paused and not first and steps_left > 0:
+                steps_left -= 1
+                if not seek_wait and pos < total:      # 건너뛰는 중이거나 마지막 장이면 넘기지 않는다
+                    first = True                        # 다음 한 장을 보통 프레임으로 보낸다 (되풀이 표시 없음)
+                    due = clock()
+                    say('REPLAY CMD step %d -> %d' % (cur_pos, pos))
+                if not paused:
+                    steps_left = 0                  # 재생 중에 온 STEP은 버린다 (서버도 멈춘 상태에서만 보낸다)
+                elif steps_left > 0 and not first:
+                    steps_left -= 1
+                    if not at_end and not seek_wait and pos < total:   # 완주 후, 건너뛰는 중, 마지막 장 뒤에는 넘기지 않는다
+                        first = True                # 다음 한 장을 보낼 차례로 (시작·건너뛰기 뒤 첫 프레임과 같은 길)
+                        due = clock()
+                        say('REPLAY CMD step %d -> %d' % (cur_pos, pos))
             if (paused or at_end) and not first:   # 멈춤: 같은 프레임을 되풀이로 (조종 줄이 오면 바로 깬다)
                 d = next_rep - clock()
                 if d > 0:

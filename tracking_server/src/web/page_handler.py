@@ -367,6 +367,7 @@ def make_lv_Handler():
                     with APP.LIVE.cond:
                         code_, text_ = replay_link.seek_request(pq4_(u4_.query))   # 11-12: jump to a frame (0-based index)
                 elif u4_.path == '/replay/pause': code_, text_ = replay_link.pause_request()
+                elif u4_.path == '/replay/step': code_, text_ = replay_link.step_request()
                 elif u4_.path == '/replay/play': code_, text_ = replay_link.play_request()
                 elif u4_.path == '/replay/speed': code_, text_ = replay_link.speed_request(pq4_(u4_.query))   # 11-12: frames per second while playing
                 elif u4_.path == '/replay/eval/reset': code_, text_ = replay_link.restart_request()

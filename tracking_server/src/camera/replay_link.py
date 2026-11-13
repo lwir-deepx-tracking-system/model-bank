@@ -175,11 +175,15 @@ class Ctl:
         self.dead = False; self.sent = 0; self.coalesced = 0; self.err = ''
         threading.Thread(target=self._run, daemon=True).start()
 
-    def send(self, kind_, val_=None):   # kind_: 'seek' | 'speed' | 'paused'
+    def send(self, kind_, val_=None):   # kind_: 'seek' | 'speed' | 'paused' | 'step'
         with self.cv:
             if self.dead: return False
-            if kind_ in self.pend: self.coalesced += 1
-            self.pend[kind_] = val_; self.cv.notify()
+            if kind_ == 'step':             # 한 장 넘기기는 모으지 않고 횟수를 더한다
+                self.pend['step'] = self.pend.get('step', 0) + 1
+            else:
+                if kind_ in self.pend: self.coalesced += 1
+                self.pend[kind_] = val_
+            self.cv.notify()
             return True
 
     def _run(self):
@@ -196,6 +200,7 @@ class Ctl:
                     pos, pause = take_['seek']
                     lines_.append('SEEK %d%s' % (pos, ' PAUSE' if pause else ''))
                 if 'paused' in take_: lines_.append('PAUSE' if take_['paused'] else 'PLAY')
+                if 'step' in take_: lines_ += ['STEP'] * take_['step']
                 try: self.p.stdin.write(('\n'.join(lines_) + '\n').encode('ascii')); self.p.stdin.flush(); self.sent += len(lines_)
                 except (BrokenPipeError, OSError, ValueError) as e_: self.err = type(e_).__name__; return
         finally:
@@ -378,6 +383,13 @@ def stop_request():
     _gimbal_stop()
     APP.lv_th.Thread(target=_switch, args=(None,), daemon=True).start()
     return 200, '재생 멈춤: 카메라로 돌아가는 중 (영상은 10~60초 뒤)'
+
+def step_request():   # POST /replay/step: 멈춘 상태에서 다음 한 장만 보내고 다시 멈춤 (추적이 이어짐)
+    r_, ctl_, e_ = _ctl_target()
+    if r_ is None: return e_
+    if not r_.get('paused'): return 409, '멈춘 상태에서만 한 장씩 넘길 수 있습니다'
+    ctl_.send('step')
+    return 200, '다음 한 장'
 
 
 def _end_old(p_, replay_):   # 지금 카메라 자리의 프로그램을 끝낸다. True = 끝남
