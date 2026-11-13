@@ -117,6 +117,10 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         if marked:
             text += ' OBS %d' % bool(healthy)  # Before LEAD: without_lead must preserve this.
         epoch = getattr(gb, 'control_epoch', None)
+        if APP.CTL['lead'] and gb.state.get('auto'):   # 11-13: counters for /rules lead_stats (why prediction did or did not reach the bridge)
+            why_ = ('bridge has no LEAD support' if not getattr(gb, 'lead_control_supported', False) else 'no control epoch yet' if epoch is None
+                    else 'selection pending' if getattr(gb, 'lead_pending', 0) else 'lost or error' if gb.state.get('lost') or gb.state.get('error') else '')
+            if why_: st_ = APP.CTL.setdefault('lead_stats', {}); st_[why_] = st_.get(why_, 0) + 1
         if (APP.CTL['lead'] and getattr(gb, 'lead_control_supported', False) and epoch is not None
                 and not getattr(gb, 'lead_pending', 0) and gb.state.get('auto')
                 and not gb.state.get('lost') and not gb.state.get('error')):
@@ -131,6 +135,9 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                 previous, selected, observed, frame_t, APP.CTL.get('lead_motion'), APP.CTL['lead_ms'],
                 aim_y=_bridge_aim_y(gb), correction=correction)
             # A settings request can reset the sample while NumPy is running.
+            st_ = APP.CTL.setdefault('lead_stats', {}); w_ = predictive_lead.LAST.get('why') or '?'
+            if w_ == 'sent' and not math.hypot(dx, dy): w_ = 'zero'
+            st_[w_] = st_.get(w_, 0) + 1
             if APP.CTL['lead'] and APP.CTL['lv'] is previous:
                 APP.CTL['lv'] = sample
                 APP.CTL['lead_px'] = math.hypot(dx, dy)

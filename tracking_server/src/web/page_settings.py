@@ -85,7 +85,7 @@ def ctl_state():
                 app=APP.CTL['app'], apps=[dict(key='off', name='끔', available=True, note=''),
                                       dict(key='repvgg', name='RepVGG_(TMOT,CAMEL)', available=rl_ok_, note='' if rl_ok_ else 'KeepID 모델이 이 실행에 없습니다'),
                                       dict(key='vit', name='ViT', available=False, note='ViT 파일을 장치에 올려야 열립니다')],
-                lead=bool(APP.CTL['lead']), lead_ms=int(APP.CTL['lead_ms']), lead_px=round(float(APP.CTL['lead_px']), 1), warm_on=bool(settings.WARM_MIN > 0 or settings.WARM_MAX > 0), warm_prev=list(APP.CTL['warm_prev']),
+                lead=bool(APP.CTL['lead']), lead_ms=int(APP.CTL['lead_ms']), lead_px=round(float(APP.CTL['lead_px']), 1), lead_stats=dict(APP.CTL.get('lead_stats') or {}), warm_on=bool(settings.WARM_MIN > 0 or settings.WARM_MAX > 0), warm_prev=list(APP.CTL['warm_prev']),
                 gimbal=dict(present=gbs_ is not None, running=bool(gbs_ and gbs_.get('running')), id=int(gbs_.get('id', 0) or 0) if gbs_ else 0, auto=int(gbs_.get('auto', 0) or 0) if gbs_ else 0))
 
 
@@ -201,7 +201,7 @@ def rules_request(q_):
         with APP.REID['lock']: APP.REID['req'] = dict(key=rk_, t=time.time())
         print('RULES reid queued', rk_, flush=True)
     if 'lead_ms' in q_: APP.CTL['lead_ms'] = lm_
-    if 'lead' in q_: APP.CTL['lead'] = q_['lead'][0] in ('1', 'true', 'on'); APP.CTL['lv'] = None; APP.CTL['lead_px'] = 0.0; APP.CTL['lead_err'] = ''
+    if 'lead' in q_: APP.CTL['lead'] = q_['lead'][0] in ('1', 'true', 'on'); APP.CTL['lv'] = None; APP.CTL['lead_px'] = 0.0; APP.CTL['lead_err'] = ''; APP.CTL['lead_stats'] = {}
     if any(k_ in q_ for k_ in ('app', 'lead', 'lead_ms', 'warm_on')): print('RULES set app %s lead %d lead_ms %d' % (APP.CTL['app'], APP.CTL['lead'], APP.CTL['lead_ms']), flush=True)
     with APP.RULES['lock']:
         if pend_: APP.RULES['pending'] = dict(APP.RULES['pending'] or {}, **pend_, t=time.time())
