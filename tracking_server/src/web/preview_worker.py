@@ -86,9 +86,21 @@ def render_preview(cv2, frame):
         b = min(max(int(x2 * sc), 0), ww - 1), min(max(int(y2 * sc), 0), hh - 1)
         if a[0] < b[0] and a[1] < b[1]:
             _dash_rect(cv2, img, a, b, (255, 255, 255) if kind == 0 else (200, 90, 255), 1, 4)
-    for p1, p2, col, tid in frame.predictions:
+    for pr in frame.predictions:
+        p1, p2, col, tid = pr[:4]
+        lab = pr[4] if len(pr) > 4 else '%d predict' % tid
+        last = pr[5] if len(pr) > 5 else None; pts = pr[6] if len(pr) > 6 else ()
+        if last is not None:   # 11-14 (user): where the person was last seen = 위치 기억 (thin box + centre), path since then = 예측 이동
+            lx, ly, lw, lh = last
+            _dash_rect(cv2, img, (lx - lw // 2, ly - lh // 2), (lx + lw // 2, ly + lh // 2), col, 1, 3)
+            cv2.circle(img, (lx, ly), 4, col, 2)
+            cv2.putText(img, 'last seen', (lx - lw // 2, ly + lh // 2 + 14), font, 0.45, col, 1)
+            path = [(lx, ly)] + list(pts)
+            if len(path) > 1:
+                cv2.polylines(img, [np.array(path, np.int32).reshape(-1, 1, 2)], False, col, 1)
+                cv2.arrowedLine(img, path[-2] if len(path) > 2 else path[0], path[-1], col, 2, tipLength=0.4)
         _dash_rect(cv2, img, p1, p2, col, 2, 7)
-        cv2.putText(img, '%d predict' % tid, (p1[0], max(p1[1] - 4, 12)), font, 0.55, col, 2)
+        cv2.putText(img, lab, (p1[0], max(p1[1] - 4, 12)), font, 0.55, col, 2)
     if PICTURE_BANNER:
         cv2.rectangle(img, (0, 0), (ww, 26), (0, 0, 150) if frame.replay else (0, 0, 0), -1)
         cv2.putText(img, frame.top_text, (8, 19), font, 0.55, (255, 255, 255), 1)

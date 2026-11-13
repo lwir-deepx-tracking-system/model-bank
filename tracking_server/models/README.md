@@ -78,6 +78,13 @@
   - AdamW lr 0.0002, 보정 97장(우리 카메라), ema, opt 1. 종류 16칸을 채우는 작은 부분만 파일 안의 CPU 부분, 나머지는 NPU. 만든 스크립트 `build_scripts/yolo26m_pose_otp2_bodybox_build/` (coco_prep.py, otp2_coco.yaml 포함)
   - 이전 두 판(11-13 bodybox, bodybox_occl)은 이 판으로 대체되어 지웠습니다(git 기록에는 남아 있음).
   - 상태: 근거리·가림 시험용. 장치 INT8 정확도와 실카메라 성능 미측정
+- **YOLO26m-pose_fine-tuning_(OTP2+COCO)_20261114_bodybox_occl_kpt 640x480 [관절]**
+  - 파일 `yolo26m/yolo26m_pose_otp2coco_20261114_bodybox_occl_kpt_640x480.dxnn`
+  - 바로 위 OTP2+COCO 판과 같은 가중치(13번째 epoch). 출력 9개: 상자·종류 6개(같음) + 관절 `kpt_s8/16/32` `[1,51,H/s,W/s]` (Pose26 의 관절 conv 그대로, 17개 × x·y·보임 logit)
+  - 서버는 NMS 로 남은 사람 상자의 관절만 풀어(x = (값 + 열 + 0.5) × stride, 보임 = sigmoid) 관절 위치 기억(GRU/Mamba + 관절)에 넘깁니다(`src/detect/detect_frame.py` attach_kpts)
+  - 11-14 이전 서버는 출력이 9개인 파일을 목록에 올리지 않습니다. 보정 97장, ema, opt 1. 만든 스크립트 `build_scripts/yolo26m_pose_otp2_bodybox_build/build_bodybox_kpt.py`
+  - 장치 NPU 확인(11-14, 실내 녹화 8장): 출력 9개 정상, 가장 가까운 사람의 보이는 관절 위치가 PC(ONNX, float)와 평균 0.7~1.3 px 차이, 한 장 24.8 ms(동기 실행, CPU 부분 포함)
+  - 상태: 근거리·가림 시험용. 실카메라 추적 성능 미측정
 - **yolo26s_nmsfree_npu_640x640 [NMS-free]**
   - 파일 `yolo26s/yolo26s_nmsfree_npu_640x640.dxnn`
   - 입력 `[1,640,640,3]`
@@ -211,25 +218,14 @@ DXNN 이 아니라 가중치가 든 JSON / npz 이고, 서버가 장치 CPU 에�
   - 학습: TMOT 검증 6편의 정답 쌍 1,430개
   - 측정: TMOT 검증 교차 확인: IDF1 0.692, 되돌린 58건 중 같은 사람 39 / 다른 사람 11 / 모름 8 (파일 안의 기록)
   - 상태: 켜기 스크립트가 `--judge` 로 넘김. RepVGG_distillation_(TMOT,CAMEL)_20261103 의 점수로 맞춘 것이라 다른 외형 모델과는 확인되지 않음
-- **GRU 위치 기억**
-  - 파일 `track/pos_gru.json`, `pos_gru.npz` (11-14 재학습)
-  - 입력: 놓친 사람 한 명, 프레임마다 숫자 16개. 출력: 숫자 4개 (Kalman+카메라 보정 예측 상자를 고치는 값, 0 이면 Kalman 과 같음)
-  - 학습: 우리 카메라 야외 영상(seq_*)에서 검출을 일부러 끊고 맞히기. 40 epoch, 영상별 균형 뽑기, 입력 흔들기(중심 0.06 키, 크기 0.08), 6번째 epoch
-  - 측정(val, 오차/키, 낮을수록 좋음): **0.1715** · 서버 기본 Kalman+카메라 보정 0.1893 (9% 좋음) · 카메라 보정 없는 Kalman 0.1648 (이것보다는 못함). 놓친 뒤 30프레임: 0.180 대 0.205
-  - 상태: 시험해 볼 수 있음. val 로 고른 값이라 약간 낙관적, hold 자료와 장치·실카메라에서는 아직 확인 안 함
-- **Mamba 위치 기억**
-  - 파일 `track/pos_mamba.json`, `pos_mamba.npz` (11-14 재학습)
-  - 입력·출력·학습: GRU 와 같음(seed 0, 8번째 epoch)
-  - 측정(val): **0.1726** · Kalman+카메라 보정 0.1893 · 보정 없는 Kalman 0.1648
-  - 상태: GRU 와 같음
-- **(화면에 없음) 관절 입력 GRU · Mamba 위치 기억**
+- **GRU · Mamba 위치 기억 + 관절** (11-14 화면 연결)
   - 파일 `track/pos_gru_kpt_posetrack18_20261114.{npz,json}`, `track/pos_mamba_kpt_posetrack18_20261114.{npz,json}`
   - 입력: 위 16개와 비슷한 상자 값 + 화면 가장자리까지 거리 + **관절 17개(위치·보임)**, 프레임당 68개. 출력: 15프레임 동안 보정 없는 Kalman 예측을 고치는 값
   - 학습: PoseTrack18 라벨(영상·사람 번호·관절, 좌표만 씀) 30 epoch. 증강: 빠른 움직임(프레임 절반), 시간 뒤집기, 좌우 뒤집기, 카메라 이동, 사라짐 합성(사라지기 전 0~6프레임 동안 가리개가 몸을 20→90% 덮으며 관절이 하나씩 사라짐, 3~15프레임 놓침)
   - 측정(PoseTrack18 val 중 고르는 데 안 쓴 절반, 오차/키): GRU 일반 0.119 · 사라짐 합성 0.181 · 실제 사라짐 0.678 / Mamba 0.121 · 0.184 · 0.720 / Kalman 0.150 · 0.231 · 0.717. 관절을 빼면 GRU 0.130 · 0.189 로 나빠짐. 은닉 크기 32·64·128 중 64 선택. 실제 사라짐은 23개뿐
-  - 상태: **서버 연결 전.** 지금 검출 모델 파일은 관절 점을 내보내지 않아 서버가 이 입력을 만들 수 없음. 만든 코드 `track/build_scripts/pos_kpt_posetrack18_build/m5_kpt_motion.py`
+  - 상태: 11-14 서버 연결. 화면 이름 "GRU 위치 기억 + 관절", "Mamba 위치 기억 + 관절". 관절은 관절 출력이 있는 검출 파일(`yolo26m_pose_otp2coco_20261114_bodybox_occl_kpt_640x480`)에서 읽음. 서버 numpy 계산 = 학습 torch (GRU 3.6e-5, Mamba 4.1e-5 px, `src/track/parity_kpt_vs_torch.py`). 놓친 뒤 15프레임까지 고치고 그 뒤는 Kalman. 카메라 움직임은 경로에 적용. 장치·실카메라 미확인. 만든 코드 `track/build_scripts/pos_kpt_posetrack18_build/m5_kpt_motion.py`
 
-화면의 위치 기억 기본값은 학습 모델이 없는 "Kalman filter + 카메라 움직임 보정"입니다.
+화면의 위치 기억 기본값은 학습 모델이 없는 "Kalman filter + 카메라 움직임 보정"입니다. 관절 없는 GRU·Mamba 판(`pos_gru`, `pos_mamba`)은 11-14 사용자 요청으로 지웠습니다(git 기록에는 남음).
 
 ## 3. 외형 비교 (`reid/`)
 

@@ -1,5 +1,5 @@
 {
- "status": "관절 입력 MAMBA 위치 기억 (PoseTrack18) · 서버 연결 전 — 검출 모델이 관절 점을 내야 쓸 수 있음",
+ "status": "관절 입력 MAMBA 위치 기억 (PoseTrack18) · 관절 내는 검출 파일([관절])과 함께 · 장치 미확인",
  "source": "close_range m5_kpt_motion.py mamba_kpt --aug 1 --hidden 64 (PoseTrack18 라벨, 30 epoch)",
  "inputs": "프레임당 68개: 칼만 속도 2 · 직전 검출과 예측 차이 4 · 상자 변화 4 · log 높이 · 가로세로 비 · 화면 네 가장자리까지 거리 4 · 관절 17개 × (상자 중심 기준 x, y / 키, 보임) · 놓친 프레임 표시. 놓치기 전 최대 20프레임",
  "output": "15프레임 동안 보정 없는 Kalman 예측 상자에 더하는 보정(중심 ±1 키, 크기 ±50%). 0 이면 Kalman 과 같음",

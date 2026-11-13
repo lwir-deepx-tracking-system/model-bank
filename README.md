@@ -149,7 +149,7 @@ python3 start_label_server.py --root <라벨 폴더> --bind <주소> --port 8770
 
 | 일 | 시작 모델 | 고를 수 있는 수 |
 |---|---|---|
-| 검출 | YOLO26m_(FLIR) 640x480 | 12개 |
+| 검출 | YOLO26m_(FLIR) 640x480 | 13개 |
 | 외형 비교 | RepVGG_distillation_(TMOT,CAMEL)_20261103 | 5개 |
 
 - 모델 목록, 파일 이름, 입력·출력, 학습 자료, 측정값: [tracking_server/models/README.md](tracking_server/models/README.md)

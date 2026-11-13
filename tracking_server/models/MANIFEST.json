@@ -22,6 +22,7 @@
     "REPVGG_FT_OTP2_20261113": "reid/repvgg_ft_otp2_20261113_reid.dxnn"
   },
   "_files": {
+    "detect/yolo26m/yolo26m_pose_otp2coco_20261114_bodybox_occl_kpt_640x480.dxnn": "2a4210493f573479236fd1796130a7f4583e13b0eb5cf6120aefcdb08b4afd06",
     "detect/yolo26m/yolo26m_pose_otp2coco_20261114_bodybox_occl_640x480.dxnn": "366dfed40510bc5a0588614d35efc45efa76cec98071be426613b67197c716c0",
     "detect/yolo26m/yolo26m_flir_inside_20261110_2020_640x480.dxnn": "7a2571e1caf313d34762660e57f735a17e355ac727df08f4c5862fb4ef7b35fc",
     "detect/yolo26m/yolo26m_flir_nms_640x480.dxnn": "1aa827cf11f55d470b979d73cdae248babd77a80577613fcfe98097a9fcc18b9",

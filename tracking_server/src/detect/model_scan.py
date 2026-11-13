@@ -11,6 +11,9 @@ from ..common.shared_values import HERE, CORE, DET, sha, anchors
 # ---- v28 (user 11-10): models put into dxnn/ are found by themselves ----
 W480_DETS = {'w480', 's480', 'ft1', 'ft9'}; S6_DETS = {'m640', 's6'}; BANK = {}; BANK_SEEN = {}; BANK_T = [0.0]
 BANK_REJ = {}; BANK_HEADS = ['box_s8', 'box_s16', 'box_s32', 'cls_s8', 'cls_s16', 'cls_s32']
+# 11-14 (user: 관절을 읽도록): six heads + three raw Pose26 keypoint heads kpt_s8/16/32 [1,51,H/s,W/s] (17 x (x, y, visibility logit)); boxes and NMS as 'six',
+# keypoints decoded on the host for the boxes kept by NMS only (detect_frame.attach_kpts), used by the keypoint position memory (track/position_memory.py)
+BANK_HEADS_KPT = BANK_HEADS + ['kpt_s8', 'kpt_s16', 'kpt_s32']; KPT_DETS = set(); KPT_KEYS = set()
 E2E_DETS = set(); E2E_KEYS = set()   # v30 (user 11-10): models whose one output is the finished [1,300,6] list (x1,y1,x2,y2,score,class); no host decode, no host NMS
 # 11-13 (user): models whose one output is the already decoded box list of all N anchors, before NMS (host NMS only, no host box decode).
 # 'v8' = [1,20,N]: rows cx,cy,w,h (model pixels) + 16 class scores 0..1 (YOLOv8 export); 'yolox' = [1,N,21]: per anchor cx,cy,w,h (model pixels), objectness 0..1, 16 class scores 0..1 (YOLOX export)
@@ -41,6 +44,11 @@ def bank_probe(p):
         got = sh.get(outs[0])
         return None, 'the one output %s is %s; accepted are float32 [1,300,6] (end-to-end), [1,20,%d] (YOLOv8 form) or [1,%d,21] (YOLOX form)' % (
             outs[0], '%s %s' % (list(got[0]), got[1]) if got else 'unreadable', n, n)
+    if outs == BANK_HEADS_KPT:   # 11-14: six heads + keypoint heads
+        for c, pre in ((4, 'box_s'), (16, 'cls_s'), (51, 'kpt_s')):
+            for st in (8, 16, 32):
+                if sh.get(pre + str(st)) != ((1, c, H // st, W // st), 'float32'): return None, 'head %s%d has shape %s' % (pre, st, sh.get(pre + str(st)))
+        return (H, W, 'six_kpt'), None
     if outs != BANK_HEADS: return None, 'outputs %s are neither the six detector heads nor one output of an accepted form ([1,300,6], [1,20,N], [1,N,21])' % outs
     for c, pre in ((4, 'box_s'), (16, 'cls_s')):
         for st in (8, 16, 32):
@@ -76,6 +84,7 @@ def bank_scan(folder, skip, now):
         except OSError: continue
         if '%dx%d' % (hw[1], hw[0]) not in name: name += ' %dx%d' % (hw[1], hw[0])
         if hw[2] == 'e2e': name += ' [NMS-free]'
+        if hw[2] == 'six_kpt' and '관절' not in name: name += ' [관절]'
         new.append(('bank:' + stem, stem, name + ' (자동 등록)', p, h, hw[:2], 16.0 if hw[0] == 480 else -64.0, hw[2]))
     return new
 
@@ -100,5 +109,6 @@ def bank_add_(now_):
             (W480_DETS if hw_[0] == 480 else S6_DETS).add(det_)   # input canvas (frame preparation)
             if kind_ == 'e2e': E2E_DETS.add(det_); E2E_KEYS.add(key_)   # v30: output path
             elif kind_ in ('v8', 'yolox'): RAW_DETS[det_] = kind_; RAW_KEYS[key_] = kind_   # 11-13: output path
+            elif kind_ == 'six_kpt': KPT_DETS.add(det_); KPT_KEYS.add(key_)   # 11-14: six heads + keypoints
             APP.MODEL['catalog'].append(dict(id=len(APP.MODEL['catalog']) + 1, det=det_, key=key_, name=name_))
         print('BANK model listed: id %d %s (%s)' % (len(APP.MODEL['catalog']), key_, h_[:12]), flush=True)

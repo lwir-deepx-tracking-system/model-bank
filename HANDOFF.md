@@ -1,5 +1,7 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
+**2026-11-14 관절 읽기 + 관절 위치 기억 연결 + 예측 이동·위치 기억 표시:** 새 검출 파일 `yolo26m_pose_otp2coco_20261114_bodybox_occl_kpt_640x480`(목록 이름 끝 [관절])은 상자·종류 6개에 관절 출력 3개를 더한 것입니다. 서버가 출력 9개 파일을 종류 `six_kpt` 로 받아 NMS 로 남은 사람의 관절을 풀고(`detect_frame.attach_kpts`), 위치 기억 "GRU/Mamba 위치 기억 + 관절"이 그 관절을 읽습니다. 관절 없는 GRU·Mamba 판(`pos_gru`, `pos_mamba`)은 사용자 요청으로 지웠습니다. 예측 상자 표시를 켜면 마지막으로 본 자리(last seen)와 그 뒤 예측 경로(선·화살표), "번호 예측기 놓친프레임"을 그립니다. 장치 NPU 에서 관절은 PC 와 평균 약 1 px 차이, 한 장 24.8 ms. 실카메라 추적 효과는 아직 재지 않았습니다. 서버 재시작이 있어야 새 코드가 돕니다.
+
 **2026-11-14 위치 기억 GRU·Mamba 재학습 판 교체 + 관절 입력 판 추가:** `models/track/pos_gru.npz`·`pos_mamba.npz` 를 1 epoch 시험용에서 40 epoch 재학습 판으로 바꿨습니다(야외 val 0.1715·0.1726, 서버 기본 Kalman+카메라 보정 0.1893보다 9% 정확, 장치 미확인). 관절 17개를 입력으로 쓰는 판(PoseTrack18 학습, Kalman보다 일반 21%·사라짐 22% 정확)은 파일만 넣었고, 검출 모델이 관절 점을 내보내야 연결할 수 있습니다.
 
 **2026-11-14 근거리 검출 새 판으로 교체:** `yolo26m_pose_otp2coco_20261114_bodybox_occl_640x480`(화면 "YOLO26m-pose_fine-tuning_(OTP2+COCO)_20261114_bodybox_occl 640x480")를 넣고, 이 판으로 대체된 11-13 근거리 두 판(`yolo26m_pose_otp2_20261113_bodybox_640x480`, `..._bodybox_occl_640x480`)은 사용자 요청으로 지웠습니다(git 기록에는 남아 있음). 앞 판에서 이어 COCO 사람 자세 사진 30,000장(흑백, 실제로 가려진 관절 표시 포함)을 더해 학습했고, 공개 열화상 검증 자세 mAP50-95 0.830 → 0.850. 장치에서 지운 두 판을 고르고 있었다면 새 판(목록에서 자동 등록)을 고르세요. 장치 INT8·실카메라 성능은 아직 재지 않았습니다.
@@ -250,6 +252,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 
 ## 8. 바뀐 것 기록 (새 것이 위)
 
+- 2026-11-14 Claude: **관절 읽기·관절 위치 기억 연결·예측 경로 표시(사용자 "읽도록 바꿔", "예측 이동, 위치 기억 표시", "관절 넣은 걸 쓸 수 있게, 기존 건 지워").** model_scan(six_kpt), npu_engine(관절 출력 합침), detect_frame(attach_kpts, Pose26 디코드), position_memory(PosKpt, pos_predict_kpt: 15프레임 보정, 카메라 이동 적용, PoseTrack 순서 파일은 1·2번 관절 0), page_handler·preview_worker(last seen 상자·원, 경로, 글자), 시험 test_position_kpt, 대조 parity_kpt_vs_torch(GRU 3.6e-5, Mamba 4.1e-5 px). pos_gru·pos_mamba 삭제. 모델 README·서버 README·화면 설명·이름 표·MANIFEST·최상위 README 검출 13개.
 - 2026-11-14 Claude: **위치 기억 가중치 교체(사용자 "GRU 맘바 최고 성능인 것도 업로드해").** pos_gru = m4 gru seed 1 v2bal epoch 6, pos_mamba = m4 mamba seed 0 v2bal epoch 8 (서버 PosGRU·PosMamba numpy 와 torch 차이 2e-16 확인). 관절 입력 판 pos_{gru,mamba}_kpt_posetrack18_20261114 추가(서버 연결 전), 만든 코드 track/build_scripts/pos_kpt_posetrack18_build/. 모델 README, 서버 README, 화면 설명(2_body.html → live_page.html). MANIFEST 는 .dxnn 만 적는 규칙이라 그대로.
 - 2026-11-14 Claude: **장치 MOTIP 2.67초 → 1.45초/장(사용자: 최적화 먼저), Tracker 줄에서 MOTIP 고르기(사용자).** C++ 변형 어텐션 샘플링(`msda_cpu.cpp`, 참조와 차이 2e-6) + 인코더 Linear 동적 int8. 빠른 판 결과 `motip_npu_fast_480`("MOTIP 빠른 판 (장치)") 채점: seq_003 IDF1 97.68, 실내 rec_inside_20261110_165240 IDF1 47.03(거의 그대로). 화면: 저장된 결과가 Tracker 줄의 노드로 나옴. 녹화 재생 중·결과 있는 녹화만 고를 수 있고(아니면 이유와 함께 잠김), 고르면 그 녹화를 처음부터 다시 재생. 확인: PC 미리보기에서 재생 중 클릭 → 서버 재생 추적기가 pre:motip_npu_fast_480으로 바뀜, 페이지 오류 0. 실시간은 이 구조로 안 됨(README).
 - 2026-11-14 Claude: **근거리 검출 `yolo26m_pose_otp2coco_20261114_bodybox_occl_640x480` 추가, 11-13 근거리 두 판 삭제(사용자 요청 "가장 좋은 거 올릴 때 기존 거 지워").** MANIFEST `_files`, 모델 README(두 항목을 하나로), 화면 이름 표(live_page.html 다시 만듦, --check 같음), 이름표 json, 만든 스크립트 폴더에 coco_prep.py·otp2_coco.yaml 추가. dxnn sha256 366dfed4…, 22,157,371 B, DX-COM 2.4.1-rc.1, 보정 97장 ema opt 1.

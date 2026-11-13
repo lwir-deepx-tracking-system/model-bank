@@ -3,7 +3,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import PERSON_CLS
-from ..detect.model_scan import S6_DETS, W480_DETS, E2E_DETS, RAW_DETS
+from ..detect.model_scan import S6_DETS, W480_DETS, E2E_DETS, RAW_DETS, KPT_DETS
 
 
 def avg_merge(ra, rb):   # claude_tt75_deploy_01 AvgMerge: element-wise average of the two towers' raw boxes / score logits
@@ -24,6 +24,40 @@ def raw_decoded(kind, out):
     return y
 
 
+KP = {'cur': None, 'prev': None}   # 11-14: keypoints of the person boxes of the last two frames: dict(boxes [n,4] x1,y1,x2,y2 frame coords, kpts [n,17,3] x,y frame coords + visibility 0..1)
+_KP_GRID = {}
+def _kp_grid(h, w):
+    g = _KP_GRID.get((h, w))
+    if g is None:
+        cx, cy, st = [], [], []
+        for s in (8, 16, 32):
+            gh, gw = h // s, w // s; j = np.arange(gh * gw); cx.append(j % gw + .5); cy.append(j // gw + .5); st.append(np.full(gh * gw, s, np.float32))
+        g = _KP_GRID[(h, w)] = (np.concatenate(cx).astype(np.float32), np.concatenate(cy).astype(np.float32), np.concatenate(st))
+    return g
+
+
+def attach_kpts(dec, kraw, p_, h, w, yoff):
+    """11-14: keypoints of the person boxes NMS kept. dec = decoded candidates [1,20,N] (model px), kraw = raw keypoints [1,51,N] in the same anchor order,
+    p_ = NMS rows (model px, before the y shift). A row's anchor is the one whose person score and box equal the row (NMS copies them).
+    Decode = ultralytics Pose26.kpts_decode: x = (raw_x + col + .5) * stride, y = (raw_y + row + .5) * stride, visible = sigmoid(raw_v). Kept in KP (frame coords)."""
+    KP['prev'] = KP['cur']; KP['cur'] = None
+    try:
+        m = p_[:, 5] == 0
+        if not m.any(): KP['cur'] = dict(boxes=np.zeros((0, 4), np.float32), kpts=np.zeros((0, 17, 3), np.float32)); return
+        d = dec[0]; x1 = d[0] - d[2] * .5; y1 = d[1] - d[3] * .5; gx, gy, gs = _kp_grid(h, w); rows = p_[m]; idx = []
+        for r in rows:
+            c = np.flatnonzero(np.abs(d[4] - r[4]) < 1e-6)
+            if len(c) == 0: c = np.arange(d.shape[1])
+            idx.append(int(c[np.argmin(np.abs(x1[c] - r[0]) + np.abs(y1[c] - r[1]))]))
+        idx = np.array(idx); k = kraw[0][:, idx].reshape(17, 3, -1).transpose(2, 0, 1).astype(np.float32)
+        out = np.empty_like(k); out[:, :, 0] = (k[:, :, 0] + gx[idx, None]) * gs[idx, None]; out[:, :, 1] = (k[:, :, 1] + gy[idx, None]) * gs[idx, None] + yoff
+        out[:, :, 2] = 1. / (1. + np.exp(-k[:, :, 2]))
+        b = rows[:, :4].astype(np.float32).copy(); b[:, 1] += yoff; b[:, 3] += yoff
+        KP['cur'] = dict(boxes=b, kpts=out)
+    except Exception as e:
+        print('KPT attach failed', repr(e)[:120], flush=True)
+
+
 def _detect(ra, rb):     # raw NPU outputs -> NMS detections in FRAME coordinates (512x640), columns x1,y1,x2,y2,conf,cls
     if APP.args.det in E2E_DETS:   # v30: end-to-end head; rows are x1,y1,x2,y2,score,class in model pixels, already one box per object (no host NMS)
         p_ = ra[0].reshape(-1, 6); p_ = p_[(p_[:, 4] > .001) & (p_[:, 2] > p_[:, 0]) & (p_[:, 3] > p_[:, 1])].astype(np.float32); p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
@@ -35,10 +69,14 @@ def _detect(ra, rb):     # raw NPU outputs -> NMS detections in FRAME coordinate
         p_ = APP.fast_nms(APP.dec_s(ra if APP.a.names[0] == 'boxes' else ra[::-1])).copy(); p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
         return p_
     if APP.args.det in W480_DETS:   # v16 (v22h: s480)
-        p_ = APP.fast_nms(APP.dec_tt(ra)).copy(); p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
+        d_ = APP.dec_tt(ra); p_ = APP.fast_nms(d_).copy()
+        if APP.args.det in KPT_DETS and len(ra) > 2: attach_kpts(d_, ra[2], p_, 480, 640, APP.det_yoff)   # 11-14
+        p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
         return p_
     if APP.args.det in S6_DETS:   # v22 (v22g: s6): six heads merged by the Engine into boxes/scores over the 8,400 anchors of 640x640, model y -> frame y
-        p_ = APP.fast_nms(APP.dec_s(ra)).copy(); p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
+        d_ = APP.dec_s(ra); p_ = APP.fast_nms(d_).copy()
+        if APP.args.det in KPT_DETS and len(ra) > 2: attach_kpts(d_, ra[2], p_, 640, 640, APP.det_yoff)   # 11-14
+        p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
         return p_
     if APP.args.det == 'tt75':
         p_ = APP.fast_nms(APP.dec_tt(APP.avg_merge(ra, rb)))

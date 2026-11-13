@@ -4,7 +4,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE, anchors
-from ..detect.model_scan import BANK, E2E_KEYS, RAW_KEYS, raw_shape
+from ..detect.model_scan import BANK, E2E_KEYS, RAW_KEYS, KPT_KEYS, raw_shape
 
 
 def join_tiles(left, right, out=None):   # = tile_compact_17/runtime.py join_tiles (copied so that the module's torch import is not needed)
@@ -26,7 +26,7 @@ class Decoder:
 
 class Engine:
     def __init__(self, name, core, depth=1, model=None):
-        self.name = name; self.depth = depth; self.q = []; self.nsub = 0; self.split6 = False; model = model or name   # v9: model = the DXNN when it differs from the pending key ('ZOOM')
+        self.name = name; self.depth = depth; self.q = []; self.nsub = 0; self.split6 = False; self.kpt = False; model = model or name   # v9: model = the DXNN when it differs from the pending key ('ZOOM')
         o = APP.dx.InferenceOption(); o.devices = [0]; o.bound_option = getattr(APP.dx.InferenceOption.BOUND_OPTION, 'NPU_%d' % core); o.use_ort = True; o.buffer_count = depth
         self.b = APP.dx.InferenceEngine(str(BANK[model] if model in BANK else HERE / 'models' / 'links' / (model + '.dxnn')) if not APP.args.mock else model, o)
         i = self.b.get_input_tensors_info()[0]; assert np.dtype(i['dtype']) == np.dtype('uint8'), i
@@ -42,10 +42,10 @@ class Engine:
         elif model in APP.det_shape:
             H, W = APP.det_shape[model]; self.n = anchors(H, W); assert self.in_shape == (1, H, W, 3), i
             if APP.args.split6:
-                self.split6 = True
-                assert self.names == ['box_s8', 'box_s16', 'box_s32', 'cls_s8', 'cls_s16', 'cls_s32'], self.names
+                self.split6 = True; self.kpt = model in KPT_KEYS   # 11-14: + kpt_s8/16/32
+                assert self.names == ['box_s8', 'box_s16', 'box_s32', 'cls_s8', 'cls_s16', 'cls_s32'] + (['kpt_s8', 'kpt_s16', 'kpt_s32'] if self.kpt else []), self.names
                 self.slots = [np.empty(tuple(int(d) for d in v['shape']), np.float32) for v in outs]
-                assert [s_.shape for s_ in self.slots] == [(1, c_, H // st_, W // st_) for c_ in (4, 16) for st_ in (8, 16, 32)], [s_.shape for s_ in self.slots]
+                assert [s_.shape for s_ in self.slots] == [(1, c_, H // st_, W // st_) for c_ in ((4, 16, 51) if self.kpt else (4, 16)) for st_ in (8, 16, 32)], [s_.shape for s_ in self.slots]
             else:
                 self.slots = [np.empty((1, 4 if v['name'] == 'boxes' else 16, self.n), np.float32) for v in outs]
         else:
@@ -68,7 +68,10 @@ class Engine:
             # pipeline mode: the next frame is submitted into the same output buffer before this frame is post-processed -> copy out
             d[n] = np.array(v, copy=True) if (APP.args.pipeline or not (v.ctypes.data == s.ctypes.data and v.strides == s.strides)) else v
         o_ = [d[n] for n in self.names]
-        if self.split6: return [np.concatenate([x_.reshape(1, 4, -1) for x_ in o_[:3]], axis=2), np.concatenate([x_.reshape(1, 16, -1) for x_ in o_[3:]], axis=2)]
+        if self.split6:
+            r_ = [np.concatenate([x_.reshape(1, 4, -1) for x_ in o_[:3]], axis=2), np.concatenate([x_.reshape(1, 16, -1) for x_ in o_[3:6]], axis=2)]
+            if self.kpt: r_.append(np.concatenate([x_.reshape(1, 51, -1) for x_ in o_[6:9]], axis=2))   # 11-14: raw keypoints [1,51,N], same anchor order as boxes
+            return r_
         return o_
 
 

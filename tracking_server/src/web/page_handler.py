@@ -40,11 +40,18 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
     if overlay_rows is None and camera_rows is None and POSP['show'] and now_ - POSP['boxes_t'] < 0.5:
         try:
             seen_ = {int(r_[4]) for r_ in rows_}
-            for tid_, b_ in POSP['boxes']:
+            src_name_ = {'kalman': 'Kalman', 'gru': 'GRU', 'mamba': 'Mamba', 'gru_kpt': 'GRU+kpt', 'mamba_kpt': 'Mamba+kpt'}
+            for e_ in POSP['boxes']:
+                tid_, b_ = e_[0], e_[1]; inf_ = e_[2] if len(e_) > 2 else {}
                 if tid_ in seen_ or (APP.GB is not None and tid_ != gb_id_): continue
                 pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_)
                 p1_ = (int((b_[0] - b_[2] / 2) * sc_), int((b_[1] - b_[3] / 2 - 16) * sc_)); p2_ = (int((b_[0] + b_[2] / 2) * sc_), int((b_[1] + b_[3] / 2 - 16) * sc_))
-                predictions.append((p1_, p2_, pc_, int(tid_)))
+                # 11-14 (user): predicted path (예측 이동) from the last seen place (위치 기억), predictor name and lost frames in the label
+                lab_ = '%d %s %df' % (int(tid_), src_name_.get(inf_.get('src'), str(inf_.get('src', ''))), int(inf_.get('n', 0))) if inf_ else '%d predict' % int(tid_)
+                l_ = inf_.get('last') if inf_ else None
+                last_ = (int(l_[0] * sc_), int((l_[1] - 16) * sc_), int(l_[2] * sc_), int(l_[3] * sc_)) if l_ else None
+                pts_ = tuple((int(x_ * sc_), int((y_ - 16) * sc_)) for x_, y_ in (inf_.get('pts') or ()))
+                predictions.append((p1_, p2_, pc_, int(tid_), lab_, last_, pts_))
         except Exception: pass
     txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
     rp_ = getattr(APP.LIVE, 'replay', None)
