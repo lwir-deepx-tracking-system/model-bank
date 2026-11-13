@@ -307,6 +307,11 @@ int main(int argc, char** argv)
   long drop_dup_max = 3;
   if(const char* e = std::getenv("LWIR_CAM_DROP_DUP")) { char* end = nullptr; const long v = std::strtol(e, &end, 10); if(end != e && v >= 0 && v <= 1000) drop_dup_max = v; }
   std::vector<unsigned short> prev_frame; long dup_run = 0, dups_dropped = 0, dups_passed = 0;
+  // v2.9 (11-13): WHEN THE PICTURE STOOD STILL, IN THE LOG. A run of repeats longer than the limit (the shutter is closed for a
+  // calibration, about 40 frames) gets a REPEAT_RUN line when it ends, and a stall gets a STALL_REPEATS line saying where the
+  // last such run was relative to the last frame. Two stalls so far (11-12 15:49, 11-13 14:45) came 279 s and 238 s after an
+  // open with nothing in the log to tell whether the shutter had just closed; the next one will show it. Nothing else changes.
+  bool rep_seen = false; long rep_len = 0; auto rep_start = clk::now(), rep_end = clk::now();
   std::fprintf(stderr, "DUPLICATE_FILTER holds back up to %ld repeated frames in a row (0 = off)\n", drop_dup_max);
   while(!g_stop && since(t0) < seconds)
   {
@@ -323,8 +328,16 @@ int main(int argc, char** argv)
       if(drop_dup_max > 0)
       {
         const bool same = prev_frame.size() == buf.size() && std::memcmp(prev_frame.data(), buf.data(), buf.size() * sizeof(unsigned short)) == 0;
-        if(same) { ++dup_run; if(dup_run <= drop_dup_max) { ++dups_dropped; continue; } ++dups_passed; }
-        else { dup_run = 0; prev_frame = buf; }
+        if(same) { ++dup_run; if(dup_run == 1) rep_start = clk::now(); if(dup_run <= drop_dup_max) { ++dups_dropped; continue; } ++dups_passed; }
+        else
+        {
+          if(dup_run > drop_dup_max)
+          {
+            rep_seen = true; rep_len = dup_run; rep_end = clk::now();
+            std::fprintf(stderr, "REPEAT_RUN %ld identical frames in a row (%.2f s), ended %.1f s after this open, at %s\n", dup_run, std::chrono::duration<double>(rep_end - rep_start).count(), since(t_open), hms().c_str());
+          }
+          dup_run = 0; prev_frame = buf;
+        }
       }
       auto now = clk::now();
       maxgap = std::max(maxgap, std::chrono::duration<double>(now - tprev).count()); tprev = now;
@@ -364,6 +377,10 @@ int main(int argc, char** argv)
       char calb[96] = "none"; const double cd = std::chrono::duration<double>(t_frame - g_t_cal).count();
       if(g_cal_done) { if(cd >= 0) std::snprintf(calb, sizeof calb, "%.1f s before the last frame", cd); else std::snprintf(calb, sizeof calb, "%.1f s after the last frame (no frame since it)", -cd); }
       std::fprintf(stderr, "STALL_INFO this open: %ld frames, last frame %.1f s after the open, shutter=%s, own calibrations %d, last shutter call of ours: %s, at %s\n", ok - ok_open, lived, g_shutter.text.c_str(), g_own_cals, frame_since_open ? calb : "n/a", hms().c_str());
+      // v2.9: was the picture standing still (shutter closed) when the stream stopped?
+      if(dup_run > 0) std::fprintf(stderr, "STALL_REPEATS the stream stopped DURING a run of identical frames: %ld so far, begun %.2f s before the last frame read\n", dup_run, std::chrono::duration<double>(last_read_start - rep_start).count());
+      else if(rep_seen) std::fprintf(stderr, "STALL_REPEATS last long run of identical frames: %ld frames, ended %.1f s before the last frame\n", rep_len, std::chrono::duration<double>(t_frame - rep_end).count());
+      else std::fprintf(stderr, "STALL_REPEATS no long run of identical frames since this program started\n");
     }
     diag("stall");
     const bool sent = te->ResetMainBoard();
