@@ -16,7 +16,10 @@ const REC=['bank:yolo26m_flir_inside_20261110_2020_640x480'];   // 11-13: models
 // second level inside a detector folder: model size (YOLO26m / YOLO26s ...); '' = no size in the name, the node stays directly in the folder
 const dsub=s=>{let m=/yolo ?26 ?([nsmlx])(?![a-z])/i.exec(s);if(m)return 'YOLO26'+m[1].toLowerCase();m=/yolox[-_ ]?(nano|tiny|s|m|l|x)(?![a-z])/i.exec(s);if(m)return 'YOLOX-'+m[1].toLowerCase();m=/yolo ?v?8 ?([nsmlx])(?![a-z])/i.exec(s);return m?'YOLOv8'+m[1].toLowerCase():'';};
 /* 11-13 (user): size sub-folders are listed smallest first. A name that does not end in a size keeps its place after the sized ones. */
-const szRank=q=>{const m=/(nano|tiny|[nsmlx])$/.exec(String(q)),i=m?['n','nano','tiny','s','m','l','x'].indexOf(m[1]):-1;return i<0?99:i;};
+// 11-13 (user): YOLO26 models together; inside YOLO26 one sub-folder per use
+const DSTR=['YOLO26','YOLOv8','YOLOX','기타'],SGO=['실내','실외','기본 (공개 데이터)','비교용'];
+const duse26=s=>{const u=duse(s);return u==='다른 구조 (비교용)'?'비교용':u;};
+const szRank=q=>{const u=SGO.indexOf(q);if(u>=0)return u;const m=/(nano|tiny|[nsmlx])$/.exec(String(q)),i=m?['n','nano','tiny','s','m','l','x'].indexOf(m[1]):-1;return i<0?99:i;};
 const AFOLD={repvgg:'RepVGG',vit:'ViT-lite'},PFOLD={kalman:'Kalman filter',gru:'GRU',mamba:'Mamba'};
 const otsub={};    // 'row|folder|size' -> opened (true) or closed (false) by the user; not set = open only when it holds the chosen node
 const otopen={};   // row index -> folder the user opened ('' = closed by the user); not set = the folder holding the chosen node
