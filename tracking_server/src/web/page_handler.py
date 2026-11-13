@@ -17,6 +17,7 @@ from ..camera import replay_link
 from . import system_buttons
 from . import preview_worker
 from ..camera import replay_eval   # 11-12: ground-truth comparison while a labelled recording is replayed
+from ..camera import stall_diag   # 11-13: stall log (LWIR_STALL_DIAG=1 only)
 
 
 def init_preview(live, *, transition_jpeg=None):
@@ -264,8 +265,10 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     if APP.relabeler is not None and time.monotonic() - getattr(APP.LIVE, 'rl_t', 0.0) > 20:
         APP.LIVE.rl_t = time.monotonic(); print('RLSTAT', json.dumps(dict(APP.relabeler.stats, last_event=(APP.relabeler.events[-1] if APP.relabeler.events else None), **({'ms': APP.relabeler.timing()} if APP.args.mamba else {}))), flush=True)
     if len(APP.rows) > 6000:   # long live runs: keep only the recent records in memory
+        td_ = stall_diag.mark()   # None unless LWIR_STALL_DIAG=1
         del APP.rows[:3000]; del APP.preds[:3000]; del APP.tracks_out[:3000]
         if APP.relabeler is not None: del APP.tracks_base[:3000]; del APP.relabeler.per_frame[:3000]
+        stall_diag.span(td_, 'trim of the kept frame records (3000 frames freed)')
 
 
 def make_lv_Handler():

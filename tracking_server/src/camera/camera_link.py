@@ -8,6 +8,7 @@ from ..track.stabilizer import STAB, stab_live, stab_off
 from ..web.preview_worker import invalidate_preview, publish_jpeg_locked
 from . import replay_link   # 11-12: recording replay from the page (does nothing until it is used)
 from . import camera_extra   # 2026-11-11: 지워지지 않는 카메라 기록(기본 켜짐), 프레임 시간표와 공유 메모리(환경 변수로만 켜짐)
+from . import stall_diag   # 2026-11-13: 서버가 잠깐 멈춘 까닭을 찾는 기록 (LWIR_STALL_DIAG=1 일 때만. 기본 꺼짐)
 
 
 class LiveImages:   # endless list of camera frames; it ends (IndexError) when the live time is over
@@ -23,8 +24,10 @@ class _Live: pass
 def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a new reader
     if camera_extra.stamped(p_): return camera_extra.reader(p_)   # only for a cam_pipe started with LWIR_CAM_STAMP=1 (off by default)
     n_ = APP.LIVE_W * APP.LIVE_H * 2; buf_ = bytearray(n_); cnt_ = 0; tl_ = time.monotonic()
+    dg_ = stall_diag.reader_probe()   # None unless LWIR_STALL_DIAG=1
     while True:   # v24c: never stop reading before EOF; after LIVE.stopped the frames are thrown away (cam_pipe must not block on a full pipe: it then cannot act on SIGTERM and was SIGKILLed with the camera open)
         mv_ = memoryview(buf_); got_ = 0
+        if dg_ is not None: got_ = dg_.fill(p_.stdout, mv_, n_)   # stall log on: the same reads with each one timed (READER_SLOW). A whole frame skips the loop below; at the end of the pipe it comes back short and the loop sees the end as before
         while got_ < n_:
             k_ = p_.stdout.readinto(mv_[got_:])
             if not k_:

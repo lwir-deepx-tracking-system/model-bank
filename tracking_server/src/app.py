@@ -36,7 +36,7 @@ from .detect import model_scan, npu_engine, detect_frame
 from .web import system_buttons, page_handler, page_settings, measure
 from .track import camera_motion
 from .reid import reid_embed
-from .camera import camera_link, replay_eval
+from .camera import camera_link, replay_eval, stall_diag
 from .gimbal import gimbal_link
 from .common import result_summary
 from .common import stage_timing   # 2026-11-11: 단계별 시간 재기 (LWIR_STAGE_TIMING=1 일 때만, 기본 꺼짐)
@@ -434,6 +434,7 @@ def main():
             APP.S640_BUFS = [np.full((1, 640, 640, 3), 114, np.uint8) for _ in range(APP.args.npu_depth + 3)]   # v16: --det s640
             _Live = camera_link._Live
             APP.LIVE = _Live(); APP.LIVE.stopped = False; APP.LIVE.cam_lost = False; APP.LIVE.q = APP.lv_col.deque(maxlen=3); APP.LIVE.cond = APP.lv_th.Condition(); APP.LIVE.arr = APP.lv_col.deque()
+            if stall_diag.wanted(): stall_diag.start(APP.LIVE)   # LWIR_STALL_DIAG=1 only (off by default): stall log in camera_events.log. LIVE.cond is replaced here, before any thread has it, by one that times its holders
             APP.LIVE.camera_bytetrack = CameraByteTrack(APP.args)
             APP.LIVE.restart_supported = ready_prefetch_compatible and os.environ.get('LWIR_REAL_GUI_LAUNCH') == '1'
             APP.LIVE.restart_pending = False
@@ -846,7 +847,10 @@ def main():
             prev_gray = g
             if budget: prev_arr = arr
             if i % 50 == 0 and not APP.args.mock:
+                td_ = stall_diag.mark()   # None unless LWIR_STALL_DIAG=1
                 s_ = APP.dx.DeviceStatus.get_current_status(0); util.append(dict(frame=i, core_util=[s_.get_core_utilization(k) for k in range(3)], mem=s_.get_memory_used()))
+                stall_diag.span(td_, 'NPU status query (DeviceStatus, every 50 frames)')
+            if stall_diag.ON: stall_diag.loop_frame(row, t5)
             if (i + 1) % 500 == 0: print('FRAMES', i + 1, round(time.monotonic() - t_start, 1), 'vit delivered', delivered, flush=True)
         if APP.LIVE is not None and APP.LIVE.restart_pending:
             for _ in ahead:

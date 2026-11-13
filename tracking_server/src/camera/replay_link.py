@@ -33,6 +33,7 @@ from ..track import replay_backends
 from ..web.preview_worker import set_preview_producer
 from . import camera_extra
 from . import replay_eval
+from . import stall_diag   # 11-13: stall log (LWIR_STALL_DIAG=1 only)
 
 FPS_MIN, FPS_MAX, FPS_DEF = 5.0, 30.0, 25.0
 LIST_TTL = 60.0
@@ -117,12 +118,13 @@ def listing(refresh_=False):
     if r_ is None and m_ is None: return []
     key_ = (r_, m_)
     if refresh_ or _C['root'] != key_ or time.monotonic() - _C['t'] > LIST_TTL:
-        items_ = []
+        items_ = []; td_ = stall_diag.mark()   # None unless LWIR_STALL_DIAG=1
         try: items_ += _scan(r_) if r_ else []
         except OSError: pass
         try: items_ += _scan_measure(m_) if m_ else []
         except OSError: pass
         _C.update(t=time.monotonic(), items=items_, root=key_)
+        stall_diag.span(td_, 'scan of the recordings list (GET /replay, at most once a minute per page)')
     return _C['items']
 
 

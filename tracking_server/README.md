@@ -265,6 +265,7 @@ tracking_server/
 - `cam_pipe.cpp` 카메라 프로그램
 - `camera_link.py` 그 프로그램을 띄우고 읽기, 카메라 초기화
 - `camera_extra.py` 카메라 기록
+- `stall_diag.py` 서버가 잠깐 멈춘 까닭을 찾는 기록 (`LWIR_STALL_DIAG=1` 일 때만 켜짐)
 - `replay_cam.py` 저장된 녹화를 카메라처럼 보내기 (길이 제한 없음, 건너뛰기·일시정지 줄을 표준 입력으로 받음)
 - `replay_link.py` 화면의 "녹화 재생": 녹화 목록, 카메라 ↔ 녹화 바꾸기, 재생 중 짐벌 막기, 건너뛰기·일시정지·속도 요청
 - `replay_eval.py` 재생 중 정답과 비교: 라벨 읽기, 프레임과 PNG 짝 맞추기, 재생 위치(pos), 끝난 재생의 마지막 숫자, 결과 파일
@@ -359,6 +360,7 @@ tracking_server/
 | `LWIR_GIMBAL_EXTRA_OPTS` | 없음 |
 | `LWIR_REPLAY_ROOT` | 라벨 사이트 녹화 폴더 |
 | `LWIR_REPLAY_TRACKS_ROOT` | 없음 (꺼짐) |
+| `LWIR_STALL_DIAG` | 없음 (꺼짐) |
 
 뜻:
 
@@ -373,6 +375,7 @@ tracking_server/
 - `LWIR_GIMBAL_EXTRA_OPTS` — 짐벌 프로그램에 더 줄 옵션
 - `LWIR_REPLAY_ROOT` — 화면의 "녹화 재생"이 고르는 녹화 폴더 (기본 `/mnt/lwir_data/label_web/LWIR_labels`, 서버 옵션 `--replay-root`). 폴더가 없으면 재생을 쓸 수 없습니다
 - `LWIR_REPLAY_TRACKS_ROOT` — PC 에서 미리 만든 추적 결과 폴더 (서버 옵션 `--replay-tracks-root`). 비워 두면 꺼짐. 아래 "저장된 추적 결과 재생"
+- `LWIR_STALL_DIAG` — 서버가 잠깐 멈춘 까닭을 찾는 기록. `1` 일 때만 켜짐. 줄은 `camera_events.log` 에 남고 (`READER_SLOW`, `GIL_STALL`, `GC_SLOW`, `LOCK_HELD`, `SPAN_SLOW`, `LOOP_SLOW`) 카메라 프로그램의 `INPUT_GAP` 줄과 시각으로 맞춰 봅니다. 5분쯤 재는 용도이고, 설명과 읽는 법은 `scripts/live.env.example` 과 `src/camera/stall_diag.py` 맨 위
 
 시험·측정용 값(단계별 시간 재기, 카메라 시간표, 번갈아 넣기 등)은 `scripts/live.env.example` 아래쪽에 설명이 있고, 모두 기본 꺼짐입니다.
 
