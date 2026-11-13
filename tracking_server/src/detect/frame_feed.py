@@ -380,6 +380,9 @@ class Feed:
                 if getattr(L_, 'restart_stop', False):
                     return None
                 r_ = self.out.popleft() if self.out else None
+                if r_ is not None:
+                    # An idle core can take queued input before this job is collected.
+                    L_.cond.notify_all()
             if r_ is not None:
                 if L_.prev_t is not None and r_.t - L_.prev_t > 1.0:
                     L_.gap_n += 1

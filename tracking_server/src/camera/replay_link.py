@@ -162,6 +162,8 @@ def cam_argv():   # 카메라 자리에 띄울 명령. 재생이 없으면 전�
     argv = [sys.executable, '-B', str(HERE / 'src' / 'camera' / 'replay_cam.py'), '--dir', r_['dir'], '--fps', '%g' % r_['fps'], '--loops', '0' if r_['loop'] else '1', '--tag', '--control', '--total', str(r_['frames'] or 0)]
     if replay_eval.lossless():
         argv.append('--no-skip')
+    if 'pacing' in r_:
+        argv.extend(['--pacing', r_['pacing']])
     return argv
 
 
@@ -247,6 +249,7 @@ def state():
         st_['pass'] = ps_.get('pass_')
         st_['backend'] = r_.get('backend', 'python')
         st_['preview'] = 'async' if async_preview(r_, worker) else 'sync'
+        st_['pacing'] = r_.get('pacing', 'legacy')
     return st_
 
 
@@ -266,6 +269,10 @@ def start_request(q_):   # -> (http 코드, 글)
     if not FPS_MIN <= fps_ <= FPS_MAX: return 400, 'fps 는 %g ~ %g' % (FPS_MIN, FPS_MAX)
     lp_ = q_.get('loop', ['0'])[0]
     if lp_ not in ('0', '1'): return 400, 'loop 는 0 또는 1'
+    pacing_values = q_.get('pacing', [os.environ.get('LWIR_REPLAY_PACING', 'legacy')])
+    if len(pacing_values) != 1 or pacing_values[0] not in ('legacy', 'deadline'):
+        return 400, 'pacing 은 legacy 또는 deadline'
+    pacing = pacing_values[0]
     backend = q_.get('backend', ['python'])[0]
     library = available_bytetrack_library(APP.args) if backend == 'cpp_bytetrack' else None
     if backend not in ('python', 'cpp_bytetrack'):
@@ -290,7 +297,7 @@ def start_request(q_):   # -> (http 코드, 글)
         set_preview_producer(L_, None, before=time.perf_counter())
     _gimbal_stop()
     tgt_ = dict(name=it_['name'], dir=d_, fps=fps_, loop=lp_ == '1', bits=it_['bits'], frames=it_['frames'], fin0=None, paused=False,
-                backend=backend, tracker_library=library, preview=preview_mode)
+                backend=backend, tracker_library=library, preview=preview_mode, pacing=pacing)
     APP.lv_th.Thread(target=_switch, args=(tgt_,), daemon=True).start()
     return 200, '재생 시작: %s' % it_['name']
 
@@ -356,6 +363,8 @@ def restart_request():
              'backend': [target.get('backend', 'python')]}
     if 'preview' in target:
         query['preview'] = [target['preview']]
+    if 'pacing' in target:
+        query['pacing'] = [target['pacing']]
     return start_request(query)
 
 

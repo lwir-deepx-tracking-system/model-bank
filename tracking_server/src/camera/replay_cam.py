@@ -296,6 +296,22 @@ def write_all(fd, data):
         mv = mv[n:]
 
 
+def next_deadline(due, completed, period, *, no_skip, pacing):
+    """Pace lossless replay without adding every write time to its period.
+
+    Deadline pacing preserves all frame positions. If a whole next deadline
+    was missed, abandon the timing debt and wait a fresh period; do not burst
+    through a backlog. Sub-period lateness can shorten the following interval.
+    The legacy mode remains available for same-input comparisons.
+    """
+    nominal = due + period
+    if not no_skip:
+        return nominal
+    if pacing != 'deadline':
+        return max(due, completed) + period
+    return completed + period if nominal <= completed else nominal
+
+
 def main():
     ap = argparse.ArgumentParser(description='replay stored frames in the cam_pipe output format')
     ap.add_argument('--dir', default=os.environ.get('LWIR_REPLAY_DIR', ''))
@@ -309,7 +325,12 @@ def main():
     ap.add_argument('--control', action='store_true', default=os.environ.get('LWIR_REPLAY_CONTROL') == '1')
     ap.add_argument('--tag', action='store_true', default=os.environ.get('LWIR_REPLAY_TAG') == '1')
     ap.add_argument('--no-skip', action='store_true', help='preserve sequential frames under backpressure')
+    ap.add_argument('--pacing', choices=['legacy', 'deadline'],
+                    default=os.environ.get('LWIR_REPLAY_PACING', 'legacy'),
+                    help='lossless replay timing; deadline includes read/write work in the frame period')
     a = ap.parse_args()
+    if a.pacing not in ('legacy', 'deadline'):
+        ap.error('LWIR_REPLAY_PACING must be legacy or deadline')
     err = sys.stderr
 
     def say(t):
@@ -353,6 +374,7 @@ def main():
         say('CAMERA %d %d' % (W, H))
         tag = stamp and a.tag
         say('REPLAY %d frames (%s), %d skipped files, %g fps, loops %s, time stamps %s, png numbers %s, control %s' % (total, src.kind, src.bad, a.fps, a.loops or 'endless', 'on' if stamp else 'off', 'on' if tag else 'off', 'on' if ctl else 'off'))
+        say('REPLAY pacing %s, lossless %s' % (a.pacing, 'on' if a.no_skip else 'off'))
         if stamp and os.environ.get('LWIR_CAM_SHM') == '1':
             say('SHM_RING not used by replay_cam: pictures go through the pipe')
         fd = sys.stdout.fileno()
@@ -485,7 +507,7 @@ def main():
             seek_wait = False
             sent += 1
             pos += 1
-            due = max(due, clock()) + period if a.no_skip else due + period
+            due = next_deadline(due, clock(), period, no_skip=a.no_skip, pacing=a.pacing)
             first = False
             if hold_at_end and pos == total:
                 at_end = True

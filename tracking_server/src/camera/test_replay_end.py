@@ -18,6 +18,7 @@ class ReplayEndTest(unittest.TestCase):
         self.raw = Path(tmp.name) / "three.raw"
         self.raw.write_bytes(b"".join(bytes([i]) * replay_cam.FRAME_BYTES for i in (1, 2, 3)))
         self.env = {**os.environ, "LWIR_CAM_STAMP": "1"}
+        self.env.pop("LWIR_REPLAY_PACING", None)  # baseline tests the real default
 
     def start(self, *args):
         cmd = [sys.executable, "-B", str(Path(replay_cam.__file__)), "--dir", str(self.raw),
@@ -82,6 +83,25 @@ class ReplayEndTest(unittest.TestCase):
         self.assertEqual(p.wait(timeout=3), 0)
         _, frame = self.start("--control", "--loops", "0", "--no-skip")
         self.assertEqual([frame() for _ in range(4)], [(0, False, 0, 1), (1, False, 0, 2), (2, False, 0, 3), (0, False, 1, 1)])
+
+    def test_pause_seek_and_speed_preserve_positions(self):
+        p, frame = self.start("--control", "--loops", "1", "--no-skip")
+        self.assertEqual([frame() for _ in range(3)], [(0, False, 0, 1), (1, False, 0, 2), (2, False, 0, 3)])
+        self.command(p, b"SEEK 1 PAUSE")
+        self.assertEqual(self.fresh(frame), (1, False, 1, 2))
+        self.assertEqual(frame(), (1, True, 1, 2))
+        self.command(p, b"SPEED 5")
+        self.assertEqual(frame(), (1, True, 1, 2))
+        self.command(p, b"PLAY")
+        self.assertEqual(self.fresh(frame), (2, False, 1, 3))
+        self.assertEqual(frame(), (2, True, 1, 3))
+
+
+class DeadlineReplayEndTest(ReplayEndTest):
+    """Exercise EOF, held frames, restart and seek with the new timing option."""
+
+    def start(self, *args):
+        return super().start(*args, "--pacing", "deadline")
 
 
 if __name__ == "__main__":

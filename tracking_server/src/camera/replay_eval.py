@@ -117,6 +117,7 @@ class Eval:
         self.zero()
         self.backend = tgt.get('backend', 'python')
         self.preview = tgt.get('preview', 'sync')
+        self.pacing = tgt.get('pacing', 'legacy')
         self.backend_error = None
         self.native_tracker = NativeByteTrack(tgt['tracker_library']) if self.backend == 'cpp_bytetrack' else None
         self.native_tag = None
@@ -301,7 +302,7 @@ class Eval:
         lab = self.lab
         s = dict(run_id=self.run_id, name=self.name, fps=self.fps, loop=self.loop, started=self.started, since=self.since, ended=self.ended, end_reason=self.end_reason, file=self.file,
                  backend=self.backend, backend_error=self.backend_error, native_frames=self.native_frames,
-                 preview=self.preview,
+                 preview=self.preview, pacing=self.pacing,
                  scoring=lab['ok'], why=lab['why'] or None, review=lab['review'] or None, label_file=lab['label_file'], label_sha256=lab['label_sha256'],
                  label_bad_lines=lab['bad_lines'], labelled_frames=lab['labelled'], scorable_frames=len(lab['frames']), passes=self.passes, scored_unique=len(self.uniq), seeks=self.seeks,
                  counts=dict(self.n, server_skipped=max(0, self.n['received'] - self.n['published'] - len(self.tags))),
