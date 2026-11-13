@@ -11,6 +11,8 @@ const DNOTE={w480:'FLIR 공개 열화상으로 학습 · 카메라 크기 그대
 const dfold=s=>/yolox/i.test(s)?'YOLOX':/yolo ?v?8/i.test(s)?'YOLOv8':/yolo ?26/i.test(s)?'YOLO26':'기타';
 // second level inside a detector folder: model size (YOLO26m / YOLO26s ...); '' = no size in the name, the node stays directly in the folder
 const dsub=s=>{let m=/yolo ?26 ?([nsmlx])(?![a-z])/i.exec(s);if(m)return 'YOLO26'+m[1].toLowerCase();m=/yolox[-_ ]?(nano|tiny|s|m|l|x)(?![a-z])/i.exec(s);if(m)return 'YOLOX-'+m[1].toLowerCase();m=/yolo ?v?8 ?([nsmlx])(?![a-z])/i.exec(s);return m?'YOLOv8'+m[1].toLowerCase():'';};
+/* 11-13 (user): size sub-folders are listed smallest first. A name that does not end in a size keeps its place after the sized ones. */
+const szRank=q=>{const m=/(nano|tiny|[nsmlx])$/.exec(String(q)),i=m?['n','nano','tiny','s','m','l','x'].indexOf(m[1]):-1;return i<0?99:i;};
 const AFOLD={repvgg:'RepVGG',vit:'ViT-lite'},PFOLD={kalman:'Kalman filter',gru:'GRU',mamba:'Mamba'};
 const otsub={};    // 'row|folder|size' -> opened (true) or closed (false) by the user; not set = open only when it holds the chosen node
 const otopen={};   // row index -> folder the user opened ('' = closed by the user); not set = the folder holding the chosen node
