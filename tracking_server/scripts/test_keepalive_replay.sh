@@ -26,7 +26,7 @@ run_case() (
   curl() {
     case "${!#}" in
       */healthz)
-        replay='"sample"' frames=42 queue=0 out_idle=$((30 + poll * 5))
+        replay='"sample"' frames=840 queue=0 out_idle=$((30 + poll * 5))
         case "$input" in
           live) replay=null ;;
           advancing) frames=$((frames + poll)) ;;
@@ -61,18 +61,30 @@ check() {
   fi
 }
 
-paused='{"state":{"on":true,"busy":false,"name":"sample","paused":true,"seeking":false,"loop":false,"total":100,"pos":20}}'
-ended='{"state":{"on":true,"busy":false,"name":"sample","paused":false,"seeking":false,"loop":false,"total":100,"pos":99}}'
+paused='{"state":{"on":true,"busy":false,"name":"sample","paused":true,"seeking":false,"loop":false,"total":100,"pos":20,"shown":21},"eval":{"on":true,"name":"sample","counts":{"received":21,"published":21,"server_skipped":0,"untagged":0}}}'
+ended='{"state":{"on":true,"busy":false,"name":"sample","paused":false,"seeking":false,"loop":false,"total":100,"pos":99,"shown":100},"eval":{"on":true,"name":"sample","counts":{"received":100,"published":100,"server_skipped":0,"untagged":0}}}'
+async_ended='{"state":{"on":true,"busy":false,"name":"sample","paused":false,"seeking":false,"loop":false,"total":280,"pos":null,"shown":280,"preview":"async"},"eval":{"on":true,"name":"sample","counts":{"received":280,"published":280,"server_skipped":0,"untagged":0}}}'
 playing=${paused/\"paused\":true/\"paused\":false}
 check hold "$paused" still
 check hold "$ended" still
+check hold "$async_ended" still
+check hold "${paused/\"published\":21,\"server_skipped\":0/\"published\":20,\"server_skipped\":1}" still
+check restart "${async_ended/\"published\":280/\"published\":279}" still
+check restart "${paused/\"published\":21/\"published\":20}" still
+check restart "${async_ended/\"received\":280,\"published\":280/\"received\":279,\"published\":279}" still
+check restart "${async_ended/\"untagged\":0/\"untagged\":1}" still
+check restart "${async_ended/\"eval\":/\"missing\":}" still
+check restart "${async_ended/\"eval\":\{\"on\":true,\"name\":\"sample\"/\"eval\":\{\"on\":true,\"name\":\"different\"}" still
+check restart "${async_ended/\"eval\":\{\"on\":true/\"eval\":\{\"on\":false}" still
 check restart "$playing" still
 check restart "${ended/\"loop\":false/\"loop\":true}" still
 check restart "${paused/\"seeking\":false/\"seeking\":true}" still
 check restart "${ended/sample/different}" still
 check restart '{"state":null}' still
-check restart "$ended" advancing
-check restart "$ended" queued
+check restart "${async_ended/\"shown\":280/\"shown\":279}" still
+check restart "${async_ended/\"pos\":null/\"pos\":278}" still
+check restart "$async_ended" advancing
+check restart "$async_ended" queued
 check restart '' live
 check hold "$playing" healthy
-printf '%s\n' '11 watchdog replay and live checks passed'
+printf '%s\n' '22 watchdog replay and live checks passed'

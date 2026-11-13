@@ -44,13 +44,27 @@ replay_holding() {
 import json, sys
 
 try:
-    state = json.load(sys.stdin)["state"]
-    total, pos = state.get("total"), state.get("pos")
+    replay = json.load(sys.stdin)
+    state, evaluation = replay["state"], replay["eval"]
+    total, pos, shown = state.get("total"), state.get("pos"), state.get("shown")
+    # An async replay can have no JPEG position even after all input frames arrived.
+    # shown counts queued input frames for this run, excluding repeated hold packets.
     at_end = (state.get("loop") is False and type(total) is int and total > 0
-              and type(pos) is int and pos == total - 1)
+              and ((type(pos) is int and pos == total - 1)
+                   or (pos is None and type(shown) is int and shown == total)))
+    counts = evaluation["counts"]
+    received, published, skipped, untagged = (
+        counts[key] for key in ("received", "published", "server_skipped", "untagged"))
+    # The eval summary can be cached. Compare received with the live input count
+    # before using it to rule out a frame still in flight after leaving the queue.
+    drained = (all(type(value) is int and value >= 0
+                   for value in (shown, received, published, skipped, untagged))
+               and untagged == 0 and shown == received == published + skipped)
     holding = (state.get("on") is True and state.get("name") == sys.argv[1]
                and state.get("busy") is False and state.get("seeking") is False
-               and (state.get("paused") is True or at_end))
+               and (state.get("paused") is True or at_end)
+               and evaluation.get("on") is True and evaluation.get("name") == sys.argv[1]
+               and drained)
 except (AttributeError, KeyError, TypeError, ValueError):
     holding = False
 raise SystemExit(0 if holding else 1)
