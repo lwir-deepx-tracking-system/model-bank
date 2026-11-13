@@ -53,3 +53,8 @@
 .ot-n small.ot-why{color:var(--warn)}
 .ot-sumtop{margin:0 0 8px;padding:6px 9px;border:1px solid var(--acc);border-radius:6px;background:rgba(224,122,36,.08);color:var(--ink)}
 body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is locked shows even in the brief view */
+/* 11-13 (design review 3): the 'now' summary as label / value lines; names keep Korean words whole */
+#ot-sum{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 12px;margin-top:4px}
+#ot-sum b{font-weight:400;color:var(--ink2);white-space:nowrap}#ot-sum span{color:var(--ink);word-break:keep-all;overflow-wrap:anywhere}
+.ot-sumh{font-size:11.5px;color:var(--acc);font-weight:700}
+.ot-n{word-break:keep-all;overflow-wrap:anywhere}.ot-n small:empty{display:none}

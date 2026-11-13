@@ -2,8 +2,8 @@
 function mdl(m){mlast=m;const cat=m.catalog||[];
   if(!cat.length){MIN.textContent='검출 모델 · 이 실행에서는 모델을 바꿀 수 없습니다.';chip('mcdot','mctext','','모델 고정');otdraw();return;}
   const cur=cat.find(c=>c.id===m.current);
-  chip('mcdot','mctext',m.busy?'live':'good',m.busy?'모델 바꾸는 중':(cur?cur.name:'모델'));
-  let t=cur?'지금: '+cur.name:'';
+  chip('mcdot','mctext',m.busy?'live':'good',m.busy?'모델 바꾸는 중':(cur?dname(cur):'모델'));
+  let t=cur?'지금: '+dname(cur):'';
   if(m.busy){const p=cat.find(c=>c.id===m.pending);t='바꾸는 중'+(p?': '+p.name:'')+' · 카메라 영상이 들어오는 다음 프레임에 바뀝니다';}
   else if(m.last){t+=' · '+m.last.at+' '+m.last.text+(m.last.seconds!=null?' ('+m.last.seconds+'초)':'');}
   MIN.textContent='검출 모델 · '+t;otdraw();}

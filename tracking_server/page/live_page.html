@@ -158,6 +158,9 @@ body:not(.adv) .adv-only{display:none!important}
 .vdead[hidden]{display:none}.vdead b{font-size:19px;color:#fff}.vdead span{font-size:13.5px;color:#ddd;line-height:1.5}.vdead.wait{border-color:var(--warn)}
 .vtoast{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:3;background:rgba(20,20,20,.82);color:#fff;font-size:14px;font-weight:700;padding:6px 14px;border-radius:999px;border:1px solid var(--acc);pointer-events:none;white-space:nowrap}
 .vtoast[hidden]{display:none}.vtoast.lost{border-color:var(--warn)}body.replay-mode .vtoast,body.replay-mode .vdead{display:none}
+/* 11-13 (design review 3): the picture chip at the top right (top left covered box numbers); replay status line below the section titles */
+.vchip{left:auto;right:16px;max-width:calc(100% - 32px)}.vchip.replay{box-shadow:inset -3px 0 0 var(--acc)}
+#rpstatus{font-size:13px;font-weight:600;color:var(--ink2)}
 /* Performance graphs below the video and replay controls. */
 :root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--c5:#ffc46b;--c6:#ff8f8f;--pf-grid:#465363;--pf-label:#e1e8f2}
 .pfo{margin-top:8px;width:min(460px,100%);font-size:13px;line-height:1.35;color:var(--pf-label)}
@@ -290,6 +293,11 @@ body:not(.adv) .adv-only{display:none!important}
 .ot-n small.ot-why{color:var(--warn)}
 .ot-sumtop{margin:0 0 8px;padding:6px 9px;border:1px solid var(--acc);border-radius:6px;background:rgba(224,122,36,.08);color:var(--ink)}
 body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is locked shows even in the brief view */
+/* 11-13 (design review 3): the 'now' summary as label / value lines; names keep Korean words whole */
+#ot-sum{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 12px;margin-top:4px}
+#ot-sum b{font-weight:400;color:var(--ink2);white-space:nowrap}#ot-sum span{color:var(--ink);word-break:keep-all;overflow-wrap:anywhere}
+.ot-sumh{font-size:11.5px;color:var(--acc);font-weight:700}
+.ot-n{word-break:keep-all;overflow-wrap:anywhere}.ot-n small:empty{display:none}
 /* v40: phone joystick. A finger pressed on the picture and dragged moves the gimbal; the ring is drawn where the finger went down. The picture no longer scrolls the page under a finger (touch-action). */
 #v{touch-action:none}
 .joy{position:absolute;display:none;width:112px;height:112px;margin:-56px 0 0 -56px;border-radius:50%;border:1px solid var(--line2);background:rgba(24,24,24,.45);pointer-events:none;z-index:3}
@@ -367,7 +375,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
 <header>
   <h1>LWIR 추적</h1>
   <span class="chip"><span class="dot" id="cdot"></span><span id="ctext">연결 확인 중</span></span>
-  <span class="chip desk num"><span id="fps">–</span><span>&nbsp;fps</span></span>
+  <span class="chip desk num"><span id="fps">–</span></span>
   <span class="chip desk camera-only"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
   <span class="chip desk"><span class="dot" id="mcdot"></span><span id="mctext">모델</span></span>
   <span class="chip"><span class="dot" id="mdot"></span><span id="mtext">측정 대기</span></span>
@@ -440,7 +448,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         <!-- v40: one tree for everything that used to be three sections (검출 모델 / Filter / Tracker). Rows run top to bottom in processing order; what is picked above opens or locks the nodes below. A click on a node is sent at once, the choice is kept on the server, and every open page reads it again each second. -->
         <div class="body stack">
           <div class="ot-leg"><span class="ot-n sel">선택됨</span><span class="ot-n">고를 수 있음</span><span class="ot-n lock"><svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg> 잠김</span><span>누르면 바로 적용 · 접속한 모든 화면이 같이 바뀝니다</span></div>
-          <div class="ot-sum ot-sumtop">지금: <span id="ot-sum">–</span></div>
+          <div class="ot-sum ot-sumtop"><div class="ot-sumh">지금 쓰는 조합</div><div id="ot-sum">–</div></div>
           <div id="ot-tree"><div class="minfo" style="margin-top:0">설정을 불러오는 중…</div></div>
           <div class="ot-hint" id="ot-hint" role="status"></div>
           <div class="stack" id="bt-confirm" hidden>
@@ -764,7 +772,7 @@ function wake(){grace=Date.now();ping();if(Date.now()-pageT0>3000)openStream();}
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)wake();});addEventListener('pageshow',wake);addEventListener('online',wake);
 // v25: frame rate from /healthz (read only): frames_in difference / up difference over the last 2 s
 function hztick(){if(document.hidden)return;fetch('/healthz',{cache:'no-store'}).then(r=>r.json()).then(h=>{lastOk=Date.now();
-  const r0=v=>Number.isFinite(v)?Math.round(v):'–';$('fps').textContent='카메라 '+r0(h.cam_fps)+' · 추적 '+r0(h.track_fps);hzPrev=h;   // 11-13: the server's speeds
+  const r0=v=>Number.isFinite(v)?Math.round(v):'–';$('fps').textContent='카메라 '+r0(h.cam_fps)+' · 추적 '+r0(h.track_fps)+' fps';hzPrev=h;   // 11-13: the server's speeds
   const rs=(typeof rpLast!=='undefined'&&rpLast&&rpLast.state)||{},vc=$('vchip');   // 11-13: picture chip (was a text bar drawn into the picture)
   if(vc){const rp=!!rs.on;vc.className='vchip num'+(rp?' replay':'');vc.textContent=(rp?'녹화 재생 · '+(rs.name||''):'실시간')+' · 추적 '+r0(h.track_fps)+' fps'+(Number.isFinite(h.delay_p50)?' · 지연 '+Math.round(h.delay_p50)+' ms':'');vc.hidden=false;}
   }).catch(()=>{});}
@@ -892,6 +900,8 @@ const REC=['bank:yolo26m_flir_inside_20261110_2020_640x480'];   // 11-13: models
 const dsub=s=>{let m=/yolo ?26 ?([nsmlx])(?![a-z])/i.exec(s);if(m)return 'YOLO26'+m[1].toLowerCase();m=/yolox[-_ ]?(nano|tiny|s|m|l|x)(?![a-z])/i.exec(s);if(m)return 'YOLOX-'+m[1].toLowerCase();m=/yolo ?v?8 ?([nsmlx])(?![a-z])/i.exec(s);return m?'YOLOv8'+m[1].toLowerCase():'';};
 /* 11-13 (user): size sub-folders are listed smallest first. A name that does not end in a size keeps its place after the sized ones. */
 // 11-13 (user): YOLO26 models together; inside YOLO26 one sub-folder per use
+const dname=c=>DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim();   // 11-13: one display name for a detector (tree, top bar, 지금 적용된 값)
+const wn=s=>esc(s).replace(/_/g,'_<wbr>');   // 11-13: long names break after '_', not inside a Korean word
 const DSTR=['YOLO26','YOLOv8','YOLOX','기타'],SGO=['실내','실외','기본 (공개 데이터)','비교용'];
 const duse26=s=>{const u=duse(s);return u==='다른 구조 (비교용)'?'비교용':u;};
 const szRank=q=>{const u=SGO.indexOf(q);if(u>=0)return u;const m=/(nano|tiny|[nsmlx])$/.exec(String(q)),i=m?['n','nano','tiny','s','m','l','x'].indexOf(m[1]):-1;return i<0?99:i;};
@@ -912,7 +922,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const dk=c=>String(c.det)+' '+String(c.name),ADVON=document.body.classList.contains('adv'),HIDEF=['기본 (공개 데이터)','다른 구조 (비교용)'],curm=m?(m.busy?m.pending:m.current):null;
   const catv=cat,dfs=DSTR.filter(f=>catv.some(c=>dfold(dk(c))===f));   // 11-13 (user): every detector folder always shows (hiding the comparison models was a problem)   // 11-13: folders by use, only the ones that have models
   T.push({lab:'검출 모델',sub:'구조별 · YOLO26 안은 쓰는 곳별',f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
-    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:REC.includes(c.det),note:DNOTE[c.det]||'',name:DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim(),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1}))});
+    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:REC.includes(c.det),note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1}))});
   T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
@@ -989,7 +999,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   return T;}
 function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const body=(t,i)=>{let h='';
-    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+esc(n.name)+(n.rec?'<span class="ot-rec">추천</span>':'')+(n.note?'<small>'+esc(n.note)+'</small>':'')+(n.lock&&n.lock!==n.note?'<small class="ot-why">'+esc(n.lock)+'</small>':'')+'</button>';   // 11-13: why a node is locked, shown in it
+    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+wn(n.name)+(n.rec?'<span class="ot-rec">추천</span>':'')+(n.note?'<small>'+esc(n.note)+'</small>':'')+(n.lock&&n.lock!==n.note?'<small class="ot-why">'+esc(n.lock)+'</small>':'')+'</button>';   // 11-13: why a node is locked, shown in it
     if(!t.f)t.n.forEach((n,j)=>{const ki=n.sel&&n.key?OTT.findIndex(c=>c.kidOf===i&&c.show&&c.kidKey===n.key):-1;   // v42: a chosen tile that owns a child row becomes one box with the child inside
       if(ki<0){h+=btn(n,j);return;}const c=OTT[ki];
       h+='<div class="ot-grp sel ot-own">'+btn(n,j)+'<div class="ot-kid" data-kid="'+ki+'"><div class="ot-kidlab">'+esc(c.lab)+(c.sub?'<small>'+esc(c.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(c,ki)+'</div></div></div>';});
@@ -997,11 +1007,11 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
       const sg=(t.n.find(n=>n.sel&&n.g)||{}).g||'',op=(i in otopen)?otopen[i]:sg;
       t.f.forEach((f,k)=>{const inn=t.n.filter(n=>n.g===f),s=inn.find(n=>n.sel),all=inn.length&&inn.every(n=>n.lock);
         if(op===f)h+='<div class="ot-grp'+(s?' sel':'')+'">';
-        h+='<button type="button" class="ot-n ot-f'+(s?' sel':!inn.length||all?' lock':'')+(op===f?' open':'')+'" data-f="'+i+'.'+k+'" aria-expanded="'+(op===f?'true':'false')+'">'+FD+' '+esc(f)+' '+(op===f?'▾':'▸')+'<small>'+(s?'선택: '+esc(s.name):inn.length?'모델 '+inn.length+'개'+(all?' · 모두 잠김':''):'모델 없음')+'</small></button>';
+        h+='<button type="button" class="ot-n ot-f'+(s?' sel':!inn.length||all?' lock':'')+(op===f?' open':'')+'" data-f="'+i+'.'+k+'" aria-expanded="'+(op===f?'true':'false')+'">'+FD+' '+esc(f)+' '+(op===f?'▾':'▸')+'<small>'+(s?(op===f?'':'선택: '+wn(s.name)):inn.length?'모델 '+inn.length+'개'+(all?' · 모두 잠김':''):'모델 없음')+'</small></button>';
         if(op===f){let b='';const sz=[];inn.forEach(n=>{if(n.sg&&!sz.includes(n.sg))sz.push(n.sg);});sz.sort((a,b)=>szRank(a)-szRank(b));   // 11-13: size sub-folders smallest first (n, nano, tiny, s, m, l, x). the models sit inside the folder's own box
           t.n.forEach((n,j)=>{if(n.g===f&&(sz.length<2||!n.sg))b+=btn(n,j);});
           if(sz.length>1)sz.forEach(q=>{const si=inn.filter(n=>n.sg===q),ss=si.find(n=>n.sel),key=i+'|'+f+'|'+q,so=(key in otsub)?otsub[key]:!!ss;   // two or more sizes: one sub-folder per size
-            b+='<div class="ot-sg'+(ss?' sel':'')+'"><button type="button" class="ot-n ot-f ot-sf'+(ss?' sel':si.every(n=>n.lock)?' lock':'')+(so?' open':'')+'" data-s="'+esc(key)+'" aria-expanded="'+(so?'true':'false')+'">'+FD+' '+esc(q)+' '+(so?'▾':'▸')+'<small>'+(ss?'선택: '+esc(ss.name):'모델 '+si.length+'개')+'</small></button>';
+            b+='<div class="ot-sg'+(ss?' sel':'')+'"><button type="button" class="ot-n ot-f ot-sf'+(ss?' sel':si.every(n=>n.lock)?' lock':'')+(so?' open':'')+'" data-s="'+esc(key)+'" aria-expanded="'+(so?'true':'false')+'">'+FD+' '+esc(q)+' '+(so?'▾':'▸')+'<small>'+(ss?(so?'':'선택: '+wn(ss.name)):'모델 '+si.length+'개')+'</small></button>';
             if(so){b+='<div class="ot-sub">';t.n.forEach((n,j)=>{if(n.g===f&&n.sg===q)b+=btn(n,j);});b+='</div>';}
             b+='</div>';});
           h+='<div class="ot-sub">'+(b||'<span class="ot-none">'+esc((t.fe&&t.fe[f])||'이 안에 모델이 없습니다')+'</span>')+'</div></div>';}});}
@@ -1013,10 +1023,11 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const R=l=>OTT.find(t=>t.lab===l)||{n:[]};   // 11-13: rows by name (the '외형 모델' row moved the numbers)
   const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(R('전처리')),flt=on(R('검출 뒤 Filter')),ctl=(window.OTFOL?['따라가기']:[]).concat(on(R('제어')));
   const am=one(R('외형 모델')),ap=one(R('외형 비교')),kp=one(R('KeepID'));
-  const a=[pre.length?pre.join(' + '):'전처리 없음',one(R('검출 모델'))||'검출 모델 –',flt.length?flt.join(' + '):'Filter 없음',one(R('Tracker'))||tname(trk)];
-  if(trk==='botsort')a.push('외형 '+(ap==='끔'?'끔':(am||ap||'–')));
-  a.push(one(R('위치 기억 · 신뢰도'))||'Kalman filter','KeepID '+(kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'),ctl.length?ctl.join(' + '):'수동');
-  OS.textContent=a.join(' → ');}
+  // 11-13 (design review 3): one line per stage, label + value (it was one long arrow chain)
+  const a=[['전처리',pre.length?pre.join(' + '):'없음'],['검출',one(R('검출 모델'))||'–'],['Filter',flt.length?flt.join(' + '):'없음'],['Tracker',one(R('Tracker'))||tname(trk)]];
+  if(trk==='botsort')a.push(['외형 비교',ap==='끔'?'끔':(am||ap||'–')]);
+  a.push(['위치 기억',one(R('위치 기억 · 신뢰도'))||'Kalman filter'],['KeepID',kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'],['제어',ctl.length?ctl.join(' + '):'수동']);
+  const sh=a.map(([k,v])=>'<b>'+esc(k)+'</b><span>'+wn(v)+'</span>').join('');if(OS.innerHTML!==sh)OS.innerHTML=sh;}
 OT.addEventListener('click',e=>{const sb=e.target.closest('.ot-sf'),fb=e.target.closest('.ot-f');
   if(sb&&sb.dataset.s){otsub[sb.dataset.s]=sb.getAttribute('aria-expanded')!=='true';OH.textContent='';otdraw();return;}   // size sub-folder: open / close, nothing is sent
   if(fb&&fb.dataset.f){const x=fb.dataset.f.split('.'),t=OTT[+x[0]],f=t&&t.f&&t.f[+x[1]];if(!f)return;
@@ -1042,8 +1053,8 @@ OT.addEventListener('click',e=>{const sb=e.target.closest('.ot-sf'),fb=e.target.
 function mdl(m){mlast=m;const cat=m.catalog||[];
   if(!cat.length){MIN.textContent='검출 모델 · 이 실행에서는 모델을 바꿀 수 없습니다.';chip('mcdot','mctext','','모델 고정');otdraw();return;}
   const cur=cat.find(c=>c.id===m.current);
-  chip('mcdot','mctext',m.busy?'live':'good',m.busy?'모델 바꾸는 중':(cur?cur.name:'모델'));
-  let t=cur?'지금: '+cur.name:'';
+  chip('mcdot','mctext',m.busy?'live':'good',m.busy?'모델 바꾸는 중':(cur?dname(cur):'모델'));
+  let t=cur?'지금: '+dname(cur):'';
   if(m.busy){const p=cat.find(c=>c.id===m.pending);t='바꾸는 중'+(p?': '+p.name:'')+' · 카메라 영상이 들어오는 다음 프레임에 바뀝니다';}
   else if(m.last){t+=' · '+m.last.at+' '+m.last.text+(m.last.seconds!=null?' ('+m.last.seconds+'초)':'');}
   MIN.textContent='검출 모델 · '+t;otdraw();}

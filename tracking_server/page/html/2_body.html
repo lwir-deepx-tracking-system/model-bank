@@ -2,7 +2,7 @@
 <header>
   <h1>LWIR 추적</h1>
   <span class="chip"><span class="dot" id="cdot"></span><span id="ctext">연결 확인 중</span></span>
-  <span class="chip desk num"><span id="fps">–</span><span>&nbsp;fps</span></span>
+  <span class="chip desk num"><span id="fps">–</span></span>
   <span class="chip desk camera-only"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
   <span class="chip desk"><span class="dot" id="mcdot"></span><span id="mctext">모델</span></span>
   <span class="chip"><span class="dot" id="mdot"></span><span id="mtext">측정 대기</span></span>
@@ -75,7 +75,7 @@
         <!-- v40: one tree for everything that used to be three sections (검출 모델 / Filter / Tracker). Rows run top to bottom in processing order; what is picked above opens or locks the nodes below. A click on a node is sent at once, the choice is kept on the server, and every open page reads it again each second. -->
         <div class="body stack">
           <div class="ot-leg"><span class="ot-n sel">선택됨</span><span class="ot-n">고를 수 있음</span><span class="ot-n lock"><svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg> 잠김</span><span>누르면 바로 적용 · 접속한 모든 화면이 같이 바뀝니다</span></div>
-          <div class="ot-sum ot-sumtop">지금: <span id="ot-sum">–</span></div>
+          <div class="ot-sum ot-sumtop"><div class="ot-sumh">지금 쓰는 조합</div><div id="ot-sum">–</div></div>
           <div id="ot-tree"><div class="minfo" style="margin-top:0">설정을 불러오는 중…</div></div>
           <div class="ot-hint" id="ot-hint" role="status"></div>
           <div class="stack" id="bt-confirm" hidden>
