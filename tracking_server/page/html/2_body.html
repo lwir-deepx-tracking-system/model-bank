@@ -103,11 +103,11 @@
             <dt>출력</dt><dd>보정값 4개. 한 프레임에 중심은 상자 높이의 ±50%, 크기는 ±10% 를 넘지 못하게 막아 둠. 보정한 상자를 Kalman 상태의 위치·크기에 덮어씀(속도, 공분산은 그대로).</dd>
             <dt>구조</dt><dd>GRU: GRU cell(은닉 40) → linear 4, 가중치 7,124개. Mamba: Mamba block 1개(d_model 32, expand 2, d_state 8, d_conv 4, Gu &amp; Dao 2023) → linear 4, 가중치 9,124개. 둘 다 numpy 로 오렌지파이 CPU 에서 계산(NPU 안 씀).</dd>
             <dt>쓰는 조건</dt><dd>놓치기 전에 5프레임 이상 연속으로 본 사람만. 그보다 짧으면 그 사람은 Kalman filter 만 씁니다. 계산 오류가 20번 넘으면 자동으로 Kalman filter 로 돌아갑니다.</dd>
-            <dt>학습</dt><dd>우리 카메라 야외 영상(seq_*)의 사람 궤적에서 검출을 일부러 끊고, 끊긴 동안의 실제 위치를 맞히도록 학습. 가중치 파일은 tracker/motion/pos_gru.npz, pos_mamba.npz. 새 파일을 넣으면 재시작 없이 목록에 뜹니다.</dd>
-            <dt>신뢰도</dt><dd>지금 가중치는 신뢰도를 내지 않습니다(시험용 1 epoch). 0~1 신뢰도를 같이 내도록 다시 학습하는 것을 준비 중입니다. 신뢰도가 낮으면 Kalman filter 값을 쓰고 예측 상자를 그리지 않게 됩니다.</dd>
+            <dt>학습</dt><dd>우리 카메라 야외 영상(seq_*)의 사람 궤적에서 검출을 일부러 끊고, 끊긴 동안의 실제 위치를 맞히도록 학습. 가중치 파일은 models/track/pos_gru.npz, pos_mamba.npz. 새 파일을 넣으면 재시작 없이 목록에 뜹니다.</dd>
+            <dt>성능 (11-14 재학습)</dt><dd>우리 야외 영상 val, 놓친 뒤 5·15·30·60프레임 중심 오차 / 키 평균: GRU 0.172 · Mamba 0.173 · Kalman+카메라 보정 0.189 (낮을수록 좋음, 약 9% 좋음). 장치·실카메라 미확인. 신뢰도는 아직 내지 않습니다.</dd>
             <dt>지금 상태</dt><dd id="pstat">서버 정보를 불러오는 중…</dd>
             <dt>예측 상자 표시</dt><dd>"제어" 줄에서 켜면 짐벌이 따라가는 사람을 놓쳤을 때 그 사람의 추정 위치만, 같은 색 점선 상자와 "번호 predict" 로 화면에 그립니다(Kalman filter 일 때도 됨). 다른 사람의 추정 위치는 그리지 않습니다. 화면에만 그리고 짐벌에는 보내지 않습니다.</dd>
-            <dt>주의</dt><dd>추정 위치가 틀리면 다른 사람에게 번호가 넘어갈 수 있습니다. 검증된 가중치가 나오기 전에는 기본값(Kalman filter)을 쓰세요. 코드: pos_predict 함수, PosGRU · PosMamba 클래스.</dd>
+            <dt>주의</dt><dd>추정 위치가 틀리면 다른 사람에게 번호가 넘어갈 수 있습니다. 장치에서 확인되기 전에는 기본값(Kalman filter)을 권합니다. 코드: pos_predict 함수, PosGRU · PosMamba 클래스.</dd>
           </dl></details>
           <details class="fold" style="margin-top:0"><summary>Tracker 설명 (고른 것)</summary><div id="rdoc"></div></details>
         </div>

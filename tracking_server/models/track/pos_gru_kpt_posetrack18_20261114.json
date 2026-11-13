@@ -1,0 +1,19 @@
+{
+ "status": "관절 입력 GRU 위치 기억 (PoseTrack18) · 서버 연결 전 — 검출 모델이 관절 점을 내야 쓸 수 있음",
+ "source": "close_range m5_kpt_motion.py gru_kpt --aug 1 --hidden 64 (PoseTrack18 라벨, 30 epoch)",
+ "inputs": "프레임당 68개: 칼만 속도 2 · 직전 검출과 예측 차이 4 · 상자 변화 4 · log 높이 · 가로세로 비 · 화면 네 가장자리까지 거리 4 · 관절 17개 × (상자 중심 기준 x, y / 키, 보임) · 놓친 프레임 표시. 놓치기 전 최대 20프레임",
+ "output": "15프레임 동안 보정 없는 Kalman 예측 상자에 더하는 보정(중심 ±1 키, 크기 ±50%). 0 이면 Kalman 과 같음",
+ "test": {
+  "kalman": {
+   "all": 0.1503,
+   "vanish": 0.231,
+   "real_vanish": 0.7174
+  },
+  "model": {
+   "all": 0.119,
+   "vanish": 0.181,
+   "real_vanish": 0.6778
+  }
+ },
+ "note": "PoseTrack18 val 영상의 절반(고르는 데 안 쓴 쪽) 채점. all = 일반 장면, vanish = 가리개가 몸을 덮으며 사라지는 합성 장면 235개, real_vanish = 실제로 사라졌다 돌아온 23개(적음). 같은 모델에서 관절을 빼면 all 0.130 · vanish 0.189 로 나빠짐. 사진은 컬러 영상이지만 쓰는 것은 좌표뿐."
+}
