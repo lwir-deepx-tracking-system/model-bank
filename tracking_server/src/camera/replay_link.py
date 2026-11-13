@@ -17,6 +17,8 @@
 - 재생을 한 번도 쓰지 않으면 이 파일은 아무것도 바꾸지 않는다 (cam_argv() 는 전과 같은 명령을 돌려준다, LIVE.replay 는 None).
 - 정답과 비교 (11-12, replay_eval.py): 재생 카메라는 늘 프레임 머리(LWIR_CAM_STAMP=1)와 PNG 번호(--tag)를 붙여 띄운다 (spawn).
   카메라 쪽 설정(LWIR_CAM_STAMP)과 상관없이 재생 프로그램에만 그렇게 하고, 진짜 카메라를 띄우는 길은 바꾸지 않는다.
+- 저장된 결과 (11-13, src/track/replay_backends.py): --replay-tracks-root 를 주면 <그 폴더>/<녹화 이름>/<key>.mot.txt 와 <key>.json 을 찾아
+  그 녹화의 재생 추적기 'pre:<key>' 로 내놓는다. 고르면 서버 추적기의 상자 대신 파일의 상자와 번호를 그리고 채점한다. 옵션을 주지 않으면 아무것도 바뀌지 않는다.
 """
 import os
 import re
@@ -27,6 +29,7 @@ import time
 from ..common.state import APP
 from ..common.shared_values import HERE
 from ..track.bytetrack import available_bytetrack_library
+from ..track import replay_backends
 from ..web.preview_worker import set_preview_producer
 from . import camera_extra
 from . import replay_eval
@@ -145,6 +148,60 @@ def find(name_):   # 이름 -> (목록 항목, images 폴더의 절대 경로) �
     return it_, d_
 
 
+NO_STORED = '이 녹화에는 저장된 결과가 없습니다'
+_T = dict(t=-1e9, key=None, items=None, found={}, sigs={})
+_T_LOCK = threading.Lock()   # 다시 읽는 동안 들어온 다른 요청이 같은 읽기를 겹쳐 시작하지 않게 한다
+
+
+def tracks_root():   # 저장된 결과 폴더 (--replay-tracks-root). 주지 않았거나 폴더가 없으면 None = 이 기능은 아무것도 하지 않는다
+    t_ = getattr(APP.args, 'replay_tracks_root', '') or ''
+    return t_ if t_ and os.path.isdir(t_) else None
+
+
+def _stored_sig(d_, im_, frames_):   # 한 녹화의 저장된 결과가 그대로인지 보는 값: 결과·설명 파일의 (이름, 크기, 바뀐 시각) + 녹화의 PNG 수 + images 폴더의 바뀐 시각. 읽지 못하면 None (= 다시 읽는다)
+    try:
+        with os.scandir(d_) as es_:
+            fs_ = sorted((e_.name, e_.stat().st_size, e_.stat().st_mtime_ns) for e_ in es_ if e_.name.endswith((replay_backends.MOT_EXT, replay_backends.META_EXT)))
+        return tuple(fs_), frames_, os.stat(im_).st_mtime_ns
+    except OSError: return None
+
+
+def stored_tracks(items_, refresh_=False):
+    """{녹화 이름: (쓸 수 있는 것 [dict(id, key, label)], 못 쓰는 것 [dict(key, why)])}. 녹화 목록처럼 60초마다 다시 본다.
+
+    다시 볼 때 파일을 처음부터 읽는 것(sha256, 모든 줄 풀기)은 _stored_sig 가 바뀐 녹화만 한다. 화면이 열려 있으면 카메라 추적 중에도
+    60초마다 여기로 오기 때문이다. 새로 고침(refresh=1)은 모두 다시 읽는다. 크기와 바뀐 시각이 같은 채 내용만 바뀐 파일은 새로 고침 전까지
+    목록에서 알아채지 못하지만, 재생을 시작할 때 _stored_target 과 replay_backends.make 가 언제나 처음부터 다시 읽고 확인한다."""
+    t_ = tracks_root(); r_ = root()
+    if t_ is None or r_ is None: return {}
+    key_ = (t_, r_)
+    with _T_LOCK:
+        if refresh_ or _T['key'] != key_ or _T['items'] is not items_ or time.monotonic() - _T['t'] > LIST_TTL:
+            found_ = {}; sigs_ = {}; old_ = _T['sigs'] if _T['key'] == key_ and not refresh_ else {}
+            for it_ in items_:
+                parts_ = it_['name'].split('/')
+                if not it_.get('usable') or parts_[0] == MEAS: continue
+                d_ = replay_backends.stored_dir(t_, it_['name'])
+                if d_ is None or not os.path.isdir(d_): continue
+                im_ = os.path.join(r_, *parts_, 'images')
+                sig_ = _stored_sig(d_, im_, it_.get('frames')); prev_ = old_.get(it_['name'])
+                res_ = prev_[1] if sig_ is not None and prev_ is not None and prev_[0] == sig_ else replay_backends.scan_stored(d_, im_, it_['name'])
+                if sig_ is not None: sigs_[it_['name']] = (sig_, res_)
+                if res_[0] or res_[1]: found_[it_['name']] = res_
+            _T.update(t=time.monotonic(), key=key_, items=items_, found=found_, sigs=sigs_)
+        return _T['found']
+
+
+def _stored_target(it_, d_, key_):   # 재생을 시작할 때: 고른 녹화의 저장된 결과를 지금 다시 읽어 확인한다 -> (dict(key, mot, meta, label), None) 또는 (None, 이유)
+    t_ = tracks_root()
+    paths_ = replay_backends.stored_paths(t_, it_['name'], key_) if t_ is not None and it_['name'].split('/')[0] != MEAS else None
+    if paths_ is None: return None, NO_STORED
+    try: item_ = replay_backends.PrecomputedTracks(key_, paths_[0], paths_[1], replay_backends.png_numbers(d_), it_['name'])
+    except replay_backends.Refused as e_: return None, '저장된 결과를 쓸 수 없습니다: %s' % e_
+    except Exception as e_: return None, '저장된 결과를 쓸 수 없습니다 (%s)' % type(e_).__name__   # OSError(전부터) 와 미처 생각하지 못한 깨진 파일: 409 로 답한다
+    return dict(key=key_, mot=paths_[0], meta=paths_[1], label=item_.label), None
+
+
 def blocking():   # 짐벌을 막아야 하는가 (재생 중 또는 바꾸는 중)
     L_ = APP.LIVE
     return L_ is not None and (getattr(L_, 'replay', None) is not None or getattr(L_, 'replay_busy', False))
@@ -222,7 +279,8 @@ def spawn():   # lv_spawn 의 재생 판 (LIVE.replay 가 있을 때만): 머리
 
 
 def top_text(r_):   # 화면 그림 맨 윗줄 앞에 붙는 글 (cv2 는 한글을 못 그려서 ASCII 만)
-    return 'REPLAY ' + r_['name'].encode('ascii', 'replace').decode('ascii')
+    t_ = 'REPLAY ' + r_['name'].encode('ascii', 'replace').decode('ascii')
+    return t_ + ' | STORED ' + r_['tracks']['key'] if r_.get('tracks') else t_   # 저장된 결과를 그리는 중임을 그림에도 적는다
 
 
 def _msg(t_):
@@ -254,6 +312,7 @@ def state():
                    pos=ps_.get('pos'), paused=bool(r_.get('paused')), seeking=ps_.get('seek_to') is not None, seek_to=ps_.get('seek_to'))   # pos = 0-based index of the frame on screen, from the frame header
         st_['pass'] = ps_.get('pass_')
         st_['backend'] = r_.get('backend', 'python')
+        if r_.get('tracks'): st_['backend_label'] = r_['tracks']['label']
         st_['preview'] = 'async' if async_preview(r_, worker) else 'sync'
         st_['pacing'] = r_.get('pacing', 'legacy')
     return st_
@@ -266,7 +325,22 @@ def get_info(q_):
     backends = [dict(id='python', label='현재 추적기')]
     if available_bytetrack_library(APP.args) is not None:
         backends.append(dict(id='cpp_bytetrack', label='C++ ByteTrack'))
-    return dict(backends=backends, result_views=True, available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
+    items_ = listing(refresh_) if r_ else []
+    stored_ = stored_tracks(items_, refresh_) if r_ else {}
+    if stored_:   # 저장된 결과가 있는 녹화에만 tracks 를 붙인다 (화면은 고른 녹화의 것만 보여 준다). backends 에는 이름을 찾을 수 있게 모두 넣고 stored 표시를 한다
+        labels_ = {}
+        for name_ in sorted(stored_):
+            for b_ in stored_[name_][0]: labels_.setdefault(b_['id'], b_['label'])
+        backends += [dict(id=id_, label=label_, stored=True) for id_, label_ in labels_.items()]
+        shown_ = []
+        for it_ in items_:
+            ok_, bad_ = stored_.get(it_['name'], ((), ()))
+            if ok_ or bad_:
+                it_ = dict(it_, tracks=[dict(id=b_['id'], label=b_['label']) for b_ in ok_])
+                if bad_: it_['tracks_note'] = '저장된 결과 %s 못 씀: %s' % (bad_[0]['key'], bad_[0]['why']) + (' (외 %d개)' % (len(bad_) - 1) if len(bad_) > 1 else '')
+            shown_.append(it_)
+        items_ = shown_
+    return dict(backends=backends, result_views=True, available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=items_, state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
 
 
 def start_request(q_):   # -> (http 코드, 글)
@@ -281,12 +355,17 @@ def start_request(q_):   # -> (http 코드, 글)
     pacing = pacing_values[0]
     backend = q_.get('backend', ['python'])[0]
     library = available_bytetrack_library(APP.args) if backend == 'cpp_bytetrack' else None
-    if backend not in ('python', 'cpp_bytetrack'):
+    stored_key = replay_backends.stored_key(backend) if tracks_root() is not None else None   # 'pre:<key>' (저장된 결과). 옵션이 없으면 전처럼 모르는 이름이다
+    if backend not in ('python', 'cpp_bytetrack') and stored_key is None:
         return 400, '알 수 없는 재생 추적기'
     if backend == 'cpp_bytetrack' and library is None:
         return 409, 'C++ ByteTrack 라이브러리가 설정되지 않았습니다'
     it_, d_ = find(q_.get('seq', [''])[0])
     if it_ is None: return (409 if not on() else 400), d_
+    tracks_ = None
+    if stored_key is not None:
+        tracks_, why_ = _stored_target(it_, d_, stored_key)
+        if tracks_ is None: return 409, why_
     L_ = APP.LIVE
     worker = getattr(L_, 'preview_worker', None)
     can_async = worker is not None and worker.async_replay
@@ -304,6 +383,7 @@ def start_request(q_):   # -> (http 코드, 글)
     _gimbal_stop()
     tgt_ = dict(name=it_['name'], dir=d_, fps=fps_, loop=lp_ == '1', bits=it_['bits'], frames=it_['frames'], fin0=None, paused=False,
                 backend=backend, tracker_library=library, preview=preview_mode, pacing=pacing)
+    if tracks_ is not None: tgt_['tracks'] = tracks_
     APP.lv_th.Thread(target=_switch, args=(tgt_,), daemon=True).start()
     return 200, '재생 시작: %s' % it_['name']
 
@@ -416,6 +496,9 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
             ev_ = replay_eval.prepare(tgt_)
             if ev_ is None and tgt_.get('backend') == 'cpp_bytetrack':
                 _msg('C++ ByteTrack을 열지 못해 재생을 시작하지 않았습니다')
+                return
+            if ev_ is None and tgt_.get('tracks'):   # 저장된 결과를 다시 읽다가 실패: 서버 추적기의 상자를 대신 보여 주지 않는다
+                _msg('저장된 결과를 열지 못해 재생을 시작하지 않았습니다')
                 return
         if not _end_old(old_proc_, old_ is not None):
             _msg('카메라 프로그램이 45초 안에 끝나지 않아 재생을 시작하지 않음. 잠시 뒤 다시 누르세요'); return

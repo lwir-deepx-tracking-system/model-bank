@@ -133,6 +133,8 @@ def main():
     ap.add_argument('--live-wait', type=float, default=90, help='v21: seconds to wait for the first camera frame; 0 = never give up: the page and the gimbal link stay up with a placeholder picture and the camera is reopened every 180 s until --live-seconds ends')
     ap.add_argument('--replay-bytetrack-library', default=os.environ.get('LWIR_REPLAY_BYTETRACK_LIBRARY', ''),
                     help='Optional path override for the C++ ByteTrack library used by camera preview and playback')
+    ap.add_argument('--replay-tracks-root', default=os.environ.get('LWIR_REPLAY_TRACKS_ROOT', ''),
+                    help='11-13: folder of stored tracking results made offline (<root>/<recording name>/<key>.mot.txt + <key>.json); the replay page offers them as extra replay trackers for that recording. Empty or missing folder = off, nothing changes')
     ap.add_argument('--replay-root', default='', help='11-12: folder of the label site recordings (<root>/<name>/images/000001.png ...); the web page can play one of them instead of the camera (GET /replay, POST /replay/start, /replay/stop). Empty or missing folder = replay unavailable')
     ap.add_argument('--live-cam', default='', help='v14: path of the cam_pipe helper (default: src/camera/cam_pipe)')
     ap.add_argument('--live-map', choices=['fixed', 'pct'], default='pct', help='v14: 16 -> 8 bit mapping: fixed = linear 0..65535 (team runtime), pct = smoothed 1..99 percentile window')

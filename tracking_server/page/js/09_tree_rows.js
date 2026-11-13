@@ -16,6 +16,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const camNative=r.camera_bytetrack;
   const recording=rpLast&&rpLast.state&&rpLast.state.on?rpLast.state:null;
   const replayCpp=!!(recording&&recording.backend==='cpp_bytetrack');
+  const replayStored=!!(recording&&String(recording.backend||'').startsWith('pre:'));
   const replayErr=replayCpp&&!!(rpLast.eval&&rpLast.eval.backend_error);
   const camCpp=!!(!recording&&camNative&&camNative.active);
   const camTransition=!recording&&(!!camNative?.requested!==!!camNative?.active);
@@ -25,7 +26,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const eng=pend(r,'engine')||'auto',curEngine=p=>p.key===trk&&!cpp&&!camTransition;
   const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(curEngine(p)&&eng==='python'?'Python':(p.backend||'백엔드 미보고')),note:p.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':TN[p.key]?TN[p.key][1]:'',sel:!cpp&&!camTransition&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key)+'&engine=auto')}));
   if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack · '+(camNative?.available?'C++':'Python'),note:camNative?.available?'C++ 라이브러리가 있어 C++로 시작합니다. Python은 아래 ByteTrack 옵션에서 고릅니다':'',sel:btSelected,u:Q('tracker='+encodeURIComponent(bt.key)+'&engine=auto')});
-  const trackerSummary=camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
+  const trackerSummary=replayStored?'녹화: 저장된 결과 표시 중 · 이 줄의 추적기와 무관':camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
   T.push({lab:'Tracker',sub:trackerSummary,n:tn});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
@@ -58,7 +59,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     const pythonPreset=BT_KEYS.includes(trk)?trk:bt.key;
     const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':camTransition?'추적기 전환이 끝난 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
     T.push({lab:'ByteTrack 옵션',kidOf:3,kidKey:'bytetrack',show:btSelected,multi:1,n:[
-      {name:'Python',sel:!cpp&&!camTransition,lock:switching?'영상 전환 중입니다':'',
+      {name:'Python',sel:!cpp&&!camTransition&&!replayStored,lock:switching?'영상 전환 중입니다':'',
        replayBackend:recording?'python':null,u:Q('tracker='+encodeURIComponent(pythonPreset))},
       {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?(camNative?.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 라이브러리를 사용할 수 없습니다'):'',
        note:recording?'녹화 재생':camCppNote,

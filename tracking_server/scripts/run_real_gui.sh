@@ -12,6 +12,7 @@
 #   LWIR_GIMBAL_SPEED_MAX     top speed of automatic following (default 100)
 #   LWIR_GIMBAL_REACQUIRE_MS  how long the gimbal waits for a lost person before it gives up, in ms (default 10000)
 #   LWIR_REPLAY_ROOT recordings the web page can play instead of the camera (default /mnt/lwir_data/label_web/LWIR_labels; a missing folder = replay unavailable)
+#   LWIR_REPLAY_TRACKS_ROOT stored tracking results made offline, shown and scored in replay (<folder>/<recording name>/<key>.mot.txt + <key>.json; default empty = off)
 # Normally started by scripts/keepalive.sh (cron). By hand, from any folder:  bash scripts/run_real_gui.sh   (messages: real_gui_1.out, results: real_gui_1/)
 #
 # 2026-11-11 (새 폴더 배치): 실행 파일은 start_tracking_server.py, 이 스크립트는 scripts/ 에 있다. 실행 폴더는 전처럼 실행 파일이 있는 폴더(tracking_server/)다.
@@ -53,6 +54,7 @@ tracker_args=(
   --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 1 --confirm-gate models/track/gate_gru32_frozen.json --judge models/track/relink_judge_frozen.json --judge-crops 2
   --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 --replay-root "$REPLAY_ROOT"
   --replay-bytetrack-library "${LWIR_REPLAY_BYTETRACK_LIBRARY:-}"
+  --replay-tracks-root "${LWIR_REPLAY_TRACKS_ROOT:-}"
   --gimbal "$GIMBAL_DEV" --gimbal-speed 10 --gimbal-aim-y "$AIM_Y" --gimbal-bridge "$BRIDGE" --gimbal-opts "--controller pid --ki 0 --kd 6 --integral-limit 3 --deadband 0.06 --manual-speed 20 --speed-max $SPEED_MAX --reacquire-ms $REACQUIRE_MS $EXTRA_OPTS"
   --gui-host "$GUI_HOST" --gui-bind 0.0.0.0
 )

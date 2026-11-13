@@ -858,6 +858,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const camNative=r.camera_bytetrack;
   const recording=rpLast&&rpLast.state&&rpLast.state.on?rpLast.state:null;
   const replayCpp=!!(recording&&recording.backend==='cpp_bytetrack');
+  const replayStored=!!(recording&&String(recording.backend||'').startsWith('pre:'));
   const replayErr=replayCpp&&!!(rpLast.eval&&rpLast.eval.backend_error);
   const camCpp=!!(!recording&&camNative&&camNative.active);
   const camTransition=!recording&&(!!camNative?.requested!==!!camNative?.active);
@@ -867,7 +868,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const eng=pend(r,'engine')||'auto',curEngine=p=>p.key===trk&&!cpp&&!camTransition;
   const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(curEngine(p)&&eng==='python'?'Python':(p.backend||'백엔드 미보고')),note:p.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':TN[p.key]?TN[p.key][1]:'',sel:!cpp&&!camTransition&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key)+'&engine=auto')}));
   if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack · '+(camNative?.available?'C++':'Python'),note:camNative?.available?'C++ 라이브러리가 있어 C++로 시작합니다. Python은 아래 ByteTrack 옵션에서 고릅니다':'',sel:btSelected,u:Q('tracker='+encodeURIComponent(bt.key)+'&engine=auto')});
-  const trackerSummary=camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
+  const trackerSummary=replayStored?'녹화: 저장된 결과 표시 중 · 이 줄의 추적기와 무관':camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
   T.push({lab:'Tracker',sub:trackerSummary,n:tn});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
@@ -900,7 +901,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     const pythonPreset=BT_KEYS.includes(trk)?trk:bt.key;
     const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':camTransition?'추적기 전환이 끝난 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
     T.push({lab:'ByteTrack 옵션',kidOf:3,kidKey:'bytetrack',show:btSelected,multi:1,n:[
-      {name:'Python',sel:!cpp&&!camTransition,lock:switching?'영상 전환 중입니다':'',
+      {name:'Python',sel:!cpp&&!camTransition&&!replayStored,lock:switching?'영상 전환 중입니다':'',
        replayBackend:recording?'python':null,u:Q('tracker='+encodeURIComponent(pythonPreset))},
       {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?(camNative?.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 라이브러리를 사용할 수 없습니다'):'',
        note:recording?'녹화 재생':camCppNote,
@@ -1298,13 +1299,22 @@ addEventListener('resize',pfdraw);setInterval(pftick,1000);pfdraw();pftick();
 // 11-12: 녹화 재생 — a recording of the label site instead of the camera (GET /replay, POST /replay/start, /replay/stop). The server stops the gimbal and refuses moves while it plays.
 // 11-12 later: video-player controls under the picture (POST /replay/seek?pos=, /replay/pause, /replay/play, /replay/speed?fps=) and the comparison numbers under the picture only during playback.
 const RPSEC=$('rpsec'),RPSEL=$('rpsel'),RPBACK=$('rpbackend'),RPFPS=$('rpfps'),RPLOOP=$('rploop'),RPST=$('rpstart'),RPSP=$('rpstop'),RPNOTE=$('rpnote'),RPMSG=$('rpmsg');
-let rpKeys='',rpBackendKeys='',rpList=[],rpBusy=false,rpLast=null;
+let rpKeys='',rpBackendKeys='',rpList=[],rpBusy=false,rpLast=null,rpSelSynced='';
 const EVBAR=$('rpevbar'),EVLIVE=$('rpevallive'),EVSLIDER=$('rpevalslider'),EVFINAL=$('rpevalfinal'),EVRESET=$('rpevalreset'),EVVIEW=$('rpevalview');
 let rpEvalMode='live',rpEvalFinal=null,rpEvalPrefix=null,rpEvalPrefixPos=null,rpEvalError='',rpEvalPending=false,rpEvalToken=0,rpEvalRunId=null,rpEvalRetryTimer=0;
 function rpEnded(st){return !!(st&&st.on&&!st.loop&&!st.seeking&&st.total>0&&st.pos===st.total-1);}
 function rpItem(n){return rpList.find(x=>x.name===n)||null;}
-function rpBackendLabel(id,r){const b=(r&&Array.isArray(r.backends)?r.backends:[]).find(x=>x.id===id);return b&&b.label||({python:'현재 추적기',cpp_bytetrack:'C++ ByteTrack'}[id]||id||'현재 추적기');}
-function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state;RPNOTE.textContent=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';}
+// 11-13: the name of what is playing comes first (state.backend_label exists only while a stored result plays; one key may carry another label in another recording)
+function rpBackendLabel(id,r){const b=(r&&Array.isArray(r.backends)?r.backends:[]).find(x=>x.id===id),st=r&&r.state;return (st&&st.backend===id&&st.backend_label)||b&&b.label||({python:'현재 추적기',cpp_bytetrack:'C++ ByteTrack'}[id]||id||'현재 추적기');}
+function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state,base=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';RPNOTE.textContent=[base,it&&it.tracks_note].filter(Boolean).join(' · ');}
+// 11-13: the tracker selector offers the trackers every recording has, plus the stored results (pre:<key>) of the SELECTED recording only
+function rpBackendsFor(r){const all=r&&Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}],it=rpItem(RPSEL.value);
+  return all.filter(x=>!x.stored).concat(it&&Array.isArray(it.tracks)?it.tracks:[]);}
+function rpFillBackends(r){const backends=rpBackendsFor(r),backendKeys=backends.map(x=>x.id+'|'+x.label).join('\n');
+  if(backendKeys===rpBackendKeys)return;
+  const keep=RPBACK.value;rpBackendKeys=backendKeys;RPBACK.innerHTML=backends.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.label)+'</option>').join('');
+  const active=r&&r.state&&r.state.on&&r.state.backend;
+  if(active&&backends.some(x=>x.id===active))RPBACK.value=active;else if(backends.some(x=>x.id===keep))RPBACK.value=keep;else RPBACK.value=backends[0].id;}
 function rpTrackerState(r){const st=r?.state;return JSON.stringify([st?.on,st?.busy,st?.backend,!!r?.eval?.backend_error,r?.backends?.map(b=>b.id)]);}
 function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLast=r;
   const playback=r.state;
@@ -1319,28 +1329,27 @@ function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLas
   }
   v.alt=replayMode?'녹화 영상':'실시간 영상';
   if(redraw){syncConfirmTime();otdraw();}
-  const backends=Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}];
-  const backendKeys=backends.map(x=>x.id+'|'+x.label).join('\n');
-  if(backendKeys!==rpBackendKeys){const keep=RPBACK.value;rpBackendKeys=backendKeys;RPBACK.innerHTML=backends.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.label)+'</option>').join('');
-    const active=r.state&&r.state.on&&r.state.backend;
-    if(active&&backends.some(x=>x.id===active))RPBACK.value=active;else if(backends.some(x=>x.id===keep))RPBACK.value=keep;else RPBACK.value=backends[0].id;}
-  if(!r.available){RPSEL.innerHTML='<option value="">쓸 수 없음</option>';rpKeys='';rpList=[];RPST.disabled=RPSP.disabled=true;RPNOTE.textContent='';RPMSG.textContent=r.why||'쓸 수 없음';barShow(r);return;}
+  if(!r.available){RPSEL.innerHTML='<option value="">쓸 수 없음</option>';rpKeys='';rpList=[];rpFillBackends(r);RPST.disabled=RPSP.disabled=true;RPNOTE.textContent='';RPMSG.textContent=r.why||'쓸 수 없음';barShow(r);return;}
   // Keep original and BandFill recordings side by side; original sequences come first.
   const source='outdoor_bandfill_20261111/', originals='opi_sequences/';
   const original=r.list.filter(x=>x.name.startsWith(originals));
   const band=r.list.filter(x=>x.name.startsWith(source));
   const other=r.list.filter(x=>!x.name.startsWith(originals)&&!x.name.startsWith(source));
   const list=[...original,...band,...other];
-  const keys=list.map(x=>x.name+'|'+x.frames+'|'+x.bits+'|'+x.usable).join('\n');
+  const keys=list.map(x=>x.name+'|'+x.frames+'|'+x.bits+'|'+x.usable+'|'+(Array.isArray(x.tracks)?x.tracks.map(t=>t.id+'~'+t.label).join(','):'')+'|'+(x.tracks_note||'')).join('\n');
   if(keys!==rpKeys){const keep=RPSEL.value;rpKeys=keys;rpList=list;
     RPSEL.innerHTML=list.length?list.map(x=>{const label=x.name.startsWith(source)?'BandFill / '+x.name.slice(source.length):x.name.startsWith(originals)?'원본 / '+x.name.slice(originals.length):x.name;return '<option value="'+esc(x.name)+'"'+(x.usable?'':' disabled')+'>'+esc(label)+' · '+x.frames+'장 · '+(x.bits?x.bits+'비트':'?')+(x.usable?'':' (쓸 수 없음)')+'</option>';}).join(''):'<option value="">녹화가 없습니다</option>';
     if(keep&&rpItem(keep))RPSEL.value=keep;}
   const st=r.state;
-  if(st.on&&document.activeElement!==RPSEL&&rpItem(st.name))RPSEL.value=st.name;
+  // 11-13: follow the playing recording only when it CHANGES, not on every answer. Otherwise a recording picked during playback snaps back
+  // as soon as the focus leaves the selector, and its stored results can never be chosen (they are offered for the selected recording only).
+  const playing=st.on?st.name:'';
+  if(playing!==rpSelSynced&&document.activeElement!==RPSEL){rpSelSynced=playing;if(playing&&rpItem(playing))RPSEL.value=playing;}
+  rpFillBackends(r);
   if(st.on&&document.activeElement!==RPFPS&&st.fps!=null)RPFPS.value=Math.round(st.fps);
   RPST.disabled=rpBusy||st.busy||!list.some(x=>x.usable);RPSP.disabled=rpBusy||st.busy||!st.on;
   let t=st.busy?'바꾸는 중…':st.on?(rpEnded(st)?'완주 · 마지막 장: ':'재생 중: ')+st.name+' · '+st.fps+' fps · 추적기 '+rpBackendLabel(st.backend,r)+' · '+(st.loop?'반복':'한 번')+(st.pos!=null?(st.paused?' · 멈춤':'')+' · '+(st.pos+1)+' / '+st.total+'번째 장':' · 불러오는 중'):'꺼짐 (카메라 영상)';
-  if(r.eval&&r.eval.backend_error)t+='\nC++ ByteTrack 오류 · '+r.eval.backend_error;
+  if(r.eval&&r.eval.backend_error)t+='\n'+(r.eval.backend_label||rpBackendLabel(r.eval.backend||'cpp_bytetrack',r))+' 오류 · '+r.eval.backend_error;
   if(st.msg)t+='\n'+st.msg.at+' '+st.msg.text;
   RPMSG.style.whiteSpace='pre-line';RPMSG.textContent=t;rpNote();rpRenderEval(r);}
 // 11-12: 정답과 비교 — numbers of the two scorings (새 채점 = with ignore regions, 옛 채점 = without), false boxes first
@@ -1361,14 +1370,14 @@ function evShow(e,emptyText){if(!e){EVSW.innerHTML='';EVMSG.textContent=emptyTex
   EVSW.innerHTML=e.scoring?evSwitches(e):'';
   if(Date.now()-evDrawT>3000)EVDR.checked=!!e.draw;
   if(!e.name){EVMSG.textContent='재생을 시작하면, 검수한 정답 라벨이 있는 녹화는 여기에 1초마다 점수가 나옵니다.';EVT.innerHTML='';return;}
-  const c=e.counts||{},head=(e.on?'':'끝난 재생: ')+e.name+(e.backend?' · 추적기 '+rpBackendLabel(e.backend,rpLast):'');
+  const c=e.counts||{},head=(e.on?'':'끝난 재생: ')+e.name+(e.backend?' · 추적기 '+(e.backend_label||rpBackendLabel(e.backend,rpLast)):'');
   if(!e.scoring){EVMSG.textContent=head+' · '+(evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음')+evCoverage(e);EVT.innerHTML='';return;}
   let m=head+' · 정답 '+(e.label_file||'')+'\n'+(e.review||'')+'\n'+(evPhase(e)||'재생 상태 미상')+' · 이 회차 점수에 반영된 장 '+c.scored+evCoverage(e)+(e.scorable_frames!=null?' · 검수된 비교 가능 장 '+e.scorable_frames:'')+' · 건너뛴 카메라 장 '+(c.cam_skipped||0)+' · 서버 누락 '+(c.server_skipped||0)+(c.untagged?' · PNG 번호 모름 '+c.untagged:'')+'\nHOTA / mAP · '+evMetricStatus(e)+'\n'+e.since+' 부터'+(e.file?'\n결과 파일: '+e.file:'');
   EVMSG.style.whiteSpace='pre-line';EVMSG.textContent=m;
   const n=e.new||{},o=e.old||{};
   const rows=[['metric','HOTA','hota',1],['metric','사람 mAP50:95 (검출 후보)','map',1],['metric','사람 AP50 (검출 후보)','ap50',1],['fp','잘못 그린 상자','false',0],['','정답 사람','gt',0],['','찾음','found',0],['','놓침','missed',0],['sub','작은 사람 (<32px)','missed_small',0],['sub','그 밖','missed_other',0],
     ['','찾은 비율','recall',1],['','맞은 비율','precision',1],['','번호 바뀜','idsw',0],['','IDF1','idf1',1],['','MOTA','mota',1],['','무시 구역 상자','ignored_out',0]];
-  EVT.innerHTML='<tr><th></th><th>새 채점</th><th>옛 채점</th></tr>'+rows.map(([k,l,f,p])=>'<tr'+(k==='fp'?' class="fp"':'')+'><td'+(k==='sub'?' class="sub"':'')+'>'+l+'</td><td>'+(k==='metric'?metricText(e,n[f]):evN(n[f],p))+'</td><td>'+(k==='metric'||f==='ignored_out'?'–':evN(o[f],p))+'</td></tr>').join('');}
+  EVT.innerHTML='<tr><th></th><th>새 채점</th><th>옛 채점</th></tr>'+rows.map(([k,l,f,p])=>'<tr'+(k==='fp'?' class="fp"':'')+'><td'+(k==='sub'?' class="sub"':'')+'>'+l+'</td><td>'+(k==='metric'?(f==='hota'?metricText(e,n[f]):apText(e,n[f])):evN(n[f],p))+'</td><td>'+(k==='metric'||f==='ignored_out'?'–':evN(o[f],p))+'</td></tr>').join('');}
 function rpEvalSetMode(mode){rpEvalMode=mode;rpEvalToken++;rpEvalPending=false;rpEvalPrefix=null;rpEvalPrefixPos=null;rpEvalError='';clearTimeout(rpEvalRetryTimer);rpEvalRetryTimer=0;}
 function rpEvalRefreshButtons(){EVLIVE.setAttribute('aria-pressed',String(rpEvalMode==='live'));EVSLIDER.setAttribute('aria-pressed',String(rpEvalMode==='slider'));EVFINAL.setAttribute('aria-pressed',String(rpEvalMode==='final'));EVLIVE.classList.toggle('start',rpEvalMode==='live');EVSLIDER.classList.toggle('start',rpEvalMode==='slider');EVFINAL.classList.toggle('start',rpEvalMode==='final');}
 function rpRenderEval(r){const live=r.eval||{},pos=rpEvalPrefixPos;let shown=null,note='';
@@ -1408,6 +1417,8 @@ let rpDrag=false,rpHold=null,rpHoldT=0,rpCmT=0;
 function fmtT(s){s=Math.max(0,Math.round(s));const m=Math.floor(s/60),x=s%60;return (m<10?'0':'')+m+':'+(x<10?'0':'')+x;}
 function nchip(l,v,cls){return '<span class="rpc'+(cls?' '+cls:'')+'">'+l+' <b>'+v+'</b></span>';}
 function metricText(e,v){if(v!=null)return evN(v,1);return e.metric_status==='pending'?'계산 중':e.metric_status==='error'?'오류':e.metric_status==='unavailable'?evUnavailableMetric(e):'–';}
+// 11-13: a stored result has no detector candidates, so the two candidate scores are never computed for it
+function apText(e,v){return e.detector_metrics===false?'없음':metricText(e,v);}
 function barShow(r,viewEval){
   const st=r.state||{},e=viewEval===undefined?(r.eval||{}):(viewEval||{});
   // seek bar: only while a recording plays (one copy; the slider follows state.pos, which comes from the frame header)
@@ -1429,10 +1440,10 @@ function barShow(r,viewEval){
   // Keep the live-camera view clear; completed results remain in the replay panel.
   if(!e.name||(!on&&viewEval===undefined)||(!e.on&&viewEval===undefined)){RNUM.hidden=true;}
   else{RNUM.hidden=false;
-    RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+rpBackendLabel(e.backend,r):'');
+    RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+(e.backend_label||rpBackendLabel(e.backend,r)):'');
     if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';}
     else{const n=e.new||{},o=e.old||{},c=e.counts||{};
-      RMAIN.innerHTML=nchip('HOTA',metricText(e,n.hota))+nchip('사람 mAP50:95 (검출 후보)',metricText(e,n.map))+nchip('사람 AP50 (검출 후보)',metricText(e,n.ap50))+nchip('오검출',evN(n.false),'fp'+(n.false?'':' zero'))+nchip('찾음',evN(n.found)+' / '+evN(n.gt)+' 정답 사람')+nchip('놓침',evN(n.missed)+' (작은 사람 '+evN(n.missed_small)+')')+nchip('recall',evN(n.recall,1))+nchip('precision',evN(n.precision,1))+nchip('번호 바뀜',evN(n.idsw))+nchip('IDF1',evN(n.idf1,1))+nchip('MOTA',evN(n.mota,1));
+      RMAIN.innerHTML=nchip('HOTA',metricText(e,n.hota))+nchip('사람 mAP50:95 (검출 후보)',apText(e,n.map))+nchip('사람 AP50 (검출 후보)',apText(e,n.ap50))+nchip('오검출',evN(n.false),'fp'+(n.false?'':' zero'))+nchip('찾음',evN(n.found)+' / '+evN(n.gt)+' 정답 사람')+nchip('놓침',evN(n.missed)+' (작은 사람 '+evN(n.missed_small)+')')+nchip('recall',evN(n.recall,1))+nchip('precision',evN(n.precision,1))+nchip('번호 바뀜',evN(n.idsw))+nchip('IDF1',evN(n.idf1,1))+nchip('MOTA',evN(n.mota,1));
       ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
       const total=e.sequence_frames,pass=e.pass_frames,scorable=e.scorable_frames;
       RFOOT.textContent=(evPhase(e)||'재생 채점')+' · 첫 재생 채점 '+(c.scored==null?'–':c.scored)+'장'+(pass!=null&&total!=null?' · 진행 '+pass+' / '+total+'장':'')+(scorable!=null?' · 정답 비교 가능 '+scorable+'장':'')+' · HOTA / mAP '+evMetricStatus(e)+(e.phase==='interrupted'?' · 다시 처음부터 재생해야 완주 결과가 나옵니다.':'');
@@ -1491,8 +1502,8 @@ async function rpUseTracker(backend){
   const result=await rppost('/replay/start?'+query);
   OH.textContent=result.ok?'선택한 엔진으로 녹화를 다시 시작합니다.':result.text||'재생을 시작하지 못했습니다';
 }
-RPSEL.addEventListener('change',rpNote);
-RPBACK.addEventListener('change',()=>{const b=RPBACK.value;if(rpLast&&rpLast.state&&rpLast.state.on)RPMSG.textContent='선택한 추적기는 다음 재생부터 적용됩니다: '+rpBackendLabel(b,rpLast);});
+RPSEL.addEventListener('change',()=>{rpNote();if(rpLast)rpFillBackends(rpLast);});
+RPBACK.addEventListener('change',()=>{const b=RPBACK.value,o=RPBACK.selectedOptions[0];if(rpLast&&rpLast.state&&rpLast.state.on)RPMSG.textContent='선택한 추적기는 다음 재생부터 적용됩니다: '+(o&&o.textContent||rpBackendLabel(b,rpLast));});
 EVLIVE.addEventListener('click',()=>{rpEvalSetMode('live');rpRenderEval(rpLast||{});});
 EVSLIDER.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on||st.pos==null){EVVIEW.textContent='재생 중인 영상에서 슬라이더 위치를 선택할 수 있습니다.';return;}if(st.seeking){EVVIEW.textContent='프레임 이동이 끝난 뒤 결과를 다시 요청해 주세요.';return;}rpLoadPrefix(st.pos);});
 EVFINAL.addEventListener('click',rpLoadFinal);
