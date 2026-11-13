@@ -228,7 +228,7 @@ RPSEC.addEventListener('toggle',()=>{if(RPSEC.open)rptick('refresh');});
 setInterval(rptick,500);rptick(true);
 // 11-13 (design review, pass 2): 'advanced' open/closed shows the engineering controls (body.adv); stop button and hint over
 // the picture; aim marker at the bridge's --aim-screen-y. (Model / tracker are chosen in the settings tree, kept in the main panel.)
-const ADV=$('advsec');function advSync(){document.body.classList.toggle('adv',!!ADV.open);}ADV.addEventListener('toggle',advSync);advSync();
+const ADV=$('advsec');function advSync(){document.body.classList.toggle('adv',!!ADV.open);if(rlast)otdraw();}ADV.addEventListener('toggle',advSync);advSync();
 $('vstop').addEventListener('click',()=>post('/gimbal/stop'));
 setInterval(()=>{$('vhint').hidden=autoNow||camIdle>3;const ex=((rlast&&rlast.gimbal_cfg&&rlast.gimbal_cfg.extra)||'').match(/--aim-screen-y\s+([0-9.]+)/),ay=ex?Number(ex[1]):0.5;$('camera-center').style.top=(ay>0&&ay<1?ay*100:50)+'%';},500);
 // 11-13 (pass 4): camera-not-answering note (Korean, with what to do) and follow notes over the picture
