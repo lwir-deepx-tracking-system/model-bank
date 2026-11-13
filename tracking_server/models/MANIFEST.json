@@ -22,6 +22,7 @@
   "_files": {
     "detect/yolo26m/yolo26m_flir_inside_20261110_1742_640x480.dxnn": "d29ffca0618aef268ae98050a3def5a1df6d0acfd5dfd6e498be6ceb5bc756ff",
     "detect/yolo26m/yolo26m_flir_inside_20261110_2020_640x480.dxnn": "7a2571e1caf313d34762660e57f735a17e355ac727df08f4c5862fb4ef7b35fc",
+    "detect/yolo26m/yolo26m_bodybox_close_20261113_640x480.dxnn": "82557ccfff6db2e04b2921a3d5b7868cc4bb95a8a5cce7b64ae972656cf4e69f",
     "detect/yolo26m/yolo26m_flir_inside_20261111_patch_640x480.dxnn": "ae29d607462cf5b790991ad244f54f1d08d762476502da1382ad4b3a7b9bdc07",
     "detect/yolo26m/yolo26m_flir_nms_640x480.dxnn": "1aa827cf11f55d470b979d73cdae248babd77a80577613fcfe98097a9fcc18b9",
     "detect/yolo26m/yolo26m_flir_nms_640x640.dxnn": "b43d4e53a36ff7c0f29518f99244ea5947266b92faba18ba4a7c1373880909c3",
