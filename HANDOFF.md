@@ -96,7 +96,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 | 통합 변경의 장치 적용 | 장치가 최신 웹 화면 파일을 제공. 장치 위치값으로 눈금·삼각형을 켜는 코드 확인. 브라우저 화면 직접 확인과 장치 지연 재측정은 대기 |
 | 서버 재시작 | Orange Pi 8090 브라우저에서 동작 확인. 새 서버와 카메라 영상 복귀까지 시험 1회 약 3.6초 |
 | C++ ByteTrack | 과거 PC 50개·장치 가상 직렬 17개와 C++ 활성/ID 전달 확인 기록은 보존. 이번 배포 전후 선택은 Python이며, 현재 C++ 호환 빌드 없음으로 비활성. 실제 클릭 후 중심 유지 성능은 미검증 |
-| C++ SORT·OC-SORT·BoT-SORT | 저장소에 소스와 대조 시험 추가. PC(Linux x86-64)의 CPython 3.8·numpy 1.24와 3.11·numpy 2.4에서 Python과 프레임별 일치 확인. **장치 빌드·8090 연결·실영상 비교·M1 속도는 미검증, 장치 미적용** |
+| C++ SORT·OC-SORT·BoT-SORT | 장치에 빌드됨(aarch64, CPython 3.10, numpy 2.2). 장치에서 대조 시험 26개 통과, 3,000프레임 묶음 다른 행 0개. 실행 중 서버가 세 추적기를 C++ 사용 가능으로 보고. **실제 추적기 전환·실영상 비교·서버 재시작 뒤 동작은 미검증**(카메라 영상 없음, 재시작하지 않음) |
 | 실제 짐벌 시험 | 1단계 1회 실행. 가로 영상 변위 한계 초과로 중단, 정지와 서버 복귀 확인. 2·3단계 미실행 (5절) |
 
 ## 2. 장치에 걸려 있던 설정 (마지막 확인 11-12 01:11)
@@ -115,7 +115,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 
 ## 3. 장치 반영 및 검증 상태
 
-- **장치에 안 내려간 것:** C++ SORT·OC-SORT·BoT-SORT(`tracking_server/src/track/`의 `native_tracker_core.hpp`, `sort.cpp`, `ocsort.cpp`, `botsort.cpp`)와 `native_backend.py`의 끄기 스위치. 장치에서 `build_native_trackers.sh` 또는 `setup.sh`를 실행하고 서버를 다시 시작하면 세 추적기 메뉴가 C++로 바뀝니다. 현재 선택인 ByteTrack Python에는 영향이 없습니다. 원하지 않으면 `LWIR_NATIVE_TRACKERS=0`으로 Python을 유지합니다.
+- **장치 반영(2026-11-13 12:27, 서버 재시작 없음):** 배포 폴더를 `main`의 C++ 추적기·화면 변경까지 올리고 `build_native_trackers.sh`로 확장 3개를 빌드했습니다. 화면 파일은 열 때마다 다시 읽으므로 새 화면(영상 위의 NPU 번갈아 쓰기 줄, ByteTrack · C++/Python 표시)은 새로 고침하면 나옵니다. **재시작 전에는** 실행 중인 서버가 예전 Python 코드를 쓰므로 ByteTrack 줄의 C++ 우선 선택, `LWIR_NATIVE_TRACKERS=0`, 공통 헤더 날짜 검사는 동작하지 않습니다. SORT·OC-SORT·BoT-SORT는 재시작 없이도 다음에 그 추적기를 고를 때 C++가 선택됩니다. 이 장치의 v27 브리지는 C++ ByteTrack ID 연결을 보고하지 않아(`control_supported=false`) 재시작 뒤에도 ByteTrack 줄은 Python으로 시작합니다. 서버·짐벌 브리지·8770·cron은 건드리지 않았고 8090 응답 200을 확인했습니다.
 
 - 입력 잠금 분리와 사전 준비 `0481dc8`은 장치 적용·ARM64 107개 검사·실행 환경/로그 확인 완료입니다. 현재 선택 모델(`w480`)·제어·8770을 보존했고 기존/수정 2회씩 모든 212장과 점수 일치를 확인했습니다. 원래 재생 정지 상태로 돌렸습니다. 이전 실외 patch 모델 보고서의 지연·FP/FN 수치와 직접 비교하지 않습니다.
 
@@ -143,7 +143,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 
 ## 4. 다음 할 일 (순서대로)
 
-- C++ SORT·OC-SORT·BoT-SORT 장치 확인(짐벌과 무관, 서버 재시작 필요): Orange Pi에서 빌드 → `python3 -m unittest src.track.test_native_trackers` → 저장 녹화 한 편을 Python과 C++로 각각 재생해 점수와 ID 변경 일치 확인 → 추적 계산 시간 비교. [방법과 한계](tracking_server/src/track/README.md#c-sortoc-sortbot-sort)
+- C++ 추적기 남은 확인: 사람이 장치 옆에 있을 때 8090의 **서버 재시작**을 한 번 누르고(짐벌 브리지도 함께 다시 시작됨), 카메라가 연결되면 Tracker에서 OC-SORT·BoT-SORT·SORT를 골라 "실제 실행 엔진: C++"와 박스·ID를 확인합니다. 저장 녹화 한 편을 `LWIR_NATIVE_TRACKERS=0`인 실행과 비교해 점수와 ID 변경이 같은지도 봅니다. [방법과 한계](tracking_server/src/track/README.md#c-sortoc-sortbot-sort)
 
 **현재 다음 단계:** 저장 영상 280장 전후 비교와 운영 적용은 완료했습니다. 카메라를 다시 연결하면 실제 입력 간격, 입력→추적 발행, JPEG 준비와 화면 표시 지연을 같은 조건으로 측정합니다. 저장 영상 p95 49.96ms를 33.3ms 달성 또는 실카메라 성능으로 표현하지 않습니다. 아래 이전 단계의 계획은 중복 실행하지 않습니다.
 
@@ -229,6 +229,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 
 ## 8. 바뀐 것 기록 (새 것이 위)
 
+- 2026-11-13 Claude: 장치 적용. 첫 빌드는 `offsetof` 선언 없음으로 실패(그동안 Python 유지)했고 `<cstddef>` 추가 뒤 3개 빌드. 장치에서 대조·로더·엔진 선택 시험 26개 통과(38초), 3,000프레임 묶음 세 추적기 다른 행 0개, 프레임당 계산 시간 SORT 0.54→0.016ms, OC-SORT 2.14→0.028ms, BoT-SORT 0.67→0.023ms(장치 CPU, 합성 검출), 2만 4천 프레임 메모리 증가 없음. 실행 중 서버가 세 추적기를 C++로 보고. 서버 재시작·실제 전환·실영상은 하지 않음(카메라 영상 없음, 다른 접속자 있음). `page` 조각과 `live_page.html`은 장치에서 `--check` 일치.
 - 2026-11-13 Claude: (1) Tracker 메뉴의 ByteTrack 줄을 누르면 C++ 라이브러리가 있을 때 C++로 시작(`engine=auto`). 라이브러리 없음·녹화 재생 중·따라가는 중·브리지가 C++ ID를 받지 못할 때는 Python 유지. Python은 ByteTrack 옵션에서 직접 선택. 서버 시작 때의 저장된 선택은 바꾸지 않음. (2) "NPU 0·1 교대 투입"을 "검출 지연 줄이기 · NPU 0·1 번갈아 쓰기"로 바꾸고 System에서 영상 위로 옮김. 동작과 요청 주소는 그대로. PC 모의 서버 화면에서 위치·문구·콘솔 오류 없음 확인, 새 선택 시험 3개 통과, `build_page.py --check` 일치. 장치 화면과 실제 전환은 아래 장치 적용 기록 참조.
 - 2026-11-13 Claude: SORT·OC-SORT·BoT-SORT를 C++ CPython 확장으로 추가(공통 `native_tracker_core.hpp`). 확장이 없으면 기존 Python 그대로이며 `LWIR_NATIVE_TRACKERS=0`으로 끌 수 있음. 공통 헤더가 확장보다 새 파일이면 Python 사용. PC Linux x86-64의 CPython 3.8·numpy 1.24와 3.11·numpy 2.4에서 추적기 폴더의 시험 파일 4개 39개 통과(새 대조 10개·로더 2개 포함, `test_bytetrack_library`는 실행하지 않음), 3,000프레임 묶음에서 다른 행 0개. 장치 빌드·실행·실영상·M1 속도 미검증.
 - 2026-11-13 Codex: `d34efcf` 장치 반영 및 기존 cron `flock --close` 적용. 마지막 감시기 교체 전후 추적 서버 instance·짐벌·8770 동일, 일시중지 해제 확인. 이전 서버 종료·교체 시간초과 기록 보존, 실카메라 없음 및 p95 33.3ms 미달 명시.
