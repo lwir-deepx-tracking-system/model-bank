@@ -90,6 +90,35 @@ class NativeBackendTests(unittest.TestCase):
         # The extension exists, though create() correctly rejects this mode.
         self.assertEqual(label, "Python")
 
+    def fake_load(self, module):
+        spec = types.SimpleNamespace(loader=Mock())
+        self.contexts.enter_context(patch.object(backend.importlib.util, "spec_from_file_location", return_value=spec))
+        self.contexts.enter_context(patch.object(backend.importlib.util, "module_from_spec", return_value=module))
+
+    def test_environment_switch_keeps_python(self):
+        self.extension_files("ocsort")
+        self.fake_load(self.install("ocsort"))
+        with patch.dict(os.environ, {"LWIR_NATIVE_TRACKERS": "0"}):
+            tracker = backend.create("ocsort", "ocsort", {}, FakeTracker)
+            self.assertEqual(backend.backend_of(tracker), "Python")
+            self.assertEqual(backend.backend_status("ocsort")["reason"], "disabled by LWIR_NATIVE_TRACKERS=0")
+        with patch.dict(os.environ):
+            os.environ.pop("LWIR_NATIVE_TRACKERS", None)
+            self.assertEqual(backend.backend_label("ocsort"), "C++")
+
+    def test_newer_shared_header_requires_rebuild(self):
+        source, binary = self.extension_files("sort")
+        self.fake_load(self.install("sort"))
+        header = source.parent / "native_tracker_core.hpp"
+        header.write_text("// newer core", encoding="utf-8")
+        newer = binary.stat().st_mtime_ns + 5_000_000_000
+        os.utime(header, ns=(newer, newer))
+        status = backend.backend_status("sort")
+        self.assertEqual(status["backend"], "Python")
+        self.assertIn("rebuild needed", status["reason"])
+        os.utime(binary, ns=(newer, newer))
+        self.assertEqual(backend.backend_label("sort"), "C++")
+
     def test_missing_extension_uses_python(self):
         _, binary = self.extension_files("sort")
         binary.unlink()

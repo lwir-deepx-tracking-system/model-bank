@@ -58,6 +58,57 @@
 - 일부 계산만 옮길 때는 Python 추적기 내부에서 `ctypes`로 별도 공유 라이브러리를 호출할 수도 있습니다. [후처리 어댑터 예](../detect/native_post.py). 전체 추적기를 메뉴에 C++로 표시하려면 위 모듈 규약을 따릅니다.
 - 8090은 기존 [`live_publish()`](../web/page_handler.py)를 사용합니다. 팀 PC GUI도 캡처 프레임 번호와 영상 타임스탬프를 유지한 기존 전송 경로를 씁니다. [팀 PC 통신 형식](../gimbal/team/docs/pc_communication.md)
 
+## C++ SORT·OC-SORT·BoT-SORT
+
+위 규약대로 만든 CPython 확장 세 개입니다. Python 클래스(`sort.py`, `ocsort.py`, `botsort.py`와 공통 `alt_tracker.py`, `bytetrack.py`)를 한 단계씩 옮겼고, Python이 비교 기준입니다.
+
+| 파일 | 내용 |
+|---|---|
+| [`native_tracker_core.hpp`](native_tracker_core.hpp) | 공통 구현. Kalman, IoU, 배정, 트랙 수명, Python에 보이는 트랙·추적기 객체 |
+| [`sort.cpp`](sort.cpp), [`ocsort.cpp`](ocsort.cpp), [`botsort.cpp`](botsort.cpp) | 종류만 정하고 공통 구현을 포함하는 모듈 3개 |
+| [`test_native_trackers.py`](test_native_trackers.py) | Python과 프레임별 대조 시험 |
+
+**빌드와 선택**
+
+```sh
+bash tracking_server/scripts/build_native_trackers.sh
+cd tracking_server && python3 -m unittest src.track.test_native_trackers
+```
+
+- 빌드에는 `g++`와 `python3-config`만 씁니다. numpy 헤더는 필요 없습니다.
+- 빌드된 확장이 있으면 서버를 다시 시작한 뒤 Tracker 메뉴의 SORT·OC-SORT·BoT-SORT가 C++로 표시되고 그 구현을 씁니다. `setup.sh`도 이 빌드를 실행합니다.
+- **끄는 법:** 서버 환경에 `LWIR_NATIVE_TRACKERS=0`을 넣으면 확장이 있어도 Python을 씁니다.
+- `native_tracker_core.hpp`가 확장보다 새 파일이면 다시 빌드할 때까지 Python을 씁니다.
+- 시험은 확장이 없으면 건너뜁니다. 건너뛴 결과를 통과로 적지 않습니다.
+
+**Python과 같게 맞춘 것**
+
+- 입력 `[N, 6]`과 출력 `[x1, y1, x2, y2, id, conf, cls, det_idx]`, 출력 순서, 빈 프레임의 프레임 진행.
+- 서버가 읽고 바꾸는 상태: `tracked`, `lost`, `frame_id`, `next_id`, `n_init`, `kf`, `new_this_frame`, `lost_this_frame`, 트랙의 `mean`, `cov`, `state`, `is_activated`, `last_det`, `feat`, `xyxy`, `xywh`. 서버가 붙이는 임의 속성도 받습니다.
+- 카메라 움직임 보정: `tracker.kf.warp`를 예측 뒤 한 번 적용하고 비웁니다. OC-SORT는 저장한 관측에도 적용합니다.
+- 배정은 SciPy `linear_sum_assignment`와 같은 순서·동점 규칙으로 옮겼습니다. float32 비용의 문턱 비교는 실행 중인 numpy 버전의 규칙(1.x와 2.x가 다름)을 따릅니다.
+- BoT-SORT 외형 비용, `set_feat`, `attach_embedding`, `find`. 외형 입력 `{det_idx: 특징}`은 float32와 float64 모두 받습니다.
+
+**Python을 그대로 부르는 부분**
+
+- 가장자리 출생 규칙: `EDGE_BIRTH`가 0보다 클 때만 Python `edge_ok()`를 부릅니다(흔들림 보정 여백 포함).
+- 위치 예측기(`POSP`)나 예측 상자 표시가 켜져 있으면 그 프레임의 예측 단계는 Python `pos_predict()`가 계산합니다.
+
+**확인한 것 (2026-11-13, PC의 Linux x86-64)**
+
+- CPython 3.8 + numpy 1.24, CPython 3.11 + numpy 2.4에서 각각 빌드하고 대조 시험 10개를 통과했습니다.
+- 합성 검출 열(사람 이동·가림·미검출·낮은 점수·오검출·빈 프레임) 300프레임 묶음으로 ID·클래스·`det_idx`·출력 순서는 완전 일치, 상자·점수·Kalman 상태는 `1e-6` 안에서 비교했습니다.
+- 조건: 카메라 움직임, 외형 특징, 클래스 구분, 확인 프레임 수 변경, 입력 끊김 초기화, 가장자리 규칙, 위치 예측기.
+- 배정 단위 비교 16,000건(동점과 문턱과 같은 비용 포함) 일치.
+- 3,000프레임 한 묶음(카메라 움직임 포함)에서 세 추적기 모두 다른 행 0개. 프레임당 계산 시간은 PC에서 SORT 0.92→0.02ms, OC-SORT 4.19→0.03ms, BoT-SORT 2.17→0.04ms였습니다. 2만 4천 프레임 반복에서 메모리 증가는 없었습니다.
+
+**확인하지 못한 것**
+
+- Orange Pi(ARM64) 빌드와 실행, 8090 서버 연결, 실제 카메라·녹화 검출로의 비교, M1 속도.
+- 정답과 대조한 정확도. 이 작업은 Python과 같은 결과를 내는지만 봤습니다.
+- 부동소수 계산 순서가 달라 `1e-6`보다 작은 차이는 남을 수 있습니다. 비용이 문턱과 그만큼 가까운 드문 경우에는 짝이 달라질 수 있습니다.
+- C-BIoU, LostFirst, 학습 확인 판정기, ByteTrack의 `rebind`는 옮기지 않았습니다.
+
 ## 팀 runtime의 C++ 코드
 
 팀의 [runtime C++ 추적기](https://github.com/lwir-deepx-tracking-system/runtime/tree/0fe016f7edd069900457a746dc4cc787569c5ae6/src/tracking)에는 ByteTrack과 OC-SORT가 있습니다. `track(vector<Detection>)`과 `reset()`을 사용합니다. 재사용하려면 `XYWH`↔`XYXY`를 변환하고, 검출 인덱스 `det_idx`와 서버가 읽는 추적 상태를 연결하는 어댑터가 필요합니다. 임계값, Kalman 상태 표현, 새 트랙 확인과 클래스 구분도 Python판과 맞춰서 검증합니다.

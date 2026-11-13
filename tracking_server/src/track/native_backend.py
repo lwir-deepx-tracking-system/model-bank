@@ -11,6 +11,9 @@ mode-incompatible extension falls back to the supplied zero-argument Python
 factory. Loaded extensions stay pinned to their file identity for the life of
 the process. Use ``backend_status(kind)`` for the next tracker and
 ``backend_of(active_tracker)`` to label the actual instance.
+
+``LWIR_NATIVE_TRACKERS=0`` in the environment keeps every tracker on Python
+even when extensions are built.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ from dataclasses import dataclass
 import importlib.machinery
 import importlib.util
 import logging
+import os
 from pathlib import Path
 import sys
 from threading import RLock
@@ -28,6 +32,8 @@ from typing import Callable
 
 _LOG = logging.getLogger(__name__)
 _SOURCE_DIR = Path(__file__).resolve().parent
+_SHARED_SOURCES = ("native_tracker_core.hpp",)   # included by sort.cpp, ocsort.cpp and botsort.cpp
+_DISABLED = "disabled by LWIR_NATIVE_TRACKERS=0"
 _NATIVE_DIR = _SOURCE_DIR / "_native"
 _KIND_MODULE = {
     "bytetrack": "bytetrack",
@@ -76,6 +82,8 @@ def _load_module(kind: str):
     stem = _module_stem(kind)
     if stem is None:
         return None, f"unknown tracker kind: {kind}"
+    if os.environ.get("LWIR_NATIVE_TRACKERS", "1").strip() == "0":
+        return None, _DISABLED
     module_name = f"_native_{stem}"
     source = _SOURCE_DIR / f"{stem}.cpp"
     with _IMPORT_LOCK:
@@ -101,7 +109,9 @@ def _load_extension(module_name: str, source: Path):
         fingerprint = _fingerprint(binary_stat)
         if previous and (previous.path != resolved_binary or previous.fingerprint != fingerprint):
             return None, _RESTART_REQUIRED
-        if binary_stat.st_mtime_ns < source.stat().st_mtime_ns:
+        newest_source = max(path.stat().st_mtime_ns for path in
+                            (source, *(source.parent / name for name in _SHARED_SOURCES)) if path.is_file())
+        if binary_stat.st_mtime_ns < newest_source:
             return None, "C++ source is newer than the extension; rebuild needed"
     except Exception as exc:
         return None, f"{module_name} unavailable ({type(exc).__name__})"
