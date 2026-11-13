@@ -79,3 +79,13 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .rpbig small{font-size:12px;color:var(--ink2)}.rpbig b{font-size:22px;line-height:1.15;color:var(--ink);font-variant-numeric:tabular-nums}.rpbig i{font-style:normal;font-size:12px;color:var(--mut)}.rpbig.fp b{color:var(--warn)}.rpbig.fp.zero b{color:var(--ink)}
 .rpmorebtn{align-self:center;background:none;border:1px solid var(--line2);border-radius:999px;color:var(--ink2);font-size:12px;padding:3px 10px;cursor:pointer}
 .rpmain .rpx{display:none;align-self:center}.rpmain.more .rpx{display:inline-flex}
+/* 11-13 (design review, pass 2) */
+body:not(.adv) .adv-only{display:none!important}
+.advsec>summary{color:var(--ink2)}.advbody>details.sec{margin:0 -2px;border-radius:var(--r)}.advfeed{margin:0}
+.cardt{font-size:12px;color:var(--ink2);margin-bottom:4px;display:block}
+.quick{display:flex;flex-direction:column;gap:8px}.qrow{display:flex;flex-direction:column;gap:2px}.qrow select{width:100%}
+.vfol{position:absolute;left:10px;right:10px;bottom:16px;z-index:2;display:flex;align-items:center;gap:8px;pointer-events:none}
+.vfol>*{pointer-events:auto}.vhint{background:rgba(10,10,10,.62);color:#eee;font-size:12.5px;padding:4px 10px;border-radius:999px}
+.vhint[hidden]{display:none}.vstop{margin-left:auto;background:var(--stop);border-color:var(--stop);color:#fff;font-weight:700;padding:7px 14px}
+.vstop kbd{margin-left:4px;font-size:11px;opacity:.85}body.replay-mode .vfol{display:none}
+.chip[hidden]{display:none}.vstop.btn{flex:none;width:auto}

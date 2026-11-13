@@ -10,6 +10,7 @@ import time
 # 11-13 (user, design review): the page shows mode, speed and gimbal state as chips, so the red / black text bars are no
 # longer drawn into the picture. LWIR_PICTURE_BANNER=1 draws them again (for viewers of /stream without the page).
 PICTURE_BANNER = os.environ.get('LWIR_PICTURE_BANNER') == '1'
+FOLLOW_COLOR = (0, 220, 255)   # the colour page_handler gives the followed person's box
 
 import numpy as np
 
@@ -70,6 +71,13 @@ def render_preview(cv2, frame):
         img = cv2.resize(img, None, fx=sc, fy=sc, interpolation=cv2.INTER_LINEAR)
     font = cv2.FONT_HERSHEY_SIMPLEX
     for p1, p2, col, tid in frame.boxes:
+        if not frame.replay and tuple(col) == FOLLOW_COLOR:   # 11-13 (design review): the followed person stands out: thick box, filled tag
+            cv2.rectangle(img, p1, p2, col, 4)
+            label, (tw, th) = 'FOLLOW %d' % tid, cv2.getTextSize('FOLLOW %d' % tid, font, 0.6, 2)[0]
+            ty = max(p1[1], th + 8)
+            cv2.rectangle(img, (p1[0] - 2, ty - th - 8), (p1[0] + tw + 8, ty), col, -1)
+            cv2.putText(img, label, (p1[0] + 3, ty - 5), font, 0.6, (20, 20, 20), 2)
+            continue
         cv2.rectangle(img, p1, p2, col, 2)
         cv2.putText(img, str(tid), (p1[0], max(p1[1] - 4, 12)), font, 0.55, col, 2)
     hh, ww = img.shape[:2]

@@ -6,19 +6,14 @@
   <span class="chip desk camera-only"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
   <span class="chip desk"><span class="dot" id="mcdot"></span><span id="mctext">모델</span></span>
   <span class="chip"><span class="dot" id="mdot"></span><span id="mtext">측정 대기</span></span>
-  <button class="hbtn" id="verbose-btn" aria-pressed="false" title="설명 글 보이기 / 숨기기">설명 보기</button>
+  <button class="hbtn" id="verbose-btn" aria-pressed="false" title="설명 글 보이기 / 숨기기" aria-label="설명 보기">?</button>
 </header>
 <main>
   <section class="view">
     <div class="vbox">
-      <!-- 11-13: moved here from System. Detection frames alternate between NPU core 0 and 1 so the next frame starts before the previous one returns. -->
-      <div class="feedbar" id="npu-feed-bar">
-        <label class="chk"><input type="checkbox" id="npu-feed" aria-describedby="npu-feed-state npu-feed-hint" disabled> 검출 지연 줄이기 · NPU 0·1 번갈아 쓰기</label>
-        <button class="btn accent small" id="npu-feed-apply" disabled>적용</button>
-        <span class="feedinfo"><span id="npu-feed-state" role="status">상태를 확인하는 중…</span> <span class="num" id="npu-feed-counts"></span> <span id="npu-feed-hint" role="status"></span></span>
-      </div>
       <div class="frame"><img id="v" src="/stream" alt="실시간 영상" draggable="false">
         <div class="vchip num" id="vchip" aria-live="polite" hidden></div>
+        <div class="vfol camera-only" id="vfol"><span class="vhint" id="vhint">사람을 누르면 따라갑니다</span><button class="btn vstop" id="vstop" type="button" title="따라가기·이동 멈춤 (Space)">■ 멈춤 <kbd>Space</kbd></button></div>
         <div id="camera-center" class="camera-center" aria-hidden="true" hidden></div>
         <div class="pose" id="gimbal-position">
           <div class="pose-axis pose-pan" id="pose-pan" role="img" hidden><i data-marker></i></div>
@@ -27,13 +22,13 @@
         <div class="joy" id="joyb" aria-hidden="true"><i id="joyk"></i></div>
       </div>
       <div class="rpseek" id="rpseek" hidden>
-        <div class="rpr"><button class="btn small" id="rpplay" disabled>일시정지</button><button class="btn small" id="rpm10" disabled title="10초 뒤로 되감기">−10초</button><input type="range" id="rpslider" min="0" max="0" step="1" value="0" disabled aria-label="재생 위치"><button class="btn small" id="rpp10" disabled title="10초 앞으로 건너뛰기">+10초</button><button class="btn small" id="rpstep" type="button" disabled title="멈춘 상태에서 다음 한 장 (추적이 이어짐)">+1장</button></div>
-        <div class="rpr rpt"><span class="num" id="rptime">–</span><span class="rpj">장 번호 <input type="number" id="rpjn" min="1" step="1" inputmode="numeric" aria-label="이동할 장 번호 (1부터)" disabled><button class="btn small" id="rpgo" disabled>이동</button></span></div>
+        <div class="rpr"><button class="btn small" id="rpplay" disabled>일시정지</button><button class="btn small" id="rpm10" disabled title="10초 뒤로 되감기">−10초</button><input type="range" id="rpslider" min="0" max="0" step="1" value="0" disabled aria-label="재생 위치"><button class="btn small" id="rpp10" disabled title="10초 앞으로 건너뛰기">+10초</button><button class="btn small adv-only" id="rpstep" type="button" disabled title="멈춘 상태에서 다음 한 장 (추적이 이어짐)">+1장</button></div>
+        <div class="rpr rpt"><span class="num" id="rptime">–</span><span class="rpj adv-only">장 번호 <input type="number" id="rpjn" min="1" step="1" inputmode="numeric" aria-label="이동할 장 번호 (1부터)" disabled><button class="btn small" id="rpgo" disabled>이동</button></span></div>
         <div class="rpr rpreturn-row"><button class="btn small" id="rpreturn" disabled>카메라로 돌아가기</button><span class="rpreturn-key"><kbd>Esc</kbd></span></div>
         <div class="minfo rpcm" id="rpcm"></div>
       </div>
       <div class="rpbar" id="rpbar" hidden>
-        <div class="rpevbar" id="rpevbar" hidden>
+        <div class="rpevbar adv-only" id="rpevbar" hidden>
           <div class="row"><button class="btn" id="rpevallive" aria-pressed="true">현재 진행</button><button class="btn" id="rpevalslider" aria-pressed="false">슬라이더 결과</button><button class="btn" id="rpevalfinal" aria-pressed="false">최종 보기</button></div>
           <div class="row"><button class="btn" id="rpevalreset">끝까지 다시 계산</button></div>
           <div class="minfo" id="rpevalview" style="margin-top:0">현재 재생 진행 결과입니다.</div>
@@ -47,7 +42,7 @@
         </div>
       </div>
       <div class="hint camera-only">실시간 카메라에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
-      <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
+      <div class="pfo adv-only" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
         <div class="pfx">
           <div class="pft">속도 (FPS) <span>1초 동안 처리한 영상 수 · 높을수록 좋음</span></div>
           <div class="pfh"><span class="pfl" title="서버로 영상이 들어오는 초당 장 수. 녹화 재생 중에는 재생 속도"><i style="background:var(--c2)"></i>카메라 입력 <b class="num" id="pfv1">–</b></span><span class="pfl" title="추적 결과(박스와 ID)가 나오는 초당 장 수. 들어온 영상보다 낮으면 처리가 밀리는 중"><i style="background:var(--c1)"></i>추적 출력 <b class="num" id="pfv0">–</b></span></div>
@@ -65,12 +60,18 @@
   </section>
   <aside class="panel">
     <section class="st camera-only">
+      <div class="cardt">따라가기</div>
       <div class="sthead"><span class="sq" id="sq"></span><div class="status" id="s">대기 중</div></div>
       <div class="ans" id="ans"></div>
       <dl class="kv num"><dt>가로 오차</dt><dd id="ex">–</dd><dt>세로 오차</dt><dd id="ey">–</dd><dt>놓친 시간</dt><dd id="lt">–</dd></dl>
       <div class="mobhint">실시간 카메라에서 사람을 누르면 따라갑니다 · 빈 곳을 톡 누르면 멈춥니다 · 누른 채 끌면 그 방향으로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
     </section>
     <section class="st replay-only"><div class="status" id="rpstatus" role="status">녹화 재생</div></section>
+    <section class="st quick" id="quick">
+      <label class="qrow"><span class="cardt">검출 모델</span><select id="qmodel" aria-label="검출 모델"><option>불러오는 중…</option></select></label>
+      <label class="qrow"><span class="cardt">추적기</span><select id="qtracker" aria-label="추적기"><option>불러오는 중…</option></select></label>
+      <div class="minfo" id="qmsg" role="status" style="margin-top:0"></div>
+    </section>
     <div class="secs">
       <details class="sec" data-k="replay" id="rpsec">
         <summary>녹화 재생</summary>
@@ -78,8 +79,8 @@
         <div class="body stack">
           <select id="rpsel" aria-label="녹화 고르기"><option value="">목록을 불러오는 중…</option></select>
           <div class="row"><label class="lbl" for="rpbackend">추적기</label><select id="rpbackend" aria-label="재생 추적기"><option value="python">현재 추적기</option></select></div>
-          <div class="row"><span class="lbl">초당 장 수</span><input type="number" id="rpfps" min="5" max="30" step="1" value="25" aria-label="초당 장 수 (재생 중에 바꾸면 바로 적용)"><label class="chk"><input type="checkbox" id="rploop"> 반복</label></div>
-          <div class="row"><button class="btn start" id="rpstart">재생 시작</button><button class="btn" id="rpstop" disabled>재생 멈춤 (카메라로)</button></div>
+          <div class="row adv-only"><span class="lbl">초당 장 수</span><input type="number" id="rpfps" min="5" max="30" step="1" value="25" aria-label="초당 장 수 (재생 중에 바꾸면 바로 적용)"><label class="chk"><input type="checkbox" id="rploop"> 반복</label></div>
+          <div class="row"><button class="btn start" id="rpstart">재생 시작</button><button class="btn adv-only" id="rpstop" disabled>재생 멈춤 (카메라로)</button></div>
           <div class="minfo rpnote" id="rpnote" style="margin-top:0"></div>
           <div class="minfo" id="rpmsg" style="margin-top:0"></div>
           <!-- 11-12: ground-truth comparison while a recording with reviewed labels plays (GET /replay -> eval, POST /replay/eval/reset, /replay/eval/draw) -->
@@ -88,7 +89,7 @@
             <div class="minfo" id="rpevmsg" style="margin-top:0">재생을 시작하면, 검수한 정답 라벨이 있는 녹화는 여기에 1초마다 점수가 나옵니다.</div>
             <table id="rpevt"></table>
             <div class="rpids" id="rpevids"></div>
-            <div class="row"><label class="chk"><input type="checkbox" id="rpevdraw"> 정답 상자 그리기</label></div>
+            <div class="row adv-only"><label class="chk"><input type="checkbox" id="rpevdraw"> 정답 상자 그리기</label></div>
             <details class="fold"><summary>숫자 설명</summary><dl class="legend">
               <dt>새 채점 · 옛 채점</dt><dd>같은 프레임을 두 규칙으로 셉니다. 새 채점은 무시 구역(라벨의 무시 상자, 가장자리에 걸친 좁은 사람)을 빼고, 옛 채점은 빼지 않습니다.</dd>
               <dt>잘못 그린 상자</dt><dd>정답 사람과 짝이 없는 서버의 사람 상자 수. 있으면 안 되는 상자라 맨 위에 둡니다. 새 채점에서는 무시 구역 안에 반 넘게 든 상자는 세지 않습니다.</dd>
@@ -132,6 +133,18 @@
           </dl></details>
         </div>
       </details>
+      <!-- 11-13 (design review): everything an operator does not need every day, in one place. Open = body.adv, which also shows
+           the engineering controls elsewhere on the page (.adv-only). -->
+      <details class="sec advsec" data-k="adv" id="advsec">
+        <summary>고급 · 개발자</summary>
+        <div class="body stack advbody">
+          <div class="minfo" style="margin-top:0">카메라가 멈춰 영상이 안 나오면(USB 응답 없음) 카메라 초기화로는 살아나지 않습니다. 카메라 USB 케이블을 뽑았다 다시 꽂으세요.</div>
+      <!-- 11-13: moved here from System. Detection frames alternate between NPU core 0 and 1 so the next frame starts before the previous one returns. -->
+      <div class="feedbar advfeed" id="npu-feed-bar">
+        <label class="chk"><input type="checkbox" id="npu-feed" aria-describedby="npu-feed-state npu-feed-hint" disabled> 검출 지연 줄이기 · NPU 0·1 번갈아 쓰기</label>
+        <button class="btn accent small" id="npu-feed-apply" disabled>적용</button>
+        <span class="feedinfo"><span id="npu-feed-state" role="status">상태를 확인하는 중…</span> <span class="num" id="npu-feed-counts"></span> <span id="npu-feed-hint" role="status"></span></span>
+      </div>
       <details class="sec" data-k="meas">
         <summary>측정</summary>
         <div class="body">
@@ -230,6 +243,8 @@
         <div class="body keys">
           <kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> 짐벌 이동 (누르는 동안) &nbsp;·&nbsp; <kbd>Space</kbd> 정지<br>
           영상 위 사람 클릭: 그 사람 따라가기 &nbsp;·&nbsp; 영상의 빈 곳 클릭 또는 Space: 정지 &nbsp;·&nbsp; 방향키 또는 W A S D: 짐벌 이동 &nbsp;·&nbsp; 입력칸에 글을 쓰는 동안에는 짐벌을 움직이지 않습니다
+        </div>
+      </details>
         </div>
       </details>
     </div>
