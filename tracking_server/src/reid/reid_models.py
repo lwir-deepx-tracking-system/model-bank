@@ -9,7 +9,8 @@ REID_INFO = {'RVGGA0_REID2C256': ('RepVGG_distillation_(TMOT,CAMEL)_20261103', '
              'REPVGG_DISTILL_INSIDE_20261110': ('RepVGG_distillation_(실내)_20261110', 'RepVGG', 'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정'),
              'REPVGG_FT_INSIDE_20261110': ('RepVGG_fine-tuning_(실내)_20261110', 'RepVGG', '우리 카메라 실내로 학습 · 장치 정확도 미측정'),
              'VIT_LITE_DISTILL_INSIDE_20261111': ('ViT-lite_distillation_(실내)_20261111', 'ViT-lite', 'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정'),
-             'VIT_LITE_FT_INSIDE_20261111': ('ViT-lite_fine-tuning_(실내)_20261111', 'ViT-lite', '우리 카메라 실내로 학습 · 장치 정확도 미측정')}
+             'VIT_LITE_FT_INSIDE_20261111': ('ViT-lite_fine-tuning_(실내)_20261111', 'ViT-lite', '우리 카메라 실내로 학습 · 장치 정확도 미측정'),
+             'REPVGG_BODYBOX_OTP2_20261113': ('RepVGG_근거리 몸 네모_(OTP2 신원)_20261113', 'RepVGG', '근거리 몸 네모 검출 모델과 짝 · 잘림·가림 조각으로 학습 · 장치 정확도 미측정')}
 def reid_catalog(models_dir, man, start_key=''):
     """-> the appearance models the page may show: the known names above (+ the model this run was started with), each with available / why.
     A file counts as installed when models/<key>.dxnn exists AND MANIFEST.json has its sha256 (the sha itself is checked at the change, not here).

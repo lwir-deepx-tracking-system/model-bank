@@ -8,6 +8,7 @@
   "REPVGG_FT_INSIDE_20261110": "e52eda7d8a3354f6cab3f83b3b44397afddaba394c1092091b1598fd101b6137",
   "VIT_LITE_DISTILL_INSIDE_20261111": "9c79e07bedefa097d36b4deb7716a72b404ba5f1f19366f448e5bd03b9a68199",
   "VIT_LITE_FT_INSIDE_20261111": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2",
+  "REPVGG_BODYBOX_OTP2_20261113": "92cf064b3dc627b5ddc6360b7e693e2ca973b519e7696cf207d5dd710f178d31",
   "_links": {
     "NEWMRW480": "detect/yolo26m/yolo26m_flir_nms_640x480.dxnn",
     "S480": "detect/yolo26s/yolo26s_nms_640x480.dxnn",
@@ -17,7 +18,8 @@
     "REPVGG_DISTILL_INSIDE_20261110": "reid/repvgg_distill_inside_20261110_reid.dxnn",
     "REPVGG_FT_INSIDE_20261110": "reid/repvgg_ft_inside_20261110_reid.dxnn",
     "VIT_LITE_DISTILL_INSIDE_20261111": "reid/vit_lite_distill_inside_20261111_reid.dxnn",
-    "VIT_LITE_FT_INSIDE_20261111": "reid/vit_lite_ft_inside_20261111_reid.dxnn"
+    "VIT_LITE_FT_INSIDE_20261111": "reid/vit_lite_ft_inside_20261111_reid.dxnn",
+    "REPVGG_BODYBOX_OTP2_20261113": "reid/repvgg_bodybox_otp2_20261113_reid.dxnn"
   },
   "_files": {
     "detect/yolo26m/yolo26m_flir_inside_20261110_1742_640x480.dxnn": "d29ffca0618aef268ae98050a3def5a1df6d0acfd5dfd6e498be6ceb5bc756ff",
@@ -38,7 +40,8 @@
     "reid/repvgg_ft_inside_20261110_reid.dxnn": "e52eda7d8a3354f6cab3f83b3b44397afddaba394c1092091b1598fd101b6137",
     "reid/repvgg_tmot_camel_reid.dxnn": "dc19d7862a77ffa1d7c7f71f84283e86c33267d9e741b59070b839cb1921ff53",
     "reid/vit_lite_distill_inside_20261111_reid.dxnn": "9c79e07bedefa097d36b4deb7716a72b404ba5f1f19366f448e5bd03b9a68199",
-    "reid/vit_lite_ft_inside_20261111_reid.dxnn": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2"
+    "reid/vit_lite_ft_inside_20261111_reid.dxnn": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2",
+    "reid/repvgg_bodybox_otp2_20261113_reid.dxnn": "92cf064b3dc627b5ddc6360b7e693e2ca973b519e7696cf207d5dd710f178d31"
   },
   "_note": "internal model name -> sha256 of the DXNN file. scripts/setup.sh links models/links/<name>.dxnn to the file given in \"_links\" and checks every sha256 here. The server checks the detector and the re-ID model it loads against these values and lists a model on the page only when its name is here and linked. \"_files\": sha256 of every DXNN under models/detect/*/ and models/reid/ (detectors without an internal name are found by the server itself in models/detect/*/). Keys that start with \"_\" are not model names."
 }
