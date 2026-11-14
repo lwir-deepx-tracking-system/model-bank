@@ -209,7 +209,8 @@ def rules_request(q_):
         if not spec_proposals.PROP['show']: spec_proposals.PROP['boxes'] = []
     if 'prop_fuse' in q_:   # 11-14 research: weak person boxes the spectrum calls a person get the new-track score (spec_proposals.fuse)
         from ..detect import spec_proposals
-        spec_proposals.FUSE['on'] = q_['prop_fuse'][0] in ('1', 'true', 'on'); spec_proposals.FUSE['boosted'] = 0; spec_proposals.FUSE['frames'] = 0
+        v_ = q_['prop_fuse'][0]   # 1 = current rule, 2 = the first rule (boosts duplicates too), 0 = off
+        spec_proposals.FUSE['on'] = v_ in ('1', '2', 'true', 'on'); spec_proposals.FUSE['mode'] = 2 if v_ == '2' else 1; spec_proposals.FUSE['boosted'] = 0; spec_proposals.FUSE['frames'] = 0
     if 'prop_log' in q_:   # 11-14 research log of the detector's weak boxes (spec_proposals.log_frame); 0 writes tracking_server/spec_prop_log.json
         from ..detect import spec_proposals
         on_ = q_['prop_log'][0] in ('1', 'true', 'on')

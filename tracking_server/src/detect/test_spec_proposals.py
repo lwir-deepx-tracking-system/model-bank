@@ -87,9 +87,15 @@ class SpecProposalTest(unittest.TestCase):
     def test_fuse(self):
         m = sp.Model(); m.thr = -1e9; sp._FUSE_MODEL[0] = m
         arr = np.array([[360, 176, 440, 356, 0.12, 0], [10, 26, 20, 36, 0.12, 0], [100, 116, 200, 316, 0.6, 0], [300, 116, 400, 316, 0.12, 2]], np.float32)
+        sp.FUSE['mode'] = 2
         out = sp.fuse(arr, _scene(), 0, 16.0)
         self.assertEqual([round(float(v), 2) for v in out[:, 4]], [0.26, 0.12, 0.6, 0.12])   # weak person boosted; tiny / strong / other class untouched
         self.assertEqual(arr[0, 4].round(2), 0.12)   # input not changed
+        sp.FUSE['mode'] = 1   # current rule: a weak box on a strong detection is left alone, conf must be >= 0.10
+        arr2 = np.array([[360, 176, 440, 356, 0.12, 0], [365, 180, 440, 356, 0.6, 0], [100, 116, 200, 316, 0.08, 0]], np.float32)
+        self.assertEqual([round(float(v), 2) for v in sp.fuse(arr2, _scene(), 0, 16.0)[:, 4]], [0.12, 0.6, 0.08])
+        arr3 = np.array([[360, 176, 440, 356, 0.12, 0]], np.float32)
+        self.assertEqual([round(float(v), 2) for v in sp.fuse(arr3, _scene(), 0, 16.0)[:, 4]], [0.26])
         sp._FUSE_MODEL[0] = None
 
     def test_log(self):

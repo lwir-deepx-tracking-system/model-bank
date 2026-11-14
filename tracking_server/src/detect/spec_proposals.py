@@ -266,7 +266,8 @@ def submit(frame_t, raw, people, weak=None):
     _PROPOSER[0].submit(frame_t, raw, people, weak)
 
 
-FUSE = dict(on=False, to=0.26, boosted=0, frames=0, ms=None)   # 11-14 research switch /rules/set?prop_fuse=1|0 (not kept over a restart)
+FUSE = dict(on=False, mode=1, to=0.26, min=0.10, boosted=0, frames=0, ms=None)   # mode 1 (11-14, after the replay A/B): weak boxes overlapping a strong
+# person detection are left alone and conf must be >= min (boosting duplicates of tracked people added false tracks and ID switches); mode 2 = first rule   # 11-14 research switch /rules/set?prop_fuse=1|0 (not kept over a restart)
 _FUSE_MODEL = [None]
 
 
@@ -279,7 +280,11 @@ def fuse(arr, raw, person_cls, dy):
     if _FUSE_MODEL[0] is None:
         _FUSE_MODEL[0] = Model()
     m = _FUSE_MODEL[0]
-    idx = [k for k in range(len(arr)) if int(arr[k, 5]) == person_cls and WEAK_MIN <= float(arr[k, 4]) < FUSE['to']]
+    lo = FUSE['min'] if FUSE['mode'] == 1 else WEAK_MIN
+    idx = [k for k in range(len(arr)) if int(arr[k, 5]) == person_cls and lo <= float(arr[k, 4]) < FUSE['to']]
+    if FUSE['mode'] == 1 and idx:   # not on / mostly inside a strong person detection (the tracker already has that person)
+        strong = [arr[k, :4] for k in range(len(arr)) if int(arr[k, 5]) == person_cls and float(arr[k, 4]) >= FUSE['to']]
+        idx = [k for k in idx if not any(_iou(arr[k, :4], q) >= 0.1 or _inside(arr[k, :4], q) >= 0.5 for q in strong)]
     FUSE['frames'] += 1
     if not idx:
         return arr
