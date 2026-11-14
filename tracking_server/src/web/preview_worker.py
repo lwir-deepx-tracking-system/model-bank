@@ -38,6 +38,7 @@ class PreviewFrame:
     click_people: tuple | None = None
     click_ticket: int | None = None
     replay_position: tuple | None = None
+    proposals: tuple = ()   # 11-14: ((x1, y1), (x2, y2), score) people proposals from the spatial spectrum
 
 
 def transition_jpeg(cv2):
@@ -101,6 +102,9 @@ def render_preview(cv2, frame):
                 cv2.arrowedLine(img, path[-2] if len(path) > 2 else path[0], path[-1], col, 2, tipLength=0.4)
         _dash_rect(cv2, img, p1, p2, col, 2, 7)
         cv2.putText(img, lab, (p1[0], max(p1[1] - 4, 12)), font, 0.55, col, 2)
+    for p1, p2, sc_ in frame.proposals:   # 11-14: magenta thin dashed box, 'cand' + model score (display only)
+        _dash_rect(cv2, img, p1, p2, (255, 0, 255), 1, 5)
+        cv2.putText(img, 'cand %.1f' % sc_, (p1[0] + 2, max(p1[1] + 14, 12)), font, 0.45, (255, 0, 255), 1)
     if PICTURE_BANNER:
         cv2.rectangle(img, (0, 0), (ww, 26), (0, 0, 150) if frame.replay else (0, 0, 0), -1)
         cv2.putText(img, frame.top_text, (8, 19), font, 0.55, (255, 255, 255), 1)

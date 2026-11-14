@@ -12,6 +12,7 @@ from ..common.shared_values import HERE
 from ..gimbal.gimbal_link import gb_sample
 from ..gimbal import live_tracks
 from ..track.position_memory import POSP
+from ..detect import spec_proposals   # 11-14: people proposals from the spatial spectrum (display only)
 from ..track.stabilizer import STAB, stab_rows_real
 from ..camera import replay_link
 from . import system_buttons
@@ -68,9 +69,15 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
     if owned:
         # bytes owns an immutable copy; the ndarray view cannot re-enable writes.
         gray_ = np.frombuffer(gray_.tobytes(), dtype=gray_.dtype).reshape(gray_.shape)
+    proposals_ = ()
+    SP_ = spec_proposals.PROP
+    if SP_['show'] and SP_['boxes'] and time.monotonic() - SP_['boxes_t'] < 1.0:   # 11-14: raw = real coordinates; stabilized picture = real + c
+        cx_, cy_ = (sC_ or (0.0, 0.0))[:2]
+        proposals_ = tuple(((int((x0 + cx_) * sc_), int((y0 + cy_) * sc_)), (int((x1 + cx_) * sc_), int((y1 + cy_) * sc_)), float(s_))
+                           for x0, y0, x1, y1, s_ in SP_['boxes'])
     return preview_worker.PreviewFrame(t_in, gray_, sc_, tuple(draw_), gt_boxes,
                                        tuple(predictions), txt_, rp_ is not None, gtxt_, gc_,
-                                       click_people, click_ticket, replay_position)
+                                       click_people, click_ticket, replay_position, proposals_)
 
 
 def _click_live(x, y):
@@ -193,6 +200,11 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         if has_gimbal_ and len(gb_people_) < 60:
             x1_, y1_, x2_, y2_ = map(float, r_[:4])
             gb_people_.append((int(r_[4]), x1_, y1_ - 16, x2_, y2_ - 16, float(r_[5])))
+    if spec_proposals.PROP['show']:   # 11-14: proposals only where the detector found nobody; a frame with people clears them
+        if npers_ == 0 and raw_valid_ and not rep_:
+            spec_proposals.submit(t_in, rq_, [])
+        elif npers_ > 0:
+            spec_proposals.PROP['boxes'] = []
     healthy_ = False
     if has_gimbal_:
         source_ = ('replay',) if replay_link.frame_blocked(t_in) else live_tracks.current_source()

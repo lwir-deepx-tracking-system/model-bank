@@ -307,7 +307,7 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms') if k_ in sv_})
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass
@@ -316,6 +316,7 @@ def main():
         if 'relabel' in APP.SEL: qs_.append({'relabel': ['1' if APP.SEL['relabel'] else '0']})
         if 'predictor' in APP.SEL: qs_.append({'predictor': [str(APP.SEL['predictor'])]})
         if 'pred_show' in APP.SEL: qs_.append({'pred_show': ['1' if APP.SEL['pred_show'] else '0']})
+        if 'prop_show' in APP.SEL: qs_.append({'prop_show': ['1' if APP.SEL['prop_show'] else '0']})   # 11-14
         if 'app' in APP.SEL: qs_.append({'app': [str(APP.SEL['app'])]})   # v40
         if 'lead_ms' in APP.SEL: qs_.append({'lead_ms': [str(APP.SEL['lead_ms'])]})   # v40
         if 'lead' in APP.SEL: qs_.append({'lead': ['1' if APP.SEL['lead'] else '0']})   # 11-13 (user): prediction on/off comes back after a restart

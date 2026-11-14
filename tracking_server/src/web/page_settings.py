@@ -103,7 +103,7 @@ def rules_state():
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
                     det_kpt=det_has_kpt(),   # 11-14: the current or the waiting detector gives keypoints -> the keypoint position memories may be chosen
-                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state())   # v32. v40: app / lead / gimbal / warm_on
+                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state())   # v32. v40: app / lead / gimbal / warm_on
 
 
 def rules_state_2():
@@ -194,6 +194,10 @@ def rules_request(q_):
         if pk_ != 'kalman' and not any(p_['key'] == pk_ and p_['available'] for p_ in pos_list()): return False, '이 위치 예측기는 가중치 파일이 없음 (학습 전)'
         if pk_ != POSP['key']: pend_['predictor'] = pk_
     if 'pred_show' in q_: POSP['show'] = q_['pred_show'][0] in ('1', 'true', 'on')
+    if 'prop_show' in q_:   # 11-14: people proposals from the spatial spectrum (display only)
+        from ..detect import spec_proposals
+        spec_proposals.PROP['show'] = q_['prop_show'][0] in ('1', 'true', 'on')
+        if not spec_proposals.PROP['show']: spec_proposals.PROP['boxes'] = []
     if cm_ is not None:   # read once per frame by the frame loop (confirm_apply); the tracker itself is only touched there
         if APP.CONFIRM is None: APP.CONFIRM = ConfirmByTime(cm_)
         else: APP.CONFIRM.set_ms(cm_)
@@ -212,7 +216,7 @@ def rules_request(q_):
     if 'tracker' in pend_ and cam_tracker is not None:
         cam_tracker.select(prefer_cpp_bytetrack(q_, pend_['tracker'], cam_tracker))
     print('RULES set warm_min %d warm_max %d edge_birth %.2f pending %s' % (settings.WARM_MIN, settings.WARM_MAX, settings.EDGE_BIRTH, pend_), flush=True)
-    APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), app=APP.CTL['app'], lead=bool(APP.CTL['lead']), lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **(dict(confirm_ms=APP.CONFIRM.ms) if cm_ is not None else {}), **pend_)   # v36. 11-13 (user): the prediction switch (lead) is kept too
+    APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), prop_show=bool(_prop_state()['show']), app=APP.CTL['app'], lead=bool(APP.CTL['lead']), lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **(dict(confirm_ms=APP.CONFIRM.ms) if cm_ is not None else {}), **pend_)   # v36. 11-13 (user): the prediction switch (lead) is kept too
     return True, '적용됨' if not (pend_ or rk_ is not None) else '다음 프레임에 적용'
 
 
@@ -226,6 +230,11 @@ def rules_request_2(q_):
     STAB['on'] = v_ in ('1', 'true', 'on'); STAB['err'] = ''; APP.sel_save(stab=bool(STAB['on']))   # read once per frame in live_next: the change lands between two frames
     print('RULES set stab %d' % STAB['on'], flush=True)
     return ok_, tx_
+
+
+def _prop_state():
+    from ..detect import spec_proposals
+    return spec_proposals.state()
 
 
 def model_state():
