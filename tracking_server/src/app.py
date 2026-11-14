@@ -733,6 +733,7 @@ def main():
                 if APP.relabeler is not None:
                     APP.relabeler.reset()
                 APP.tracker = mk_tracker_(APP.RULES['tracker'])
+                if e2e_live.E2E['eng'] is not None: e2e_live.E2E['eng'].reset()   # 11-14: a new recording pass: the end-to-end model forgets the last frame and its people too
                 if APP.args.gmc:
                     previous_motion_frame = previous_motion_time = None
                     APP.tracker.kf = GKF()
