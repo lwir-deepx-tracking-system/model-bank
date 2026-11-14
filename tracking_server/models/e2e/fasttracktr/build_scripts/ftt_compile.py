@@ -1,6 +1,7 @@
 """WSL (dx-com env): compile the trained FastTrackTr device graphs written by ftt_trained_export.py (AE, decoder layer 0, decoder layer 1)
 with their calibration files, the same settings as the NPU port (ema, opt 1, no aggressive partitioning; several inputs = dict by ONNX input name).
-Usage: python ftt_compile.py <export dir> [ae b0 b1]"""
+Usage: python ftt_compile.py <export dir> [ae b0 b1]
+FTT_AP=1 (2026-11-15, user: faster): aggressive partitioning on, output in part_<x>_ap (CLAUDE.md: about -25% device time on YOLO26s)."""
 import os, sys, time, json
 import numpy as np, torch, onnx, dx_com
 
@@ -16,9 +17,10 @@ for part in parts:
         def __getitem__(self, i):
             t_ = [torch.from_numpy(np.ascontiguousarray(v)) for v in items[i]]
             return t_[0] if len(t_) == 1 else {n: v for n, v in zip(names, t_)}
-    od = os.path.join(d, 'part_' + part); os.makedirs(od, exist_ok=True); t = time.monotonic()
+    AP = os.environ.get('FTT_AP') == '1'
+    od = os.path.join(d, 'part_' + part + ('_ap' if AP else '')); os.makedirs(od, exist_ok=True); t = time.monotonic()
     dx_com.compile(model=onx, output_dir=od, dataloader=torch.utils.data.DataLoader(Cal(), batch_size=1, num_workers=0, shuffle=False),
-                   calibration_num=len(items), calibration_method='ema', quantization_device='cpu', opt_level=1, aggressive_partitioning=False)
+                   calibration_num=len(items), calibration_method='ema', quantization_device='cpu', opt_level=1, aggressive_partitioning=AP)
     f = [x for x in os.listdir(od) if x.endswith('.dxnn')]; res[part] = dict(files=f, seconds=round(time.monotonic() - t, 1))
     print('COMPILED', part, json.dumps(res[part]), flush=True)
-json.dump(res, open(os.path.join(d, 'COMPILE.json'), 'w'), indent=1); print('ALL COMPILED')
+json.dump(res, open(os.path.join(d, 'COMPILE_AP.json' if os.environ.get('FTT_AP') == '1' else 'COMPILE.json'), 'w'), indent=1); print('ALL COMPILED')

@@ -140,4 +140,4 @@ GPU 일은 손 라벨과 겹쳐 돌리므로 달력으로는 약 3~4 일. 현장
 
 ## 5. 근거
 - 조사 요약: 우리 카메라 라벨 > 자기 학습 ≈ 공개 열화상 자세 라벨 > 흑백 단계 > 특징 증류 > 그림 변환 (UPPET CVPRW 2025, LLVIP-Pose ACCVW 2024, LEOD CVPR 2024, D3T CVPR 2024 등).
-- 학습·변환·검사 스크립트: 프로젝트 쪽 `close_range_20261113/train/` (pose_partial.py, train_pose.py, llvip_pose_prep.py, test_ignore_flag.py, llvip_transfer_check.py).
+- 학습·자료 만들기·시험·채점 스크립트와 Vast 실행 순서: [scripts/](scripts/README.md). FastTrackTr 쪽은 `models/e2e/fasttracktr/build_scripts/`.

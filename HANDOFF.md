@@ -1,5 +1,7 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
+**2026-11-15 학습 스크립트 올림:** 열화상 자세 학습의 지금 판 스크립트를 `tracking_server/research/lwir_pose_plan/scripts/` 에 올렸습니다(무시 표시 3, LLVIP-Pose 변환, 가림 v4 와 사무실 조각 묶음 만들기, 상자만 있는 사람 지우지 않기, 실내 채점 v2, 시험들, Vast 실행 순서). 장치의 실험 E 를 만든 당시 판은 `models/detect/build_scripts/yolo26m_pose_otp2_bodybox_build/` 에 그대로 있습니다. FastTrackTr build_scripts 도 지금 판(번호 확인, 컴파일 옵션, 장치 단계별 시간 재기, TMOT 학습용 변환)으로 맞췄습니다. 자료는 올리지 않았습니다.
+
 **2026-11-15 열화상 자세 모델 학습 계획:** [계획](tracking_server/research/lwir_pose_plan/README.md) — 단계(기초 → 열화상 + 가림 합성 → 우리 카메라 → 장치), 단계별 학습 설정(AdamW, 시작 학습률, 에폭, 직선 감소를 쓰는 이유), 최종 평가는 공개 어려운 시험(OTP2·LLVIP-Pose·OCHuman·KAIST·TMOT·MOT17), 시간 예산(GPU 약 25~28시간 + 손 라벨). 지금 Vast 에서 R0/R1 → FastTrackTr 열화상 학습이 자동으로 이어 돈다.
 
 **2026-11-15 실시간 FastTrackTr 프레임 겹치기:** 장치 측정에서 한 장 53ms = 그림 준비 6.7 + AE 19.5 + 디코더 층 0 12.9 + 층 1 14.2ms였고, 디코더 호출은 NPU 계산 6.5ms에 입출력 변환이 약 6ms씩 붙습니다. 디코더 두 층을 한 그래프로 합치면 DX-COM 2.4.1 이 실패하고(research/fasttracktr_npu), `--aggressive_partitioning` 은 같은 파일이 나와 효과가 없습니다. 그래서 프레임이 도착하자마자 AE 를 NPU 2(KeepID 코어, 엔드투엔드 중 빔)에 넣고(`e2e_live.prefetch`, 넣는 스레드와 미리 읽기에서), 프레임 반복은 결과만 받아 디코더(NPU 1)를 돌립니다. 미리 못 넣은 프레임은 전처럼 그 자리에서 AE. 상태: `/rules` e2e_live.prefetch(hits/misses).
