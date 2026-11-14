@@ -11,6 +11,7 @@ import traceback
 import argparse
 from pathlib import Path
 import numpy as np
+from .detect import spec_proposals   # 11-14 research switch prop_fuse
 from .common import settings
 from .common.state import APP
 from .common import frame_records   # 11-13: compact per-frame records (fewer objects for the garbage collector)
@@ -759,6 +760,11 @@ def main():
                     p95_ = warm_p95(raw_i_[b_:d_:2, a_:c_:2])   # 11-12: was float(np.percentile(..., 95)); same value (src/track/warm_p95.py)
                     if p95_ < settings.WARM_MIN or (settings.WARM_MAX > 0 and p95_ > settings.WARM_MAX): keep_[k_] = False   # v33: range
                 if not keep_.all(): APP.LIVE.warm_dropped += int((~keep_).sum()); arr = arr[keep_]
+            if APP.LIVE is not None and spec_proposals.FUSE['on'] and len(arr) and APP.LIVE.rawq:   # 11-14 research (prop_fuse): weak person boxes the spatial spectrum calls a person get the new-track score
+                raw_s_ = APP.LIVE.rawq[0]
+                if stab_c_ is not None: raw_s_ = stab_shift(raw_s_, stab_c_)
+                try: arr = spec_proposals.fuse(arr, raw_s_, PERSON_CLS, 16.0)
+                except Exception as e_: print('FUSE failed', repr(e_)[:120], flush=True)
             if APP.LIVE is not None and APP.LIVE.arr and APP.tracker is not None:   # v26b: first frame after an input gap of over 1 s: no track is continued by position alone (the tracker counts frames, not seconds, so it would not notice the gap).
                 ta_ = APP.LIVE.arr[0]                                         # every track ends here; people get new tracks through the normal confirmation, and KeepID may give a returning person the old number by appearance only.
                 if eval_pos is None and APP.LIVE.upd_t is not None and ta_ - APP.LIVE.upd_t > 1.0:

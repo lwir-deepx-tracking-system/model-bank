@@ -266,6 +266,40 @@ def submit(frame_t, raw, people, weak=None):
     _PROPOSER[0].submit(frame_t, raw, people, weak)
 
 
+FUSE = dict(on=False, to=0.26, boosted=0, frames=0, ms=None)   # 11-14 research switch /rules/set?prop_fuse=1|0 (not kept over a restart)
+_FUSE_MODEL = [None]
+
+
+def fuse(arr, raw, person_cls, dy):
+    """tracker input rows [x1, y1 + dy, x2, y2 + dy, conf, cls, ...] (frame-loop coordinates) -> the same rows where a weak person
+    box (WEAK_MIN <= conf < FUSE['to']) whose spectral score passes the model threshold gets conf = FUSE['to'] (just above the
+    tracker's high / new-track score 0.25), so the tracker may start or continue a person with it. raw: the 16-bit frame under
+    the boxes. Nothing else changes."""
+    t0 = time.perf_counter()
+    if _FUSE_MODEL[0] is None:
+        _FUSE_MODEL[0] = Model()
+    m = _FUSE_MODEL[0]
+    idx = [k for k in range(len(arr)) if int(arr[k, 5]) == person_cls and WEAK_MIN <= float(arr[k, 4]) < FUSE['to']]
+    FUSE['frames'] += 1
+    if not idx:
+        return arr
+    H, W = raw.shape
+    keep, sqs = [], []
+    for k in idx:
+        x0, y0, x1, y1 = max(0, int(round(arr[k, 0]))), max(0, int(round(arr[k, 1] - dy))), min(W, int(round(arr[k, 2]))), min(H, int(round(arr[k, 3] - dy)))
+        side = min(x1 - x0, y1 - y0); cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+        if side >= 16:
+            keep.append(k); sqs.append((cx - side // 2, cy - side // 2, cx - side // 2 + side, cy - side // 2 + side))
+    out = arr
+    if keep:
+        sc = m.score(features(raw, sqs, m.extra))
+        hit = [k for k, v in zip(keep, sc) if v >= m.thr]
+        if hit:
+            out = arr.copy(); out[hit, 4] = FUSE['to']; FUSE['boosted'] += len(hit)
+    FUSE['ms'] = round((time.perf_counter() - t0) * 1e3, 1)
+    return out
+
+
 def log_frame(raw, dets, tracks, props=()):
     """raw: 16-bit frame (real coordinates); dets: [(x0, y0, x1, y1, score)] every person detection; tracks: [(x0, y0, x1, y1)];
     props: the proposals on screen at this frame (PROP['boxes']: x0, y0, x1, y1, score, covered), for end-to-end checks"""
@@ -284,7 +318,7 @@ def log_write(path):
 
 def state():
     return dict(show=PROP['show'], ms=PROP['ms'], runs=PROP['runs'], n=len(PROP['boxes']), n_missed=sum(1 for b in PROP['boxes'] if not b[5]),
-                missed_total=PROP.get('missed', 0), errors=PROP['errors'], last_error=PROP['last_error'], log_on=LOG['on'], log_frames=len(LOG['rows']))
+                missed_total=PROP.get('missed', 0), errors=PROP['errors'], last_error=PROP['last_error'], log_on=LOG['on'], log_frames=len(LOG['rows']), fuse=FUSE['on'], fuse_boosted=FUSE['boosted'], fuse_ms=FUSE['ms'])
 
 
 if __name__ == '__main__':   # timing: python -m src.detect.spec_proposals [frames]

@@ -74,7 +74,7 @@ class SpecProposalTest(unittest.TestCase):
         self.assertGreater(sp.PROP['runs'], runs)
         self.assertEqual(sp.PROP['frame_t'], 2.0)
         self.assertTrue(sp.PROP['boxes'])
-        self.assertEqual(set(sp.state()), {'show', 'ms', 'runs', 'n', 'n_missed', 'missed_total', 'errors', 'last_error', 'log_on', 'log_frames'})
+        self.assertEqual(set(sp.state()), {'show', 'ms', 'runs', 'n', 'n_missed', 'missed_total', 'errors', 'last_error', 'log_on', 'log_frames', 'fuse', 'fuse_boosted', 'fuse_ms'})
 
     def test_weak_boxes(self):
         d = [(10, 10, 60, 120, 0.2), (300, 100, 400, 300, 0.4), (305, 105, 400, 300, 0.02)]
@@ -83,6 +83,14 @@ class SpecProposalTest(unittest.TestCase):
         r = m.rescore(_scene(), [(360, 160, 440, 340, 0.1), (0, 0, 10, 10, 0.3)])
         self.assertEqual(len(r), 1); self.assertEqual(r[0][:4], (360, 160, 440, 340))
         self.assertEqual(len(m.pick_weak(_scene(), [(360, 160, 440, 340, 0.1), (365, 165, 440, 340, 0.1)])), 1)   # one per place
+
+    def test_fuse(self):
+        m = sp.Model(); m.thr = -1e9; sp._FUSE_MODEL[0] = m
+        arr = np.array([[360, 176, 440, 356, 0.12, 0], [10, 26, 20, 36, 0.12, 0], [100, 116, 200, 316, 0.6, 0], [300, 116, 400, 316, 0.12, 2]], np.float32)
+        out = sp.fuse(arr, _scene(), 0, 16.0)
+        self.assertEqual([round(float(v), 2) for v in out[:, 4]], [0.26, 0.12, 0.6, 0.12])   # weak person boosted; tiny / strong / other class untouched
+        self.assertEqual(arr[0, 4].round(2), 0.12)   # input not changed
+        sp._FUSE_MODEL[0] = None
 
     def test_log(self):
         import os, json, tempfile
