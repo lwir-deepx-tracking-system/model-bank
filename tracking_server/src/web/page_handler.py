@@ -52,7 +52,8 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
                 l_ = inf_.get('last') if inf_ else None
                 last_ = (int(l_[0] * sc_), int((l_[1] - 16) * sc_), int(l_[2] * sc_), int(l_[3] * sc_)) if l_ else None
                 pts_ = tuple((int(x_ * sc_), int((y_ - 16) * sc_)) for x_, y_ in (inf_.get('pts') or ()))
-                predictions.append((p1_, p2_, pc_, int(tid_), lab_, last_, pts_))
+                rad_ = int(inf_.get('r', 0) * sc_) if inf_ else 0   # 11-14: growing search range
+                predictions.append((p1_, p2_, pc_, int(tid_), lab_, last_, pts_, rad_))
         except Exception: pass
     txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
     rp_ = getattr(APP.LIVE, 'replay', None)

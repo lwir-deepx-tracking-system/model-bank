@@ -260,7 +260,9 @@ def pos_predict(kf, pool, mean, cov):
             if tr_ is not None:
                 tr_['pts'].append((float(mean[i, 0]), float(mean[i, 1])))
                 if len(tr_['pts']) > 90: del tr_['pts'][:-90]
-            out_.append((int(t.track_id), mean[i, :4].copy(), dict(src=POSP['key'], last=tr_['last'] if tr_ else None, pts=list(tr_['pts']) if tr_ else [], n=len(tr_['pts']) if tr_ else 0)))
+            n_ = len(tr_['pts']) if tr_ else 0; lh_ = tr_['last'][3] if tr_ else float(mean[i, 3])
+            rr_ = lh_ * min(0.5 + 0.05 * n_, 4.0)   # 11-14: growing search range (= reid/relabel_online.search_range radius: SR_BASE 0.5 + SR_GROW 0.05 x lost frames, at most 4 heights)
+            out_.append((int(t.track_id), mean[i, :4].copy(), dict(src=POSP['key'], last=tr_['last'] if tr_ else None, pts=list(tr_['pts']) if tr_ else [], n=n_, r=rr_)))
         POSP['boxes'] = out_
         POSP['boxes_t'] = time.perf_counter()
     return mean, cov

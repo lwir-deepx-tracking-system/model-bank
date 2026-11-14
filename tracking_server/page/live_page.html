@@ -480,7 +480,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
             <dt>성능</dt><dd>관절 판(PoseTrack18 시험, 중심 오차 / 키): GRU 일반 0.119 · 사라지는 장면 0.181, Mamba 0.121 · 0.184, Kalman 0.150 · 0.231 (낮을수록 좋음). 장치·실카메라 미확인. 관절 없는 GRU·Mamba 판은 11-14 지웠습니다.</dd>
             <dt>관절 판 (11-14)</dt><dd>"GRU/Mamba 위치 기억 + 관절" 은 검출 모델이 관절 점도 내는 파일(목록 이름에 [관절])일 때 사람마다 관절 17개를 함께 읽습니다. 놓친 뒤 15프레임까지 보정 없는 Kalman 경로를 고치고 그 뒤는 Kalman 만 씁니다. PoseTrack18 시험에서 Kalman 보다 일반 21%, 가려져 사라지는 장면 22% 정확했습니다. 장치·실카메라 미확인. 관절 없는 검출 모델과 쓰면 관절 입력이 0 이 되어 효과가 줄어듭니다.</dd>
             <dt>지금 상태</dt><dd id="pstat">서버 정보를 불러오는 중…</dd>
-            <dt>예측 상자 표시</dt><dd>"제어" 줄에서 켜면 짐벌이 따라가는 사람을 놓쳤을 때 그 사람의 추정 위치만, 같은 색 점선 상자로 화면에 그립니다(Kalman filter 일 때도 됨). 11-14부터: 마지막으로 본 자리(위치 기억)를 가는 점선 상자와 원·"last seen" 으로, 그 뒤의 예측 이동 경로를 선과 화살표로 같이 그리고, 상자 위 글자는 "번호 예측기 놓친프레임"(예: 7 GRU 12f)입니다. 다른 사람의 추정 위치는 그리지 않습니다. 화면에만 그리고 짐벌에는 보내지 않습니다.</dd>
+            <dt>예측 상자 표시</dt><dd>"제어" 줄에서 켜면 짐벌이 따라가는 사람을 놓쳤을 때 그 사람의 추정 위치만, 같은 색 점선 상자로 화면에 그립니다(Kalman filter 일 때도 됨). 11-14부터: 마지막으로 본 자리(위치 기억)를 가는 점선 상자와 원·"last seen" 으로, 그 뒤의 예측 이동 경로를 선과 화살표로 같이 그리고, 상자 위 글자는 "번호 예측기 놓친프레임"(예: 7 GRU 12f)입니다. 예측 상자 둘레의 원은 다시 나타날 수 있는 범위로, 놓친 시간이 길수록 커집니다(마지막 키의 0.5배 + 프레임당 0.05배, 최대 4배). "KeepID 찾는 범위"를 "예측 이동 + 커지는 범위"로 고르면 KeepID 가 이 범위 안에서만 예전 번호를 찾습니다(시험, 기본은 마지막 자리 주변). 다른 사람의 추정 위치는 그리지 않습니다. 화면에만 그리고 짐벌에는 보내지 않습니다.</dd>
             <dt>주의</dt><dd>추정 위치가 틀리면 다른 사람에게 번호가 넘어갈 수 있습니다. 장치에서 확인되기 전에는 기본값(Kalman filter)을 권합니다. 코드: pos_predict · pos_predict_kpt 함수, PosKpt 클래스.</dd>
           </dl></details>
           <details class="fold" style="margin-top:0"><summary>Tracker 설명 (고른 것)</summary><div id="rdoc"></div></details>
@@ -976,6 +976,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {g:'ViT-lite',name:'ViT-lite_distillation_(실내)_20261111',note:'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
     {g:'ViT-lite',name:'ViT-lite_fine-tuning_(실내)_20261111',note:'우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST}]});
   const kid=rel&&!camCppControl&&!replayCpp;
+  if(kid&&r.relink_pred!=null)T.push({lab:'KeepID 찾는 범위',sub:'돌아온 사람을 어디서 찾나',n:[{name:'마지막 자리 주변',note:'기본 · 마지막으로 본 곳 둘레',sel:!r.relink_pred,u:Q('relink_pred=0')},{name:'예측 이동 + 커지는 범위',note:'시험 · 움직이던 방향으로 옮기며 시간이 지날수록 넓힘',sel:!!r.relink_pred,u:Q('relink_pred=1')}]});   // 11-14 (user)
   if(hot&&((bot&&app!=='off')||kid))T.push({lab:'외형 모델',sub:(bot&&app!=='off'&&kid?'BoT-SORT 외형 비교와 KeepID가 함께 씀':bot&&app!=='off'?'BoT-SORT 외형 비교가 씀':'KeepID가 씀'),f:['RepVGG','ViT-lite'],n:r.reids.map(a=>rn(a,true,'',true)).concat([NOVIT])});
   const g=r.gimbal,lead=!!r.lead;window.OTFOL=g?!!g.auto:autoNow;   // following is started by tapping a person in the picture, so it has no tile
   T.push({lab:'제어',sub:'여러 개 켜기',multi:1,n:[

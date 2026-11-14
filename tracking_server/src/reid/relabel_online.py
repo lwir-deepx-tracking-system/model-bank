@@ -13,6 +13,19 @@ pending IDs this gives exactly the synchronous result. numpy only (runs on the M
 from collections import deque
 import numpy as np
 THR, LOST_MAX, GATE_H, GATE_PER10, HR, WAIT, KEEP, MIN_H = 0.596, 90, 3.5, 1.0, (0.5, 2.0), 3, 5, 32.0
+# 11-14 (user, object-permanence reel): growing search range centred on the PREDICTED place. radius = last height x min(SR_BASE + SR_GROW x lost frames, SR_MAX);
+# velocity = mean centre shift per frame over the last seen frames (at most SR_VMAX heights per frame). Shared with the overlay (track/position_memory.py).
+SR_BASE, SR_GROW, SR_MAX, SR_VMAX, SR_HIST = 0.5, 0.05, 4.0, 0.15, 6
+
+
+def search_range(hist, el, lh):
+    """hist: [(t, cx, cy), ...] of the last seen frames (oldest first); el: lost frames; lh: last height -> (cx, cy, radius) of the search range."""
+    t1, x1, y1 = hist[-1]; vx = vy = 0.0
+    if len(hist) >= 2:
+        t0, x0, y0 = hist[0]; dt = max(t1 - t0, 1); vx, vy = (x1 - x0) / dt, (y1 - y0) / dt
+        s = (vx * vx + vy * vy) ** 0.5; m = SR_VMAX * lh
+        if s > m: vx, vy = vx * m / s, vy * m / s
+    return x1 + vx * el, y1 + vy * el, lh * min(SR_BASE + SR_GROW * el, SR_MAX)
 
 
 def iou_any(b, others):
@@ -25,6 +38,7 @@ def iou_any(b, others):
 class OnlineRelabel:
     def __init__(self, budget=True, every=2, k=2, new_k=2):
         self.budget, self.every, self.k, self.new_k = budget, every, k, new_k
+        self.pred_gate = False   # 11-14: growing search range on the predicted place (page switch); False = the original gate
         self.stats = dict(new_ids=0, decided_with_feature=0, relabelled=0, retired_reappearances=0, frames=0, crops_new=0, crops_refresh=0, crops_embedded=0)
         self.events, self.per_frame = [], []
         self.reset()
@@ -35,6 +49,7 @@ class OnlineRelabel:
         self.deferred = None
         self.t = -1; self.fresh = 10 ** 6
         self.id_map, self.retired, self.gallery, self.last, self.pending, self.last_emb = {}, {}, {}, {}, {}, {}
+        self.hist = {}   # 11-14: output id -> deque of (t, cx, cy) of the last seen frames
 
     def step(self, rows, P, embed, frame=None, embed_async=None):
         """rows: this frame's tracker rows [x1, y1, x2, y2, id, conf, cls, k, ...]; P: {k: [x1, y1, x2, y2]} person detections (conf >= 0.1)
@@ -94,9 +109,13 @@ class OnlineRelabel:
                 lt, lb = self.last[oid]; el = t - lt; lh = lb[3] - lb[1]
                 if el > LOST_MAX or el <= 0 or not (HR[0] <= h / max(lh, 1e-6) <= HR[1]):
                     continue
-                d = ((cx - (lb[0] + lb[2]) / 2) ** 2 + (cy - (lb[1] + lb[3]) / 2) ** 2) ** 0.5
-                if d > GATE_H * lh + GATE_PER10 * lh * el / 10.0:
-                    continue
+                if self.pred_gate and oid in self.hist:   # 11-14: predicted place, growing radius
+                    gx, gy, gr = search_range(self.hist[oid], el, lh)
+                    if ((cx - gx) ** 2 + (cy - gy) ** 2) ** 0.5 > gr: continue
+                else:
+                    d = ((cx - (lb[0] + lb[2]) / 2) ** 2 + (cy - (lb[1] + lb[3]) / 2) ** 2) ** 0.5
+                    if d > GATE_H * lh + GATE_PER10 * lh * el / 10.0:
+                        continue
                 gm = np.mean(g, 0); gm /= max(float(np.linalg.norm(gm)), 1e-12); s = float(f @ gm)
                 if s >= THR:
                     pairs.append((s, bid, oid))
@@ -109,7 +128,7 @@ class OnlineRelabel:
                 if om == oid and ob != bid:
                     self.retired[ob] = None
             old_new = self.id_map[bid]; self.id_map[bid] = oid; st['relabelled'] += 1
-            self.gallery[oid].extend(self.gallery.pop(old_new, [])); self.last.pop(old_new, None); self.last_emb.pop(old_new, None)
+            self.gallery[oid].extend(self.gallery.pop(old_new, [])); self.last.pop(old_new, None); self.last_emb.pop(old_new, None); self.hist.pop(old_new, None)
             self.events.append(dict(frame=frame, t=t, tracker_id=bid, new_id=old_new, old_id=oid, cos=round(s, 4)))
         for bid in decide:
             self.pending.pop(bid, None); st['decided_with_feature'] += 1
@@ -121,6 +140,6 @@ class OnlineRelabel:
                 bid = int(r[4]); oid = self.id_map[bid]; rr[4] = oid
                 if bid in clean:
                     self.gallery.setdefault(oid, deque(maxlen=KEEP)).append(clean[bid]); self.last_emb[oid] = t
-                self.last[oid] = (t, r[:4])
+                self.last[oid] = (t, r[:4]); self.hist.setdefault(oid, deque(maxlen=SR_HIST)).append((t, (r[0] + r[2]) / 2, (r[1] + r[3]) / 2))
             out.append(rr)
         return out

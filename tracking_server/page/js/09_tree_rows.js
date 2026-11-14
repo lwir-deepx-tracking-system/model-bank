@@ -61,6 +61,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {g:'ViT-lite',name:'ViT-lite_distillation_(실내)_20261111',note:'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
     {g:'ViT-lite',name:'ViT-lite_fine-tuning_(실내)_20261111',note:'우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST}]});
   const kid=rel&&!camCppControl&&!replayCpp;
+  if(kid&&r.relink_pred!=null)T.push({lab:'KeepID 찾는 범위',sub:'돌아온 사람을 어디서 찾나',n:[{name:'마지막 자리 주변',note:'기본 · 마지막으로 본 곳 둘레',sel:!r.relink_pred,u:Q('relink_pred=0')},{name:'예측 이동 + 커지는 범위',note:'시험 · 움직이던 방향으로 옮기며 시간이 지날수록 넓힘',sel:!!r.relink_pred,u:Q('relink_pred=1')}]});   // 11-14 (user)
   if(hot&&((bot&&app!=='off')||kid))T.push({lab:'외형 모델',sub:(bot&&app!=='off'&&kid?'BoT-SORT 외형 비교와 KeepID가 함께 씀':bot&&app!=='off'?'BoT-SORT 외형 비교가 씀':'KeepID가 씀'),f:['RepVGG','ViT-lite'],n:r.reids.map(a=>rn(a,true,'',true)).concat([NOVIT])});
   const g=r.gimbal,lead=!!r.lead;window.OTFOL=g?!!g.auto:autoNow;   // following is started by tapping a person in the picture, so it has no tile
   T.push({lab:'제어',sub:'여러 개 켜기',multi:1,n:[
