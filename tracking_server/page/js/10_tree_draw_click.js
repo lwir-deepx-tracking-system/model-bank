@@ -25,7 +25,9 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(R('전처리')),flt=on(R('검출 뒤 Filter')),ctl=(window.OTFOL?['따라가기']:[]).concat(on(R('제어')));
   const am=one(R('외형 모델')),ap=one(R('외형 비교')),kp=one(R('KeepID'));
   // 11-13 (design review 3): one line per stage, label + value (it was one long arrow chain)
-  const a=[['전처리',pre.length?pre.join(' + '):'없음'],['검출',one(R('검출 모델'))||'–'],['Filter',flt.length?flt.join(' + '):'없음'],['Tracker',one(R('Tracker'))||tname(trk)]];
+  const e2eOn=one(R('엔드투엔드')),e2eUse=!!(e2eOn&&e2eOn!=='끔');   // 11-14: an end-to-end model replaces detection + tracker
+  const a=(e2eUse?[['엔드투엔드',e2eOn]]:[]).concat([['전처리',pre.length?pre.join(' + '):'없음'],['검출',e2eUse?'– (엔드투엔드 사용 중)':one(R('검출 모델'))||'–'],
+    ['Filter',flt.length?flt.join(' + '):'없음'],['Tracker',e2eUse?'– (엔드투엔드 사용 중)':one(R('Tracker'))||tname(trk)]]);
   if(trk==='botsort')a.push(['외형 비교',ap==='끔'?'끔':(am||ap||'–')]);
   a.push(['위치 기억',one(R('위치 기억 · 신뢰도'))||'Kalman filter'],['KeepID',kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'],['제어',ctl.length?ctl.join(' + '):'수동']);
   const sh=a.map(([k,v])=>'<b>'+esc(k)+'</b><span>'+wn(v)+'</span>').join('');if(OS.innerHTML!==sh)OS.innerHTML=sh;}
@@ -36,6 +38,7 @@ OT.addEventListener('click',e=>{const sb=e.target.closest('.ot-sf'),fb=e.target.
   const b=e.target.closest('.ot-n');if(!b||!b.dataset.i)return;const ix=b.dataset.i.split('.'),t=OTT[+ix[0]],n=t&&t.n[+ix[1]];if(!n)return;
   if(n.lock){OH.textContent=n.name+': '+n.lock;return;}
   if(n.info){OH.textContent=n.info;return;}
+  if(n.e2eOff){if(!otbusy)rpE2EOff();return;}   // 11-14: back from an end-to-end model to detector + tracker (the chosen tracker, no question)
   if(n.replayBackend){
     if(!n.sel&&!otbusy)rpUseTracker(n.replayBackend);
     return;

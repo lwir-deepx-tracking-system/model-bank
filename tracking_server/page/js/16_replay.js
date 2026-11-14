@@ -212,6 +212,13 @@ async function rpUseTracker(backend){
   const result=await rppost('/replay/start?'+query);
   OH.textContent=result.ok?(stored?'미리 계산한 결과로 녹화를 처음부터 다시 재생합니다 · 지표도 처음부터 셉니다':'선택한 엔진으로 녹화를 다시 시작합니다.'):result.text||'재생을 시작하지 못했습니다';
 }
+async function rpE2EOff(){   // 11-14: the recording again from the first frame with the server's detector + chosen tracker
+  const st=rpLast?.state;
+  if(rpBusy||!st?.on||st.busy)return;
+  RPBACK.value='python';rpEvalSetMode('live');
+  const r=await rppost('/replay/start?'+new URLSearchParams({seq:st.name,fps:String(st.fps),loop:st.loop?'1':'0',backend:'python'}));
+  OH.textContent=r.ok?'검출 모델 + Tracker로 녹화를 처음부터 다시 재생합니다':r.text||'재생을 시작하지 못했습니다';
+}
 RPSEL.addEventListener('change',()=>{rpNote();if(rpLast)rpFillBackends(rpLast);});
 RPBACK.addEventListener('change',()=>{const b=RPBACK.value,o=RPBACK.selectedOptions[0];if(rpLast&&rpLast.state&&rpLast.state.on)RPMSG.textContent='선택한 추적기는 다음 재생부터 적용됩니다: '+(o&&o.textContent||rpBackendLabel(b,rpLast));});
 EVLIVE.addEventListener('click',()=>{rpEvalSetMode('live');rpRenderEval(rpLast||{});});

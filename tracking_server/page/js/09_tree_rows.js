@@ -28,11 +28,14 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(curEngine(p)&&eng==='python'?'Python':(p.backend||'백엔드 미보고')),note:p.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':TN[p.key]?TN[p.key][1]:'',sel:!replayStored&&!cpp&&!camTransition&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key)+'&engine=auto')}));
   if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack · '+(camNative?.available?'C++':'Python'),note:camNative?.available?'C++ 라이브러리가 있어 C++로 시작합니다. Python은 아래 ByteTrack 옵션에서 고릅니다':'',sel:!replayStored&&btSelected,u:Q('tracker='+encodeURIComponent(bt.key)+'&engine=auto')});
   const trackerSummary=replayStored?'녹화: 저장된 결과 표시 중 · 이 줄의 추적기와 무관':camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
-  // 11-14 (user): stored results (MOTIP made ahead of time) are picked here too; recording only (MOTIP is over a second a frame)
+  // 11-14 (user): end-to-end models (MOTIP, FastTrackTr: detection + tracking in one model) get their own first row (built
+  // here, put on top at the end); stored results, recording only, and only for recordings that have them
   const recItem=recording?(rpList||[]).find(x=>x.name===recording.name):null,recTracks=((recItem&&recItem.tracks)||[]).map(x=>x.id);
-  ((rpLast&&rpLast.backends)||[]).filter(b=>b.stored).forEach(b=>tn.push({key:b.id,name:String(b.label||b.id).replace(/\s*\(저장된 결과\)$/,''),
+  const e2e=((rpLast&&rpLast.backends)||[]).filter(b=>b.stored).map(b=>({key:b.id,name:String(b.label||b.id).replace(/\s*\(저장된 결과\)$/,''),
     note:'미리 계산한 결과 · 녹화 재생 전용',sel:replayStored&&recording.backend===b.id,replayBackend:b.id,
-    lock:!recording?'녹화 재생 중에만 고를 수 있습니다 (한 장에 1초 넘게 걸려 실시간 카메라에는 못 씀)':!recTracks.includes(b.id)?'이 녹화에는 미리 계산한 결과가 없습니다':''}));
+    lock:!recording?'녹화 재생 중에만 고를 수 있습니다 (실시간 카메라에는 아직 못 씀)':!recTracks.includes(b.id)?'이 녹화에는 미리 계산한 결과가 없습니다':''}));
+  const E2E=e2e.length?{lab:'엔드투엔드',sub:replayStored?'사용 중 · 아래 검출 모델과 Tracker 줄은 쓰이지 않음':'검출부터 추적까지 한 모델 · 끔이면 아래 검출 + Tracker 사용',
+    n:[{name:'끔',note:'아래 검출 모델 + Tracker',sel:!replayStored,e2eOff:!!(recording&&replayStored)}].concat(e2e)}:null;
   T.push({lab:'Tracker',sub:trackerSummary,n:tn});
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
@@ -87,4 +90,5 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'C++',note:hasNative?'기본':'',sel:!python,lock:hasNative?'':(p.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 빌드가 없습니다'),u:Q('tracker='+encodeURIComponent(p.key)+'&engine=auto')},
       {name:'Python',sel:python,u:Q('tracker='+encodeURIComponent(p.key)+'&engine=python')}]});
   });
+  if(E2E){T.forEach(t=>{if(t.kidOf!=null)t.kidOf++;});T.unshift(E2E);}   // 11-14: first row; child rows keep pointing at their parent
   return T;}
