@@ -220,7 +220,8 @@ class OnlineJudge:
                           decided_with_feature=0)
         self.events, self.per_frame = [], []
         self.feat_ms, self.model_ms, self.cands_per_eval = [], [], []
-        self.keep_rows = False; self.rows_log = []                      # PC verification: (frame, t, birth id, [cand ids], X, p) per evaluation
+        self.keep_rows = False; self.rows_log = []
+        self.pred_gate = False   # 11-14 (user): only candidates whose growing search range (relabel_online.search_range) holds the birth; False = unchanged                      # PC verification: (frame, t, birth id, [cand ids], X, p) per evaluation
         self.reset()
 
     def reset(self):
@@ -260,6 +261,16 @@ class OnlineJudge:
         if births:
             cl = [(c, co) for c, co in self.hist.items() if c not in now_set and t - co[-1]['t'] <= WINDOW]
             for b in births: cands[b] = cl
+            if self.pred_gate:   # 11-14: candidate kept only if the birth centre lies in its growing search range around the predicted place
+                from .relabel_online import SR_BASE, SR_GROW, SR_MAX, SR_VMAX
+                rb = {int(r[4]): r for r in prow_r}
+                for b in births:
+                    bx, by = (rb[b][0] + rb[b][2]) / 2, (rb[b][1] + rb[b][3]) / 2; keep = []
+                    for c, co in cl:
+                        last = co[-1]; hl = max(last['h'], 1e-6); gap = t - last['t']; vx, vy, _ = cv_velocity(co); sp = math.hypot(vx, vy)
+                        if sp > SR_VMAX * hl: vx, vy = vx * SR_VMAX * hl / sp, vy * SR_VMAX * hl / sp
+                        if math.hypot(bx - (last['cx'] + vx * gap), by - (last['cy'] + vy * gap)) <= hl * min(SR_BASE + SR_GROW * gap, SR_MAX): keep.append((c, co))
+                    cands[b] = keep
         # ---- crop budget: births with candidates, other births, refresh (fewest features of the last 5 obs, oldest last feature, smallest id)
         elig = self._elig(prow_r, P)
         bc = sorted(b for b in births if cands.get(b) and b in elig); bo = sorted(b for b in births if not cands.get(b) and b in elig)
