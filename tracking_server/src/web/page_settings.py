@@ -5,9 +5,9 @@ import time
 from ..common import settings
 from ..common.state import APP
 from ..common.shared_values import HERE, CORE, DET, sha
-from ..detect.model_scan import BANK
+from ..detect.model_scan import BANK, KPT_DETS
 from ..track import native_backend
-from ..track.position_memory import POSP, POS_NAMES, pos_list
+from ..track.position_memory import POSP, POS_NAMES, pos_list, pos_select
 from ..track.stabilizer import STAB
 from ..track.bytetrack import ByteTrackTracker
 from ..track.botsort import BotSortTracker
@@ -102,6 +102,7 @@ def rules_state():
                     gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker), engine=tracker_engine(),
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
+                    det_kpt=det_has_kpt(),   # 11-14: the current or the waiting detector gives keypoints -> the keypoint position memories may be chosen
                     predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state())   # v32. v40: app / lead / gimbal / warm_on
 
 
@@ -189,6 +190,7 @@ def rules_request(q_):
     if 'predictor' in q_:   # v32
         pk_ = q_['predictor'][0]
         if pk_ not in {k_ for k_, _ in POS_NAMES}: return False, '없는 위치 예측기'   # 11-14: the list in position_memory (keypoint arms)
+        if pk_.endswith('_kpt') and not det_has_kpt(): return False, '관절을 내는 검출 모델([관절])을 먼저 고르세요'   # 11-14 (user)
         if pk_ != 'kalman' and not any(p_['key'] == pk_ and p_['available'] for p_ in pos_list()): return False, '이 위치 예측기는 가중치 파일이 없음 (학습 전)'
         if pk_ != POSP['key']: pend_['predictor'] = pk_
     if 'pred_show' in q_: POSP['show'] = q_['pred_show'][0] in ('1', 'true', 'on')
@@ -248,6 +250,15 @@ def model_request(model_id, req_no=None):
         APP.MODEL['req'] = dict(det=c_['det'], id=c_['id'], req=req_no, t=time.time()); return -1
 
 
+def det_has_kpt():
+    """11-14: True when the running detector, or the one waiting to be switched in, has keypoint heads (kind six_kpt)."""
+    if APP.args.det in KPT_DETS: return True
+    pid_ = APP.MODEL.get('pending') if isinstance(getattr(APP, 'MODEL', None), dict) else None
+    if pid_ is None: return False
+    c_ = next((x_ for x_ in APP.MODEL['catalog'] if x_['id'] == pid_), None)
+    return bool(c_ and c_['det'] in KPT_DETS)
+
+
 def do_model_swap(new_det):
     """Release the old engine and create the new one on the same core. -> PipelineResult code (0 Ok, 3 CreationFailed, 4 Restored, 5 RestoreFailed)."""
     import gc
@@ -262,4 +273,6 @@ def do_model_swap(new_det):
         try: APP.eng[old_key] = APP.Engine(old_key, CORE[old_key], APP.args.npu_depth); APP.a = APP.eng[old_key]; return 4
         except Exception as e2_: print('MODEL restore of', old_key, 'failed:', repr(e2_)[:200], flush=True); return 5
     APP.a = APP.eng[key_]; APP.b = None; APP.det_names = [key_]; APP.det_yoff = DET[new_det]['yoff']; APP.args.det = new_det
+    if POSP['key'].endswith('_kpt') and new_det not in KPT_DETS:   # 11-14 (user): a keypoint position memory needs a keypoint detector
+        pos_select('kalman'); print('POS predictor back to kalman: %s gives no keypoints' % new_det, flush=True)
     print('MODEL changed %s -> %s in %.1f s' % (old_det, new_det, time.perf_counter() - t_), flush=True); return 0
