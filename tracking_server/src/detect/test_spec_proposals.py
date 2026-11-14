@@ -76,6 +76,14 @@ class SpecProposalTest(unittest.TestCase):
         self.assertTrue(sp.PROP['boxes'])
         self.assertEqual(set(sp.state()), {'show', 'ms', 'runs', 'n', 'n_missed', 'missed_total', 'errors', 'last_error', 'log_on', 'log_frames'})
 
+    def test_weak_boxes(self):
+        d = [(10, 10, 60, 120, 0.2), (300, 100, 400, 300, 0.4), (305, 105, 400, 300, 0.02)]
+        self.assertEqual(sp.weak_boxes(d, [(300, 100, 400, 300)]), [(10, 10, 60, 120, 0.2)])
+        m = sp.Model(); m.thr = -1e9
+        r = m.rescore(_scene(), [(360, 160, 440, 340, 0.1), (0, 0, 10, 10, 0.3)])
+        self.assertEqual(len(r), 1); self.assertEqual(r[0][:4], (360, 160, 440, 340))
+        self.assertEqual(len(m.pick_weak(_scene(), [(360, 160, 440, 340, 0.1), (365, 165, 440, 340, 0.1)])), 1)   # one per place
+
     def test_log(self):
         import os, json, tempfile
         sp.LOG['rows'] = []

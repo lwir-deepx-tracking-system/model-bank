@@ -151,6 +151,39 @@ class Model:
         return out
 
 
+    def rescore(self, frame, boxes):
+        """boxes (x0, y0, x1, y1, ...) -> [(x0, y0, x1, y1, spectral score)] scored on the central square of each box
+        (as the person samples in training); boxes whose square is < 16 px are left out"""
+        H, W = frame.shape
+        keep, sqs = [], []
+        for b in boxes:
+            x0, y0, x1, y1 = max(0, int(round(b[0]))), max(0, int(round(b[1]))), min(W, int(round(b[2]))), min(H, int(round(b[3])))
+            s = min(x1 - x0, y1 - y0); cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+            if s >= 16:
+                keep.append((x0, y0, x1, y1)); sqs.append((cx - s // 2, cy - s // 2, cx - s // 2 + s, cy - s // 2 + s))
+        if not keep:
+            return []
+        return [(*k, float(v)) for k, v in zip(keep, self.score(features(frame, sqs, self.extra)))]
+
+    def pick_weak(self, frame, weak):
+        """the detector's weak boxes whose spectral score passes the threshold, best first, one per place, at most 'top'"""
+        out = []
+        for o in sorted(self.rescore(frame, weak), key=lambda r: -r[4]):
+            if o[4] < self.thr or len(out) >= self.top:
+                break
+            if all(_inside(o[:4], p[:4]) < 0.3 and not _same_column(o[:4], p[:4]) for p in out):
+                out.append(o)
+        return out
+
+
+WEAK_MIN, WEAK_IOU = 0.05, 0.3
+
+
+def weak_boxes(dets, tracks):
+    """person detections (x0, y0, x1, y1, score) the tracker did not use: score >= WEAK_MIN and IoU < WEAK_IOU with every tracker person"""
+    return [d for d in dets if d[4] >= WEAK_MIN and all(_iou(d, t) < WEAK_IOU for t in tracks)][:60]
+
+
 KEEP_N, KEEP_K = 3, 2   # 11-14: a place is shown when it was found in >= 2 of the last 3 passes (one pass ~0.2-0.3 s on the device)
 
 
@@ -181,9 +214,14 @@ def mark(out, people):
 
 class Proposer:
     """One background thread, one slot: submit() replaces a waiting frame; results land in PROP (picture coordinates).
-    11-14 (user: an aid that tells what the detector missed): every pass looks at the whole frame; a place is kept only
-    when found again in the next passes (steady), and each kept place says whether the detector has a person there
-    (people = the detector's person boxes of the same frame, raw/real coordinates)."""
+    11-14 (user: an aid that tells what the detector missed): with weak boxes (the server's way) only the detector's
+    weak boxes are scored (weak_boxes, Model.pick_weak); without, the whole frame is searched (Model.propose). A place is
+    kept only when found again in the next passes (steady), and each kept place says whether the tracker has a person
+    there (people = the tracker's person boxes of the same frame, raw/real coordinates).
+    Why weak boxes (close_range_20261113/fft_liveness/weak_det_spec_eval.py, device replay logs of 4 indoor GT
+    recordings, model trained without the tested recording): among weak boxes, the spectral score told boxes on missed
+    people from false ones far better than the detector score (pooled AUC 0.79 vs 0.47; alerts on missed people 57 % vs
+    18 %), but per recording it was 0.88 / 0.44 / 0.71 and on one recording every alert was false."""
     def __init__(self, model=None):
         self.model = model or Model()
         self._slot, self._ev, self._lock = None, threading.Event(), threading.Lock()
@@ -191,9 +229,9 @@ class Proposer:
         self._th = threading.Thread(target=self._run, name='spec-proposals', daemon=True)
         self._th.start()
 
-    def submit(self, frame_t, raw, people):
+    def submit(self, frame_t, raw, people, weak=None):
         with self._lock:
-            self._slot = (frame_t, raw, list(people))
+            self._slot = (frame_t, raw, list(people), None if weak is None else list(weak))
         self._ev.set()
 
     def _run(self):
@@ -205,7 +243,7 @@ class Proposer:
                 continue
             t0 = time.perf_counter()
             try:
-                out = self.model.propose(job[1])
+                out = self.model.propose(job[1]) if job[3] is None else self.model.pick_weak(job[1], job[3])
                 boxes = mark(steady(self._hist, out), job[2])
                 self._hist = (self._hist + [out])[-(KEEP_N - 1):]
                 PROP.update(boxes=boxes, boxes_t=time.monotonic(), frame_t=job[0], ms=round((time.perf_counter() - t0) * 1e3, 1), runs=PROP['runs'] + 1,
@@ -217,7 +255,7 @@ class Proposer:
 _PROPOSER = [None]
 
 
-def submit(frame_t, raw, people):
+def submit(frame_t, raw, people, weak=None):
     """called per published frame when PROP['show'] is on; starts the worker on first use"""
     if _PROPOSER[0] is None:
         try:
@@ -225,7 +263,7 @@ def submit(frame_t, raw, people):
         except Exception as e:
             PROP.update(show=False, errors=PROP['errors'] + 1, last_error='model: ' + repr(e)[:180])
             return
-    _PROPOSER[0].submit(frame_t, raw, people)
+    _PROPOSER[0].submit(frame_t, raw, people, weak)
 
 
 def log_frame(raw, dets, tracks):

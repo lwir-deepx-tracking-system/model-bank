@@ -200,14 +200,15 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         if has_gimbal_ and len(gb_people_) < 60:
             x1_, y1_, x2_, y2_ = map(float, r_[:4])
             gb_people_.append((int(r_[4]), x1_, y1_ - 16, x2_, y2_ - 16, float(r_[5])))
-    if spec_proposals.LOG['on'] and raw_valid_ and not rep_ and detections is not None:   # 11-14 research log: every person detection (all scores) + tracker people
-        dl_ = stab_people_real([(0, float(d_[0]), float(d_[1]) - 16.0, float(d_[2]), float(d_[3]) - 16.0, float(d_[4])) for d_ in detections if int(d_[5]) == 0],
-                               sC_, float(APP.LIVE_W), float(APP.LIVE_H))
-        spec_proposals.log_frame(rq_, [d_[1:] for d_ in dl_],
-                                 [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0) for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0])
-    if spec_proposals.PROP['show'] and raw_valid_ and not rep_:   # 11-14 (user): every frame; the detector's people (real coordinates, like the raw) mark what it already has
-        spec_proposals.submit(t_in, rq_, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0)
-                                          for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0])
+    if (spec_proposals.LOG['on'] or spec_proposals.PROP['show']) and raw_valid_ and not rep_:   # 11-14: real camera coordinates, like the raw
+        dl_ = ([d_[1:] for d_ in stab_people_real([(0, float(d_[0]), float(d_[1]) - 16.0, float(d_[2]), float(d_[3]) - 16.0, float(d_[4]))
+                                                   for d_ in detections if int(d_[5]) == 0], sC_, float(APP.LIVE_W), float(APP.LIVE_H))]
+               if detections is not None else [])   # every person detection (all scores, before the tracker)
+        tr_ = [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0) for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0]
+        if spec_proposals.LOG['on'] and detections is not None:   # research log
+            spec_proposals.log_frame(rq_, dl_, tr_)
+        if spec_proposals.PROP['show']:   # (user) an aid for what the tracker missed: its weak boxes looked at again by the spectrum
+            spec_proposals.submit(t_in, rq_, tr_, spec_proposals.weak_boxes(dl_, tr_))
     healthy_ = False
     if has_gimbal_:
         source_ = ('replay',) if replay_link.frame_blocked(t_in) else live_tracks.current_source()
