@@ -427,7 +427,7 @@
   160
  ],
  "stride": 32,
- "top": 1,
+ "top": 3,
  "held_out": {
   "MEASURE_20261110_075028_1_seated": {
    "plain": {

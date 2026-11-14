@@ -6,8 +6,9 @@ A small logistic model on the spectrum (16 rings x 8 orientations, log shares) +
 indoor GT recordings; on recordings it had not seen, its best window pointed at a person in 83-100 % of the frames,
 also where the warmest spot was a laptop.
 
-Here: square windows slide over the 16-bit raw frame; windows that overlap a person the detector already reported are
-skipped; the best remaining windows above the model's threshold are proposals. They are only drawn on the picture
+Here: square windows slide over the 16-bit raw frame of every shown frame (11-14, user: show what the spectrum finds,
+also where the detector found people); the best windows above the model's threshold (up to 'top', overlap < 0.3) are
+proposals. propose(people=...) can still skip windows on given boxes; the server passes none. They are only drawn on the picture
 (dashed-looking magenta box, 'cand' + score); nothing goes to the tracker or the gimbal.
 
 Runs in its own thread with one slot (the newest frame replaces a waiting one), so a slow pass never holds the frame loop.

@@ -186,6 +186,6 @@ model = dict(decision='absolute',
              mu=[round(float(v), 6) for v in mu], sd=[round(float(v), 6) for v in sd], w=[round(float(v), 6) for v in w], b=round(float(b), 6),
              threshold=round(thr, 4), threshold_rule='95th percentile of the best-window score over %d empty-scene + person-free frames (<= 5 %% of them get a proposal)' % len(eb),
              empty_best_quantiles={str(q): round(float(np.quantile(eb, q)), 3) for q in (0.5, 0.9, 0.95, 0.99)},
-             sizes=list(SIZES), stride=STRIDE, top=1, held_out=rep)
+             sizes=list(SIZES), stride=STRIDE, top=3, held_out=rep)   # up to 3 places drawn (overlap < 0.3)
 json.dump(model, open(out_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 print('FINAL', json.dumps(dict(threshold=model['threshold'], empty=model['empty_best_quantiles']), ensure_ascii=False))

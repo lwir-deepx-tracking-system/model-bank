@@ -200,11 +200,8 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         if has_gimbal_ and len(gb_people_) < 60:
             x1_, y1_, x2_, y2_ = map(float, r_[:4])
             gb_people_.append((int(r_[4]), x1_, y1_ - 16, x2_, y2_ - 16, float(r_[5])))
-    if spec_proposals.PROP['show']:   # 11-14: proposals only where the detector found nobody; a frame with people clears them
-        if npers_ == 0 and raw_valid_ and not rep_:
-            spec_proposals.submit(t_in, rq_, [])
-        elif npers_ > 0:
-            spec_proposals.PROP['boxes'] = []
+    if spec_proposals.PROP['show'] and raw_valid_ and not rep_:   # 11-14 (user): every frame, whatever the detector found -> what the spectrum finds is shown
+        spec_proposals.submit(t_in, rq_, [])
     healthy_ = False
     if has_gimbal_:
         source_ = ('replay',) if replay_link.frame_blocked(t_in) else live_tracks.current_source()
