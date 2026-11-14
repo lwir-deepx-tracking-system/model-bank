@@ -12,6 +12,12 @@
 //   --far-gain <1..4>           multiply the speed demand up to this much for a large error (default 1 = off)
 //   --far-start-px / --far-full-px <px>  the error (640-wide picture) where the far gain starts / is complete (64 / 160)
 //   --brake-px-per-spd <px>     cap the speed at (|error| - deadband) / this, to slow down before arriving (default 0 = off)
+//   --search <0|1>              search when the followed ID is lost (default 0 = STOP and wait, as v25). With 1:
+//     --search-grace-ms (300) wait, STOPPED, before searching; --search-follow-ms (1000) / --search-follow-px (320) / --search-follow-speed (10)
+//     keep turning in the last following direction; --search-speed (7) SPD of the sweep; --search-sweep-px (320) first half-width,
+//     --search-widen (1.5) growth per turn, --search-max-px (640) widest; --search-tilt-px (0) small tilt; --search-timeout-ms (8000)
+//     from the loss, then STOP and hold. px = picture px of the 640x480 camera, estimated open loop from SPD (V27_CHANGES.md).
+//   stdout: SEARCH_CONTROL 1 at start when on; SEARCH <0 none|1 grace|2 follow-through|3 sweep|4 done> on change.
 //
 // Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
 // All control decisions, safety stops and serial output stay in the team's GimbalCommandExecutor; the PC wire format stays in the team's
@@ -244,6 +250,21 @@ Options parse(int argc, char** argv)
                 throw std::invalid_argument("--predictive-brake is 0 or 1");
             s.predictive_brake = value == "1";
         }
+        // v27 search when lost (default off = the team rule: STOP and wait for the same ID)
+        else if (name == "--search") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--search is 0 or 1");
+            s.search = value == "1";
+        }
+        else if (name == "--search-grace-ms") s.search_grace_ms = std::stoi(value);
+        else if (name == "--search-follow-ms") s.search_follow_ms = std::stoi(value);
+        else if (name == "--search-follow-px") s.search_follow_px = std::stod(value);
+        else if (name == "--search-follow-speed") s.search_follow_speed = std::stoi(value);
+        else if (name == "--search-speed") s.search_speed = std::stoi(value);
+        else if (name == "--search-sweep-px") s.search_sweep_px = std::stod(value);
+        else if (name == "--search-widen") s.search_widen = std::stod(value);
+        else if (name == "--search-max-px") s.search_max_px = std::stod(value);
+        else if (name == "--search-tilt-px") s.search_tilt_px = std::stod(value);
+        else if (name == "--search-timeout-ms") s.search_timeout_ms = std::stoi(value);
         else if (name == "--gui-host") { g.enabled = true; g.video.host = value; g.metadata.host = value; }
         else if (name == "--gui-bind") g.command.bind_address = value;
         else if (name == "--gui-video-port") g.video.port = static_cast<std::uint16_t>(std::stoi(value));
@@ -273,6 +294,13 @@ Options parse(int argc, char** argv)
     if (s.observation_grace_ms < 0 || s.observation_grace_ms > 100 ||
         (s.observation_grace_ms > 0 && s.observation_grace_ms >= c.automatic.input_timeout_ms))
         throw std::invalid_argument("--observation-grace-ms must be within 0..100 and below --input-timeout-ms when enabled");
+    if (s.search && (s.search_grace_ms < 0 || s.search_follow_ms < 0 || s.search_timeout_ms <= s.search_grace_ms ||
+        !(s.search_follow_px >= 0) || !(s.search_sweep_px > 0) || !(s.search_widen >= 1.0 && s.search_widen <= 4.0) ||
+        !(s.search_max_px >= s.search_sweep_px) || !(s.search_tilt_px >= 0) ||
+        s.search_speed < c.automatic.speed_min || s.search_speed > c.automatic.speed_max ||
+        s.search_follow_speed < c.automatic.speed_min || s.search_follow_speed > c.automatic.speed_max))
+        throw std::invalid_argument("--search-*: grace/follow >= 0, timeout > grace, sweep > 0, widen 1..4, max >= sweep, tilt >= 0, "
+                                    "speeds within --speed-min..--speed-max");
     if (c.gimbal.speed < 1 || c.gimbal.speed > c.gimbal.speed_limit || c.automatic.speed_max < c.automatic.speed_min || c.automatic.speed_max > c.gimbal.speed_limit)
         throw std::invalid_argument("speed outside the device range");
     if ((c.gimbal.x_sign != 1 && c.gimbal.x_sign != -1) || (c.gimbal.y_sign != 1 && c.gimbal.y_sign != -1))
@@ -401,7 +429,8 @@ public:
         // Keep the measured rows intact for both target validation and the PC GUI.
         std::string suffix;
         TrackLead lead;
-        bool seen_observation = false, seen_lead = false;
+        TrackVelocity velocity;   // v27 search
+        bool seen_observation = false, seen_lead = false, seen_velocity = false;
         const int separator = in.peek();
         bool malformed = separator != std::char_traits<char>::eof() &&
             !std::isspace(static_cast<unsigned char>(separator));
@@ -419,13 +448,19 @@ public:
                 seen_lead = true;
                 if (!read_token(lead.track_id) || !read_token(lead.dx_px) || !read_token(lead.dy_px) ||
                     !read_token(lead.control_epoch)) { malformed = true; break; }
+            } else if (suffix == "VEL" && !seen_velocity) {   // v27 search: predictive-control velocity of one track
+                seen_velocity = true;
+                if (!read_token(velocity.track_id) || !read_token(velocity.vx) || !read_token(velocity.vy)) { malformed = true; break; }
             } else {
                 malformed = true;
                 break;
             }
         }
         if (malformed) healthy_live = false;
-        else if (lead.matches(lead.track_id)) result->lead = lead;
+        else {
+            if (lead.matches(lead.track_id)) result->lead = lead;
+            if (velocity.matches(velocity.track_id)) result->velocity = velocity;
+        }
         result->frame = context;
         result->enqueued_at = std::chrono::steady_clock::now();
         result->aim_y = g_aim_y;
@@ -567,11 +602,13 @@ int main(int argc, char** argv) try {
     }
     Bridge bridge(executor, gui.get(), session_changes,
                   options.smoothing.observation_grace_ms > 0 || options.smoothing.catchup_speed > 0 ||
-                  options.smoothing.predictive_brake);
+                  options.smoothing.predictive_brake || options.smoothing.search);
     say("READY");
     say("TRACK_CONTROL 1");
     say("LEAD_CONTROL 1");
     say("OBSERVATION_STATUS 1");
+    if (options.smoothing.search) say("SEARCH_CONTROL 1");   // v27: the tracker may re-select a re-found person (SEARCH lines follow)
+    int reported_search = 0;
     std::string pending, reported;
     std::uint64_t reported_epoch = std::numeric_limits<std::uint64_t>::max();
     std::vector<char> buffer(262144);
@@ -608,6 +645,7 @@ int main(int argc, char** argv) try {
         }
         const auto state = state_line(snapshot);
         if (state != reported) { say(state); reported = state; }
+        if (snapshot.search != reported_search) { say("SEARCH " + std::to_string(snapshot.search)); reported_search = snapshot.search; }
         const auto now = std::chrono::steady_clock::now();
         if (!snapshot.error && now >= next_position) {
             say("POSITION_EST " + std::to_string(snapshot.pan_estimate) + " " + std::to_string(snapshot.tilt_estimate));

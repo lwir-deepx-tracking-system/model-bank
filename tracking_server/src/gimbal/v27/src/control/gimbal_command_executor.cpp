@@ -77,6 +77,15 @@ GimbalCommandExecutor::GimbalCommandExecutor(ControlConfig config,
         (smoothing_.observation_grace_ms > 0 &&
          smoothing_.observation_grace_ms >= config_.automatic.input_timeout_ms))
         throw std::invalid_argument("--observation-grace-ms must be within 0..100 and below --input-timeout-ms when enabled");
+    if (smoothing_.search) {   // v27 search when lost
+        const auto& s = smoothing_;
+        if (s.search_grace_ms < 0 || s.search_follow_ms < 0 || s.search_timeout_ms <= s.search_grace_ms ||
+            !(s.search_follow_px >= 0) || !(s.search_sweep_px > 0) || !(s.search_widen >= 1.0 && s.search_widen <= 4.0) ||
+            !(s.search_max_px >= s.search_sweep_px) || !(s.search_tilt_px >= 0) ||
+            s.search_speed < config_.automatic.speed_min || s.search_speed > config_.automatic.speed_max ||
+            s.search_follow_speed < config_.automatic.speed_min || s.search_follow_speed > config_.automatic.speed_max)
+            throw std::invalid_argument("search settings out of range");
+    }
     worker_ = std::thread([this] { run(); });
     const bool started = invoke([this] { stop("startup"); return !state_.error; });
     if (!started) {
@@ -143,7 +152,7 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
         std::lock_guard<std::mutex> lock(mutex_);
         const auto received = Clock::now();
         if ((smoothing_.observation_grace_ms > 0 || smoothing_.catchup_speed > 0 ||
-             smoothing_.predictive_brake) &&
+             smoothing_.predictive_brake || smoothing_.search) &&   // v27 search moves only on validated live frames
             input->model_generation == runtime_.generation.load() &&
             input->tracker_epoch == runtime_.tracker_epoch.load()) {
             if (published_model_ != input->model_generation || published_tracker_ != input->tracker_epoch) {
@@ -194,7 +203,7 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
 void GimbalCommandExecutor::publish_unsafe_observation()
 {
     if (smoothing_.observation_grace_ms == 0 && smoothing_.catchup_speed == 0 &&
-        !smoothing_.predictive_brake) return;
+        !smoothing_.predictive_brake && !smoothing_.search) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (smoothing_.observation_grace_ms > 0) pending_ = {};
@@ -262,7 +271,7 @@ bool GimbalCommandExecutor::ingest(Observation observation)
         if (deadline > now) grace_deadline_ = deadline;
     }
     mark_lost(now);
-    if (state_.moving && (holding || grace_deadline_ == Clock::time_point{}))
+    if (state_.moving && !searching() && (holding || grace_deadline_ == Clock::time_point{}))
         stop("target lost/stale");
     return false;
 }
@@ -326,6 +335,7 @@ void GimbalCommandExecutor::failure(const std::exception& e)
     state_.error = true;
     published_brake_target_.store(0);
     state_.automatic = false; state_.selected_id = 0; state_.lost = false;
+    search_ = {}; state_.search = 0;   // v27
     ++state_.command_generation;
     try { device_->stop(); } catch (const std::exception& stop_error) {
         Logger::error(std::string("[Control] STOP failed: ") + stop_error.what());
@@ -359,6 +369,7 @@ void GimbalCommandExecutor::invalidate(const char* reason)
     lost_since_ = {}; next_auto_ = {};
     grace_deadline_ = {}; last_observed_capture_ = {}; observation_cadence_ = {};
     brake_ = {};
+    search_ = {}; state_.search = 0; follow_x_ = follow_speed_ = 0; follow_error_x_ = follow_vx_ = 0; follow_v_at_ = {};   // v27
     if (state_.moving) stop(reason);
 }
 void GimbalCommandExecutor::send(int x, int y, int speed, bool automatic)
@@ -445,6 +456,112 @@ bool GimbalCommandExecutor::apply_predictive_brake(const Track& track, const Gim
     return true;
 }
 
+// v27 search when lost (SmoothingConfig::search). Called by tick() on every period while the followed ID is missing.
+// Open loop: the pose offset from the loss is estimated from the commanded SPD (search_picture_px_per_s); it only bounds
+// and centres the pattern. Every safety condition of following still applies (tick() checked heartbeat and mode; this
+// checks frame freshness/health and control authority before each output).
+void GimbalCommandExecutor::search_step(Clock::time_point now)
+{
+    using std::chrono::milliseconds;
+    auto& s = search_;
+    const auto& c = smoothing_;
+    if (s.phase == Search::None) {
+        s = {};
+        s.phase = Search::Grace;
+        s.lost_at = lost_since_ == Clock::time_point{} ? now : lost_since_;
+        s.last_step = now;
+        // Follow-through: where the person should be. First choice = the server's predictive-control velocity of the
+        // person against the background (VEL, predictive_lead.py), at the SPD whose measured picture speed covers it;
+        // without one (lead data missing/old, slower than 15 px/s) = the last following output.
+        const bool velocity = follow_v_at_ != Clock::time_point{} && s.lost_at - follow_v_at_ <= milliseconds(300) &&
+            std::abs(follow_vx_) >= SmoothingConfig::search_min_velocity;
+        if (velocity) {
+            s.dir_x = follow_vx_ > 0 ? 1 : -1;
+            int spd = config_.automatic.speed_min;
+            while (spd < c.search_follow_speed && search_picture_px_per_s(spd) < std::abs(follow_vx_)) ++spd;
+            s.follow_speed = std::clamp(spd, config_.automatic.speed_min, c.search_follow_speed);
+        } else {
+            s.dir_x = follow_x_;
+            s.follow_speed = std::clamp(follow_speed_, config_.automatic.speed_min, c.search_follow_speed);
+        }
+        s.side = s.dir_x ? s.dir_x : follow_error_x_ < 0 ? -1 : 1;
+        Logger::debug("[Control] search: target lost, follow-through direction " + std::to_string(s.dir_x) +
+                      (velocity ? " from the predictive velocity " + std::to_string(follow_vx_) + " px/s" : " from the last output"));
+    }
+    const double dt = std::max(0.0, std::chrono::duration<double>(now - s.last_step).count());
+    s.last_step = now;
+    if (state_.moving) {   // the command applied since the previous step
+        const double px = search_picture_px_per_s(sent_speed_) * dt;
+        s.pan += x_ * px;
+        s.tilt += y_ * px;
+    }
+    const auto halt = [this](const char* why) { if (state_.moving) stop(why); };
+    const auto report = [this, &s] { state_.search = int(s.phase); };
+    if (grace_deadline_ != Clock::time_point{}) { report(); return; }   // observation grace owns the output until its deadline
+    const auto elapsed = now - s.lost_at;
+    if (s.phase == Search::Done) { halt("search done"); report(); return; }
+    if (elapsed >= milliseconds(c.search_timeout_ms)) {
+        s.phase = Search::Done; halt("search timeout"); report(); return;
+    }
+    // Blind (no fresh healthy frame): never move. The pattern continues when frames are good again.
+    if (!fresh() || !latest_healthy_) { s.blind = true; halt("search: no fresh healthy frame"); report(); return; }
+    s.blind = false;
+    if (elapsed < milliseconds(c.search_grace_ms)) { halt("target lost/stale"); report(); return; }
+    if (!ready()) { invalidate("control authority"); return; }
+    const double step = config_.automatic.speed_rate * std::min(dt, config_.automatic.period_ms / 1000.0);
+    const auto drive = [&](int x, int y, int speed) {
+        const double want = std::clamp(speed, config_.automatic.speed_min, config_.automatic.speed_max);
+        const bool turn = state_.moving && ((x_ && x && x_ != x) || (y_ && y && y_ != y));
+        if (turn) { stop("search turn"); return; }   // as the team rule: a reversal goes through STOP
+        limited_speed_ = state_.moving ?
+            std::clamp(want, std::max(double(config_.automatic.speed_min), limited_speed_ - step), limited_speed_ + step) :
+            double(config_.automatic.speed_min);
+        last_output_ = now;
+        send(x, y, std::clamp(int(std::lround(limited_speed_)), config_.automatic.speed_min, config_.automatic.speed_max), true);
+        controller_.set_applied_output(x_ * sent_speed_, -y_ * sent_speed_);
+    };
+    if (s.phase == Search::Grace) {
+        s.phase = s.dir_x ? Search::Follow : Search::Sweep;
+        s.follow_since = now;
+        s.leg = 0;
+    }
+    if (s.phase == Search::Follow) {
+        if (now - s.follow_since < milliseconds(c.search_follow_ms) && std::abs(s.pan) < c.search_follow_px &&
+            std::abs(s.pan) < c.search_max_px) {
+            drive(s.dir_x, 0, s.follow_speed);
+            report();
+            return;
+        }
+        s.phase = Search::Sweep;
+        s.leg = 0;
+    }
+    // Sweep: leg k goes to start * (-1)^k * A_k, A_k = min(max, sweep * widen^k). After a follow-through the first leg
+    // turns back across the place of the loss; without one it starts on the side where the person was last seen.
+    // The widest leg is swept to both sides, then the pattern ends.
+    const int start = s.dir_x ? -s.side : s.side;
+    const auto amplitude_of = [&c](int leg) {
+        return std::min(c.search_max_px, c.search_sweep_px * std::pow(c.search_widen, leg));
+    };
+    int last_leg = 0;
+    while (last_leg < 62 && amplitude_of(last_leg) < c.search_max_px) ++last_leg;
+    ++last_leg;
+    for (;;) {
+        if (s.leg > last_leg) { s.phase = Search::Done; halt("search pattern complete"); report(); return; }
+        const double amplitude = amplitude_of(s.leg);
+        const int dir = (s.leg % 2 == 0) ? start : -start;
+        const double target = dir * amplitude;
+        if (dir * (target - s.pan) <= 0) { ++s.leg; continue; }   // this leg's end is reached
+        int y = 0;
+        if (c.search_tilt_px > 0) {   // small tilt: up on even legs, down on odd legs
+            const double tilt_target = (s.leg % 2 == 0 ? 1 : -1) * c.search_tilt_px;
+            if (std::abs(tilt_target - s.tilt) > 4.0) y = tilt_target > s.tilt ? 1 : -1;
+        }
+        drive(dir, y, c.search_speed);
+        report();
+        return;
+    }
+}
+
 void GimbalCommandExecutor::tick()
 {
     if (runtime_.generation.load() != model_generation_ ||
@@ -465,12 +582,19 @@ void GimbalCommandExecutor::tick()
     }
     if (!t) {
         mark_lost(now);
+        if (smoothing_.search) { search_step(now); return; }   // v27
         if (state_.moving && grace_deadline_ == Clock::time_point{}) stop("target lost/stale");
         return;
     }
     if (state_.lost && smoothing_.observation_grace_ms > 0)
         lead_after_frame_ = latest_->frame->metadata.frame_id;
+    if (search_.phase != Search::None) {   // v27: the same ID is back; the search output is the starting point of following
+        Logger::debug(std::string("[Control] search ended: target back"));
+        search_ = {}; state_.search = 0;
+    }
     state_.lost = false; lost_since_ = {};
+    follow_x_ = x_; follow_speed_ = sent_speed_;   // v27: the output while the target is seen
+    if (latest_->velocity.matches(t->track_id)) { follow_vx_ = latest_->velocity.vx; follow_v_at_ = now; }
     const auto lead = latest_->frame->metadata.frame_id > lead_after_frame_ &&
         latest_->lead.control_epoch == state_.command_generation ? latest_->lead : TrackLead{};
     const bool catchup_observed = smoothing_.catchup_speed > 0 && latest_healthy_ &&
@@ -480,6 +604,7 @@ void GimbalCommandExecutor::tick()
          }) == 1);
     const auto demand = controller_.calculate(*t, latest_->frame->image.cols, latest_->frame->image.rows,
         latest_->frame->metadata, latest_->model_generation, lead, latest_->aim_y, catchup_observed);
+    follow_error_x_ = demand.error_x;   // v27
     if (smoothing_.predictive_brake && apply_predictive_brake(*t, demand, lead)) return;
     if (demand.stop()) {
         if (!state_.moving) return;

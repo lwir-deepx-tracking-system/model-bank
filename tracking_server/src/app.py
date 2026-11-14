@@ -3,6 +3,7 @@
 main() 안에 정의돼 있던 함수와 클래스는 일별 파일로 옮겼다. 원래 정의하던 자리에는 그 이름을 이어 주는 한 줄이 있다
 (예: APP.gb_send = gimbal_link.gb_send). 옮긴 함수들이 함께 쓰는 값은 APP.이름 으로, 실행 중에 바뀌는 설정 네 가지는 settings.이름 으로 읽고 쓴다.
 crop_into, vit_sync, sync_embed, budget_embed 는 옮기지 않고 여기 그대로 있다 (main() 의 지역 변수 vit 를 직접 써야 해서)."""
+import collections
 import os
 import sys
 import json
@@ -770,6 +771,8 @@ def main():
                 APP.tracker.kf.warp = W_
                 if frame_time is not None:
                     APP.CTL['lead_motion'] = motion.paired(previous_motion_frame, g, previous_motion_time, frame_time)
+                    if APP.CTL['lead_motion'] is not None:   # 11-15: the last frame pairs, for the gimbal search re-catch (live_tracks._motion)
+                        APP.CTL.setdefault("motion_hist", collections.deque(maxlen=32)).append(APP.CTL['lead_motion'])
                 previous_motion_frame, previous_motion_time = (g, frame_time) if frame_time is not None else (None, None)
                 for t_ in APP.tracker.tracked:
                     if not t_.is_activated and t_.mean is not None:

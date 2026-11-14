@@ -56,20 +56,35 @@ def halted(ticket):
             gb.selection_reset = False
 
 
-def _bridge_aim_y(gb):
-    # v27 advertises LEAD only after parsing its launch options. Use that
-    # process's actual argv, not the web display or mutable server settings.
+def _bridge_option(gb, name):
+    """The value of a launch option of the running bridge (the last one wins, as in the bridge), else None."""
     argv = getattr(getattr(gb, 'proc', None), 'args', None)
     if not isinstance(argv, (list, tuple)) or len(argv) % 2 != 1:
         return None
     value = None
     for flag, arg in zip(argv[1::2], argv[2::2]):
-        if flag == '--aim-y':
-            try:
-                value = float(arg)
-            except (TypeError, ValueError):
-                return None
-    return value if value is not None and 0.0 <= value <= 1.0 else None
+        if flag == name:
+            value = arg
+    return value
+
+
+def _bridge_aim_y(gb):
+    # v27 advertises LEAD only after parsing its launch options. Use that
+    # process's actual argv, not the web display or mutable server settings.
+    value = _bridge_option(gb, '--aim-y')
+    if value is None:
+        return None
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if 0.0 <= value <= 1.0 else None
+
+
+def search_enabled(gb):
+    """11-15: the running bridge said SEARCH_CONTROL 1 (started with --search 1: it sweeps when the followed id is lost).
+    Its own line, not the launch options: a wrapper may add options the server never sees."""
+    return bool(getattr(gb, 'search_control_supported', False))
 
 
 # 11-13 (user): FOLLOW HANDOFF. A person close to the camera who moves fast is often split by the detector (a whole-body box and a
@@ -92,7 +107,7 @@ def _iou(a, b):
 
 def _handoff_locked(gb, selected, frame_t):
     """Called with gb.wcond held, after gb.people is set for this frame. Returns the id following moved to, else 0."""
-    if os.environ.get('LWIR_FOLLOW_HANDOFF') != '1':
+    if os.environ.get('LWIR_FOLLOW_HANDOFF') != '1' or search_enabled(gb):   # 11-15: a searching gimbal moves the picture; _recatch_locked replaces this rule
         return 0
     if (not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0) or getattr(gb, 'mover', None)
             or getattr(gb, 'selection_reset', False) or not gb.people):
@@ -131,6 +146,148 @@ def _handoff_locked(gb, selected, frame_t):
     gb.handoff_n = getattr(gb, 'handoff_n', 0) + 1
     print('FOLLOW handoff %d -> %d (IoU %.2f with its last box, %.2f s after it was last seen)' % (selected, best[0], best[1], frame_t - h['t']), flush=True)
     return best[0]
+
+
+# 11-15 (user): SEARCH RE-CATCH UNDER A NEW ID, only with the bridge option --search 1 AND LWIR_SEARCH_NEW_ID=1 (both off by
+# default). The user's rule is that a re-catch must give back the SAME id (tracker, KeepID appearance, Kalman position memory):
+# the bridge follows only its selected id, so by default a person who comes back under a new id is not taken. This opt-in
+# rule is kept for experiments with that case only. The last seen box is carried through the camera motion (GMC
+# warp of every frame pair, the same warps the tracker uses) and moved on with the person's last speed for RECATCH_WALK_S.
+# A candidate must (1) not have been on screen when ours was last seen (so it is not one of the others around it), (2) lie
+# within the gate (RECATCH_R0 x box width + RECATCH_GROW px/s since last seen, at most RECATCH_RMAX x width) with a height
+# within RECATCH_SIZE x, (3) be the ONLY box near the prediction (none else within RECATCH_CROWD x the gate: in a crowd the
+# rule does nothing), (4) stay so for RECATCH_N frames in a row. A frame pair without camera motion breaks the chain: no
+# re-catch for that loss. The selection is the same 'A id' a click sends.
+RECATCH_N, RECATCH_R0, RECATCH_GROW, RECATCH_RMIN, RECATCH_RMAX = 3, .5, 120., 24., 1.5
+RECATCH_SIZE, RECATCH_CROWD, RECATCH_WALK_S, RECATCH_MAX_S, RECATCH_MAX_V = 1.5, 1.5, 1.0, 10., 600.
+CANVAS_Y = 16.0   # GMC warps work on the padded canvas: people rows are 16 px higher
+
+
+def _motion(t0, t1):
+    """The 2x3 camera-motion warp from frame time t0 to frame time t1 composed from APP.CTL['motion_hist'], else None."""
+    if t0 == t1:
+        return np.array([[1., 0., 0.], [0., 1., 0.]])
+    hist = list(APP.CTL.get('motion_hist') or ())
+    out, t = None, t0
+    for _ in range(len(hist)):
+        step = next((m for m in hist if m[0] == t), None)
+        if step is None:
+            return None
+        w = np.asarray(step[2], dtype=float)
+        if w.shape != (2, 3) or not np.isfinite(w).all():
+            return None
+        out = w if out is None else np.vstack([w, [0., 0., 1.]])[:2] @ np.vstack([out, [0., 0., 1.]])
+        t = step[1]
+        if t == t1:
+            return out
+        if t > t1:
+            return None
+    return None
+
+
+def _warp_point(w, x, y):
+    px, py = w @ (x, y + CANVAS_Y, 1.0)
+    return float(px), float(py - CANVAS_Y)
+
+
+def _recatch_locked(gb, selected, frame_t):
+    """Called with gb.wcond held, after gb.people is set for this frame. Returns the id following moved to, else 0."""
+    if not search_enabled(gb) or os.environ.get('LWIR_SEARCH_NEW_ID') != '1':
+        return 0
+    if (not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0) or getattr(gb, 'mover', None)
+            or getattr(gb, 'selection_reset', False) or not getattr(gb, 'people_t', 0.0)):
+        if not selected or not gb.state.get('auto'): gb.recatch = None
+        return 0
+    h = getattr(gb, 'recatch', None)
+    if h is None or h['sel'] != selected:
+        h = gb.recatch = dict(sel=selected, t_seen=None, ok=False, cand=0, cand_n=0, vx=0., vy=0.)
+    mine = [p for p in gb.people if int(p[0]) == selected]
+    if mine:
+        p = mine[0]
+        cx, cy, w, hh = (p[1] + p[3]) / 2., (p[2] + p[4]) / 2., p[3] - p[1], p[4] - p[2]
+        if h['t_seen'] is not None and 0 < frame_t - h['t_seen'] <= .25:
+            m = _motion(h['t_seen'], frame_t)
+            if m is not None:
+                px, py = _warp_point(m, h['cx'], h['cy']); dt = frame_t - h['t_seen']
+                h['vx'] = max(-RECATCH_MAX_V, min(RECATCH_MAX_V, .7 * h['vx'] + .3 * (cx - px) / dt))
+                h['vy'] = max(-RECATCH_MAX_V, min(RECATCH_MAX_V, .7 * h['vy'] + .3 * (cy - py) / dt))
+        else:
+            h['vx'] = h['vy'] = 0.
+        h.update(cx=cx, cy=cy, w=w, h=hh, t_seen=frame_t, pred=(cx, cy, w, hh), pred_t=frame_t, ok=True,
+                 ids={int(q[0]) for q in gb.people}, cand=0, cand_n=0)
+        return 0
+    if h['t_seen'] is None or not h['ok']:
+        return 0
+    age = frame_t - h['t_seen']
+    if not 0 < age <= RECATCH_MAX_S or frame_t <= h['pred_t']:
+        return 0
+    m = _motion(h['pred_t'], frame_t)
+    if m is None:
+        h['ok'] = False
+        gb.recatch_broken = getattr(gb, 'recatch_broken', 0) + 1
+        print('SEARCH re-catch off for this loss of %d: no camera motion for a frame pair' % selected, flush=True)
+        return 0
+    px, py, pw, ph = h['pred']
+    s = math.sqrt(abs(float(np.linalg.det(m[:, :2])))) or 1.
+    px, py = _warp_point(m, px, py)
+    walk = max(0., min(age, RECATCH_WALK_S) - min(h['pred_t'] - h['t_seen'], RECATCH_WALK_S))
+    px += h['vx'] * walk; py += h['vy'] * walk; pw *= s; ph *= s
+    h['pred'], h['pred_t'] = (px, py, pw, ph), frame_t
+    gate = min(max(RECATCH_RMAX * pw, RECATCH_RMIN), max(RECATCH_RMIN, RECATCH_R0 * pw) + RECATCH_GROW * age)
+    cands, near = [], 0
+    for q in gb.people:
+        qid = int(q[0])
+        if qid == selected: continue
+        d = math.hypot((q[1] + q[3]) / 2. - px, (q[2] + q[4]) / 2. - py)
+        if d <= RECATCH_CROWD * gate: near += 1
+        size = (q[4] - q[2]) / ph if ph > 0 else 0.
+        if qid not in h['ids'] and d <= gate and 1. / RECATCH_SIZE <= size <= RECATCH_SIZE:
+            cands.append((qid, d, size))
+    if len(cands) != 1 or near != 1:
+        h['cand'], h['cand_n'] = 0, 0
+        return 0
+    qid, d, size = cands[0]
+    if qid != h['cand']:
+        h['cand'], h['cand_n'] = qid, 0
+    h['cand_n'] += 1
+    if h['cand_n'] < RECATCH_N or len(gb.wq) >= 62:
+        return 0
+    reset_lead()
+    gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
+    if gb.wframe is not None:   # the bridge sees the new id in a frame before it is selected (as for a click)
+        gb.wq.append(without_lead(gb.wframe)); gb.wframe = None
+    gb.wq.append(('A %d\n' % qid).encode())
+    gb.recatch = dict(sel=qid, t_seen=None, ok=False, cand=0, cand_n=0, vx=0., vy=0.)
+    gb.recatch_n = getattr(gb, 'recatch_n', 0) + 1
+    print('SEARCH re-catch %d -> %d (%.0f px from the prediction, gate %.0f px, height x%.2f, %.2f s after it was last seen)'
+          % (selected, qid, d, gate, size, age), flush=True)
+    return qid
+
+
+def _search_velocity_locked(gb, selected, real, rows, frame_t, correction):
+    """11-15: ' VEL <id> <vx> <vy>' for a bridge that said SEARCH_CONTROL 1: the followed person's velocity against the
+    background (picture px/s) from the predictive-control estimator (predictive_lead.estimate, the same one LEAD uses; when
+    LEAD is on its own sample of this frame is reused). The bridge uses it only to keep turning where the person should be
+    after a loss, so the tracker / KeepID can give the same id back. '' when there is nothing to send."""
+    if not getattr(gb, 'search_control_supported', False) or not selected or not gb.state.get('auto'):
+        gb.search_lv = None
+        return ''
+    lv = APP.CTL.get('lv')
+    if not (APP.CTL.get('lead') and lv is not None and getattr(lv, 'track_id', 0) == selected and getattr(lv, 'time', None) == frame_t):
+        matches = [row for person, row in zip(real, rows) if person[0] == selected]
+        observed = None
+        if len(matches) == 1:
+            x, y, w, h = map(float, matches[0].split()[1:5])
+            observed = (selected, x, y, x + w, y + h)
+        why = predictive_lead.LAST.get('why')
+        lv, _ = predictive_lead.estimate(getattr(gb, 'search_lv', None), selected, observed, frame_t,
+                                         APP.CTL.get('lead_motion'), 0, aim_y=_bridge_aim_y(gb) if _bridge_aim_y(gb) is not None else .5,
+                                         correction=correction)
+        predictive_lead.LAST['why'] = why   # the lead counters stay those of the lead path
+        gb.search_lv = lv
+    if lv is None or lv.time != frame_t or not (math.isfinite(lv.vx) and math.isfinite(lv.vy)) or (lv.vx == 0 and lv.vy == 0):
+        return ''
+    return ' VEL %d %.1f %.1f' % (selected, lv.vx, lv.vy)
 
 
 def publish(people, correction, frame_t, raw16, source, blocked=False, *, healthy_live=False):
@@ -173,6 +330,7 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                 gb.observation_barrier = f'F {gb.frame} {captured_ns} 0 OBS 0\n'.encode()
         selected = 0 if gb.selection_reset else int(gb.state.get('id', 0))
         _handoff_locked(gb, selected, frame_t)   # 11-13: LWIR_FOLLOW_HANDOFF=1 only
+        _recatch_locked(gb, selected, frame_t)   # 11-15: bridge --search 1 and LWIR_SEARCH_NEW_ID=1 only
         real = stab_people_real(gb.people, correction, float(APP.LIVE_W), float(APP.LIVE_H))
         rows = [' %d %.1f %.1f %.1f %.1f %.3f' %
                 (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real]
@@ -208,6 +366,9 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                     text += f' LEAD {selected} {dx!r} {dy!r} {epoch}'
         else:
             reset_lead()
+        vel = _search_velocity_locked(gb, selected, real, rows, frame_t, correction)
+        if vel:   # before LEAD: without_lead() cuts from LEAD to the end of the line
+            text = text.replace(' LEAD ', vel + ' LEAD ', 1) if ' LEAD ' in text else text + vel
         if gb.gui and raw16 is not None and raw16.shape == (APP.LIVE_H, APP.LIVE_W):
             APP.gb_send_frame('G %d %d %d %d %d' %
                               (gb.frame, captured_ns, APP.LIVE_W, APP.LIVE_H, len(real)) + text,

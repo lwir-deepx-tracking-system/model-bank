@@ -41,4 +41,37 @@ struct SmoothingConfig {
     double far_start_px = 64.0;
     double far_full_px = 160.0;
     double brake_px_per_spd = 0.0;
+    // Search when lost (11-15, user: "sweep the surroundings so it can catch the person again"). false = the team rule:
+    // STOP at once and wait for the same ID. true: after search_grace_ms without the followed ID, (1) keep turning in the
+    // last horizontal following direction for at most search_follow_ms / search_follow_px, at the last following SPD
+    // (at most search_follow_speed); (2) sweep left-right around the place where the person was lost, at search_speed,
+    // first to +-search_sweep_px, each later turn search_widen times wider, never beyond +-search_max_px, with an optional
+    // small tilt of +-search_tilt_px; (3) STOP and hold after search_timeout_ms (counted from the loss). The reacquire
+    // timeout still drops the selection. Distances are pictures px of the 640-wide camera image, estimated from the
+    // commanded SPD with the measured pan speed map (open loop; only used to bound and centre the pattern). The search
+    // stops at once on a stale, unhealthy or missing frame, a lost heartbeat, a mode change or STOP, like following.
+    // The follow-through uses the server's predictive-control velocity (VEL suffix, predictive_lead.py) when it is at
+    // least search_min_velocity px/s and at most 300 ms older than the loss; otherwise the last following output.
+    static constexpr double search_min_velocity = 15.0;
+    bool search = false;
+    int search_grace_ms = 300;
+    int search_follow_ms = 1000;
+    double search_follow_px = 320.0;
+    int search_follow_speed = 10;
+    int search_speed = 7;
+    double search_sweep_px = 320.0;
+    double search_widen = 1.5;
+    double search_max_px = 640.0;
+    double search_tilt_px = 0.0;
+    int search_timeout_ms = 8000;
 };
+
+// Measured picture speed (px/s of the 640x480 camera) at a pan SPD (PID_TUNING_RECORD_20261110.md sec. 5; above 20 not
+// measured, held at 450). Only for the open-loop search bookkeeping.
+inline double search_picture_px_per_s(int spd)
+{
+    static constexpr double table[] = {0, 156, 161, 160, 166, 172, 204, 237, 277, 316, 356, 367, 378, 388, 399, 410,
+                                       418, 425, 433, 440, 448};
+    if (spd <= 0) return 0.0;
+    return spd < int(sizeof(table) / sizeof(table[0])) ? table[spd] : 450.0;
+}

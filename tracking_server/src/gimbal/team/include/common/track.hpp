@@ -46,6 +46,21 @@ struct TrackLead
     }
 };
 
+// v27 search when lost (11-15): the predictive-control velocity of one track against the background, picture px/s
+// (+x right, +y down), from the server's predictive_lead estimate. Optional; used only for the follow-through after a loss.
+struct TrackVelocity
+{
+    int track_id = 0;
+    double vx = 0;
+    double vy = 0;
+
+    bool matches(int id) const
+    {
+        return id > 0 && track_id == id && std::isfinite(vx) && std::isfinite(vy) &&
+            std::abs(vx) <= 5000.0 && std::abs(vy) <= 5000.0;
+    }
+};
+
 // 한 프레임의 추적 목록과 GUI 표시에 필요한 원본 프레임을 함께 전달한다.
 struct TrackingResult
 {
@@ -56,6 +71,7 @@ struct TrackingResult
     std::uint64_t tracker_epoch = 0; // 로컬 추적 세대; PC 통신에는 포함하지 않는다.
     bool bypass = false;
     TrackLead lead;
+    TrackVelocity velocity; // v27 search: VEL suffix
     double aim_y = 0.5; // Control reference, measured from the top of the observed box.
 };
 
