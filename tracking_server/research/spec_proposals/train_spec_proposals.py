@@ -1,17 +1,22 @@
 """Train the spatial-spectrum people-proposal model used by src/detect/spec_proposals.py (same feature code).
 
-Usage: python train_spec_proposals.py <out model json> <GT MEASURE dir> ... --empty <empty-scene dir> ...
+Usage: python train_spec_proposals.py <out model json> <GT MEASURE dir> ... --empty <empty-scene dir> ... [--hard <dir>:<first>-<last> ...] [--no-mining]
   GT MEASURE dir: frames.raw.gz + frames.json (16-bit), gt_mot.txt (hand GT, frame 1 = raw 0), optional labelled_frames.txt
-  empty-scene dir: frames.raw.gz + frames.json of frames with nobody in them
+  empty-scene dir: frames.raw.gz + frames.json of frames with nobody in them (used for the threshold only)
+  --hard: frames (0-based raw index) of a GT recording checked by eye to hold nobody (e.g. the camera turned away).
+          Labelled frames with no GT box are such frames too and are added automatically.
 Samples (every 5th labelled frame): person = central square of each GT box; not person = warm parts outside the GT boxes
 (at least as warm as the 25th percentile of the GT pixels, area >= 600 px) and random windows away from the GT boxes.
 Model: L2 logistic regression on 128 spectrum bins + warmth, classes balanced.
-Decision: the best window's raw model score (absolute). (Within-frame relative scores failed: with many people in view the
-median window score rises.) Threshold = 95th percentile of the best-window score over the empty-scene frames, so at most
-5 % of empty frames get a proposal.
-Held-out report: leave one GT recording out; the fold's own model, threshold set again from the empty scenes; per held-out
-recording (every 6th labelled frame): best window on a person and passing, some person window passing, some window off
-every person passing. The final model is fitted on all GT recordings."""
+Hard-negative mining (2026-11-14, after the device showed a proposal on a cable between two laptops in a frame with nobody):
+the windows that score highest on the person-free frames of the training recordings (every 2nd frame, top 5 per frame,
+overlap < 0.3) are added as not-person, and the model is fitted again (2 rounds).
+Decision: the best window's raw model score (absolute). Threshold = 95th percentile of the best-window score over the
+empty-scene frames and the person-free frames of the training recordings.
+Held-out report: leave one GT recording out; the fold's own model and threshold (its person-free frames are not used);
+per held-out recording (every 6th labelled frame): best window on a person and passing, some person window passing,
+some window off every person passing; and on its person-free frames: share with a proposal. Reported with and without
+mining. The final model is fitted on all GT recordings."""
 import gzip
 import json
 import os
@@ -25,11 +30,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 from src.detect.spec_proposals import features, windows   # noqa: E402
 
 args = sys.argv[1:]
+MINING = '--no-mining' not in args
+args = [a for a in args if a != '--no-mining']
+hard_specs = []
+while '--hard' in args:
+    i = args.index('--hard'); hard_specs.append(args[i + 1]); del args[i:i + 2]
 out_path = args[0]
 ei = args.index('--empty')
 dirs, empty_dirs = args[1:ei], args[ei + 1:]
-SIZES, STRIDE, STEP_TR, STEP_TE, MINAREA = (64, 96, 128, 160), 32, 5, 6, 600
+SIZES, STRIDE, STEP_TR, STEP_TE, MINAREA, STEP_HARD, MINE_TOP, ROUNDS = (64, 96, 128, 160), 32, 5, 6, 600, 2, 5, 2
 rng = np.random.default_rng(0)
+
+
+def key(d):
+    return os.path.basename(d.rstrip('/\\'))
 
 
 def load_raw(d):
@@ -100,7 +114,32 @@ def score(F, mu, sd, w, b):
     return ((F - mu) / sd) @ w + b
 
 
-data = {os.path.basename(d.rstrip('/\\')): load(d) for d in dirs}
+def mined(F, M):
+    """top MINE_TOP windows of one person-free frame (overlap < 0.3) -> their feature rows"""
+    s = score(F, *M); out = []
+    for i in np.argsort(-s):
+        if len(out) >= MINE_TOP:
+            break
+        if all(iou(WINS[i], WINS[j]) < 0.3 for j in out):
+            out.append(i)
+    return F[out]
+
+
+def train(keys, mining):
+    X = np.concatenate([S[k][0] for k in keys]); y = np.concatenate([S[k][1] for k in keys])
+    M = fit(X, y)
+    HF = [F for k in keys for F in HARDF[k][::STEP_HARD]]
+    if mining and HF:
+        extra = []
+        for _ in range(ROUNDS):
+            extra += [mined(F, M) for F in HF]
+            E = np.concatenate(extra)
+            M = fit(np.concatenate([X, E]), np.r_[y, np.zeros(len(E), int)])
+    best = [score(F, *M).max() for F in EF] + [score(F, *M).max() for k in keys for F in HARDF[k]]
+    return M, float(np.quantile(best, 0.95)), np.array(best)
+
+
+data = {key(d): load(d) for d in dirs}
 S = {k: samples(*v) for k, v in data.items()}
 print({k: (int(v[1].sum()), int((1 - v[1]).sum())) for k, v in S.items()}, flush=True)
 WINS = windows(480, 640, SIZES, STRIDE)
@@ -108,36 +147,44 @@ EF = []
 for d in empty_dirs:
     raw = load_raw(d)
     EF += [features(raw[f], WINS) for f in range(0, len(raw), 3)]
-print('empty frames', len(EF), flush=True)
+hard = {k: [f for f in v[2] if f not in v[1]] for k, v in data.items()}   # labelled frames without any GT box
+for h in hard_specs:
+    p, r = h.rsplit(':', 1); a, b = [int(t) for t in r.split('-')]
+    hard[key(p)] = sorted(set(hard[key(p)]) | set(range(a, b + 1)))
+HARDF = {k: [features(data[k][0][f], WINS) for f in hard[k] if f < len(data[k][0])] for k in data}
+print('empty frames', len(EF), 'person-free frames', {k: len(v) for k, v in HARDF.items()}, flush=True)
 rep = {}
 for test in data:
-    X = np.concatenate([S[k][0] for k in S if k != test]); y = np.concatenate([S[k][1] for k in S if k != test])
-    mu, sd, w, b = fit(X, y)
-    thr_f = float(np.quantile([score(F, mu, sd, w, b).max() for F in EF], 0.95))
-    raw, gt, frames = data[test]
-    R = []
-    for f in frames[::STEP_TE]:
-        if f not in gt:
-            continue
-        s_ = score(features(raw[f], WINS), mu, sd, w, b)
-        on = np.array([any(p[0] <= (q[0] + q[2]) / 2 <= p[2] and p[1] <= (q[1] + q[3]) / 2 <= p[3] for p in gt[f]) for q in WINS])
-        off = np.array([all(iou(q, p) < 0.05 for p in gt[f]) for q in WINS])
-        i = int(np.argmax(s_))
-        R.append(dict(a=bool(on[i] and s_[i] >= thr_f), b=bool(on.any() and s_[on].max() >= thr_f), c=bool(off.any() and s_[off].max() >= thr_f)))
-    rep[test] = dict(frames=len(R), threshold_this_fold=round(thr_f, 3),
-                     best_window_on_person_and_proposed=round(float(np.mean([r['a'] for r in R])), 3),
-                     some_person_window_passes=round(float(np.mean([r['b'] for r in R])), 3),
-                     off_person_window_passes=round(float(np.mean([r['c'] for r in R])), 3))
-    print(test, json.dumps(rep[test]), flush=True)
-X = np.concatenate([S[k][0] for k in S]); y = np.concatenate([S[k][1] for k in S])
-mu, sd, w, b = fit(X, y)
-eb = np.array([score(F, mu, sd, w, b).max() for F in EF])
-thr = float(np.quantile(eb, 0.95))
+    rep[test] = {}
+    for mode in ((False, True) if MINING else (False,)):
+        M, thr_f, _ = train([k for k in data if k != test], mode)
+        raw, gt, frames = data[test]
+        R = []
+        for f in frames[::STEP_TE]:
+            if f not in gt:
+                continue
+            s_ = score(features(raw[f], WINS), *M)
+            on = np.array([any(p[0] <= (q[0] + q[2]) / 2 <= p[2] and p[1] <= (q[1] + q[3]) / 2 <= p[3] for p in gt[f]) for q in WINS])
+            off = np.array([all(iou(q, p) < 0.05 for p in gt[f]) for q in WINS])
+            i = int(np.argmax(s_))
+            R.append(dict(a=bool(on[i] and s_[i] >= thr_f), b=bool(on.any() and s_[on].max() >= thr_f), c=bool(off.any() and s_[off].max() >= thr_f)))
+        r_ = dict(frames=len(R), threshold_this_fold=round(thr_f, 3),
+                  best_window_on_person_and_proposed=round(float(np.mean([r['a'] for r in R])), 3),
+                  some_person_window_passes=round(float(np.mean([r['b'] for r in R])), 3),
+                  off_person_window_passes=round(float(np.mean([r['c'] for r in R])), 3))
+        if HARDF[test]:
+            r_['person_free_frames'] = len(HARDF[test])
+            r_['person_free_with_proposal'] = round(float(np.mean([score(F, *M).max() >= thr_f for F in HARDF[test]])), 3)
+        rep[test]['mined' if mode else 'plain'] = r_
+        print(test, 'mined' if mode else 'plain', json.dumps(r_), flush=True)
+M, thr, eb = train(list(data), MINING)
+mu, sd, w, b = M
 model = dict(decision='absolute',
              note='spatial-spectrum people proposals; features: src/detect/spec_proposals.py features() (128 log spectrum shares in 16 rings x 8 orientations of the window resized to 64x64, + warmth z)',
-             trained_on=list(data), samples=dict(person=int(y.sum()), not_person=int((1 - y).sum())),
+             trained_on=list(data), hard_negative_mining=MINING, person_free_frames={k: len(v) for k, v in HARDF.items()},
+             samples=dict(person=sum(int(v[1].sum()) for v in S.values()), not_person=sum(int((1 - v[1]).sum()) for v in S.values())),
              mu=[round(float(v), 6) for v in mu], sd=[round(float(v), 6) for v in sd], w=[round(float(v), 6) for v in w], b=round(float(b), 6),
-             threshold=round(thr, 4), threshold_rule='95th percentile of the best-window score over %d empty-scene frames (<= 5 %% of empty frames get a proposal)' % len(eb),
+             threshold=round(thr, 4), threshold_rule='95th percentile of the best-window score over %d empty-scene + person-free frames (<= 5 %% of them get a proposal)' % len(eb),
              empty_best_quantiles={str(q): round(float(np.quantile(eb, q)), 3) for q in (0.5, 0.9, 0.95, 0.99)},
              sizes=list(SIZES), stride=STRIDE, top=1, held_out=rep)
 json.dump(model, open(out_path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
