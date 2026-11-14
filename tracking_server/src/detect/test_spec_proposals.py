@@ -74,7 +74,17 @@ class SpecProposalTest(unittest.TestCase):
         self.assertGreater(sp.PROP['runs'], runs)
         self.assertEqual(sp.PROP['frame_t'], 2.0)
         self.assertTrue(sp.PROP['boxes'])
-        self.assertEqual(set(sp.state()), {'show', 'ms', 'runs', 'n', 'n_missed', 'missed_total', 'errors', 'last_error'})
+        self.assertEqual(set(sp.state()), {'show', 'ms', 'runs', 'n', 'n_missed', 'missed_total', 'errors', 'last_error', 'log_on', 'log_frames'})
+
+    def test_log(self):
+        import os, json, tempfile
+        sp.LOG['rows'] = []
+        sp.log_frame(_scene(), [(1, 2, 30, 40, 0.12)], [(5, 6, 50, 60)])
+        self.assertEqual(len(sp.LOG['rows'][0]['sig']), 12 * 16)
+        path = os.path.join(tempfile.mkdtemp(), 'log.json')
+        self.assertEqual(sp.log_write(path), 1)
+        self.assertEqual(json.load(open(path))['rows'][0]['dets'], [[1.0, 2.0, 30.0, 40.0, 0.12]])
+        self.assertEqual(sp.LOG['rows'], [])
 
     def test_preview_draws_proposals(self):
         try:

@@ -37,6 +37,7 @@ except ImportError:
 _HANN = np.outer(np.hanning(SZ), np.hanning(SZ)).astype(np.float32)
 MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'spec_proposals_model.json')
 
+LOG = dict(on=False, rows=[])   # 11-14 research log (src/web/page_handler.py, /rules/set?prop_log=1|0)
 PROP = dict(show=False, boxes=[], boxes_t=0.0, frame_t=None, ms=None, runs=0, errors=0, last_error='')   # read by the page / preview
 
 
@@ -227,9 +228,23 @@ def submit(frame_t, raw, people):
     _PROPOSER[0].submit(frame_t, raw, people)
 
 
+def log_frame(raw, dets, tracks):
+    """raw: 16-bit frame (real coordinates); dets: [(x0, y0, x1, y1, score)] every person detection; tracks: [(x0, y0, x1, y1)]"""
+    if len(LOG['rows']) < 20000:
+        LOG['rows'].append(dict(sig=raw[::40, ::40].astype(int).ravel().tolist(), dets=[[round(float(v), 1) for v in d[:4]] + [round(float(d[4]), 4)] for d in dets],
+                                tracks=[[round(float(v), 1) for v in t[:4]] for t in tracks]))
+
+
+def log_write(path):
+    rows, LOG['rows'] = LOG['rows'], []
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(dict(frames=len(rows), rows=rows), fh)
+    return len(rows)
+
+
 def state():
     return dict(show=PROP['show'], ms=PROP['ms'], runs=PROP['runs'], n=len(PROP['boxes']), n_missed=sum(1 for b in PROP['boxes'] if not b[5]),
-                missed_total=PROP.get('missed', 0), errors=PROP['errors'], last_error=PROP['last_error'])
+                missed_total=PROP.get('missed', 0), errors=PROP['errors'], last_error=PROP['last_error'], log_on=LOG['on'], log_frames=len(LOG['rows']))
 
 
 if __name__ == '__main__':   # timing: python -m src.detect.spec_proposals [frames]

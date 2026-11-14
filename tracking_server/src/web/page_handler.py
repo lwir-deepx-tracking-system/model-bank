@@ -13,7 +13,7 @@ from ..gimbal.gimbal_link import gb_sample
 from ..gimbal import live_tracks
 from ..track.position_memory import POSP
 from ..detect import spec_proposals   # 11-14: people proposals from the spatial spectrum (display only)
-from ..track.stabilizer import STAB, stab_rows_real
+from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
 from . import system_buttons
 from . import preview_worker
@@ -200,6 +200,11 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         if has_gimbal_ and len(gb_people_) < 60:
             x1_, y1_, x2_, y2_ = map(float, r_[:4])
             gb_people_.append((int(r_[4]), x1_, y1_ - 16, x2_, y2_ - 16, float(r_[5])))
+    if spec_proposals.LOG['on'] and raw_valid_ and not rep_ and detections is not None:   # 11-14 research log: every person detection (all scores) + tracker people
+        dl_ = stab_people_real([(0, float(d_[0]), float(d_[1]) - 16.0, float(d_[2]), float(d_[3]) - 16.0, float(d_[4])) for d_ in detections if int(d_[5]) == 0],
+                               sC_, float(APP.LIVE_W), float(APP.LIVE_H))
+        spec_proposals.log_frame(rq_, [d_[1:] for d_ in dl_],
+                                 [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0) for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0])
     if spec_proposals.PROP['show'] and raw_valid_ and not rep_:   # 11-14 (user): every frame; the detector's people (real coordinates, like the raw) mark what it already has
         spec_proposals.submit(t_in, rq_, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0)
                                           for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0])

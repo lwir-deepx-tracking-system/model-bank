@@ -198,6 +198,12 @@ def rules_request(q_):
         from ..detect import spec_proposals
         spec_proposals.PROP['show'] = q_['prop_show'][0] in ('1', 'true', 'on')
         if not spec_proposals.PROP['show']: spec_proposals.PROP['boxes'] = []
+    if 'prop_log' in q_:   # 11-14 research log of the detector's weak boxes (spec_proposals.log_frame); 0 writes tracking_server/spec_prop_log.json
+        from ..detect import spec_proposals
+        on_ = q_['prop_log'][0] in ('1', 'true', 'on')
+        if on_: spec_proposals.LOG['rows'] = []
+        elif spec_proposals.LOG['on']: spec_proposals.log_write(str(HERE / 'spec_prop_log.json'))
+        spec_proposals.LOG['on'] = on_
     if cm_ is not None:   # read once per frame by the frame loop (confirm_apply); the tracker itself is only touched there
         if APP.CONFIRM is None: APP.CONFIRM = ConfirmByTime(cm_)
         else: APP.CONFIRM.set_ms(cm_)
