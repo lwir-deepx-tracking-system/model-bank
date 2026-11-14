@@ -1,6 +1,6 @@
 """Train the spatial-spectrum people-proposal model used by src/detect/spec_proposals.py (same feature code).
 
-Usage: python train_spec_proposals.py <out model json> <GT MEASURE dir> ... --empty <empty-scene dir> ... [--hard <dir>:<first>-<last> ...] [--no-mining]
+Usage: python train_spec_proposals.py <out model json> <GT MEASURE dir> ... --empty <empty-scene dir> ... [--hard <dir>:<first>-<last> ...] [--no-mining] [--extra]
   GT MEASURE dir: frames.raw.gz + frames.json (16-bit), gt_mot.txt (hand GT, frame 1 = raw 0), optional labelled_frames.txt
   empty-scene dir: frames.raw.gz + frames.json of frames with nobody in them (used for the threshold only)
   --hard: frames (0-based raw index) of a GT recording checked by eye to hold nobody (e.g. the camera turned away).
@@ -31,7 +31,14 @@ from src.detect.spec_proposals import features, windows   # noqa: E402
 
 args = sys.argv[1:]
 MINING = '--no-mining' not in args
-args = [a for a in args if a != '--no-mining']
+EXTRA = '--extra' in args   # 11-14: + 3 gain-robust heat cues (features(extra=True))
+args = [a for a in args if a not in ('--no-mining', '--extra')]
+
+
+def feat(im, boxes):
+    return features(im, boxes, EXTRA)
+
+
 hard_specs = []
 while '--hard' in args:
     i = args.index('--hard'); hard_specs.append(args[i + 1]); del args[i:i + 2]
@@ -97,7 +104,7 @@ def samples(raw, gt, frames):
             if all(iou((x0, y0, x0 + z, y0 + z), b) < 0.05 for b in gt[f]):
                 neg.append((x0, y0, x0 + z, y0 + z))
         if pos + neg:
-            X.append(features(im, pos + neg)); y += [1] * len(pos) + [0] * len(neg)
+            X.append(feat(im, pos + neg)); y += [1] * len(pos) + [0] * len(neg)
     return np.concatenate(X), np.array(y)
 
 
@@ -146,12 +153,12 @@ WINS = windows(480, 640, SIZES, STRIDE)
 EF = []
 for d in empty_dirs:
     raw = load_raw(d)
-    EF += [features(raw[f], WINS) for f in range(0, len(raw), 3)]
+    EF += [feat(raw[f], WINS) for f in range(0, len(raw), 3)]
 hard = {k: [f for f in v[2] if f not in v[1]] for k, v in data.items()}   # labelled frames without any GT box
 for h in hard_specs:
     p, r = h.rsplit(':', 1); a, b = [int(t) for t in r.split('-')]
     hard[key(p)] = sorted(set(hard[key(p)]) | set(range(a, b + 1)))
-HARDF = {k: [features(data[k][0][f], WINS) for f in hard[k] if f < len(data[k][0])] for k in data}
+HARDF = {k: [feat(data[k][0][f], WINS) for f in hard[k] if f < len(data[k][0])] for k in data}
 print('empty frames', len(EF), 'person-free frames', {k: len(v) for k, v in HARDF.items()}, flush=True)
 rep = {}
 for test in data:
@@ -163,7 +170,7 @@ for test in data:
         for f in frames[::STEP_TE]:
             if f not in gt:
                 continue
-            s_ = score(features(raw[f], WINS), *M)
+            s_ = score(feat(raw[f], WINS), *M)
             on = np.array([any(p[0] <= (q[0] + q[2]) / 2 <= p[2] and p[1] <= (q[1] + q[3]) / 2 <= p[3] for p in gt[f]) for q in WINS])
             off = np.array([all(iou(q, p) < 0.05 for p in gt[f]) for q in WINS])
             i = int(np.argmax(s_))
@@ -181,7 +188,7 @@ M, thr, eb = train(list(data), MINING)
 mu, sd, w, b = M
 model = dict(decision='absolute',
              note='spatial-spectrum people proposals; features: src/detect/spec_proposals.py features() (128 log spectrum shares in 16 rings x 8 orientations of the window resized to 64x64, + warmth z)',
-             trained_on=list(data), hard_negative_mining=MINING, person_free_frames={k: len(v) for k, v in HARDF.items()},
+             trained_on=list(data), hard_negative_mining=MINING, extra_features=EXTRA, person_free_frames={k: len(v) for k, v in HARDF.items()},
              samples=dict(person=sum(int(v[1].sum()) for v in S.values()), not_person=sum(int((1 - v[1]).sum()) for v in S.values())),
              mu=[round(float(v), 6) for v in mu], sd=[round(float(v), 6) for v in sd], w=[round(float(v), 6) for v in w], b=round(float(b), 6),
              threshold=round(thr, 4), threshold_rule='95th percentile of the best-window score over %d empty-scene + person-free frames (<= 5 %% of them get a proposal)' % len(eb),

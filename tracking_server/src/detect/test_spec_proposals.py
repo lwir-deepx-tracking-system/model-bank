@@ -52,19 +52,29 @@ class SpecProposalTest(unittest.TestCase):
         self.assertFalse(sp._same_column((100, 40, 196, 136), (300, 140, 460, 300)))
         self.assertEqual(sp._inside((10, 10, 74, 74), (0, 0, 160, 160)), 1.0)
 
+    def test_steady_and_mark(self):
+        a, b = (100, 100, 196, 196, 4.0), (400, 50, 560, 210, 4.2)
+        self.assertEqual(sp.steady([], [a]), [])   # seen once: not shown yet
+        self.assertEqual(sp.steady([[a]], [(110, 104, 206, 200, 4.1)]), [(110, 104, 206, 200, 4.1)])   # again, moved a little
+        self.assertEqual(sp.steady([[a], []], [b]), [])
+        m = sp.mark([a, b], [(90, 60, 220, 400)])
+        self.assertEqual([x[5] for x in m], [True, False])   # on the detected person / missed
+
     def test_worker_fills_prop(self):
         p = sp.Proposer()
         p.model.thr = -1e9
         runs = sp.PROP['runs']
-        p.submit(1.0, _scene(), [])
+        for t in (1.0, 2.0):   # a place needs two passes
+            p.submit(t, _scene(), [])
+            time.sleep(0.05)
         for _ in range(100):
-            if sp.PROP['runs'] > runs:
+            if sp.PROP['runs'] > runs + 1:
                 break
             time.sleep(0.05)
         self.assertGreater(sp.PROP['runs'], runs)
-        self.assertEqual(sp.PROP['frame_t'], 1.0)
+        self.assertEqual(sp.PROP['frame_t'], 2.0)
         self.assertTrue(sp.PROP['boxes'])
-        self.assertEqual(set(sp.state()), {'show', 'ms', 'runs', 'n', 'errors', 'last_error'})
+        self.assertEqual(set(sp.state()), {'show', 'ms', 'runs', 'n', 'n_missed', 'missed_total', 'errors', 'last_error'})
 
     def test_preview_draws_proposals(self):
         try:
@@ -75,7 +85,7 @@ class SpecProposalTest(unittest.TestCase):
         base = dict(frame_t=0.0, gray=np.zeros((480, 640), np.uint8), scale=1.0, boxes=(), gt_boxes=(), predictions=(),
                     top_text='', replay=False, gimbal_text='', gimbal_color=(0, 0, 0))
         a = pw.render_preview(cv2, pw.PreviewFrame(**base))
-        b = pw.render_preview(cv2, pw.PreviewFrame(**base, proposals=(((100, 100), (200, 200), 2.0),)))
+        b = pw.render_preview(cv2, pw.PreviewFrame(**base, proposals=(((100, 100), (200, 200), 2.0, False), ((300, 100), (400, 200), 4.0, True))))
         self.assertFalse(np.array_equal(np.asarray(a), np.asarray(b)))
 
 

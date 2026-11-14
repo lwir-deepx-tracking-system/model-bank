@@ -73,8 +73,8 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
     SP_ = spec_proposals.PROP
     if SP_['show'] and SP_['boxes'] and time.monotonic() - SP_['boxes_t'] < 1.0:   # 11-14: raw = real coordinates; stabilized picture = real + c
         cx_, cy_ = (sC_ or (0.0, 0.0))[:2]
-        proposals_ = tuple(((int((x0 + cx_) * sc_), int((y0 + cy_) * sc_)), (int((x1 + cx_) * sc_), int((y1 + cy_) * sc_)), float(s_))
-                           for x0, y0, x1, y1, s_ in SP_['boxes'])
+        proposals_ = tuple(((int((x0 + cx_) * sc_), int((y0 + cy_) * sc_)), (int((x1 + cx_) * sc_), int((y1 + cy_) * sc_)), float(s_), bool(cov_))
+                           for x0, y0, x1, y1, s_, cov_ in SP_['boxes'])
     return preview_worker.PreviewFrame(t_in, gray_, sc_, tuple(draw_), gt_boxes,
                                        tuple(predictions), txt_, rp_ is not None, gtxt_, gc_,
                                        click_people, click_ticket, replay_position, proposals_)
@@ -200,8 +200,9 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         if has_gimbal_ and len(gb_people_) < 60:
             x1_, y1_, x2_, y2_ = map(float, r_[:4])
             gb_people_.append((int(r_[4]), x1_, y1_ - 16, x2_, y2_ - 16, float(r_[5])))
-    if spec_proposals.PROP['show'] and raw_valid_ and not rep_:   # 11-14 (user): every frame, whatever the detector found -> what the spectrum finds is shown
-        spec_proposals.submit(t_in, rq_, [])
+    if spec_proposals.PROP['show'] and raw_valid_ and not rep_:   # 11-14 (user): every frame; the detector's people (real coordinates, like the raw) mark what it already has
+        spec_proposals.submit(t_in, rq_, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0)
+                                          for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0])
     healthy_ = False
     if has_gimbal_:
         source_ = ('replay',) if replay_link.frame_blocked(t_in) else live_tracks.current_source()

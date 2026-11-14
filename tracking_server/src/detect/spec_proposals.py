@@ -66,14 +66,28 @@ def spectra(crops):
     return np.log(v / (v.sum(1, keepdims=True) + 1e-12) + 1e-9)
 
 
-def features(frame, boxes):
+SAT = 65000   # the camera's 16-bit values clip at 65280 (hot faces in a close, gain-raised picture)
+
+
+def features(frame, boxes, extra=False):
     """frame: 2-D array (16-bit raw or any linear picture); boxes [(x0, y0, x1, y1)] square windows ->
-    [n, 129]: 128 spectrum bins + warmth (window mean minus frame median, over frame std)."""
+    [n, 129]: 128 spectrum bins + warmth (window mean minus frame median, over frame std).
+    extra (11-14): + 3 heat cues that survive the camera's automatic gain (the raw values are not temperatures: the
+    same room reads ~15000 or ~35000 depending on the recording): window 90th / 99th percentile placed between the frame
+    median (0) and the frame's 99.5th percentile (1), and the share of clipped pixels -> [n, 132]."""
     f = frame.astype(np.float32)
     med, sd = float(np.median(f)), float(f.std()) + 1e-6
     crops = np.stack([resize64(f[y0:y1, x0:x1]) for x0, y0, x1, y1 in boxes])
     warm = (crops.mean((1, 2)) - med) / sd
-    return np.c_[spectra(crops), warm]
+    if not extra:
+        return np.c_[spectra(crops), warm]
+    top = float(np.percentile(f, 99.5)) - med + 1e-6
+    flat = crops.reshape(len(crops), -1)
+    q = np.partition(flat, (int(0.90 * flat.shape[1]), int(0.99 * flat.shape[1])), axis=1)
+    p90 = (q[:, int(0.90 * flat.shape[1])] - med) / top
+    p99 = (q[:, int(0.99 * flat.shape[1])] - med) / top
+    sat = (flat >= SAT).mean(1)
+    return np.c_[spectra(crops), warm, p90, p99, sat]
 
 
 def windows(h, w, sizes, stride):
@@ -111,6 +125,7 @@ class Model:
         self.w, self.b, self.thr = np.array(m['w'], np.float32), float(m['b']), float(m['threshold'])
         self.sizes, self.stride, self.top = tuple(m['sizes']), int(m['stride']), int(m.get('top', 3))
         self.meta = {k: m[k] for k in ('trained_on', 'note', 'threshold_rule') if k in m}
+        self.extra = bool(m.get('extra_features'))   # 11-14: model trained with features(extra=True)
         self.relative = m.get('decision') == 'within_frame_z'   # threshold on (s - median) / (1.4826 MAD) inside the frame
 
     def score(self, F):
@@ -123,7 +138,7 @@ class Model:
                 if not any(_iou(b, p) > 0.2 or (p[0] <= (b[0] + b[2]) / 2 <= p[2] and p[1] <= (b[1] + b[3]) / 2 <= p[3]) for p in people)]
         if not wins:
             return []
-        s = self.score(features(frame, wins))
+        s = self.score(features(frame, wins, self.extra))
         if self.relative:
             s = (s - np.median(s)) / (1.4826 * np.median(np.abs(s - np.median(s))) + 1e-9)
         out = []
@@ -135,11 +150,43 @@ class Model:
         return out
 
 
+KEEP_N, KEEP_K = 3, 2   # 11-14: a place is shown when it was found in >= 2 of the last 3 passes (one pass ~0.2-0.3 s on the device)
+
+
+def _same_place(a, b):
+    """the same place in two passes ~0.25 s apart (people move a little)"""
+    if _inside(a, b) >= 0.3 or _same_column(a, b):
+        return True
+    z = min(a[2] - a[0], b[2] - b[0])
+    return abs((a[0] + a[2]) - (b[0] + b[2])) / 2 <= 0.75 * z and abs((a[1] + a[3]) - (b[1] + b[3])) / 2 <= 0.75 * z
+
+
+def _covered(b, people):
+    """the window is on a person the detector reported: its centre lies in a person box or it lies mostly inside one"""
+    cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+    return any((p[0] <= cx <= p[2] and p[1] <= cy <= p[3]) or _inside(b, p) >= 0.5 for p in people)
+
+
+def steady(history, out):
+    """out: this pass's [(x0, y0, x1, y1, score)]; history: earlier passes (newest last) -> the ones also found in
+    enough earlier passes (KEEP_K counting this one)"""
+    return [o for o in out if 1 + sum(any(_same_place(o[:4], h[:4]) for h in past) for past in history[-(KEEP_N - 1):]) >= KEEP_K]
+
+
+def mark(out, people):
+    """-> [(x0, y0, x1, y1, score, covered)]: covered = on a person the detector already reported"""
+    return [(*o[:5], _covered(o[:4], people)) for o in out]
+
+
 class Proposer:
-    """One background thread, one slot: submit() replaces a waiting frame; results land in PROP (picture coordinates)."""
+    """One background thread, one slot: submit() replaces a waiting frame; results land in PROP (picture coordinates).
+    11-14 (user: an aid that tells what the detector missed): every pass looks at the whole frame; a place is kept only
+    when found again in the next passes (steady), and each kept place says whether the detector has a person there
+    (people = the detector's person boxes of the same frame, raw/real coordinates)."""
     def __init__(self, model=None):
         self.model = model or Model()
         self._slot, self._ev, self._lock = None, threading.Event(), threading.Lock()
+        self._hist = []
         self._th = threading.Thread(target=self._run, name='spec-proposals', daemon=True)
         self._th.start()
 
@@ -157,8 +204,11 @@ class Proposer:
                 continue
             t0 = time.perf_counter()
             try:
-                boxes = self.model.propose(job[1], job[2])
-                PROP.update(boxes=boxes, boxes_t=time.monotonic(), frame_t=job[0], ms=round((time.perf_counter() - t0) * 1e3, 1), runs=PROP['runs'] + 1)
+                out = self.model.propose(job[1])
+                boxes = mark(steady(self._hist, out), job[2])
+                self._hist = (self._hist + [out])[-(KEEP_N - 1):]
+                PROP.update(boxes=boxes, boxes_t=time.monotonic(), frame_t=job[0], ms=round((time.perf_counter() - t0) * 1e3, 1), runs=PROP['runs'] + 1,
+                            missed=PROP.get('missed', 0) + sum(1 for b in boxes if not b[5]))
             except Exception as e:   # never let the display feature hurt the server
                 PROP.update(errors=PROP['errors'] + 1, last_error=repr(e)[:200])
 
@@ -178,7 +228,8 @@ def submit(frame_t, raw, people):
 
 
 def state():
-    return dict(show=PROP['show'], ms=PROP['ms'], runs=PROP['runs'], n=len(PROP['boxes']), errors=PROP['errors'], last_error=PROP['last_error'])
+    return dict(show=PROP['show'], ms=PROP['ms'], runs=PROP['runs'], n=len(PROP['boxes']), n_missed=sum(1 for b in PROP['boxes'] if not b[5]),
+                missed_total=PROP.get('missed', 0), errors=PROP['errors'], last_error=PROP['last_error'])
 
 
 if __name__ == '__main__':   # timing: python -m src.detect.spec_proposals [frames]
