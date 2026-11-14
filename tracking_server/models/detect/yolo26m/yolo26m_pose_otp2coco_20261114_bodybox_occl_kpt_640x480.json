@@ -1,5 +1,0 @@
-{
- "display_name": "YOLO26m-pose_fine-tuning_(OTP2+COCO)_20261114_bodybox_occl_kpt 640x480",
- "sha256": "2a4210493f573479236fd1796130a7f4583e13b0eb5cf6120aefcdb08b4afd06",
- "note": "OTP2+COCO 근거리 가림 판(yolo26m_pose_otp2coco_20261114_bodybox_occl_640x480)과 같은 가중치에 관절 출력 3개(kpt_s8/16/32, 17개 x·y·보임 logit)를 더한 파일. 서버(11-14 이후)가 NMS로 남은 사람 상자의 관절을 풀어 'GRU/Mamba 위치 기억 + 관절'에 넘긴다. 상자는 몸 네모(머리 꼭대기~골반). 조준 LWIR_GIMBAL_AIM_Y=0.37. 장치 속도·INT8 관절 정확도 미측정."
-}

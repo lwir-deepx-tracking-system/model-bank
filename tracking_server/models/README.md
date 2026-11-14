@@ -66,24 +66,26 @@
   - 학습: YOLO26m_fine-tuning_(실외)_20261110_patch: 우리 카메라 실외 영상만 + 사람 아닌 조각 붙이기, 3번째 epoch
   - 보정 16장
   - 상태: 시험용. 실외 실시간 시험을 기다리는 중
-- **YOLO26m-pose_fine-tuning_(OTP2+COCO)_20261114_bodybox_occl 640x480**
-  - 파일 `yolo26m/yolo26m_pose_otp2coco_20261114_bodybox_occl_640x480.dxnn`
+- **YOLO26m-pose_fine-tuning_(OTP2+COCO+MOT17)_20261114_bodybox_occl 640x480**
+  - 파일 `yolo26m/yolo26m_pose_otp2cocomot_20261114_bodybox_occl_640x480.dxnn`
   - 입력 `[1,480,640,3]`, 출력 분할 출력 6개 (종류 16칸 중 0번만 사람 점수, 나머지 15칸은 항상 0에 가까움)
   - **사람 상자가 보이는 부분이 아니라 몸 네모(머리 꼭대기~골반)** 입니다. 몸이 잘리거나 가려져도 몸 전체의 네모를 내며, 화면 밖·가리개 뒤까지 이어질 수 있습니다.
-  - 학습 순서: Ultralytics yolo26m-pose(COCO 자세) → OpenThermalPose2(공개 열화상 자세)로 몸 네모 학습 30 epoch(부분 확대 자르기 50%) → 물체 가림·열화상 화질 증강 17 epoch → **이 판: COCO 사람 자세 사진 30,000장(흑백)을 더해 14 epoch, 13번째 선택**. COCO는 실제로 가려진 관절에 "위치 있고 안 보임" 표시가 있어 실제 가림을 배웁니다.
+  - 학습 순서: Ultralytics yolo26m-pose(COCO 자세) → OpenThermalPose2(공개 열화상 자세)로 몸 네모 학습 30 epoch(부분 확대 자르기 50%) → 물체 가림·열화상 화질 증강 17 epoch → COCO 사람 자세 사진 30,000장(흑백)을 더해 14 epoch(OTP2 0.850) → **이 판: MOT17 흑백(사람끼리 겹친 거리 영상 2,536장, 사람 7.1만 명)을 더해 12 epoch 중 가장 좋은 것**. MOT17은 가려져도 몸 전체 위치가 라벨돼 있어, 모든 사람에 관절 17개를 달았습니다(보이는 관절 = 공개 자세 모델, 가려진 관절 = 몸 틀, "위치 있고 안 보임").
   - 증강: 부분 확대 자르기 50%(팔만·얼굴만 남김), 물체 가림 50%(다른 그림의 실제 배경 조각, 절반은 20-50%, 절반은 60-90%를 덮어 머리 꼭대기·어깨만 남김), 열화상 화질(초점 흐림 30%, 움직임 흐림 15%, 저해상 15%, 대비·밝기·감마 50%, 센서 잡음 30%, 세로줄 잡음 10%)
-  - 공개 열화상 검증(OTP2 val, PC, INT8 아님): 자세 mAP50-95 **0.850** (앞 단계 0.815 → 0.830 → 0.850)
+  - 공개 열화상 검증(OTP2 val, PC, INT8 아님): 자세 mAP50-95 **0.848** (앞 단계 0.815 → 0.830 → 0.850 → 0.848)
+  - 가림 확인(학습 안 쓴 MOT17-09·11 흑백, 5,400명, 몸 네모 IoU 0.5): 찾은 비율 몸이 10-30% 보임 33.7%→**37.5%**, 30-50% 43.6%→**48.7%**, 50-80% 71.8%→73.8%, 80% 이상 82.5%→84.1% (앞 판 → 이 판)
+  - 우리 실내 열화상 녹화(보이는 부분 라벨이라 대충 비교): 찾은 비율 39%→46%, 44%→54%, 앉은 사람 78%→78%
   - 모니터 뒤로 머리만 보이는 실제 화면 1장(사용자 제공)에서는 아직 못 찾음. 우리 카메라 가림 장면 라벨이 필요합니다.
   - 조준: 얼굴과 가슴 사이를 가운데에 두려면 `LWIR_GIMBAL_AIM_Y=0.37` (몸 네모 위에서 37%)
-  - AdamW lr 0.0002, 보정 97장(우리 카메라), ema, opt 1. 종류 16칸을 채우는 작은 부분만 파일 안의 CPU 부분, 나머지는 NPU. 만든 스크립트 `build_scripts/yolo26m_pose_otp2_bodybox_build/` (coco_prep.py, otp2_coco.yaml 포함)
-  - 이전 두 판(11-13 bodybox, bodybox_occl)은 이 판으로 대체되어 지웠습니다(git 기록에는 남아 있음).
+  - AdamW lr 0.0002, 보정 97장(우리 카메라), ema, opt 1. 종류 16칸을 채우는 작은 부분만 파일 안의 CPU 부분, 나머지는 NPU. 만든 스크립트 `build_scripts/yolo26m_pose_otp2_bodybox_build/` (coco_prep.py, mot17_det_prep.py, otp2_coco_mot17.yaml, eval_mot17_check.py 포함)
+  - 이전 판들(11-13 bodybox·bodybox_occl, 11-14 OTP2+COCO 두 파일)은 이 판으로 대체되어 지웠습니다(git 기록에는 남아 있음).
   - 상태: 근거리·가림 시험용. 장치 INT8 정확도와 실카메라 성능 미측정
-- **YOLO26m-pose_fine-tuning_(OTP2+COCO)_20261114_bodybox_occl_kpt 640x480 [관절]**
-  - 파일 `yolo26m/yolo26m_pose_otp2coco_20261114_bodybox_occl_kpt_640x480.dxnn`
-  - 바로 위 OTP2+COCO 판과 같은 가중치(13번째 epoch). 출력 9개: 상자·종류 6개(같음) + 관절 `kpt_s8/16/32` `[1,51,H/s,W/s]` (Pose26 의 관절 conv 그대로, 17개 × x·y·보임 logit)
+- **YOLO26m-pose_fine-tuning_(OTP2+COCO+MOT17)_20261114_bodybox_occl_kpt 640x480 [관절]**
+  - 파일 `yolo26m/yolo26m_pose_otp2cocomot_20261114_bodybox_occl_kpt_640x480.dxnn`
+  - 바로 위 OTP2+COCO+MOT17 판과 같은 가중치. 출력 9개: 상자·종류 6개(같음) + 관절 `kpt_s8/16/32` `[1,51,H/s,W/s]` (Pose26 의 관절 conv 그대로, 17개 × x·y·보임 logit)
   - 서버는 NMS 로 남은 사람 상자의 관절만 풀어(x = (값 + 열 + 0.5) × stride, 보임 = sigmoid) 관절 위치 기억(GRU/Mamba + 관절)에 넘깁니다(`src/detect/detect_frame.py` attach_kpts)
   - 11-14 이전 서버는 출력이 9개인 파일을 목록에 올리지 않습니다. 보정 97장, ema, opt 1. 만든 스크립트 `build_scripts/yolo26m_pose_otp2_bodybox_build/build_bodybox_kpt.py`
-  - 장치 NPU 확인(11-14, 실내 녹화 8장): 출력 9개 정상, 가장 가까운 사람의 보이는 관절 위치가 PC(ONNX, float)와 평균 0.7~1.3 px 차이, 한 장 24.8 ms(동기 실행, CPU 부분 포함)
+  - 장치 NPU 확인(11-14, 같은 구조의 앞 판, 실내 녹화 8장): 출력 9개 정상, 가장 가까운 사람의 보이는 관절 위치가 PC(ONNX, float)와 평균 0.7~1.3 px 차이, 한 장 24.8 ms(동기 실행, CPU 부분 포함)
   - 상태: 근거리·가림 시험용. 실카메라 추적 성능 미측정
 - **yolo26s_nmsfree_npu_640x640 [NMS-free]**
   - 파일 `yolo26s/yolo26s_nmsfree_npu_640x640.dxnn`
@@ -223,7 +225,7 @@ DXNN 이 아니라 가중치가 든 JSON / npz 이고, 서버가 장치 CPU 에�
   - 입력: 위 16개와 비슷한 상자 값 + 화면 가장자리까지 거리 + **관절 17개(위치·보임)**, 프레임당 68개. 출력: 15프레임 동안 보정 없는 Kalman 예측을 고치는 값
   - 학습: PoseTrack18 라벨(영상·사람 번호·관절, 좌표만 씀) 30 epoch. 증강: 빠른 움직임(프레임 절반), 시간 뒤집기, 좌우 뒤집기, 카메라 이동, 사라짐 합성(사라지기 전 0~6프레임 동안 가리개가 몸을 20→90% 덮으며 관절이 하나씩 사라짐, 3~15프레임 놓침)
   - 측정(PoseTrack18 val 중 고르는 데 안 쓴 절반, 오차/키): GRU 일반 0.119 · 사라짐 합성 0.181 · 실제 사라짐 0.678 / Mamba 0.121 · 0.184 · 0.720 / Kalman 0.150 · 0.231 · 0.717. 관절을 빼면 GRU 0.130 · 0.189 로 나빠짐. 은닉 크기 32·64·128 중 64 선택. 실제 사라짐은 23개뿐
-  - 상태: 11-14 서버 연결. 화면 이름 "GRU 위치 기억 + 관절", "Mamba 위치 기억 + 관절". 관절은 관절 출력이 있는 검출 파일(`yolo26m_pose_otp2coco_20261114_bodybox_occl_kpt_640x480`)에서 읽음. 서버 numpy 계산 = 학습 torch (GRU 3.6e-5, Mamba 4.1e-5 px, `src/track/parity_kpt_vs_torch.py`). 놓친 뒤 15프레임까지 고치고 그 뒤는 Kalman. 카메라 움직임은 경로에 적용. 장치·실카메라 미확인. 만든 코드 `track/build_scripts/pos_kpt_posetrack18_build/m5_kpt_motion.py`
+  - 상태: 11-14 서버 연결. 화면 이름 "GRU 위치 기억 + 관절", "Mamba 위치 기억 + 관절". 관절은 관절 출력이 있는 검출 파일(`yolo26m_pose_otp2cocomot_20261114_bodybox_occl_kpt_640x480`)에서 읽음. 서버 numpy 계산 = 학습 torch (GRU 3.6e-5, Mamba 4.1e-5 px, `src/track/parity_kpt_vs_torch.py`). 놓친 뒤 15프레임까지 고치고 그 뒤는 Kalman. 카메라 움직임은 경로에 적용. 장치·실카메라 미확인. 만든 코드 `track/build_scripts/pos_kpt_posetrack18_build/m5_kpt_motion.py`
 
 화면의 위치 기억 기본값은 학습 모델이 없는 "Kalman filter + 카메라 움직임 보정"입니다. 관절 없는 GRU·Mamba 판(`pos_gru`, `pos_mamba`)은 11-14 사용자 요청으로 지웠습니다(git 기록에는 남음).
 
@@ -260,7 +262,7 @@ DXNN 이 아니라 가중치가 든 JSON / npz 이고, 서버가 장치 CPU 에�
   - 상태: 시험용. **장치 INT8 정확도 미측정**. 마지막 단계만 파일 안의 CPU 부분
 - **RepVGG_fine-tuning_(OTP2)_20261113**
   - 파일 `reid/repvgg_ft_otp2_20261113_reid.dxnn` (내부 이름 `REPVGG_FT_OTP2_20261113`)
-  - 근거리 몸 네모 검출 모델(`yolo26m_pose_otp2coco_20261114_bodybox_occl_640x480`)과 함께 쓰는 외형 모델. 조각이 몸 네모(머리~골반)를 화면 안으로 자른 것이라, 화면 가장자리에서 잘리고 늘어난 조각과 물체에 가려진 조각으로 학습했습니다.
+  - 근거리 몸 네모 검출 모델(`yolo26m_pose_otp2cocomot_20261114_bodybox_occl_640x480`)과 함께 쓰는 외형 모델. 조각이 몸 네모(머리~골반)를 화면 안으로 자른 것이라, 화면 가장자리에서 잘리고 늘어난 조각과 물체에 가려진 조각으로 학습했습니다.
   - 학습: RepVGG_distillation_(TMOT,CAMEL)_20261103 에서 시작. OpenThermalPose2 실내 앉은 사람 부분의 실제 신원(사람+회차, 학습 200신원 3,563장)으로 batch-hard triplet, 원래 공개 조각에서는 원래 모델 값 유지(약하게). 3000 step.
   - PC 측정(INT8 아님): OpenThermalPose2 시험 60신원 1순위 정답 비율 몸 네모 72→89%, 잘림 18→27%, 가림 65→84%. 우리 실내 녹화 점수 몸 네모 0.79→0.81(검증)·0.92→0.92(시험), 잘림 0.72→0.75·0.78→0.87, 가림 0.75→0.79·0.88→0.84, 몸 전체 조각 0.81→0.79·0.95→0.93.
   - 몸 전체 조각에서는 조금 나빠지므로 예전 검출 모델과는 쓰지 않습니다. 번호 잇기 판정기는 원래 모델 점수로 맞춘 것이라 이 모델과의 결과는 확인되지 않았습니다. 시험용, 장치 INT8 정확도 미측정.

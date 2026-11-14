@@ -1,0 +1,5 @@
+{
+ "display_name": "YOLO26m-pose_fine-tuning_(OTP2+COCO+MOT17)_20261114_bodybox_occl_kpt 640x480",
+ "sha256": "8f97f3a1abc23fc26adf914efe277a3126556fa82953cc8ac742e94e51fd2db9",
+ "note": "위 OTP2+COCO+MOT17 판과 같은 가중치에 관절 출력 3개(kpt_s8/16/32)를 더한 파일. 서버(11-14 이후)가 NMS로 남은 사람의 관절을 풀어 \"GRU/Mamba 위치 기억 + 관절\"에 넘긴다. 장치 NPU 속도·관절 정확도는 D 판(같은 구조)에서 24.8 ms·약 1 px로 확인, 이 판은 미측정."
+}
