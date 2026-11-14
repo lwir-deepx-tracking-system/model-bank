@@ -141,6 +141,39 @@ if os.environ.get('FTT_AMP') == '1':
         return _to32(out)
     FT.FastTrackTr.forward = _amp_fwd
     print('NPU-TRAIN bf16 autocast on', flush=True)
+# 11-14 fixes after the ID check (ftt_id_check.py: id_words matched people worse than the nearest box centre, and worse after the 2nd epoch;
+# a code audit found the ID loss falls to ~0 for collapsed embeddings). Both are off unless asked for, so the run started earlier is unchanged.
+# FTT_ID_FIX=1: the circle loss on L2-normalised id_words (the tracker compares normalised features), standard margin m=0.25, gamma=64,
+#   no division by the feature size and detection count, times FTT_ID_W (default 0.05: 8 terms per step, ~30 each at the start).
+#   The official one used raw dot products, m=0.8 and /301 /N, so shrinking every embedding towards 0 already gave ~0 loss.
+if os.environ.get('FTT_ID_FIX') == '1':
+    import einops   # noqa: E402
+    from models import criterion as CR   # noqa: E402
+    _ID_W = float(os.environ.get('FTT_ID_W', '0.05')); _circle = CR.CircleLoss(m=0.25, gamma=64)
+
+    def _id_forward(self, outputs, targets, emb_reid):
+        f = F.normalize(einops.rearrange(outputs, 'b n c -> (b n) c').float(), dim=1); t = targets.squeeze(0)
+        sp, sn, _ = CR.convert_label_to_similarity(f, t)
+        if not len(sp) or not len(sn): return f.sum() * 0.0   # no same-person pair or no other person in this clip
+        return _ID_W * self.IDLoss_fixed(sp, sn, 1)
+    CR.IDCriterion.forward = _id_forward; CR.IDCriterion.IDLoss_fixed = _circle
+    print('NPU-TRAIN ID loss: normalised circle loss m=0.25 gamma=64 x %.3g' % _ID_W, flush=True)
+
+# FTT_ASPECT=1: the official multi-scale squashes every frame to a square (480..800), but the device runs 640x480 as it is; scale the
+# frame keeping 3:4 instead (most often 480x640). Boxes are normalised (cx, cy, w, h), so the targets stay as they are.
+if os.environ.get('FTT_ASPECT') == '1':
+    import numpy as _np2   # noqa: E402
+    from models.rt_detr_cross import rtdetr_cross as RC   # noqa: E402
+    _SIZES = [(384, 512), (416, 544), (448, 608), (480, 640), (480, 640), (480, 640), (512, 672), (544, 736), (576, 768)]
+    _rc_fwd = RC.RTDETRCROSS.forward
+
+    def _aspect_fwd(self, x, *a, **k):
+        if not (self.training and self.multi_scale): return _rc_fwd(self, x, *a, **k)
+        h, w = _SIZES[_np2.random.randint(len(_SIZES))]; x.tensors = F.interpolate(x.tensors, size=[h, w]); ms = self.multi_scale; self.multi_scale = None
+        try: return _rc_fwd(self, x, *a, **k)
+        finally: self.multi_scale = ms
+    RC.RTDETRCROSS.forward = _aspect_fwd
+    print('NPU-TRAIN multi-scale keeps 3:4 (%s)' % ', '.join('%dx%d' % (w, h) for h, w in _SIZES), flush=True)
 import train_engine as TE   # noqa: E402
 if hasattr(TE, 'build_rt_model'): TE.build_rt_model = _build
 

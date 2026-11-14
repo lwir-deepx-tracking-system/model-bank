@@ -35,7 +35,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     note:'미리 계산한 결과 · 녹화 재생 전용',sel:replayStored&&recording.backend===b.id,replayBackend:b.id,
     lock:!recording?'녹화 재생 중에만 고를 수 있습니다 (실시간 카메라에는 아직 못 씀)':!recTracks.includes(b.id)?'이 녹화에는 미리 계산한 결과가 없습니다':''}));
   const el=r.e2e_live;   // 11-14 (user): live FastTrackTr (camera and recordings, server tracker = this model)
-  if(el&&el.available)e2e.push({key:'e2e_live_ftt',name:(el.label||'FastTrackTr')+' · 실시간',note:'장치 NPU 에서 매 프레임 실행'+(el.ms?' · '+el.ms+' ms':'')+(el.err?' · '+el.err:''),sel:el.on==='ftt'||el.want==='ftt',u:Q('e2e_live=ftt')});
+  if(el&&el.available)e2e.push({key:'e2e_live_ftt',name:(el.label||'FastTrackTr')+' · 실시간',note:'장치 NPU 에서 매 프레임 실행'+(el.ms?' · '+el.ms+' ms':'')+(el.link_used?' · 번호 잇기: '+(el.link_used==='id'?'모델 번호 출력 + 겹침':'겹침만'):'')+(el.err?' · '+el.err:''),sel:el.on==='ftt'||el.want==='ftt',u:Q('e2e_live=ftt')});
   const E2E=e2e.length?{lab:'엔드투엔드',sub:replayStored?'사용 중 · 아래 검출 모델과 Tracker 줄은 쓰이지 않음':'검출부터 추적까지 한 모델 · 끔이면 아래 검출 + Tracker 사용',
     n:[{name:'끔',note:'아래 검출 모델 + Tracker',sel:!replayStored&&!(el&&(el.on==='ftt'||el.want==='ftt')),e2eOff:!!(recording&&replayStored),u:(el&&el.on==='ftt')?Q('e2e_live=off'):undefined}].concat(e2e)}:null;
   T.push({lab:'Tracker',sub:trackerSummary,n:tn});

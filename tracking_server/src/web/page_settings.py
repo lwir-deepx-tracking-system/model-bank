@@ -190,6 +190,10 @@ def rules_request(q_):
         if v_ not in ('ftt', 'off'): return False, '없는 엔드투엔드 모델'
         if v_ == 'ftt' and e2e_live.info()[0] is None: return False, 'FastTrackTr 모델 파일이 장치에 없음'
         e2e_live.E2E['want'] = v_
+    if 'e2e_link' in q_:   # 11-14: how the end-to-end model's people keep their numbers (auto | iou | id), see track/e2e_live.py
+        v_ = q_['e2e_link'][0]
+        if v_ not in ('auto', 'iou', 'id'): return False, '없는 번호 잇기 방식'
+        e2e_live.E2E['link'] = v_
     if 'relink_pred' in q_:   # 11-14: KeepID growing search range on the predicted place (OnlineRelabel only)
         if APP.relabeler is None or not hasattr(APP.relabeler, 'pred_gate'): return False, 'KeepID(외형 번호 되살리기)가 이 실행에 없음'
         APP.relabeler.pred_gate = q_['relink_pred'][0] in ('1', 'true', 'on')
