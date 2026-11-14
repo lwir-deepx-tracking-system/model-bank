@@ -253,10 +253,8 @@ def model_request(model_id, req_no=None):
 def det_has_kpt():
     """11-14: True when the running detector, or the one waiting to be switched in, has keypoint heads (kind six_kpt)."""
     if APP.args.det in KPT_DETS: return True
-    pid_ = APP.MODEL.get('pending') if isinstance(getattr(APP, 'MODEL', None), dict) else None
-    if pid_ is None: return False
-    c_ = next((x_ for x_ in APP.MODEL['catalog'] if x_['id'] == pid_), None)
-    return bool(c_ and c_['det'] in KPT_DETS)
+    req_ = APP.MODEL.get('req') if isinstance(getattr(APP, 'MODEL', None), dict) else None   # the waiting model change (same field as the model list's 'pending')
+    return bool(req_ and req_.get('det') in KPT_DETS)
 
 
 def do_model_swap(new_det):
