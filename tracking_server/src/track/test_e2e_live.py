@@ -54,6 +54,16 @@ class E2ELiveTests(unittest.TestCase):
         self.assertTrue(E.uses_own())                                    # frame loop skips the detector and KeepID
         E.E2E['want'] = 'off'; E.apply(FakeDX); self.assertIsNone(E.step(g)); self.assertFalse(E.uses_own())
 
+    def test_skip_detector_for_stored_replay(self):   # stored end-to-end results on a recording: the server detector / tracker are not used
+        from ..camera import replay_eval as R
+        old = R.EV
+        try:
+            R.EV = SimpleNamespace(own_boxes=True); self.assertTrue(E.skip_detector())
+            R.EV = SimpleNamespace(own_boxes=False); self.assertFalse(E.skip_detector())
+            R.EV = None; self.assertFalse(E.skip_detector())
+        finally:
+            R.EV = old
+
     def test_missing_files(self):
         os.remove(os.path.join(self.d, 'b1.dxnn')); E.E2E['want'] = 'ftt'; E.apply(FakeDX)
         self.assertEqual(E.E2E['on'], 'off'); self.assertIn('b1', E.E2E['err'])

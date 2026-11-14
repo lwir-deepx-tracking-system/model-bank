@@ -115,6 +115,18 @@ def uses_own():
     return E2E['on'] == 'ftt' and E2E['eng'] is not None
 
 
+def skip_detector():
+    """True while the server detector and tracker are not used: the live end-to-end model is on, or a recording is replayed with
+    stored end-to-end results (their boxes are drawn and scored, the server's are not: replay_eval EV.own_boxes)."""
+    if uses_own(): return True
+    try:
+        from ..camera import replay_eval
+        ev = replay_eval.EV
+        return bool(ev is not None and getattr(ev, 'own_boxes', False))
+    except Exception:
+        return False
+
+
 def state():
     d, why = info()
     return dict(available=d is not None, why=why, label=(d or {}).get('label'), want=E2E['want'], on=E2E['on'], err=E2E['err'],

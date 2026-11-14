@@ -51,6 +51,7 @@ from ..track.stabilizer import STAB, stab_live, stab_off
 from ..track import camera_motion
 from ..camera import camera_extra
 from . import detect_frame
+from ..track import e2e_live   # 11-14: no detector while the end-to-end model is on
 
 SECOND = '#core1'   # 둘째 엔진의 이름 꼬리 (APP.pending 의 열쇠가 첫째 엔진과 겹치지 않게)
 AHEAD = 1           # 검출기에 넣어 두고 프레임 반복이 아직 안 받아 간 프레임 수의 한도
@@ -255,7 +256,8 @@ class Feed:
                     while True:
                         if self.quit or L_.stopped or getattr(L_, 'restart_stop', False): return
                         if not self.paused and self.pending is None:
-                            e_ = self._free() if len(self.out) < AHEAD else None
+                            skip_ = e2e_live.skip_detector()   # 11-14: end-to-end model on -> the frame is queued without the detector (engine -1)
+                            e_ = (-1 if skip_ else self._free()) if len(self.out) < AHEAD else None
                             if e_ is None and not camera_extra.replay_eval.lossless():
                                 while len(L_.q) > 1: L_.q.popleft(); L_.q_drop += 1; self.st['drop_wait'] += 1   # 지금은 넣을 수 없다: 기다리는 것은 가장 새 프레임 1 장만
                             elif e_ is not None and (self.redo or L_.q): break
@@ -265,7 +267,8 @@ class Feed:
                         t_, raw_ = L_.q.popleft()
                         if camera_extra.replay_eval.lossless():
                             L_.cond.notify_all()
-                    self.busy[e_] = True; self.working = True
+                    if e_ >= 0: self.busy[e_] = True
+                    self.working = True
                     if sum(self.busy) > 1: self.st['overlap'] += 1
                 self._job = None
                 if r_ is None:
@@ -274,15 +277,18 @@ class Feed:
                     sc_ = stab_live(g8_, t_, gg_) if STAB['on'] else stab_off()
                     r_ = _Rec(); r_.seq = self.seq; self.seq += 1; r_.t = t_; r_.raw = raw_; r_.g8 = g8_; r_.gg = gg_; r_.stab = sc_
                     r_.gmc = self._gmc(gg_, restart) if APP.args.gmc_thread else None
-                self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
+                if e_ >= 0: self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
+                else: r_.t_sub = time.perf_counter_ns(); self._job = None
                 r_.e = e_; r_.job = self._job
                 with L_.cond:
-                    self.out.append(r_); self.last_e = e_; self.working = False
-                    self.st['submitted'] += 1; self.st['core'][e_] += 1; self.st['max_ahead'] = max(self.st['max_ahead'], len(self.out))
+                    self.out.append(r_); self.working = False
+                    if e_ >= 0: self.last_e = e_; self.st['submitted'] += 1; self.st['core'][e_] += 1
+                    else: self.st['e2e_skip'] = self.st.get('e2e_skip', 0) + 1
+                    self.st['max_ahead'] = max(self.st['max_ahead'], len(self.out))
                     e_ = None; L_.cond.notify_all()
         except BaseException as x_:
             with L_.cond:
-                if e_ is not None and self._job is None and e_ < len(self.busy): self.busy[e_] = False
+                if e_ is not None and e_ >= 0 and self._job is None and e_ < len(self.busy): self.busy[e_] = False
                 self.err = repr(x_)[:200]; self.working = False; L_.cond.notify_all()
 
     def _gmc(self, gg_, restart=False):   # camera_motion.gmc_submit 과 같은 일 (첫 프레임에서 계산 객체를 만들고, 작업 스레드에 순서대로 맡긴다). 프레임 번호는 받아 갈 때 붙는다
@@ -351,12 +357,17 @@ class Feed:
         if self.direct or self.cur is None: return detect_frame.submit_tiles(g_, k_)
         return self.cur.t_sub
 
+    def cur_submitted(self):
+        """Frame loop (11-14): False when the current frame was queued without the detector (end-to-end model on)."""
+        return self.direct or self.cur is None or self.cur.e >= 0
+
     def wait(self):
         if self.direct or self.cur is None: return self.eng[0].wait()
         r_ = self.cur; self.cur = None
         return self._collect(r_, True)
 
     def _collect(self, r_, keep_):
+        if r_.e < 0: return None   # 11-14: queued without the detector
         e_ = self.eng[r_.e]
         try:
             APP.pending[e_.name] = r_.job; o_ = e_.wait()

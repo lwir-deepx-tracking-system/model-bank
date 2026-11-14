@@ -20,7 +20,7 @@ from .common.shared_values import (
 from .detect.model_scan import BANK_T
 from .common.device_wait import wait_m1_free
 from .track.kalman import gmc_warp, GKF
-from .track.position_memory import pos_select
+from .track.position_memory import pos_select, POSP
 from .track import e2e_live   # 11-14: live end-to-end FastTrackTr
 from .track.camera_motion import GMC
 from .track.stabilizer import STAB_M, stab_shift, stab_margins
@@ -584,6 +584,7 @@ def main():
                 dt_ = (time.perf_counter_ns() - t0_) / 1e6; lf_crop_ms.append(dt_); lf_frame_ms[0] += dt_
                 if not APP.args.mock: lf_npu.append(vit.b.get_npu_inference_time() / 1000)
             return got
+        e2e_prev = False   # 11-14: last frame skipped the detector + tracker (end-to-end model on / stored end-to-end replay)
         g_next = None; t_sub_next = None; t_prev_emit = None; ahead = []     # v7: frames read + submitted ahead [(gray, submit ns)], --npu-depth of them
         if ready_prefetch:
             print('LIVE camera prefetch: only take the next frame before publication if it is queued', flush=True)
@@ -671,7 +672,7 @@ def main():
                     g = APP.live_next(fresh_only=True)
                     if g is None:
                         break
-                    sub_ = not e2e_live.uses_own(); t0 = submit_tiles(g, i) if sub_ else time.perf_counter_ns()   # 11-14: no detector while the end-to-end model is on
+                    sub_ = not e2e_live.skip_detector(); t0 = submit_tiles(g, i) if sub_ else time.perf_counter_ns()   # 11-14: no detector while the end-to-end model is on
                     gmc_submit(i, g)
                 else:
                     g, t0, sub_ = ahead.pop(0)
@@ -685,7 +686,7 @@ def main():
                     else:
                         g_n, read_ms = read_frame(next_i)
                     if g_n is not None:
-                        sn_ = not e2e_live.uses_own(); ahead.append((g_n, submit_tiles(g_n, next_i) if sn_ else time.perf_counter_ns(), sn_))
+                        sn_ = not e2e_live.skip_detector(); ahead.append((g_n, submit_tiles(g_n, next_i) if sn_ else time.perf_counter_ns(), sn_))
                         gmc_submit(next_i, g_n)
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                       # one sync per frame; the ViT job overlaps detection of i+1
                 t_nms0 = time.perf_counter_ns(); p = detect(ra, rb) if sub_ else np.zeros((0, 6), np.float32); t2 = time.perf_counter_ns(); t3 = t2
@@ -693,9 +694,11 @@ def main():
                 g, _ = read_frame(i); read_ms = 0.0
                 if g is None:
                     break
-                sub_ = not e2e_live.uses_own(); t0 = submit_tiles(g, i) if sub_ else time.perf_counter_ns()   # 11-14
+                fd_ = APP.FEED is not None and not APP.FEED.direct   # 11-14: with the arrival feed the feeding thread decided (and already submitted or not)
+                sub_ = APP.FEED.cur_submitted() if fd_ else not e2e_live.skip_detector(); t0 = submit_tiles(g, i) if (sub_ or fd_) else time.perf_counter_ns()
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                          # sync point 1
                 ra = APP.a.wait() if sub_ else None; rb = (APP.b.wait() if APP.b is not None else None) if sub_ else None; t1 = time.perf_counter_ns(); t_nms0 = t1
+                if fd_ and not sub_: APP.FEED.cur = None
                 p = detect(ra, rb) if sub_ else np.zeros((0, 6), np.float32); t2 = time.perf_counter_ns()
                 if async_vit: vw += vit_sync(g, prev_gray, i)                                                   # sync point 2
                 t3 = time.perf_counter_ns()
@@ -778,7 +781,16 @@ def main():
                     if ch_: print('CONFIRM %g ms at %.1f fps: %d -> %d frames (frame %d)' % (APP.CONFIRM.ms, APP.CONFIRM.fps or 0.0, ch_[0], ch_[1], i), flush=True)
             if APP.TIMING is not None: APP.TIMING.mark()
             n_sync0 = len(sync_lat)
-            if budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association
+            if getattr(APP, 'dx', None) is not None and not APP.args.mock: e2e_live.apply(APP.dx)   # 11-14: switch first, so this frame already follows the page
+            own_ = e2e_live.skip_detector()
+            if own_ != e2e_prev:   # 11-14: empty tracker both ways: no ghost tracks / predicted boxes while it is on, a clean start after
+                e2e_prev = own_; POSP['boxes'] = []
+                if APP.relabeler is not None: APP.relabeler.reset()
+                if APP.tracker is not None and APP.LIVE is not None: APP.tracker = mk_tracker_(APP.RULES['tracker'])
+                print('E2E: server detector + tracker %s at frame %d' % ('skipped' if own_ else 'back on', i), flush=True)
+            if own_:   # 11-14: the end-to-end model (or the stored result) makes the rows; the server tracker is not run
+                tr_rows = []; t4 = time.perf_counter_ns(); vs = 0.0; POSP['boxes'] = []
+            elif budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association
                 lf_frame_ms[0] = 0.0
                 feat_fn = lambda idxs, g_=g, arr_=arr, f_=i: budget_embed(idxs, g_, arr_, f_)
                 feat_fn_prev = (lambda idxs, g_=prev_gray, arr_=prev_arr, f_=i: budget_embed(idxs, g_, arr_, f_)) if prev_gray is not None else None
@@ -798,10 +810,10 @@ def main():
                 tr_rows = APP.tracker.update(arr, bs_feats, feat_fn); t4 = time.perf_counter_ns()
                 vs = sync_lat[-1] if len(sync_lat) > n_sync0 else 0.0
             if getattr(APP, 'dx', None) is not None and not APP.args.mock:   # 11-14 (user): live end-to-end FastTrackTr replaces the tracker rows when chosen on the page
-                e2e_live.apply(APP.dx); er_ = e2e_live.step(g)
+                er_ = e2e_live.step(g)
                 if er_ is not None: tr_rows = er_
             base_rows = tr_rows; rl_ms = 0.0
-            if APP.relabeler is not None and APP.RULES['relabel'] and not e2e_live.uses_own():   # 11-14: not with the end-to-end model (its own numbers). --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
+            if APP.relabeler is not None and APP.RULES['relabel'] and not e2e_live.skip_detector():   # 11-14: not with the end-to-end model (its own numbers). --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
                 mamba_kw_ = dict(warp=W_, ts_ns=None if APP.args.live_port else (i + 1) * 33333333) if APP.args.mamba else {}
