@@ -8,7 +8,8 @@ also where the warmest spot was a laptop.
 
 Here: square windows slide over the 16-bit raw frame of every shown frame (11-14, user: show what the spectrum finds,
 also where the detector found people); the best windows above the model's threshold (up to 'top', overlap < 0.3) are
-proposals. propose(people=...) can still skip windows on given boxes; the server passes none. They are only drawn on the picture
+proposals; a window that lies mostly (>= 30 % of the smaller one) over a chosen one is dropped, so one person gets one box.
+propose(people=...) can still skip windows on given boxes; the server passes none. They are only drawn on the picture
 (dashed-looking magenta box, 'cand' + score); nothing goes to the tracker or the gimbal.
 
 Runs in its own thread with one slot (the newest frame replaces a waiting one), so a slow pass never holds the frame loop.
@@ -85,6 +86,13 @@ def _iou(a, b):
     return ix * iy / u if u > 0 else 0.0
 
 
+def _inside(a, b):
+    """overlap as a share of the smaller box (1.0 when one window lies inside the other)"""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])); iy = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    m = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return ix * iy / m if m > 0 else 0.0
+
+
 class Model:
     def __init__(self, path=MODEL_PATH):
         with open(path, encoding='utf-8') as fh:
@@ -112,7 +120,7 @@ class Model:
         for i in np.argsort(-s):
             if s[i] < self.thr or len(out) >= self.top:
                 break
-            if all(_iou(wins[i], o[:4]) < 0.3 for o in out):
+            if all(_inside(wins[i], o[:4]) < 0.3 for o in out):   # 11-14 (user): one box per person; a head window inside a body window has a low IoU
                 out.append((*wins[i], float(s[i])))
         return out
 

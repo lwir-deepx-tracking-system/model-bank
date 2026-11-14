@@ -40,6 +40,15 @@ class SpecProposalTest(unittest.TestCase):
             cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
             self.assertFalse(320 <= cx <= 480 and 120 <= cy <= 400)
 
+    def test_one_box_per_place(self):
+        m = sp.Model()
+        m.thr = -1e9; m.top = 10
+        out = m.propose(_scene(), [])
+        for i, a in enumerate(out):
+            for b in out[:i]:
+                self.assertLess(sp._inside(a[:4], b[:4]), 0.3)   # no window inside / mostly over another one
+        self.assertEqual(sp._inside((10, 10, 74, 74), (0, 0, 160, 160)), 1.0)
+
     def test_worker_fills_prop(self):
         p = sp.Proposer()
         p.model.thr = -1e9
