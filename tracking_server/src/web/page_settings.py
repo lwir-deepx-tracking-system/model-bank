@@ -104,7 +104,7 @@ def rules_state():
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
                     det_kpt=det_has_kpt(), e2e_live=e2e_live.state(), relink_pred=(bool(getattr(APP.relabeler, 'pred_gate', False)) if APP.relabeler is not None and hasattr(APP.relabeler, 'pred_gate') else None),   # 11-14: the current or the waiting detector gives keypoints -> the keypoint position memories may be chosen
-                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state())   # v32. v40: app / lead / gimbal / warm_on
+                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state(), **_temp_keys())   # v32. v40: app / lead / gimbal / warm_on. 11-14: temp_show / temp
 
 
 def rules_state_2():
@@ -221,6 +221,10 @@ def rules_request(q_):
         if on_: spec_proposals.LOG['rows'] = []
         elif spec_proposals.LOG['on']: spec_proposals.log_write(str(HERE / 'spec_prop_log.json'))
         spec_proposals.LOG['on'] = on_
+    if 'temp_show' in q_:   # 11-14: skin-temperature labels from the camera's temperature map (display only; NOT kept over a restart)
+        from ..detect import skin_temp
+        skin_temp.set_show(q_['temp_show'][0] in ('1', 'true', 'on'))
+        print('RULES set temp_show %d' % skin_temp.TEMP['show'], flush=True)
     if cm_ is not None:   # read once per frame by the frame loop (confirm_apply); the tracker itself is only touched there
         if APP.CONFIRM is None: APP.CONFIRM = ConfirmByTime(cm_)
         else: APP.CONFIRM.set_ms(cm_)
@@ -258,6 +262,15 @@ def rules_request_2(q_):
 def _prop_state():
     from ..detect import spec_proposals
     return spec_proposals.state()
+
+
+def _temp_keys():   # 11-14: the skin-temperature switch and its numbers for the page (src/detect/skin_temp.py)
+    try:
+        from ..detect import skin_temp
+        st_ = skin_temp.state()
+        return dict(temp_show=st_['show'], temp=st_)
+    except Exception as e_:
+        return dict(temp_show=False, temp=dict(show=False, last_error=repr(e_)[:120]))
 
 
 def model_state():

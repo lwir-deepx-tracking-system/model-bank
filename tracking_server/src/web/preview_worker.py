@@ -39,6 +39,7 @@ class PreviewFrame:
     click_ticket: int | None = None
     replay_position: tuple | None = None
     proposals: tuple = ()   # 11-14: ((x1, y1), (x2, y2), score, covered) people proposals from the spatial spectrum
+    temps: tuple = ()   # 11-14: ((x1, y1), (x2, y2), text, colour) skin-temperature labels of person boxes (src/detect/skin_temp.py)
 
 
 def transition_jpeg(cv2):
@@ -110,6 +111,12 @@ def render_preview(cv2, frame):
         else:   # nobody detected there: bright magenta + 'miss?'
             _dash_rect(cv2, img, p1, p2, (255, 0, 255), 2, 6)
             cv2.putText(img, 'miss? %.1f' % sc_, (p1[0] + 2, max(p1[1] + 15, 12)), font, 0.5, (255, 0, 255), 2)
+    for p1, p2, text, col in frame.temps:   # 11-14: right of the box's top corner (left of it when there is no room), dark backing
+        (tw, th), _ = cv2.getTextSize(text, font, 0.5, 1)
+        x = p2[0] + 4 if p2[0] + 4 + tw <= ww else max(0, p1[0] - 4 - tw)
+        y = min(max(p1[1] + th + 2, th + 2), hh - 2)
+        cv2.rectangle(img, (x - 2, y - th - 3), (x + tw + 2, y + 3), (20, 20, 20), -1)
+        cv2.putText(img, text, (x, y), font, 0.5, col, 1, cv2.LINE_AA)
     if PICTURE_BANNER:
         cv2.rectangle(img, (0, 0), (ww, 26), (0, 0, 150) if frame.replay else (0, 0, 0), -1)
         cv2.putText(img, frame.top_text, (8, 19), font, 0.55, (255, 255, 255), 1)

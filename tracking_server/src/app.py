@@ -40,6 +40,7 @@ from .web import system_buttons, page_handler, page_settings, measure
 from .track import camera_motion
 from .reid import reid_embed
 from .camera import camera_link, replay_eval, stall_diag
+from .camera import temp_ring   # 11-14: --cam-temp (camera temperature map for the skin-temperature labels; off by default)
 from .gimbal import gimbal_link
 from .common import result_summary
 from .common import stage_timing   # 2026-11-11: 단계별 시간 재기 (LWIR_STAGE_TIMING=1 일 때만, 기본 꺼짐)
@@ -140,6 +141,7 @@ def main():
                     help='11-13: folder of stored tracking results made offline (<root>/<recording name>/<key>.mot.txt + <key>.json); the replay page offers them as extra replay trackers for that recording. Empty or missing folder = off, nothing changes')
     ap.add_argument('--replay-root', default='', help='11-12: folder of the label site recordings (<root>/<name>/images/000001.png ...); the web page can play one of them instead of the camera (GET /replay, POST /replay/start, /replay/stop). Empty or missing folder = replay unavailable')
     ap.add_argument('--live-cam', default='', help='v14: path of the cam_pipe helper (default: src/camera/cam_pipe)')
+    ap.add_argument('--cam-temp', type=int, default=0, help='11-14 research (default 0 = off = unchanged): pass LWIR_CAM_TEMP=N to cam_pipe (v2.11): it puts the camera\'s temperature map of some frames into /dev/shm/lwir_temp_ring_<uid> (src/camera/temp_ring.py) for the skin-temperature labels (/rules/set?temp_show=1). A LWIR_CAM_TEMP in the environment is passed on as well')
     ap.add_argument('--live-map', choices=['fixed', 'pct'], default='pct', help='v14: 16 -> 8 bit mapping: fixed = linear 0..65535 (team runtime), pct = smoothed 1..99 percentile window')
     ap.add_argument('--live-scale', type=float, default=1.5, help='v14: display scale of the streamed picture')
     ap.add_argument('--mamba', default='', help='v18: folder of the Mamba relabeler (replaces --judge); needs --relabel and --gmc')
@@ -453,6 +455,7 @@ def main():
             APP.LIVE.stabq = APP.lv_col.deque()   # stab: correction (cx, cy) or None of every frame read, paired with LIVE.arr
             APP.lv_reader = camera_link.lv_reader
             APP.lv_spawn = camera_link.lv_spawn
+            temp_ring.apply_cli(APP.args.cam_temp)   # 11-14: --cam-temp N > 0 -> LWIR_CAM_TEMP=N for every cam_pipe start; 0 = environment unchanged
             APP.lv_spawn()
             APP.lv_cam_wait = camera_link.lv_cam_wait
             APP.GB = None

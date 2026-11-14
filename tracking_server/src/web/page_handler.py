@@ -13,6 +13,7 @@ from ..gimbal.gimbal_link import gb_sample
 from ..gimbal import live_tracks
 from ..track.position_memory import POSP
 from ..detect import spec_proposals   # 11-14: people proposals from the spatial spectrum (display only)
+from ..detect import skin_temp   # 11-14: skin temperature per person box from the camera's temperature map (display only, off by default)
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
 from . import system_buttons
@@ -76,9 +77,10 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
         cx_, cy_ = (sC_ or (0.0, 0.0))[:2]
         proposals_ = tuple(((int((x0 + cx_) * sc_), int((y0 + cy_) * sc_)), (int((x1 + cx_) * sc_), int((y1 + cy_) * sc_)), float(s_), bool(cov_))
                            for x0, y0, x1, y1, s_, cov_ in SP_['boxes'])
+    temps_ = skin_temp.preview_labels(t_in, sc_, sC_, {d_[3] for d_ in draw_}) if skin_temp.TEMP['show'] and overlay_rows is None else ()   # 11-14
     return preview_worker.PreviewFrame(t_in, gray_, sc_, tuple(draw_), gt_boxes,
                                        tuple(predictions), txt_, rp_ is not None, gtxt_, gc_,
-                                       click_people, click_ticket, replay_position, proposals_)
+                                       click_people, click_ticket, replay_position, proposals_, temps=temps_)
 
 
 def _click_live(x, y):
@@ -218,6 +220,9 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
                     and not any(getattr(APP.LIVE, flag, False) for flag in ('cam_lost', 'cam_hold', 'stopped', 'restart_stop', 'restart_pending')))
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
                                     frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_)
+    if skin_temp.TEMP['show']:   # 11-14: person boxes in real camera coordinates against the newest temperature map (no labels on a recording); after the gimbal frame (display only)
+        skin_temp.on_frame(t_in, [(int(b_[4]), float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0) for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0],
+                           ok=raw_valid_ and not rep_ and not replay_link.frame_blocked(t_in))
     preview_receipt = []
     receipt_args = {'preview_receipt': preview_receipt} if async_replay_ else {}
     gtd_, overlay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections,

@@ -1,5 +1,35 @@
 // Camera -> stdout pipe for the live tracker (DX-M1 host). Writes every received 16-bit frame (w*h*2 bytes, native endian) to stdout and prints stats to stderr.
 // Opens the camera like the team runtime (runtime/src/camera/camera.cpp). Optional frame-rate setting: ./cam_pipe [fps_code] [seconds]   fps_code: 0 = 30 fps, 1 = 25 fps, -1 = leave as is (default)
+// v2.11 (11-14): OPTIONAL TEMPERATURE MAPS IN SHARED MEMORY, OFF UNLESS LWIR_CAM_TEMP IS SET. With LWIR_CAM_TEMP unset, empty or 0, the bytes on stdout and the lines on stderr are
+//   exactly those of v2.10 (LWIR_CAM_TEMP_EMIS and LWIR_CAM_TEMP_MAX_MS are then not even read). Purpose: a single-frame person cue from radiation alone (skin about 28-38 C).
+//   LWIR_CAM_TEMP=N (whole number 1..300): after every N-th frame that is passed on (frame numbers N, 2N, 3N, ...) te->CalcTemp(map) is called for the whole picture. CalcTemp
+//     works on the most recent RecvImage, so it runs right after that frame's read: after the picture has been handed on (the picture is not delayed) and before the next read.
+//     Its time comes out of the read pacing (v2.7), so a slow CalcTemp can cost frames. The map (one uint16 per pixel, T_C = (v - 5000) / 100) is copied into its own ring
+//     /dev/shm/lwir_temp_ring_<uid> (4 slots) with the same rule as the picture ring: the slot's frame number is 0 while the slot is written and the frame number after it.
+//     The pictures do not change: still RecvImage(buf, true), the SDK's AGC.
+//   OPEN QUESTION, answered by the cam_temp_probe run with the camera (phase P3): does CalcTemp give temperatures after an AGC-on read? If it does not, the fix is a later change,
+//     not made here: every N-th read becomes an AGC-off read RecvImage(raw, false) followed by CalcTemp, and that frame's picture is either not passed on (the tracker loses
+//     1 frame in N) or made from the raw frame by an AGC of our own. The slot flags (bit 0 = the read before CalcTemp had the AGC on) tell a reader which kind of map it got.
+//   LWIR_CAM_TEMP_EMIS=e (0.01..1.0; unset = SetEmissivity is not called, the camera keeps its own setting): te->SetEmissivity(e) after every open (skin: about 0.98).
+//   LWIR_CAM_TEMP_MAX_MS=m (whole number 1..10000, default 50): when CalcTemp takes longer than m ms more than 3 times in a row, the maps stop for the rest of this run (TEMP_OFF
+//     line, ring state 2). This protects the stream in case CalcTemp blocks like the SDK's temperature getters do (about 2 s each, v2.2).
+//   Log: one TEMP_RING line at the start (or "TEMP_RING failed" / "TEMP_RING not used"), a TEMP_STATS line every 30 s from the CAMFPS block (not every 2 s: camera_extra.py keeps
+//     every cam_pipe line except CAMFPS in camera_events.log), TEMP_OFF, TEMP_EMIS after a reopen, TEMP_TOTAL at the end, and the INPUT_GAP line names the CalcTemp time.
+//   Ring layout (native byte order = little endian on the board; the Python struct format of each header in brackets; the server's reader is src/camera/temp_ring.py):
+//     file header, 64 bytes at offset 0 ['<4s7IQ2If2I4x']: magic "LWT1", u32 version 1, u32 ring_id, u32 nslots 4, u32 stride (bytes per slot), u32 payload (= width*height*2),
+//       u32 width, u32 height, u64 pid, u32 every (N), u32 state (1 = maps are written, 2 = stopped for this run: TEMP_OFF or the picture size changed at a reopen, 3 = cam_pipe
+//       ended normally, the file is unlinked right after), f32 emissivity (0 = SetEmissivity not called), u32 max_ms, u32 maps (maps written so far; map k is in slot
+//       (k - 1) % nslots; stored after that slot is complete), 4 bytes unused. The first 40 bytes have the same fields as the picture ring header (LWR1).
+//     slot i at offset 64 + i * stride: 64-byte slot header ['<Q4sHHQIHHfIIIHH12x']: u64 frame (cam_pipe frame number of the picture the map belongs to = the seq of its stamp
+//       header; 0 while the slot is written), magic "LWTS", u16 version 1, u16 flags (bit 0: the read before CalcTemp had the AGC on), u64 t_mono_ns (CLOCK_MONOTONIC ns when that
+//       frame's RecvImage returned = its stamp header's t_mono_ns), u32 calc_us (time CalcTemp took), u16 width, u16 height, f32 emissivity, u32 map_seq (k), u32 payload,
+//       u32 ring_id, u16 t_offset 5000, u16 t_div 100 (T_C = (v - t_offset) / t_div), 12 bytes unused; then the map: height rows of width uint16 (row-major).
+//     Writing a slot: frame := 0 (atomic, then a full fence), the slot header without the frame and the map, frame := the frame number (atomic release), then maps := k.
+//     Reader: k = maps (0 = no map yet); slot = (k - 1) % nslots; f1 = that slot's frame (0 = being written: try again or take map k - 1); copy the slot header and the map;
+//       f2 = the slot's frame again; use the copy only if f1 == f2 and the copied header's frame == f1 (and its map_seq == k, ring_id == the file's ring_id).
+//   Frame numbers count the frames passed on since this cam_pipe started, from 1 (repeats held back by the duplicate filter are not counted); with LWIR_CAM_STAMP=1 they are
+//   the stamp header's seq, without it a reader counts the pictures it took from the pipe. A ring left by a killed cam_pipe is replaced at the start; unlinked on a normal end.
+//   Layout check without a camera: cam_temp_ring_test.cpp writes a ring with the functions of this file, test_cam_temp_ring.py reads it (also with temp_ring.py).
 // v2.6 (11-11): TWO OPTIONAL THINGS, BOTH OFF UNLESS THE ENVIRONMENT TURNS THEM ON. With neither variable set, the bytes on stdout and the lines on stderr are exactly those of v2.5.
 //   LWIR_CAM_STAMP=1 (exactly "1"): a 48-byte header goes before every frame: magic "LWF1", version, flags, frame number (from 1), CLOCK_MONOTONIC time in ns of the moment
 //     RecvImage returned, microseconds since the previous frame, ring slot, payload bytes, ring id, width, height, check word (xor of the 11 words before it and 0x5A17C0DE).
@@ -28,9 +58,11 @@
 // this program calls ResetMainBoard(), closes the handle, waits RESET_WAIT_S seconds, scans again and reopens (tested 11-09: frames came back about 25 s later, no board reboot).
 // After MAX_FAILED_RECOVERIES recoveries in a row without a single frame it ends with exit code 6 (the tracker may start a new process).
 // Build: g++ -O2 cam_pipe.cpp -o cam_pipe -D_LINUX -I/usr/local/include/i3system $(pkg-config --cflags --libs opencv4) -li3system_te_64 -li3system_usb_64 -li3system_imgproc_impl_64 -lpthread
+//   (v2.11: the same line; nothing new to link. Checked 11-14 with g++ 11.4 on the board, also with -Wall -Wextra: no warning from the v2.11 code.)
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <cstdlib>
 #include <map>
@@ -252,6 +284,143 @@ static i3::TE_A* open_camera(int* w, int* h)
   return te;
 }
 
+// v2.11 (11-14): optional temperature maps (LWIR_CAM_TEMP=N, see the top of this file for the layout). Nothing below runs unless temp_setup found LWIR_CAM_TEMP set to 1..300.
+struct TempRingHead { char magic[4]; uint32_t version, ring_id, nslots, stride, payload, width, height; uint64_t pid; uint32_t every, state; float emissivity; uint32_t max_ms, maps, unused; };
+static_assert(sizeof(TempRingHead) == 64 && offsetof(TempRingHead, pid) == 32 && offsetof(TempRingHead, every) == 40 && offsetof(TempRingHead, emissivity) == 48
+              && offsetof(TempRingHead, maps) == 56, "temperature ring header layout (src/camera/temp_ring.py RING_HDR)");
+struct TempSlotHead { uint64_t frame; char magic[4]; uint16_t version, flags; uint64_t t_mono_ns; uint32_t calc_us; uint16_t width, height; float emissivity; uint32_t map_seq, payload, ring_id; uint16_t t_offset, t_div; unsigned char unused[12]; };
+static_assert(sizeof(TempSlotHead) == 64 && offsetof(TempSlotHead, t_mono_ns) == 16 && offsetof(TempSlotHead, calc_us) == 24 && offsetof(TempSlotHead, emissivity) == 32
+              && offsetof(TempSlotHead, ring_id) == 44 && offsetof(TempSlotHead, t_offset) == 48, "temperature slot header layout (src/camera/temp_ring.py SLOT_HDR)");
+static const uint32_t TEMP_SLOTS = 4, TEMP_STATE_ON = 1, TEMP_STATE_STOPPED = 2, TEMP_STATE_ENDED = 3;
+static const uint16_t TEMP_FLAG_AGC_READ = 1;   // slot flags bit 0: the read before CalcTemp had the SDK's AGC on (the only kind in v2.11)
+static const double TEMP_STATS_S = 30.0;        // TEMP_STATS period (each line goes into camera_events.log)
+struct TempRing { unsigned char* base = nullptr; size_t bytes = 0; uint32_t id = 0, stride = 0, payload = 0, maps = 0; std::string path; };
+static TempRing g_tring;
+struct TempOpt
+{
+  bool on = false, started = false, emis_set = false;   // on = maps are being made now; started = the ring was made in this run (TEMP_TOTAL, INPUT_GAP note)
+  long every = 0, max_ms = 50, calls = 0, over = 0, win_calls = 0; int slow_in_row = 0; float emis = 0;
+  double sum_ms = 0, top_ms = 0, win_sum = 0, win_top = 0; clk::time_point t_win = clk::now(); std::vector<unsigned short> map;
+};
+static TempOpt g_temp;
+
+static TempRingHead* temp_head() { return reinterpret_cast<TempRingHead*>(g_tring.base); }
+
+static void temp_ring_close()   // state 3 (for a reader that still has it mapped), unmap, unlink (normal end)
+{
+  if(g_tring.base) { __atomic_store_n(&temp_head()->state, TEMP_STATE_ENDED, __ATOMIC_SEQ_CST); munmap(g_tring.base, g_tring.bytes); g_tring.base = nullptr; }
+  if(!g_tring.path.empty()) { unlink(g_tring.path.c_str()); g_tring.path.clear(); }
+}
+
+static bool temp_ring_open(const std::string& name, int w, int h)   // false = no maps in this run (the line saying why is printed here)
+{
+  const uint32_t payload = static_cast<uint32_t>(w) * static_cast<uint32_t>(h) * 2u, stride = (static_cast<uint32_t>(sizeof(TempSlotHead)) + payload + 63u) & ~63u;
+  const size_t bytes = sizeof(TempRingHead) + static_cast<size_t>(TEMP_SLOTS) * stride;
+  unlink(name.c_str());   // a ring left by a cam_pipe that was killed (only one cam_pipe runs: the lock in main)
+  const int fd = open(name.c_str(), O_CREAT | O_EXCL | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0600);
+  if(fd < 0) { std::fprintf(stderr, "TEMP_RING failed (open %s: %s): no temperature maps\n", name.c_str(), std::strerror(errno)); return false; }
+  const int fe = posix_fallocate(fd, 0, static_cast<off_t>(bytes));
+  if(fe != 0) { std::fprintf(stderr, "TEMP_RING failed (no room for %zu bytes in %s: %s): no temperature maps\n", bytes, name.c_str(), std::strerror(fe)); close(fd); unlink(name.c_str()); return false; }
+  void* m = mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+  close(fd);
+  if(m == MAP_FAILED) { std::fprintf(stderr, "TEMP_RING failed (mmap %s: %s): no temperature maps\n", name.c_str(), std::strerror(errno)); unlink(name.c_str()); return false; }
+  std::memset(m, 0, bytes);
+  g_tring.base = static_cast<unsigned char*>(m); g_tring.bytes = bytes; g_tring.stride = stride; g_tring.payload = payload; g_tring.maps = 0; g_tring.path = name;
+  g_tring.id = (static_cast<uint32_t>(mono_ns() / 1000u) ^ (static_cast<uint32_t>(getpid()) << 16)) + 1u; if(g_tring.id == 0) g_tring.id = 1;
+  TempRingHead rh; std::memset(&rh, 0, sizeof rh); std::memcpy(rh.magic, "LWT1", 4); rh.version = 1; rh.ring_id = g_tring.id; rh.nslots = TEMP_SLOTS; rh.stride = stride; rh.payload = payload;
+  rh.width = static_cast<uint32_t>(w); rh.height = static_cast<uint32_t>(h); rh.pid = static_cast<uint64_t>(getpid()); rh.every = static_cast<uint32_t>(g_temp.every); rh.state = TEMP_STATE_ON;
+  rh.emissivity = g_temp.emis_set ? g_temp.emis : 0.0f; rh.max_ms = static_cast<uint32_t>(g_temp.max_ms);
+  std::memcpy(g_tring.base, &rh, sizeof rh);
+  return true;
+}
+
+static void temp_ring_put(const unsigned short* map, int w, int h, uint64_t frame, uint64_t t_ns, uint32_t calc_us, uint16_t flags)   // map k = maps + 1 into slot maps % TEMP_SLOTS
+{
+  const uint32_t payload = static_cast<uint32_t>(w) * static_cast<uint32_t>(h) * 2u;
+  if(!g_tring.base || payload != g_tring.payload || frame == 0) return;
+  unsigned char* s = g_tring.base + sizeof(TempRingHead) + static_cast<size_t>(g_tring.maps % TEMP_SLOTS) * g_tring.stride;
+  uint64_t* fr = reinterpret_cast<uint64_t*>(s);
+  __atomic_store_n(fr, static_cast<uint64_t>(0), __ATOMIC_SEQ_CST);   // "being written"
+  __atomic_thread_fence(__ATOMIC_SEQ_CST);                            // the 0 is visible before any byte below (on arm64 a store alone does not hold LATER plain stores back)
+  TempSlotHead sh; std::memset(&sh, 0, sizeof sh); std::memcpy(sh.magic, "LWTS", 4); sh.version = 1; sh.flags = flags; sh.t_mono_ns = t_ns; sh.calc_us = calc_us;
+  sh.width = static_cast<uint16_t>(w); sh.height = static_cast<uint16_t>(h); sh.emissivity = g_temp.emis_set ? g_temp.emis : 0.0f; sh.map_seq = g_tring.maps + 1u;
+  sh.payload = payload; sh.ring_id = g_tring.id; sh.t_offset = 5000; sh.t_div = 100;
+  std::memcpy(s + sizeof(uint64_t), reinterpret_cast<const unsigned char*>(&sh) + sizeof(uint64_t), sizeof sh - sizeof(uint64_t));   // all of the slot header but the frame number
+  std::memcpy(s + sizeof sh, map, payload);
+  __atomic_store_n(fr, frame, __ATOMIC_RELEASE);                      // after the map: everything above is visible before the number
+  ++g_tring.maps; __atomic_store_n(&temp_head()->maps, g_tring.maps, __ATOMIC_RELEASE);
+}
+
+static void temp_off(const char* why)   // the maps stop for the rest of this run; the pictures go on
+{
+  g_temp.on = false;
+  if(g_tring.base) __atomic_store_n(&temp_head()->state, TEMP_STATE_STOPPED, __ATOMIC_SEQ_CST);
+  std::fprintf(stderr, "TEMP_OFF %s: no more temperature maps in this run (the pictures go on), after %ld CalcTemp calls, at %s\n", why, g_temp.calls, hms().c_str());
+}
+
+static void temp_setup(i3::TE_A* te, int w, int h)   // reads LWIR_CAM_TEMP*. Unset, empty or 0: returns at once and prints nothing
+{
+  const char* e = std::getenv("LWIR_CAM_TEMP");
+  if(!e || !*e || std::strcmp(e, "0") == 0) return;
+  char* end = nullptr; const long n = std::strtol(e, &end, 10);
+  if(end == e || *end != 0 || n < 1 || n > 300) { std::fprintf(stderr, "TEMP_RING not used: LWIR_CAM_TEMP=\"%s\" is not a whole number 1..300 (0 or unset = off)\n", e); return; }
+  g_temp.every = n; std::string notes;
+  if(const char* m = std::getenv("LWIR_CAM_TEMP_MAX_MS"))
+  {
+    char* me = nullptr; const long v = std::strtol(m, &me, 10);
+    if(me != m && *me == 0 && v >= 1 && v <= 10000) g_temp.max_ms = v; else notes += std::string("; LWIR_CAM_TEMP_MAX_MS=\"") + m + "\" not understood (1..10000): 50 ms";
+  }
+  if(const char* em = std::getenv("LWIR_CAM_TEMP_EMIS"))
+  {
+    char* ee = nullptr; const double v = std::strtod(em, &ee);
+    if(ee != em && *ee == 0 && v >= 0.01 && v <= 1.0) { g_temp.emis = static_cast<float>(v); g_temp.emis_set = true; }
+    else notes += std::string("; LWIR_CAM_TEMP_EMIS=\"") + em + "\" not understood (0.01..1.0): SetEmissivity not called";
+  }
+  char name[64]; std::snprintf(name, sizeof name, "/dev/shm/lwir_temp_ring_%u", static_cast<unsigned>(getuid()));
+  if(!temp_ring_open(name, w, h)) return;
+  if(g_temp.emis_set) te->SetEmissivity(g_temp.emis);
+  g_temp.map.assign(static_cast<size_t>(w) * static_cast<size_t>(h), 0); g_temp.on = g_temp.started = true; g_temp.t_win = clk::now();
+  char eb[64];
+  if(g_temp.emis_set) std::snprintf(eb, sizeof eb, "%.3f (SetEmissivity called)", static_cast<double>(g_temp.emis)); else std::snprintf(eb, sizeof eb, "camera default (SetEmissivity not called)");
+  std::fprintf(stderr, "TEMP_RING on %s slots=%u map=%u bytes every=%ld frames emissivity=%s max_ms=%ld (off after more than 3 slower calls in a row) id=%u; CalcTemp after the AGC read, T_C = (v - 5000) / 100%s\n",
+               name, TEMP_SLOTS, g_tring.payload, g_temp.every, eb, g_temp.max_ms, g_tring.id, notes.c_str());
+}
+
+static void temp_after_reopen(i3::TE_A* te, int w, int h)   // a new camera handle after the stall repair
+{
+  if(!g_temp.on) return;
+  g_temp.slow_in_row = 0;
+  if(static_cast<uint32_t>(w) * static_cast<uint32_t>(h) * 2u != g_tring.payload) { temp_off("the picture size changed at the reopen"); return; }
+  if(g_temp.emis_set) { te->SetEmissivity(g_temp.emis); std::fprintf(stderr, "TEMP_EMIS %.3f set again after the reopen\n", static_cast<double>(g_temp.emis)); }
+}
+
+static double temp_take(i3::TE_A* te, int w, int h, uint64_t frame, uint64_t t_ns)   // CalcTemp for the frame just read and passed on, map into the ring. Returns the CalcTemp time in ms
+{
+  if(g_temp.map.size() != static_cast<size_t>(w) * static_cast<size_t>(h)) { temp_off("the map buffer does not fit the picture"); return 0; }
+  const auto t = clk::now(); te->CalcTemp(g_temp.map.data()); const double ms = std::chrono::duration<double, std::milli>(clk::now() - t).count();
+  const double us = ms * 1000.0 + 0.5;
+  temp_ring_put(g_temp.map.data(), w, h, frame, t_ns, us >= 4294967295.0 ? 0xFFFFFFFFu : static_cast<uint32_t>(us), TEMP_FLAG_AGC_READ);
+  ++g_temp.calls; ++g_temp.win_calls; g_temp.sum_ms += ms; g_temp.win_sum += ms; g_temp.top_ms = std::max(g_temp.top_ms, ms); g_temp.win_top = std::max(g_temp.win_top, ms);
+  if(ms > static_cast<double>(g_temp.max_ms))
+  {
+    ++g_temp.over;
+    if(++g_temp.slow_in_row > 3) { char b[128]; std::snprintf(b, sizeof b, "CalcTemp took more than %ld ms %d times in a row (last %.0f ms)", g_temp.max_ms, g_temp.slow_in_row, ms); temp_off(b); }
+  }
+  else g_temp.slow_in_row = 0;
+  return ms;
+}
+
+static void temp_stats()   // from the CAMFPS block: one TEMP_STATS line every TEMP_STATS_S while the maps are on
+{
+  if(!g_temp.on) return;
+  const double s = since(g_temp.t_win);
+  if(s < TEMP_STATS_S) return;
+  std::fprintf(stderr, "TEMP_STATS %ld CalcTemp calls in %.0f s, calc_ms mean %.1f max %.1f (whole run: %ld calls, mean %.1f max %.1f, %ld over %ld ms; maps in the ring %u), at %s\n",
+               g_temp.win_calls, s, g_temp.win_calls ? g_temp.win_sum / static_cast<double>(g_temp.win_calls) : 0.0, g_temp.win_top, g_temp.calls,
+               g_temp.calls ? g_temp.sum_ms / static_cast<double>(g_temp.calls) : 0.0, g_temp.top_ms, g_temp.over, g_temp.max_ms, g_tring.maps, hms().c_str());
+  g_temp.win_calls = 0; g_temp.win_sum = 0; g_temp.win_top = 0; g_temp.t_win = clk::now();
+}
+
 int main(int argc, char** argv)
 {
   const int fps_code = argc > 1 ? std::atoi(argv[1]) : -1; (void)fps_code;   // kept for the old command line; SetFrameRate is not in our header
@@ -276,6 +445,7 @@ int main(int argc, char** argv)
   g_stamp = env_is_1("LWIR_CAM_STAMP");   // v2.6: off unless set to exactly 1 (see the top of this file)
   if(g_stamp) { std::fprintf(stderr, "STAMP on: a 48-byte header goes before every frame\n"); if(env_is_1("LWIR_CAM_SHM")) ring_open(w, h); }
   else if(env_is_1("LWIR_CAM_SHM")) std::fprintf(stderr, "SHM_RING not used: LWIR_CAM_SHM=1 needs LWIR_CAM_STAMP=1\n");
+  temp_setup(te, w, h);   // v2.11: off (and silent) unless LWIR_CAM_TEMP is set (see the top of this file)
   uint64_t t_rx = 0;
   std::map<int, long> codes; long ok = 0;
   auto t0 = clk::now(), tl = t0; long okl = 0; double maxgap = 0; auto tprev = t0;
@@ -320,6 +490,7 @@ int main(int argc, char** argv)
   // repeats (shutter) was. Only log lines are added; frames, pacing and the duplicate filter are as in v2.8.
   const double GAP_LOG_MS = 150.0;
   bool gp_have = false; auto gp_last_ok = clk::now(), gp_prev_end = clk::now(); long gp_fail = 0, gp_empty = 0; double gp_max_call = 0, gp_max_wait = 0, gp_call = 0, gp_wait = 0, gp_write = 0;
+  double gp_temp = 0;   // v2.11: CalcTemp time after the last frame passed on (0 = none), named in INPUT_GAP when the maps were started
   std::fprintf(stderr, "DUPLICATE_FILTER holds back up to %ld repeated frames in a row (0 = off)\n", drop_dup_max);
   while(!g_stop && since(t0) < seconds)
   {
@@ -336,7 +507,7 @@ int main(int argc, char** argv)
       if(r != 1) { ++gp_fail; if(r == 4) ++gp_empty; gp_max_call = std::max(gp_max_call, call_ms); }
     }
     last_read_ok = (r == 1); if(last_read_ok) last_read_start = read_start;
-    if(g_stamp) t_rx = mono_ns();
+    if(g_stamp || g_temp.on) t_rx = mono_ns();
     if(test_stall_at > 0 && !test_done && since(t0) > test_stall_at) { test_done = true; std::fputs("TEST: simulated stall", stderr); std::fputc(10, stderr); nap(STALL_S + 1.0); r = 4; }
     ++codes[r];
     if(r == 1)
@@ -350,12 +521,15 @@ int main(int argc, char** argv)
           char repb[96] = "no long run of repeats yet";
           if(dup_run > 0) std::snprintf(repb, sizeof repb, "inside a run of repeats (%ld before the gap)", dup_run);
           else if(rep_seen) std::snprintf(repb, sizeof repb, "last long run of repeats ended %.1f s before", std::chrono::duration<double>(gp_last_ok - rep_end).count());
-          std::fprintf(stderr, "INPUT_GAP %.0f ms between frames: the read that brought this frame took %.0f ms and began %.0f ms after the read before it ended (sending the frame before to the server took %.0f ms); "
+          char tmpb[48] = "";   // v2.11: empty unless the temperature maps were started
+          if(g_temp.started) std::snprintf(tmpb, sizeof tmpb, ", CalcTemp after it %.0f ms", gp_temp);
+          std::fprintf(stderr, "INPUT_GAP %.0f ms between frames: the read that brought this frame took %.0f ms and began %.0f ms after the read before it ended (sending the frame before to the server took %.0f ms%s); "
                        "reads without a frame in between %ld (%ld empty), longest of them %.0f ms, longest wait between them %.1f ms; frame after the gap is %s, %s, %.1f s after this open, at %s\n",
-                       gap_ms, gp_call, gp_wait, gp_write, gp_fail, gp_empty, gp_max_call, gp_max_wait, drop_dup_max > 0 ? (same ? "a repeat" : "new") : "not compared", repb, since(t_open), hms().c_str());
+                       gap_ms, gp_call, gp_wait, gp_write, tmpb, gp_fail, gp_empty, gp_max_call, gp_max_wait, drop_dup_max > 0 ? (same ? "a repeat" : "new") : "not compared", repb, since(t_open), hms().c_str());
         }
       }
       gp_have = true; gp_last_ok = read_end; gp_fail = 0; gp_empty = 0; gp_max_call = 0; gp_max_wait = 0; gp_write = 0;
+      gp_temp = 0;
       if(drop_dup_max > 0)
       {
         if(same) { ++dup_run; if(dup_run == 1) rep_start = clk::now(); if(dup_run <= drop_dup_max) { ++dups_dropped; continue; } ++dups_passed; }
@@ -378,6 +552,7 @@ int main(int argc, char** argv)
       if(!write_all(buf.data(), buf.size() * sizeof(unsigned short))) break;
       gp_write = std::chrono::duration<double, std::milli>(clk::now() - gp_w0).count();
       ++ok; ++okl;
+      if(g_temp.on && ok % g_temp.every == 0) gp_temp = temp_take(te, w, h, static_cast<uint64_t>(ok), t_rx);   // v2.11: after the picture went out, before the next read (CalcTemp uses the last RecvImage)
       if(g_shutter.own_period_s > 0 && since(g_t_cal) >= g_shutter.own_period_s)   // v2.5 (setting mN): the engine is in MANUAL mode, the calibration is ours and it is in the log
       {
         const auto tc = clk::now(); const bool okc = te->ShutterCalibrationOn(); g_t_cal = clk::now(); g_cal_done = true; ++g_own_cals;
@@ -389,6 +564,7 @@ int main(int argc, char** argv)
         if(telemetry) std::fprintf(stderr, "CAMFPS %.1f t %.0f fpa %.2f shutter %.2f", okl / dt, since(t0), te->GetFpaTemp(), te->GetShutterPt100Temp());
         else std::fprintf(stderr, "CAMFPS %.1f", okl / dt);
         std::fputc(10, stderr); okl = 0; tl = now;
+        temp_stats();   // v2.11: every 30 s while the maps are on, nothing otherwise
       }
       continue;
     }
@@ -423,6 +599,7 @@ int main(int argc, char** argv)
     te = open_camera(&w, &h);
     if(!te) { std::fprintf(stderr, "REOPEN_FAILED\n"); exit_code = 3; break; }
     if(static_cast<size_t>(w) * h != buf.size()) buf.assign(static_cast<size_t>(w) * h, 0);
+    temp_after_reopen(te, w, h);   // v2.11: emissivity again on the new handle; maps stop if the picture size changed
     t_open = clk::now(); frame_since_open = false; tprev = t_open; tl = t_open; okl = 0; ok_open = ok; gp_have = false; gp_fail = 0; gp_empty = 0; gp_max_call = 0; gp_max_wait = 0;
   }
   double secs = since(t0);
@@ -430,7 +607,11 @@ int main(int argc, char** argv)
   std::fprintf(stderr, "FRAMES %ld in %.2f s = %.2f fps, longest gap %.0f ms, resets %d, return codes:", ok, secs, ok / secs, maxgap * 1000, recoveries);
   for(auto& kv : codes) std::fprintf(stderr, " %d x%ld", kv.first, kv.second);
   std::fprintf(stderr, "\n");
+  if(g_temp.started)   // v2.11
+    std::fprintf(stderr, "TEMP_TOTAL %ld CalcTemp calls, calc_ms mean %.1f max %.1f, %ld over %ld ms, maps %u, %s\n", g_temp.calls, g_temp.calls ? g_temp.sum_ms / static_cast<double>(g_temp.calls) : 0.0,
+                 g_temp.top_ms, g_temp.over, g_temp.max_ms, g_tring.maps, g_temp.on ? "on to the end" : "stopped earlier (TEMP_OFF)");
   ring_close();
+  temp_ring_close();
   if(te) te->CloseTE();
   return exit_code;
 }
