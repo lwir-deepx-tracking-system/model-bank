@@ -252,6 +252,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 
 ## 8. 바뀐 것 기록 (새 것이 위)
 
+- 2026-11-14 Claude: 위치 기억 선택 확인이 kalman·gru·mamba 만 받아 "GRU/Mamba + 관절" 선택이 "없는 위치 예측기"로 거절되던 것을 고침(page_settings 가 POS_NAMES 를 따름).
 - 2026-11-14 Claude: **관절 읽기·관절 위치 기억 연결·예측 경로 표시(사용자 "읽도록 바꿔", "예측 이동, 위치 기억 표시", "관절 넣은 걸 쓸 수 있게, 기존 건 지워").** model_scan(six_kpt), npu_engine(관절 출력 합침), detect_frame(attach_kpts, Pose26 디코드), position_memory(PosKpt, pos_predict_kpt: 15프레임 보정, 카메라 이동 적용, PoseTrack 순서 파일은 1·2번 관절 0), page_handler·preview_worker(last seen 상자·원, 경로, 글자), 시험 test_position_kpt, 대조 parity_kpt_vs_torch(GRU 3.6e-5, Mamba 4.1e-5 px). pos_gru·pos_mamba 삭제. 모델 README·서버 README·화면 설명·이름 표·MANIFEST·최상위 README 검출 13개.
 - 2026-11-14 Claude: **위치 기억 가중치 교체(사용자 "GRU 맘바 최고 성능인 것도 업로드해").** pos_gru = m4 gru seed 1 v2bal epoch 6, pos_mamba = m4 mamba seed 0 v2bal epoch 8 (서버 PosGRU·PosMamba numpy 와 torch 차이 2e-16 확인). 관절 입력 판 pos_{gru,mamba}_kpt_posetrack18_20261114 추가(서버 연결 전), 만든 코드 track/build_scripts/pos_kpt_posetrack18_build/. 모델 README, 서버 README, 화면 설명(2_body.html → live_page.html). MANIFEST 는 .dxnn 만 적는 규칙이라 그대로.
 - 2026-11-14 Claude: **장치 MOTIP 2.67초 → 1.45초/장(사용자: 최적화 먼저), Tracker 줄에서 MOTIP 고르기(사용자).** C++ 변형 어텐션 샘플링(`msda_cpu.cpp`, 참조와 차이 2e-6) + 인코더 Linear 동적 int8. 빠른 판 결과 `motip_npu_fast_480`("MOTIP 빠른 판 (장치)") 채점: seq_003 IDF1 97.68, 실내 rec_inside_20261110_165240 IDF1 47.03(거의 그대로). 화면: 저장된 결과가 Tracker 줄의 노드로 나옴. 녹화 재생 중·결과 있는 녹화만 고를 수 있고(아니면 이유와 함께 잠김), 고르면 그 녹화를 처음부터 다시 재생. 확인: PC 미리보기에서 재생 중 클릭 → 서버 재생 추적기가 pre:motip_npu_fast_480으로 바뀜, 페이지 오류 0. 실시간은 이 구조로 안 됨(README).

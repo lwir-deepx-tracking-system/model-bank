@@ -7,7 +7,7 @@ from ..common.state import APP
 from ..common.shared_values import HERE, CORE, DET, sha
 from ..detect.model_scan import BANK
 from ..track import native_backend
-from ..track.position_memory import POSP, pos_list
+from ..track.position_memory import POSP, POS_NAMES, pos_list
 from ..track.stabilizer import STAB
 from ..track.bytetrack import ByteTrackTracker
 from ..track.botsort import BotSortTracker
@@ -188,7 +188,7 @@ def rules_request(q_):
         pend_['relabel'] = q_['relabel'][0] in ('1', 'true', 'on')
     if 'predictor' in q_:   # v32
         pk_ = q_['predictor'][0]
-        if pk_ not in ('kalman', 'gru', 'mamba'): return False, '없는 위치 예측기'
+        if pk_ not in {k_ for k_, _ in POS_NAMES}: return False, '없는 위치 예측기'   # 11-14: the list in position_memory (keypoint arms)
         if pk_ != 'kalman' and not any(p_['key'] == pk_ and p_['available'] for p_ in pos_list()): return False, '이 위치 예측기는 가중치 파일이 없음 (학습 전)'
         if pk_ != POSP['key']: pend_['predictor'] = pk_
     if 'pred_show' in q_: POSP['show'] = q_['pred_show'][0] in ('1', 'true', 'on')
