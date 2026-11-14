@@ -38,7 +38,7 @@ def iou_any(b, others):
 class OnlineRelabel:
     def __init__(self, budget=True, every=2, k=2, new_k=2):
         self.budget, self.every, self.k, self.new_k = budget, every, k, new_k
-        self.pred_gate = False   # 11-14: growing search range on the predicted place (page switch); False = the original gate
+        self.pred_gate = True   # 11-14: growing search range on the predicted place (page switch; on by default after the replay check: ID switches 8 -> 4, 0 -> 0, 2 -> 2); False = the original gate
         self.stats = dict(new_ids=0, decided_with_feature=0, relabelled=0, retired_reappearances=0, frames=0, crops_new=0, crops_refresh=0, crops_embedded=0)
         self.events, self.per_frame = [], []
         self.reset()

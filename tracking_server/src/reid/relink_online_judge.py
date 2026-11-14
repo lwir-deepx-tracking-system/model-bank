@@ -221,7 +221,7 @@ class OnlineJudge:
         self.events, self.per_frame = [], []
         self.feat_ms, self.model_ms, self.cands_per_eval = [], [], []
         self.keep_rows = False; self.rows_log = []
-        self.pred_gate = False   # 11-14 (user): only candidates whose growing search range (relabel_online.search_range) holds the birth; False = unchanged                      # PC verification: (frame, t, birth id, [cand ids], X, p) per evaluation
+        self.pred_gate = True   # 11-14 (user): only candidates whose growing search range (relabel_online.search_range) holds the birth (default on after the replay check); False = the old candidate set                      # PC verification: (frame, t, birth id, [cand ids], X, p) per evaluation
         self.reset()
 
     def reset(self):

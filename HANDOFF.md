@@ -254,6 +254,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 
 ## 8. 바뀐 것 기록 (새 것이 위)
 
+- 2026-11-14 Claude: KeepID 커지는 찾는 범위 기본 켬. 장치 녹화 재생(정답 있음) 번호 바뀜 끔→켬: rec_inside_165240 8→4, rec_inside_170437 0→0, seq_003 2→2.
 - 2026-11-14 Claude: **놓친 사람의 커지는 찾는 범위(사용자가 보낸 대상 영속성 영상).** 예측 표시에 원(마지막 키 x min(0.5+0.05x놓친 프레임, 4)), KeepID 에 "찾는 범위" 스위치(예측 이동 + 커지는 범위, 기본 끔). 녹화 재생 점수로 번호 바뀜이 줄어드는지 확인 전. 시험 test_relink_range.
 - 2026-11-14 Claude: **근거리 검출 E 판으로 교체(사용자 "응").** 추가 otp2cocomot 두 파일(sha 2ea4fcf8…, 8f97f3a1…), 삭제 otp2coco 두 파일. MANIFEST·모델 README(가림 확인 표)·이름 표·이름표 json·만든 스크립트(mot17_det_prep.py, eval_mot17_check.py, otp2_coco_mot17.yaml). 최상위 README 검출 수 13 그대로.
 - 2026-11-14 Claude: 사람 후보 연구용 기록(`prop_log`)에 그 장 화면에 그려진 후보(PROP boxes: 좌표, 점수, 추적기 사람 위인지)도 넣음(장치 끝까지 채점용).
