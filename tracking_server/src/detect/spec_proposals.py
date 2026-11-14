@@ -231,7 +231,7 @@ def submit(frame_t, raw, people):
 def log_frame(raw, dets, tracks):
     """raw: 16-bit frame (real coordinates); dets: [(x0, y0, x1, y1, score)] every person detection; tracks: [(x0, y0, x1, y1)]"""
     if len(LOG['rows']) < 20000:
-        LOG['rows'].append(dict(sig=raw[::40, ::40].astype(int).ravel().tolist(), dets=[[round(float(v), 1) for v in d[:4]] + [round(float(d[4]), 4)] for d in dets],
+        LOG['rows'].append(dict(sig=raw[::40, ::40].astype(int).ravel().tolist(), dets=[[round(float(v), 1) for v in d[:4]] + [round(float(d[4]), 4)] for d in dets if d[4] >= 0.05][:60],   # the detector keeps up to 300 boxes down to 0.001
                                 tracks=[[round(float(v), 1) for v in t[:4]] for t in tracks]))
 
 
