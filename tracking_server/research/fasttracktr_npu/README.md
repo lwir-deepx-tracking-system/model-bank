@@ -47,3 +47,17 @@ DX-M1 NPU에 TopK / GridSample / Log가 없어서 아래처럼 바꿨습니다. 
 ## 다음 단계
 
 학습: 이 구조로 DanceTrack 등 공식 데이터 + 우리 열화상 데이터. 큰 GPU가 있는 컴퓨터와 데이터·RT-DETR 사전학습 가중치 다운로드 허락이 필요합니다.
+
+## 화면에 올림 (2026-11-14, 학습 전)
+
+`ftt_stored_run.py`로 장치에서 녹화를 돌려 저장된 결과를 만들었습니다. 녹화 재생 추적기와 트래커 줄에
+**"FastTrackTr (장치 NPU, 학습 전)"**으로 나옵니다. 지금은 seq_003, rec_inside_20261110_165240 두 녹화이고, 장 당 약 50ms입니다.
+무작위 가중치라 점수가 기준(0.5)을 넘는 상자가 없어서 **상자 0개**로 나오는 것이 정상입니다.
+번호 붙이기는 임시 겹침(IoU) 연결기이며, 학습 뒤 FastTrackTr 원래 연결 방식으로 바꿀 자리입니다.
+
+교체 방법: 학습된 가중치로 AE와 디코더 조각 .dxnn을 다시 만든 뒤 같은 명령을 다시 돌리면 결과 파일이 바뀝니다(`--untrained` 빼고, 이름은 `--label`).
+
+```
+python3 ftt_stored_run.py --ae <AE.dxnn> --chunks <B0.dxnn> <B1.dxnn> --frames <녹화>/images \
+    --out <replay_tracks>/<녹화>/fasttracktr_npu_untrained --label "FastTrackTr (장치 NPU, 학습 전)" --untrained
+```

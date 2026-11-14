@@ -252,6 +252,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 
 ## 8. 바뀐 것 기록 (새 것이 위)
 
+- 2026-11-14 Claude: **FastTrackTr를 학습 전 상태로 화면에 올림(사용자: 나중에 교체).** `research/fasttracktr_npu/ftt_stored_run.py`로 장치에서 seq_003, rec_inside_20261110_165240을 돌려 저장된 결과 `fasttracktr_npu_untrained`("FastTrackTr (장치 NPU, 학습 전)")를 만듦. 재생 추적기·트래커 줄에서 MOTIP과 함께 고를 수 있음. 장 당 약 50ms(AE 코어 1, 디코더 2조각 코어 2). 무작위 가중치라 상자 0개가 정상. 번호 붙이기는 임시 IoU 연결기. 교체는 .dxnn 다시 만들고 같은 명령 재실행(README).
 - 2026-11-14 Claude: 화면 나무에 관절 위치 기억 이름(GRU/Mamba_위치기억+관절_(PoseTrack18)_20261114)과 GRU·Mamba 폴더 배정을 넣고, 관절 판은 "고급"을 열지 않아도 보이게 함.
 - 2026-11-14 Claude: **재생 추적기 목록에서 MOTIP은 빠른 판만 남김(사용자).** 장치 `replay_tracks`의 PC 판(`motip_dancetrack_480`)과 느린 장치 판(`motip_npu_dancetrack_480`)을 `~/claude_backup_20261114/replay_tracks_removed`로 옮김(지우지 않음). 남은 `motip_npu_fast_480`의 이름은 "MOTIP (장치 NPU)". **FastTrackTr NPU 포팅을 `research/fasttracktr_npu/`에 올림**: 전부 NPU로 도는 구조(질의 고정 300칸, 일반 어텐션, 로그 없는 상자 보정), DX-COM 제약(디코더 3층 한 그래프 실패 → 층마다 그래프), 장치 ResNet-18 무작위 가중치 47ms/장, 파이프라인 34.6fps. 학습된 가중치가 없어 화면 목록에는 올리지 않음.
 - 2026-11-14 Claude: 위치 기억 선택 확인이 kalman·gru·mamba 만 받아 "GRU/Mamba + 관절" 선택이 "없는 위치 예측기"로 거절되던 것을 고침(page_settings 가 POS_NAMES 를 따름).
