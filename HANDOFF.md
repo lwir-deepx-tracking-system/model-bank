@@ -252,6 +252,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 
 ## 8. 바뀐 것 기록 (새 것이 위)
 
+- 2026-11-14 Claude: 화면 나무에 관절 위치 기억 이름(GRU/Mamba_위치기억+관절_(PoseTrack18)_20261114)과 GRU·Mamba 폴더 배정을 넣고, 관절 판은 "고급"을 열지 않아도 보이게 함.
 - 2026-11-14 Claude: **재생 추적기 목록에서 MOTIP은 빠른 판만 남김(사용자).** 장치 `replay_tracks`의 PC 판(`motip_dancetrack_480`)과 느린 장치 판(`motip_npu_dancetrack_480`)을 `~/claude_backup_20261114/replay_tracks_removed`로 옮김(지우지 않음). 남은 `motip_npu_fast_480`의 이름은 "MOTIP (장치 NPU)". **FastTrackTr NPU 포팅을 `research/fasttracktr_npu/`에 올림**: 전부 NPU로 도는 구조(질의 고정 300칸, 일반 어텐션, 로그 없는 상자 보정), DX-COM 제약(디코더 3층 한 그래프 실패 → 층마다 그래프), 장치 ResNet-18 무작위 가중치 47ms/장, 파이프라인 34.6fps. 학습된 가중치가 없어 화면 목록에는 올리지 않음.
 - 2026-11-14 Claude: 위치 기억 선택 확인이 kalman·gru·mamba 만 받아 "GRU/Mamba + 관절" 선택이 "없는 위치 예측기"로 거절되던 것을 고침(page_settings 가 POS_NAMES 를 따름).
 - 2026-11-14 Claude: **관절 읽기·관절 위치 기억 연결·예측 경로 표시(사용자 "읽도록 바꿔", "예측 이동, 위치 기억 표시", "관절 넣은 걸 쓸 수 있게, 기존 건 지워").** model_scan(six_kpt), npu_engine(관절 출력 합침), detect_frame(attach_kpts, Pose26 디코드), position_memory(PosKpt, pos_predict_kpt: 15프레임 보정, 카메라 이동 적용, PoseTrack 순서 파일은 1·2번 관절 0), page_handler·preview_worker(last seen 상자·원, 경로, 글자), 시험 test_position_kpt, 대조 parity_kpt_vs_torch(GRU 3.6e-5, Mamba 4.1e-5 px). pos_gru·pos_mamba 삭제. 모델 README·서버 README·화면 설명·이름 표·MANIFEST·최상위 README 검출 13개.

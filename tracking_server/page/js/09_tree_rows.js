@@ -45,7 +45,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   if(hot)T.push({lab:'외형 비교',sub:'사람 생김새로도 짝짓기 · 모델은 아래 외형 모델',kidOf:3,kidKey:'botsort',show:bot,n:[{name:'끔',note:'위치만으로 짝짓기',sel:bot&&app==='off',u:Q('app=off')},{name:'켬',note:rname,sel:bot&&app!=='off',u:Q('app=repvgg')}]});
   else T.push({lab:'외형 비교',sub:'',kidOf:3,kidKey:'botsort',show:bot,f:['RepVGG','ViT-lite'],n:apps.map(a=>({g:AFOLD[a.key]||'',name:AN[a.key]||a.name||a.key,note:a.note||'',sel:bot&&a.key===app,lock:!bot?'BoT-SORT를 골라야 열립니다':!r.apps?OLDSRV:a.available===false?(a.note||'지금은 고를 수 없습니다'):'',u:Q('app='+encodeURIComponent(a.key))}))});
   const pl=r.predictors||[{key:'kalman',available:true}];
-  const plv=pl.filter(p=>ADVON||p.key==='kalman'||p.key===prd);   // 11-13: GRU / Mamba (1 epoch, unverified) only with 'advanced' open
+  const plv=pl.filter(p=>ADVON||p.key==='kalman'||p.key===prd||/_kpt$/.test(p.key));   // 11-13: GRU / Mamba (1 epoch, unverified) only with 'advanced' open. 11-14: keypoint versions always shown (user)
   T.push({lab:'위치 기억 · 신뢰도',sub:'놓친 사람 위치'+(ADVON||plv.length>1?'':' · 학습 모델은 고급을 열면 보임'),f:plv.length>1?['Kalman filter','GRU','Mamba']:null,fe:{GRU:'장치에 GRU 가중치 파일이 없습니다',Mamba:'장치에 Mamba 가중치 파일이 없습니다'},n:plv.map(p=>({g:plv.length>1?(PFOLD[p.key]||''):'',name:PN[p.key]?PN[p.key][0]:p.name,note:PN[p.key]?PN[p.key][1]:(p.note||''),sel:p.key===prd,lock:p.available===false?(p.note||'가중치 파일이 없습니다'):'',u:Q('predictor='+encodeURIComponent(p.key))}))});
   const RST='장치에 파일은 있습니다. 쓰려면 추적 프로그램을 이 모델로 다시 켜야 합니다',VWAIT='PC에서 학습 중입니다. 끝나면 장치에 올립니다';
   if(hot&&!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람에게 예전 번호',n:[{name:'끔',sel:!rel,u:Q('relabel=0')},{name:'켬',note:rname,sel:rel,u:Q('relabel=1')}]});
