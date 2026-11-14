@@ -20,6 +20,7 @@ from ..track.confirm_time import ConfirmByTime, MS_MAX
 from ..reid.reid_models import reid_catalog
 from ..gimbal.gimbal_link import gb_cfg
 from .system_buttons import npu_feed_state
+from ..camera import cam_frozen   # 11-15: the frozen-camera notice for the page (/rules key cam_frozen)
 
 
 def sel_save(**over_):
@@ -101,7 +102,7 @@ def rules_state():
         return dict(camera_bytetrack=camera_backend,
                     server_restart=bool(getattr(APP.LIVE, 'restart_supported', False)),
                     npu_feed=npu_feed_state(),
-                    restart_pending=bool(getattr(APP.LIVE, 'restart_pending', False)), warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
+                    restart_pending=bool(getattr(APP.LIVE, 'restart_pending', False)), warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), cam_frozen=cam_frozen.state(APP.LIVE), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
                     gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker), engine=tracker_engine(),
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), giant_dropped=_giant(), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),

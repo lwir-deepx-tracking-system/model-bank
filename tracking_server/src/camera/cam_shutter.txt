@@ -1,0 +1,11 @@
+T120
+# cam_shutter.txt: the camera's shutter setting. cam_pipe reads the FIRST WORD of this file at every open (it must sit next to the cam_pipe binary, in
+# tracking_server/src/camera/; env CAM_SHUTTER overrides it; no file = d). T120 = TIME shutter, the engine calibrates every 120 x 30 s (once an hour).
+# 11-11 decision: T120 ended the soft stalls (under the default d = TEMP limit 1 the stream stopped every few minutes and needed ResetMainBoard).
+# Lost on 11-12 when cam_pipe moved into tracking_server/src/camera/ without this file (every open since then logged "SHUTTER setting=d (default)").
+# Restored 11-15 and kept in git (no longer ignored), so it stays next to the binary. T120 does not prevent the hard freezes of the camera's USB chip
+# (one came under T120 on 11-11 ~18:54); those end cam_pipe with exit 8 (cam_pipe.cpp v2.12).
+# Other settings (cam_pipe.cpp v2.5): d, tN (TEMP limit N, 1..10), TN (TIME every N x 30 s, 1..120), m (MANUAL), mN (MANUAL + own calibration every N x 30 s),
+# n (no shutter call); a trailing x = no calibration at the open. A second word "info" right after the setting logs the engine's saved settings once
+# (so these comment lines start with "#", never with "info").
+# To change it on the board: edit the first word, then end cam_pipe with SIGTERM (pkill -TERM -x cam_pipe); the server starts it again at once.

@@ -7,6 +7,8 @@ function netChip(){
   if(idle>4000){wasDown=true;chip('cdot','ctext','bad','서버 연결 끊김');S.textContent='서버 연결 끊김';$('sq').className='sq bad';$('fps').textContent='–';hzPrev=null;return;}
   if(idle>1500){wasDown=true;chip('cdot','ctext','warn','연결 불안정');return;}   // a 1.5 s+ gap may have cut the picture stream too
   if(wasDown){wasDown=false;openStream();}   // the picture stream died with the connection: open it again
+  const fz=rlast?.cam_frozen;   // 11-15: the camera's USB chip froze (cam_pipe exit 8): only a power cut helps (the server sends the Korean text)
+  if(fz){chip('cdot','ctext','bad','카메라 멈춤 · USB 선 다시 꽂기');$('ctext').parentElement.title=fz.title+'. '+fz.text;return;}
   if(camFail>0){chip('cdot','ctext','bad','카메라 응답 없음 · USB 확인');$('ctext').parentElement.title='카메라 영상 '+Math.round(camIdle)+'초째 없음 · 자동 복구 '+camFail+'회 실패 · 카메라 USB 케이블을 뽑았다가 다시 꽂으세요';return;}
   chip('cdot','ctext',camIdle>3?'warn':'good',camIdle>3?'카메라 영상 기다리는 중':'서버 연결됨');$('ctext').parentElement.title=camIdle>3?'카메라 영상 '+Math.round(camIdle)+'초째 안 들어옴 (스스로 복구 중)':'';}
 v.addEventListener('error',()=>setTimeout(openStream,2000));

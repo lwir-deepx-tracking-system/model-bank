@@ -10,6 +10,9 @@
 # The camera is repaired inside cam_pipe (ResetMainBoard + reopen, about 30 s) and the server backs off after repeated cam_pipe failures; this script does not touch the camera.
 # Last rung, board reboot: only when ~/lwir_keepalive.allow_reboot exists, cam_pipe failed 3 rounds in a row (12 engine resets), no frame for 15 min, the board is up > 30 min,
 # no camera experiment runs, at most 2 reboots per 24 h and 60 min apart. Counter in the home directory (not /tmp).
+# 11-15: never when the camera's USB chip froze (cam_pipe v2.12 exit 8, CAMERA_FROZEN): a reboot does not cut the power of its port (4 reboots 11-10..11-13 never brought
+# it back; only a replug did). Known from /healthz cam_frozen (the server keeps it from the exit 8 until a camera frame comes) or, for a server without that field, from
+# the last camera line of this run's cam_pipe.log being CAMERA_FROZEN. The skipped reboot is logged at most every 10 min.
 # Pause everything (deploys, experiments): create ~/lwir_keepalive.pause; delete it to resume. All timing uses /proc/uptime (the board has no RTC: the wall clock jumps after boot).
 #
 # Differences from the copy that runs on our board (the logic is otherwise the same):
@@ -79,6 +82,8 @@ prereq_ok() { [ -e /dev/dxrt0 ] && pgrep -x dxrtd > /dev/null && addr_up; }
 experiment_running() { pgrep -x cam_pipe_exp > /dev/null || pgrep -x cam_diag > /dev/null; }
 # 2026-11-11: 카메라(i3system 0547:0080)가 USB 에 아예 안 보이면 재부팅해도 살아나지 않는다(두 번 확인). 그때는 재부팅하지 않는다: 선을 다시 꽂아야 한다.
 cam_on_usb() { grep -qs 0547 /sys/bus/usb/devices/*/idVendor; }
+# 11-15: the last camera line of this server run's cam_pipe.log is CAMERA_FROZEN (no successful open "CAMERA <w> <h>" after it)
+cam_frozen_log() { local l; l=$(grep -a -E '^(CAMERA_FROZEN |CAMERA [0-9]+ [0-9]+$)' "$T/real_gui_1/cam_pipe.log" 2>/dev/null | tail -n 1); [ -n "$l" ] && [ "${l#CAMERA_FROZEN }" != "$l" ]; }
 # 2026-11-11: 팀의 NPU 측정 프로그램이 도는 동안에는 서버를 켜지 않고 기다린다 (같이 돌면 NPU 서비스가 죽는다).
 npu_busy_other() { pgrep -x lwir_benchmark > /dev/null; }
 
@@ -120,7 +125,7 @@ crash_note() {   # reason + last lines of the dying server for the record
 }
 
 log "keepalive v2 started (pid $$)"
-fails=0; gbfails=0; hung=0; restarts=(); previous_replay_frames=
+fails=0; gbfails=0; hung=0; restarts=(); previous_replay_frames=; frozen_said=-100000   # frozen_said (11-15): uptime of the last "no reboot: frozen" line
 while true; do
   sleep 5
   if [ -e "$PAUSE" ]; then fails=0; gbfails=0; hung=0; previous_replay_frames=; continue; fi
@@ -158,11 +163,15 @@ while true; do
           [ $gbfails -ge 3 ] && reason="gimbal_bridge missing"
         fi
         if [ -z "$reason" ] && [ -e "$ALLOW_REBOOT" ] && [ -n "$cam_fail" ] && [ "$cam_fail" -ge 3 ] && [ -n "$cam_idle" ] && [ "$cam_idle" -gt 900 ] && [ "$(up)" -gt 1800 ] && ! experiment_running && cam_on_usb; then
+         if [ "$(jget "$h" cam_frozen)" = 1 ] || cam_frozen_log; then   # 11-15: frozen USB chip: a reboot does not cut its power (see the top)
+          if [ $(( $(up) - frozen_said )) -ge 600 ]; then log "no reboot: the camera's USB chip is frozen (cam_pipe exit 8 / CAMERA_FROZEN, no frame for ${cam_idle} s); a reboot does not cut its power: unplug the camera USB cable ~10 s and plug it back"; frozen_said=$(up); fi
+         else
           now_epoch=$(date +%s); n24=0; last=0
           if [ "$(date +%Y)" -ge 2026 ] && [ -f "$REBOOTS" ]; then
             while read -r t; do [ -n "$t" ] && [ $((now_epoch - t)) -lt 86400 ] && n24=$((n24 + 1)) && last=$t; done < "$REBOOTS"
           fi
           if [ "$(date +%Y)" -ge 2026 ] && [ $n24 -lt 2 ] && [ $((now_epoch - last)) -gt 3600 ]; then reason="camera dead: $cam_fail cam_pipe failure rounds, no frame for ${cam_idle} s"; reboot=1; fi
+         fi
         fi
       fi
     else

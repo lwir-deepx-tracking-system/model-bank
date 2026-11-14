@@ -1,5 +1,19 @@
 // Camera -> stdout pipe for the live tracker (DX-M1 host). Writes every received 16-bit frame (w*h*2 bytes, native endian) to stdout and prints stats to stderr.
 // Opens the camera like the team runtime (runtime/src/camera/camera.cpp). Optional frame-rate setting: ./cam_pipe [fps_code] [seconds]   fps_code: 0 = 30 fps, 1 = 25 fps, -1 = leave as is (default)
+// v2.12 (11-15): FROZEN CAMERA, EXIT 8. Since 11-12 every hard camera loss looked the same: the camera's own USB chip (0547:0080) stops answering while it stays on the bus.
+//   The stall's DIAG says op=3(control) or op=4(send) result=-7(libusb_timeout), ResetMainBoard() is refused (sent=0) because the engine cannot be reached, and every open
+//   after it fails with op=4(send) libusb_timeout. Only cutting its power cleared it (a hand replug: its board root port has no software 5 V switch); the 20 s reopen loop,
+//   usbreset, the 5 V step (it switches only the board's hub, not that root port) and board reboots never did. cam_pipe now stops trying at once in two cases:
+//     (a) a stall whose DIAG is control or send + libusb_timeout and whose ResetMainBoard() returns false;
+//     (b) a reopen after a stall that fails in OpenTE_A with control or send + libusb_timeout, when this process had passed frames on (the camera was streaming).
+//   Then it closes the handle, prints one line "CAMERA_FROZEN <reason>: the camera's USB chip does not answer; ..." (the reason has no colon) and exits with code 8:
+//   no 20 s wait, no further ResetMainBoard. The server waits for the camera's USB presence to change (replug) instead of starting cam_pipe again every few seconds.
+//   Unchanged: libusb_no_device stalls (the kernel dropped the device; it comes back by itself and the reopen 20 s later works), stalls whose ResetMainBoard is accepted,
+//   a first open that fails (exit 2, nothing streamed yet), a reopen that finds no camera or fails otherwise (exit 3), CAM_NO_RECOVER (exit 7), exit 6.
+//   Test hook: CAM_PIPE_TEST_FROZEN=1 together with CAM_PIPE_TEST_STALL_AT=<s> makes that one simulated stall take the frozen path (its DIAG is taken as control
+//   libusb_timeout and ResetMainBoard is not called), so the server's handling of exit 8 can be tried with a healthy camera.
+//   Test without a camera: fake_i3/ is a stand-in for the SDK (plan of opens and stalls in FAKE_I3_PLAN); test_cam_pipe_frozen.py builds cam_pipe against it and runs
+//   the frozen and the unchanged repair paths (python3 -m unittest src.camera.test_cam_pipe_frozen, Linux with g++).
 // v2.11 (11-14): OPTIONAL TEMPERATURE MAPS IN SHARED MEMORY, OFF UNLESS LWIR_CAM_TEMP IS SET. With LWIR_CAM_TEMP unset, empty or 0, the bytes on stdout and the lines on stderr are
 //   exactly those of v2.10 (LWIR_CAM_TEMP_EMIS and LWIR_CAM_TEMP_MAX_MS are then not even read). Purpose: a single-frame person cue from radiation alone (skin about 28-38 C).
 //   LWIR_CAM_TEMP=N (whole number 1..300): after every N-th frame that is passed on (frame numbers N, 2N, 3N, ...) te->CalcTemp(map) is called for the whole picture. CalcTemp
@@ -59,6 +73,7 @@
 // After MAX_FAILED_RECOVERIES recoveries in a row without a single frame it ends with exit code 6 (the tracker may start a new process).
 // Build: g++ -O2 cam_pipe.cpp -o cam_pipe -D_LINUX -I/usr/local/include/i3system $(pkg-config --cflags --libs opencv4) -li3system_te_64 -li3system_usb_64 -li3system_imgproc_impl_64 -lpthread
 //   (v2.11: the same line; nothing new to link. Checked 11-14 with g++ 11.4 on the board, also with -Wall -Wextra: no warning from the v2.11 code.)
+//   (v2.12: the same line. Checked 11-15 with g++ 11.4 on the board, also with -Wall -Wextra: no warning.)
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -182,16 +197,38 @@ static const double FIRST_STALL_S = 30.0;   // no first frame this long after an
 static const double RESET_WAIT_S = 20.0;    // time given to the engine to reboot before the next scan/open
 static const int MAX_FAILED_RECOVERIES = 4;
 
-static void diag(const char* where)
+struct UsbDiag { bool have = false; int op = 0, result = 0; };   // v2.12: the last USB diagnostic, kept for the frozen-camera rule
+static UsbDiag diag(const char* where)
 {
-  i3::USB_DIAGNOSTIC d{};
+  UsbDiag r; i3::USB_DIAGNOSTIC d{};
   if(i3::GetLastUsbDiagnostic(&d))
+  {
+    r.have = true; r.op = d.operation; r.result = d.result;
     std::fprintf(stderr, "DIAG %s: op=%d(%s) result=%d(%s)\n", where, d.operation, i3::GetUsbOperationName(d.operation), d.result, i3::GetUsbResultName(d.result));
+  }
+  return r;
 }
 
 static std::string hms()   // board wall clock, to match this log with the tracker and kernel logs
 {
   char b[16]; std::time_t t = std::time(nullptr); std::tm tmv; localtime_r(&t, &tmv); std::strftime(b, sizeof b, "%H:%M:%S", &tmv); return b;
+}
+
+// v2.12 (11-15): the camera's USB chip does not answer = a control or send transfer timed out (libusb_timeout = -7, the raw libusb code the SDK passes on).
+// A receive timeout (op 5) is the old soft stall that ResetMainBoard repaired; libusb_no_device (-4) is the kernel dropping the device, which comes back by itself.
+static const int USB_TIMEOUT = -7;
+static bool chip_mute(const UsbDiag& d)
+{
+  return d.have && d.result == USB_TIMEOUT && (d.op == i3::I3_USB_OPERATION_CONTROL || d.op == i3::I3_USB_OPERATION_SEND);
+}
+static const char* op_word(int op) { return op == i3::I3_USB_OPERATION_CONTROL ? "control" : op == i3::I3_USB_OPERATION_SEND ? "send" : "other"; }
+static const int EXIT_FROZEN = 8;
+static int camera_frozen(i3::TE_A*& te, const std::string& reason)   // closes the handle, prints the CAMERA_FROZEN line, returns the exit code
+{
+  if(te) { te->CloseTE(); te = nullptr; }
+  std::fprintf(stderr, "CAMERA_FROZEN %s: the camera's USB chip does not answer; only a power cut (unplug ~10 s, or the 5 V step on a switchable port) clears it, at %s\n",
+               reason.c_str(), hms().c_str());
+  return EXIT_FROZEN;
 }
 
 static std::string exe_dir()
@@ -265,12 +302,14 @@ static void apply_shutter(i3::TE_A* te)
                s.mode == -2 ? "untouched" : s.mode == I3_TEMP_SHUTTER ? "TEMP" : s.mode == I3_TIME_SHUTTER ? "TIME" : "MANUAL", s.value, rm, rv, rc, s.own_period_s, hms().c_str());
 }
 
+static UsbDiag g_open_diag;   // v2.12: the DIAG of the last OpenTE_A that failed (have = false: the last open_camera did not fail in OpenTE_A)
 static i3::TE_A* open_camera(int* w, int* h)
 {
+  g_open_diag = UsbDiag();
   const int idx = scan_device(10);
   if(idx < 0) { std::fprintf(stderr, "NO_CAMERA_FOUND\n"); return nullptr; }
   auto* te = i3::OpenTE_A(idx);
-  if(!te) { diag("open"); std::fprintf(stderr, "OPEN_FAILED\n"); return nullptr; }
+  if(!te) { g_open_diag = diag("open"); std::fprintf(stderr, "OPEN_FAILED\n"); return nullptr; }
   *w = te->GetImageWidth(); *h = te->GetImageHeight();
   std::fprintf(stderr, "CAMERA %d %d\n", *w, *h);
   std::fprintf(stderr, "ENGINE product=%u core=%u at %s\n", g_prod, g_core, hms().c_str());
@@ -452,6 +491,7 @@ int main(int argc, char** argv)
   auto t_open = t0, t_frame = t0; bool frame_since_open = false; int failed_recoveries = 0, recoveries = 0; int exit_code = 0; long ok_open = 0;
   const bool no_recover = std::getenv("CAM_NO_RECOVER") != nullptr, telemetry = std::getenv("CAM_TELEMETRY") != nullptr;   // experiment switches (11-09): no_recover = log the stall and exit with code 7; telemetry = FPA and shutter temperature in the CAMFPS line (read once per 2 s)
   const double test_stall_at = std::getenv("CAM_PIPE_TEST_STALL_AT") ? std::atof(std::getenv("CAM_PIPE_TEST_STALL_AT")) : 0; bool test_done = false;   // test hook: pretend the stream stopped once at this time (tests ResetMainBoard + reopen on a healthy camera)
+  const bool test_frozen = test_stall_at > 0 && env_is_1("CAM_PIPE_TEST_FROZEN");   // v2.12 test hook: that simulated stall takes the frozen path (exit 8), see the top of this file
   // v2.7 (11-13): READ PACING. The engine sends 30 frames a second (GetSetting frameRate 0). RecvImage waits at most about 26 ms
   // for a frame and returns 4 when none completed in that time, and a read that takes a frame returns after 17 ms (no AGC) to
   // 27 ms (AGC). Calling it again at once therefore starts a second read in the middle of the frame period: that read times
@@ -508,7 +548,8 @@ int main(int argc, char** argv)
     }
     last_read_ok = (r == 1); if(last_read_ok) last_read_start = read_start;
     if(g_stamp || g_temp.on) t_rx = mono_ns();
-    if(test_stall_at > 0 && !test_done && since(t0) > test_stall_at) { test_done = true; std::fputs("TEST: simulated stall", stderr); std::fputc(10, stderr); nap(STALL_S + 1.0); r = 4; }
+    bool test_stall_now = false;   // v2.12: this read is the simulated stall
+    if(test_stall_at > 0 && !test_done && since(t0) > test_stall_at) { test_done = true; test_stall_now = true; std::fputs("TEST: simulated stall", stderr); std::fputc(10, stderr); nap(STALL_S + 1.0); r = 4; }
     ++codes[r];
     if(r == 1)
     {
@@ -590,14 +631,36 @@ int main(int argc, char** argv)
       else if(rep_seen) std::fprintf(stderr, "STALL_REPEATS last long run of identical frames: %ld frames, ended %.1f s before the last frame\n", rep_len, std::chrono::duration<double>(t_frame - rep_end).count());
       else std::fprintf(stderr, "STALL_REPEATS no long run of identical frames since this program started\n");
     }
-    diag("stall");
-    const bool sent = te->ResetMainBoard();
-    std::fprintf(stderr, "ResetMainBoard sent=%d\n", (int)sent);
+    UsbDiag sd = diag("stall");
+    bool sent = false;
+    if(test_stall_now && test_frozen)   // v2.12 test hook (CAM_PIPE_TEST_FROZEN=1): this stall is taken as frozen
+    {
+      sd.have = true; sd.op = i3::I3_USB_OPERATION_CONTROL; sd.result = USB_TIMEOUT;
+      std::fprintf(stderr, "TEST: the simulated stall is taken as frozen (DIAG control libusb_timeout, ResetMainBoard not called)\n");
+    }
+    else
+    {
+      sent = te->ResetMainBoard();
+      std::fprintf(stderr, "ResetMainBoard sent=%d\n", (int)sent);
+    }
+    if(!sent && chip_mute(sd))   // v2.12 (a): the engine cannot be reached and the chip does not answer: a reopen would only time out again
+    {
+      exit_code = camera_frozen(te, "at a stall after " + std::to_string(ok) + " frames (" + op_word(sd.op) + " libusb_timeout, ResetMainBoard refused)");
+      break;
+    }
     te->CloseTE(); te = nullptr;
     nap(RESET_WAIT_S);
     if(g_stop) break;
     te = open_camera(&w, &h);
-    if(!te) { std::fprintf(stderr, "REOPEN_FAILED\n"); exit_code = 3; break; }
+    if(!te)
+    {
+      if(ok > 0 && chip_mute(g_open_diag))   // v2.12 (b): the camera streamed in this process and now its chip does not answer the open
+      {
+        exit_code = camera_frozen(te, "at the reopen after a stall, after " + std::to_string(ok) + " frames (" + op_word(g_open_diag.op) + " libusb_timeout)");
+        break;
+      }
+      std::fprintf(stderr, "REOPEN_FAILED\n"); exit_code = 3; break;
+    }
     if(static_cast<size_t>(w) * h != buf.size()) buf.assign(static_cast<size_t>(w) * h, 0);
     temp_after_reopen(te, w, h);   // v2.11: emissivity again on the new handle; maps stop if the picture size changed
     t_open = clk::now(); frame_since_open = false; tprev = t_open; tl = t_open; okl = 0; ok_open = ok; gp_have = false; gp_fail = 0; gp_empty = 0; gp_max_call = 0; gp_max_wait = 0;
