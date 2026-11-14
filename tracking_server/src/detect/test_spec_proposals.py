@@ -87,11 +87,13 @@ class SpecProposalTest(unittest.TestCase):
     def test_log(self):
         import os, json, tempfile
         sp.LOG['rows'] = []
-        sp.log_frame(_scene(), [(1, 2, 30, 40, 0.12)], [(5, 6, 50, 60)])
+        sp.log_frame(_scene(), [(1, 2, 30, 40, 0.12)], [(5, 6, 50, 60)], [(7, 8, 70, 80, 4.5, False)])
         self.assertEqual(len(sp.LOG['rows'][0]['sig']), 12 * 16)
         path = os.path.join(tempfile.mkdtemp(), 'log.json')
         self.assertEqual(sp.log_write(path), 1)
-        self.assertEqual(json.load(open(path))['rows'][0]['dets'], [[1.0, 2.0, 30.0, 40.0, 0.12]])
+        row = json.load(open(path))['rows'][0]
+        self.assertEqual(row['dets'], [[1.0, 2.0, 30.0, 40.0, 0.12]])
+        self.assertEqual(row['props'], [[7.0, 8.0, 70.0, 80.0, 4.5, False]])
         self.assertEqual(sp.LOG['rows'], [])
 
     def test_preview_draws_proposals(self):

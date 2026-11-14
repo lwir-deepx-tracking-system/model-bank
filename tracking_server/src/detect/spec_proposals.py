@@ -266,11 +266,13 @@ def submit(frame_t, raw, people, weak=None):
     _PROPOSER[0].submit(frame_t, raw, people, weak)
 
 
-def log_frame(raw, dets, tracks):
-    """raw: 16-bit frame (real coordinates); dets: [(x0, y0, x1, y1, score)] every person detection; tracks: [(x0, y0, x1, y1)]"""
+def log_frame(raw, dets, tracks, props=()):
+    """raw: 16-bit frame (real coordinates); dets: [(x0, y0, x1, y1, score)] every person detection; tracks: [(x0, y0, x1, y1)];
+    props: the proposals on screen at this frame (PROP['boxes']: x0, y0, x1, y1, score, covered), for end-to-end checks"""
     if len(LOG['rows']) < 20000:
         LOG['rows'].append(dict(sig=raw[::40, ::40].astype(int).ravel().tolist(), dets=[[round(float(v), 1) for v in d[:4]] + [round(float(d[4]), 4)] for d in dets if d[4] >= 0.05][:60],   # the detector keeps up to 300 boxes down to 0.001
-                                tracks=[[round(float(v), 1) for v in t[:4]] for t in tracks]))
+                                tracks=[[round(float(v), 1) for v in t[:4]] for t in tracks],
+                                props=[[round(float(v), 1) for v in p[:5]] + [bool(p[5])] for p in props]))
 
 
 def log_write(path):

@@ -206,7 +206,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
                if detections is not None else [])   # every person detection (all scores, before the tracker)
         tr_ = [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0) for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0]
         if spec_proposals.LOG['on'] and detections is not None:   # research log
-            spec_proposals.log_frame(rq_, dl_, tr_)
+            spec_proposals.log_frame(rq_, dl_, tr_, spec_proposals.PROP['boxes'] if spec_proposals.PROP['show'] and time.monotonic() - spec_proposals.PROP['boxes_t'] < 1.0 else ())
         if spec_proposals.PROP['show']:   # (user) an aid for what the tracker missed: its weak boxes looked at again by the spectrum
             spec_proposals.submit(t_in, rq_, tr_, spec_proposals.weak_boxes(dl_, tr_))
     healthy_ = False
