@@ -278,7 +278,7 @@ class Feed:
                     r_ = _Rec(); r_.seq = self.seq; self.seq += 1; r_.t = t_; r_.raw = raw_; r_.g8 = g8_; r_.gg = gg_; r_.stab = sc_
                     r_.gmc = self._gmc(gg_, restart) if APP.args.gmc_thread else None
                 if e_ >= 0: self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
-                else: r_.t_sub = time.perf_counter_ns(); self._job = None
+                else: r_.t_sub = time.perf_counter_ns(); self._job = None; e2e_live.prefetch(r_.gg)   # 11-15: the end-to-end AE starts on arrival
                 r_.e = e_; r_.job = self._job
                 with L_.cond:
                     self.out.append(r_); self.working = False

@@ -15,16 +15,22 @@ class FakeEngine:
     def __init__(self, path, opt):
         self.kind = os.path.basename(path).split('.')[0]; self.calls = []
     def get_output_tensors_info(self):
-        return {'ae': [dict(name=n) for n in ('kv4', 'tgt4', 'ref4')], 'b0': [dict(name='tgt_out'), dict(name='ref_out')],
+        return {'ae': [dict(name=n, shape=s) for n, s in (('kv4', [1, 15, 20, 256]), ('tgt4', [1, 15, 20, 256]), ('ref4', [1, 15, 20, 4]))], 'b0': [dict(name='tgt_out'), dict(name='ref_out')],
                 'b1': [dict(name=n) for n in ('logits', 'boxes', 'hs', 'id_words', 'query_pos')]}[self.kind]
     def get_input_tensors_info(self):
         return [dict(name='tgt', shape=[1, 300, 256], dtype=np.float32), dict(name='ref_unact', shape=[1, 300, 4], dtype=np.float32),
                 dict(name='kv', shape=[1, 300, 256], dtype=np.float32), dict(name='traj', shape=[1, 300, 256], dtype=np.float32)]
+    def run_async(self, x, user_arg=None, output_buffer=None):   # AE prefetch (11-15)
+        self.jobs = getattr(self, 'jobs', {}); j = len(self.jobs) + 1; self.jobs[j] = np.array(x, copy=True); self.async_n = getattr(self, 'async_n', 0) + 1; return j
+    def wait(self, j):
+        x = self.jobs.pop(j); self.calls.append([x]); v = float(x.mean())
+        return [np.full((1, 15, 20, 256), v), np.full((1, 15, 20, 256), v), np.full((1, 15, 20, 4), v)]
+
     SCRIPT = None   # optional: frame number (1, 2, ...) -> list of (cx, cy, w, h, id vector) people, all normalised 0..1
 
     def run(self, xs):
         self.calls.append(xs)
-        if self.kind == 'ae': return [np.zeros((1, 15, 20, 256)), np.zeros((1, 15, 20, 256)), np.zeros((1, 15, 20, 4))]
+        if self.kind == 'ae': v = float(xs[0].mean()); return [np.full((1, 15, 20, 256), v), np.full((1, 15, 20, 256), v), np.full((1, 15, 20, 4), v)]
         if self.kind == 'b0': return [np.zeros((1, 300, 256)), np.zeros((1, 300, 4))]
         lg = np.full((1, 300, 1), -10.0); bx = np.zeros((1, 300, 4)); idw = np.zeros((1, 300, 60))
         people = FakeEngine.SCRIPT(len(self.calls)) if FakeEngine.SCRIPT else [(0.5, 0.5, 0.1, 0.4, np.eye(60)[0])]
@@ -93,6 +99,19 @@ class E2ELiveTests(unittest.TestCase):
         json.dump(dict(label='x', id_link=True, files=dict(ae='ae.dxnn', b0='b0.dxnn', b1='b1.dxnn')), open(os.path.join(self.d, 'INFO.json'), 'w'))
         E.E2E['want'] = 'ftt'; E.apply(FakeDX); self.assertEqual(E.link_mode(), 'id'); self.assertEqual(E.state()['link_used'], 'id')
         E.E2E['link'] = 'iou'; self.assertEqual(E.link_mode(), 'iou')
+
+    def test_prefetch_is_used_and_matches_the_direct_run(self):
+        E.E2E['want'] = 'ftt'; E.apply(FakeDX); eng = E.E2E['eng']
+        c1 = np.full((512, 640), 7, np.uint8); c2 = np.full((512, 640), 9, np.uint8)
+        a1 = eng._ae(np.ascontiguousarray(c1[16:496]), None)                    # direct run
+        E.prefetch(c1); E.prefetch(c1); self.assertEqual(len(eng.pre), 1)       # the same frame twice: one job
+        E.prefetch(c2); self.assertEqual(len(eng.pre), 2); E.prefetch(np.zeros((512, 640), np.uint8)); self.assertEqual(len(eng.pre), 2)   # two slots
+        r = E.step(c2); self.assertEqual(eng.hits, 1); self.assertEqual(len(eng.pre), 0); self.assertEqual(sorted(eng.free), [0, 1])   # c1 never stepped: collected as stale
+        E.prefetch(c1); a2 = eng._ae(np.ascontiguousarray(c1[16:496]), c1)
+        for k in a1: np.testing.assert_allclose(a1[k], a2[k])                 # prefetched AE == direct AE
+        E.prefetch(c2); E.E2E['want'] = 'off'; E.apply(FakeDX); self.assertEqual(eng.pre, []); self.assertEqual(sorted(eng.free), [0, 1])   # off drains
+        E.prefetch(c2)                                                          # off: nothing happens
+        self.assertIn('prefetch', E.state())
 
     def test_missing_files(self):
         os.remove(os.path.join(self.d, 'b1.dxnn')); E.E2E['want'] = 'ftt'; E.apply(FakeDX)

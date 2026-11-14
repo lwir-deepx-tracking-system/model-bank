@@ -690,6 +690,7 @@ def main():
                         g_n, read_ms = read_frame(next_i)
                     if g_n is not None:
                         sn_ = not e2e_live.skip_detector(); ahead.append((g_n, submit_tiles(g_n, next_i) if sn_ else time.perf_counter_ns(), sn_))
+                        if not sn_: e2e_live.prefetch(g_n)   # 11-15: the end-to-end AE of the read-ahead frame starts now
                         gmc_submit(next_i, g_n)
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                       # one sync per frame; the ViT job overlaps detection of i+1
                 t_nms0 = time.perf_counter_ns(); p = detect(ra, rb) if sub_ else np.zeros((0, 6), np.float32); t2 = time.perf_counter_ns(); t3 = t2

@@ -11,10 +11,14 @@ close_range ftt_npu_train.py / ftt_trained_export.py (모델 폴더 INFO.json �
 켜져 있는 동안 KeepID 는 쓰지 않는다(11-14, 겹치는 기능은 끔).
 
 모델 파일: models/e2e/fasttracktr/INFO.json = {"label": 화면 이름, "files": {"ae": ..., "b0": ..., "b1": ...}, ...}
-코어: AE 와 디코더 모두 NPU 1. 켜져 있는 동안 프레임 루프는 검출 모델을 돌리지 않는다(uses_own(), 11-14 사용자 "겹치는 거 다 꺼야지"); 페이지도 그 줄들을 잠근다.
+코어 (11-15 사용자 "속도 더 빠르게"): AE 는 NPU 2(KeepID 코어, 엔드투엔드 중에는 비어 있음), 디코더 두 층은 NPU 1. 프레임이 도착하면
+넣는 스레드(frame_feed) 또는 미리 읽기(app ahead)가 그 프레임의 AE 를 바로 NPU 2 에 넣고(prefetch), 프레임 반복은 결과만 받아 디코더를 돌린다.
+그래서 프레임 t 의 디코더와 프레임 t+1 의 AE 가 겹친다(장 당 약 53ms -> 디코더 쪽 약 30ms). 미리 넣지 못한 프레임은 전처럼 그 자리에서 AE 를 돌린다.
+(디코더 두 층을 한 그래프로 합치면 DX-COM 2.4.1 CODEGEN 이 실패한다: research/fasttracktr_npu/README.md.) 이전: AE 와 디코더 모두 NPU 1. 켜져 있는 동안 프레임 루프는 검출 모델을 돌리지 않는다(uses_own(), 11-14 사용자 "겹치는 거 다 꺼야지"); 페이지도 그 줄들을 잠근다.
 """
 import json
 import os
+import threading
 import time
 
 import numpy as np
@@ -50,17 +54,54 @@ def iou_m(A, B):
 
 
 class FTTLive:
-    def __init__(self, dx, d, core=1, score=0.5, max_det=30, link_iou=0.3, max_missed=30, id_max_missed=150, id_cos=0.6):
+    def __init__(self, dx, d, core=1, ae_core=2, score=0.5, max_det=30, link_iou=0.3, max_missed=30, id_max_missed=150, id_cos=0.6):
         self.score, self.max_det, self.link_iou, self.max_missed = score, max_det, link_iou, max_missed
         self.id_max_missed, self.id_cos = id_max_missed, id_cos
-        def eng(f):
-            o = dx.InferenceOption(); o.devices = [0]; o.bound_option = getattr(dx.InferenceOption.BOUND_OPTION, 'NPU_%d' % core); o.use_ort = True
+        def eng(f, c, bufs=1):
+            o = dx.InferenceOption(); o.devices = [0]; o.bound_option = getattr(dx.InferenceOption.BOUND_OPTION, 'NPU_%d' % c); o.use_ort = True
+            if bufs > 1: o.buffer_count = bufs
             return dx.InferenceEngine(os.path.join(model_dir(), f), o)
-        fs = d['files']; self.ea = eng(fs['ae']); self.ebs = [eng(fs['b0']), eng(fs['b1'])]
+        fs = d['files']; self.ea = eng(fs['ae'], ae_core, 2); self.ebs = [eng(fs['b0'], core), eng(fs['b1'], core)]
+        self.ae_shapes = [tuple(int(v) for v in t['shape']) for t in self.ea.get_output_tensors_info()]
+        n_ = sum(int(np.prod(s)) for s in self.ae_shapes); self.ae_bufs = [np.empty(n_, np.float32) for _ in range(2)]
+        self.xbufs = [np.empty((1, 480, 640, 3), np.uint8) for _ in range(2)]; self.pre = []; self.free = [0, 1]; self.lock = threading.Lock()
+        self.hits = 0; self.misses = 0
         self.ae_out = [t['name'] for t in self.ea.get_output_tensors_info()]
         self.b_in = [[(t['name'], tuple(t['shape']), t['dtype']) for t in e.get_input_tensors_info()] for e in self.ebs]
         self.b_out = [[t['name'] for t in e.get_output_tensors_info()] for e in self.ebs]
         self.reset()
+
+    def prefetch(self, canvas):
+        """Called when a frame arrives (feeding thread or read-ahead): its AE goes to the NPU now; step() collects it. Never blocks."""
+        with self.lock:
+            if not self.free or any(c is canvas for c, _, _ in self.pre): return
+            s = self.free.pop(0)
+        x = self.xbufs[s]; x[0] = canvas[16:496, :, None]
+        job = self.ea.run_async(x, user_arg=None, output_buffer=self.ae_bufs[s])
+        with self.lock: self.pre.append((canvas, job, s))
+
+    def _collect(self, job, s):
+        vals = self.ea.wait(job); out = [np.array(np.asarray(v, np.float32), copy=True).reshape(sh) for v, sh in zip(vals, self.ae_shapes)]
+        with self.lock: self.free.append(s)
+        return out
+
+    def drain(self):
+        """Wait every AE still in flight (before the engines are dropped)."""
+        with self.lock: pend, self.pre = self.pre, []
+        for c, job, s in pend:
+            try: self._collect(job, s)
+            except Exception: pass
+
+    def _ae(self, gray480, canvas):
+        stale, hit = [], None
+        with self.lock:
+            k = next((i for i, (c, _, _) in enumerate(self.pre) if canvas is not None and c is canvas), None)
+            if k is not None: stale, hit = self.pre[:k], self.pre[k]; del self.pre[:k + 1]
+        for c, job, s in stale: self._collect(job, s)   # frames that arrived but were never stepped (dropped)
+        if hit is not None:
+            self.hits += 1; return dict(zip(self.ae_out, self._collect(hit[1], hit[2])))
+        self.misses += 1
+        return dict(zip(self.ae_out, [np.asarray(v, np.float32) for v in self.ea.run([np.ascontiguousarray(np.repeat(gray480[None, :, :, None], 3, axis=3))])]))
 
     def reset(self):
         self.traj = np.zeros((1, 300, 256), np.float32); self.tracks = {}; self.next_id = 1; self.n = 0
@@ -102,10 +143,11 @@ class FTTLive:
         for t in [t for t, v in self.tracks.items() if self.n - v['last'] > self.id_max_missed]: del self.tracks[t]
         return rows
 
-    def step(self, gray480):
-        """gray480: 480x640 uint8 picture -> rows [[x1, y1, x2, y2, id, score, 0, -1]] in 640x512 canvas coords (y + 16)."""
+    def step(self, gray480, canvas=None):
+        """gray480: 480x640 uint8 picture -> rows [[x1, y1, x2, y2, id, score, 0, -1]] in 640x512 canvas coords (y + 16).
+        canvas = the 640x512 frame it was cut from (prefetch() may already have its AE in flight)."""
         self.n += 1; H, W = gray480.shape
-        ao = dict(zip(self.ae_out, [np.asarray(v, np.float32) for v in self.ea.run([np.ascontiguousarray(np.repeat(gray480[None, :, :, None], 3, axis=3))])]))
+        ao = self._ae(gray480, canvas)
         st = dict(kv=ao['kv4'].reshape(1, -1, 256), tgt=ao['tgt4'].reshape(1, -1, 256), ref_unact=ao['ref4'].reshape(1, -1, 4), traj=self.traj)
         res = {}
         for e, ins, outs in zip(self.ebs, self.b_in, self.b_out):
@@ -139,18 +181,29 @@ def apply(dx):
         try: E2E['eng'] = FTTLive(dx, d); E2E.update(on='ftt', err=None, label=d.get('label', 'FastTrackTr'), ms=[], auto_link='id' if d.get('id_link') else 'iou'); print('E2E live -> FastTrackTr', flush=True)
         except Exception as e: E2E.update(want='off', on='off', eng=None, err='엔진을 만들지 못함: %s' % repr(e)[:120]); print('E2E live failed', repr(e)[:200], flush=True)
     else:
-        E2E.update(on='off', eng=None); print('E2E live -> off', flush=True)
+        eng_ = E2E['eng']; E2E.update(on='off', eng=None)
+        if eng_ is not None: eng_.drain()
+        print('E2E live -> off', flush=True)
 
 
 def step(gray_canvas):
     """gray_canvas: the 640x512 frame canvas (camera rows 16..495). -> rows or None (off / error: the caller keeps the tracker rows)."""
     if E2E['on'] != 'ftt' or E2E['eng'] is None: return None
     t = time.perf_counter()
-    try: rows = E2E['eng'].step(np.ascontiguousarray(gray_canvas[16:496]))
+    try: rows = E2E['eng'].step(np.ascontiguousarray(gray_canvas[16:496]), canvas=gray_canvas)
     except Exception as e:
         E2E.update(want='off', on='off', eng=None, err='실행 오류: %s' % repr(e)[:120]); print('E2E live error', repr(e)[:200], flush=True); return None
     E2E['ms'].append((time.perf_counter() - t) * 1e3); del E2E['ms'][:-50]
     return rows
+
+
+def prefetch(canvas):
+    """A frame arrived (feeding thread / read-ahead): start its AE now if the live end-to-end model is on. Errors only switch prefetch off."""
+    eng_ = E2E['eng']
+    if E2E['on'] != 'ftt' or eng_ is None or E2E.get('no_prefetch'): return
+    try: eng_.prefetch(canvas)
+    except Exception as e:
+        E2E['no_prefetch'] = repr(e)[:120]; print('E2E prefetch off:', repr(e)[:200], flush=True)
 
 
 def uses_own():
@@ -178,4 +231,5 @@ def _link_for(d):
 def state():
     d, why = info()
     return dict(available=d is not None, why=why, label=(d or {}).get('label'), want=E2E['want'], on=E2E['on'], err=E2E['err'], link=E2E.get('link', 'auto'), link_used=_link_for(d),
-                ms=round(float(np.mean(E2E['ms'])), 1) if E2E['ms'] else None)
+                ms=round(float(np.mean(E2E['ms'])), 1) if E2E['ms'] else None,
+                prefetch=dict(hits=E2E['eng'].hits, misses=E2E['eng'].misses, off=E2E.get('no_prefetch')) if E2E['eng'] is not None else None)
