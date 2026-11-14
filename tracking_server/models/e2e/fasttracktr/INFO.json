@@ -1,0 +1,50 @@
+{
+ "label": "FastTrackTr_(DanceTrack)_20261114_학습1회",
+ "files": {
+  "ae": "fasttracktr_r18_npu_dancetrack_20261114_e1_ae.dxnn",
+  "b0": "fasttracktr_r18_npu_dancetrack_20261114_e1_b0.dxnn",
+  "b1": "fasttracktr_r18_npu_dancetrack_20261114_e1_b1.dxnn"
+ },
+ "sha256": {
+  "ae": "db5801b63040ae08550d0927507a79404e4c307eb018aa06443cda36618c0196",
+  "b0": "d72f53b5f18f480e6ccf186af3426b09eb4d5529e54254751b6e0611d9128b9c",
+  "b1": "9e55a62cebbc6bec22adf7d0037dac86d6e4cf80b37dbd59f214ffd09540ff9c"
+ },
+ "what": "FastTrackTr (liaopan-lp/fasttracktr, GPL-3.0) 장치 NPU 판(research/fasttracktr_npu): ResNet-18, 질의 300(15x20), 디코더 2층, 일반 어텐션. 그래프 3개(AE, 디코더 층 0, 층 1)",
+ "training": "DanceTrack 학습 36편을 흑백 640x480 으로(위아래 채움), RT-DETR r18 COCO 에서 맞는 가중치로 시작, bf16, 배치 4, epoch 마다 클립 시작점 1/3. 이 파일은 1 epoch(6 중) 체크포인트",
+ "calibration": "우리 실외 녹화 seq_001 17장(시험 녹화와 겹치지 않음), ema, opt 1",
+ "device_ms": {
+  "per_frame_mean": 50,
+  "note": "AE + 디코더 2개, 한 코어에서 차례로"
+ },
+ "scores_1epoch": {
+  "note": "장치 녹화 재생 채점 (임시 겹침 번호 연결기)",
+  "tmot_val_idf1": [
+   3.9,
+   3.4,
+   7.2,
+   4.3,
+   11.8,
+   18.7
+  ],
+  "seq_003": {
+   "idf1": 33.1,
+   "recall": 89.6,
+   "precision": 86.0
+  },
+  "rec_inside": {
+   "idf1": [
+    15.5,
+    12.7
+   ],
+   "recall": [
+    16.2,
+    9.4
+   ]
+  },
+  "seated": {
+   "idf1": 5.3
+  }
+ },
+ "status": "시험용. 실내 근거리는 거의 못 잡음. 학습이 끝나면(6 epoch) 같은 이름 규칙의 새 파일로 바꿈"
+}

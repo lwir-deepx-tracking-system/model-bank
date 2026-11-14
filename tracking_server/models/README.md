@@ -229,6 +229,18 @@ DXNN 이 아니라 가중치가 든 JSON / npz 이고, 서버가 장치 CPU 에�
 
 화면의 위치 기억 기본값은 학습 모델이 없는 "Kalman filter + 카메라 움직임 보정"입니다. 관절 없는 GRU·Mamba 판(`pos_gru`, `pos_mamba`)은 11-14 사용자 요청으로 지웠습니다(git 기록에는 남음).
 
+## 엔드투엔드 (`e2e/`, 11-14)
+
+검출과 추적(번호)을 한 모델이 하는 실시간 추적기. 화면 "엔드투엔드" 줄에서 고르면 서버의 검출 모델 + Tracker 행 대신 이 모델의 행을 씁니다(코드 `src/track/e2e_live.py`).
+
+- **FastTrackTr_(DanceTrack)_20261114_학습1회**
+  - 파일 `e2e/fasttracktr/fasttracktr_r18_npu_dancetrack_20261114_e1_{ae,b0,b1}.dxnn`, 설명 `e2e/fasttracktr/INFO.json`
+  - 구조: FastTrackTr(liaopan-lp/fasttracktr) 의 장치 NPU 판(`research/fasttracktr_npu/`): ResNet-18, 질의 300(15x20 칸), 디코더 2층, 일반 어텐션. 그래프 3개를 NPU 코어 1에서 차례로, 장치 한 장 약 50 ms
+  - 학습: DanceTrack 학습 36편을 흑백 640x480 으로, RT-DETR r18 COCO 에서 시작, 6 epoch 중 1 epoch 체크포인트. 만든 스크립트 `e2e/fasttracktr/build_scripts/`
+  - 채점(장치 녹화 재생, 1 epoch): 실외 seq_003 IDF1 33.1 · 재현율 89.6%; TMOT 평가 6편 IDF1 3~19; 실내 rec_inside IDF1 13~16 · 재현율 9~16%. 실내 근거리는 아직 거의 못 잡습니다
+  - 번호는 임시 겹침 연결기(IoU 0.3). FastTrackTr 고유의 번호 붙이기는 아직 안 붙였습니다
+  - 상태: 시험용. 학습이 끝나면 같은 이름 규칙의 새 파일로 바꿉니다
+
 ## 3. 외형 비교 (`reid/`)
 
 다섯 파일 모두 입력 `images` `[1,128,64,3]`(높이 128, 너비 64), 출력 `embedding` `[1,128]`, 보정 256장입니다. 모양이 같아서 서버를 켠 채로 화면에서 바꿀 수 있습니다. 사람 조각을 만드는 법은 [reid/README.md](reid/README.md)에 있습니다.

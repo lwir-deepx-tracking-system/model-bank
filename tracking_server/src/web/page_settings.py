@@ -8,6 +8,7 @@ from ..common.shared_values import HERE, CORE, DET, sha
 from ..detect.model_scan import BANK, KPT_DETS
 from ..track import native_backend
 from ..track.position_memory import POSP, POS_NAMES, pos_list, pos_select
+from ..track import e2e_live
 from ..track.stabilizer import STAB
 from ..track.bytetrack import ByteTrackTracker
 from ..track.botsort import BotSortTracker
@@ -102,7 +103,7 @@ def rules_state():
                     gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker), engine=tracker_engine(),
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
-                    det_kpt=det_has_kpt(), relink_pred=(bool(getattr(APP.relabeler, 'pred_gate', False)) if APP.relabeler is not None and hasattr(APP.relabeler, 'pred_gate') else None),   # 11-14: the current or the waiting detector gives keypoints -> the keypoint position memories may be chosen
+                    det_kpt=det_has_kpt(), e2e_live=e2e_live.state(), relink_pred=(bool(getattr(APP.relabeler, 'pred_gate', False)) if APP.relabeler is not None and hasattr(APP.relabeler, 'pred_gate') else None),   # 11-14: the current or the waiting detector gives keypoints -> the keypoint position memories may be chosen
                     predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state())   # v32. v40: app / lead / gimbal / warm_on
 
 
@@ -184,6 +185,11 @@ def rules_request(q_):
         pend_['tracker'] = tk_
         if tk_ in ENGINE_KINDS:   # 11-13: the plain click means C++ first; the engine row can ask for Python
             pend_['engine'] = 'python' if q_.get('engine', [''])[0] == 'python' else 'auto'
+    if 'e2e_live' in q_:   # 11-14 (user): live end-to-end FastTrackTr on / off (applied by the frame loop at the next frame)
+        v_ = q_['e2e_live'][0]
+        if v_ not in ('ftt', 'off'): return False, '없는 엔드투엔드 모델'
+        if v_ == 'ftt' and e2e_live.info()[0] is None: return False, 'FastTrackTr 모델 파일이 장치에 없음'
+        e2e_live.E2E['want'] = v_
     if 'relink_pred' in q_:   # 11-14: KeepID growing search range on the predicted place (OnlineRelabel only)
         if APP.relabeler is None or not hasattr(APP.relabeler, 'pred_gate'): return False, 'KeepID(외형 번호 되살리기)가 이 실행에 없음'
         APP.relabeler.pred_gate = q_['relink_pred'][0] in ('1', 'true', 'on')

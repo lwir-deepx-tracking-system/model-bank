@@ -21,6 +21,7 @@ from .detect.model_scan import BANK_T
 from .common.device_wait import wait_m1_free
 from .track.kalman import gmc_warp, GKF
 from .track.position_memory import pos_select
+from .track import e2e_live   # 11-14: live end-to-end FastTrackTr
 from .track.camera_motion import GMC
 from .track.stabilizer import STAB_M, stab_shift, stab_margins
 from .track.bytetrack import ByteTrackTracker, CameraByteTrack, crop_requests
@@ -795,6 +796,9 @@ def main():
                         bs_feats = None; print('BOTSORT embed failed', repr(e_)[:120], flush=True)
                 tr_rows = APP.tracker.update(arr, bs_feats, feat_fn); t4 = time.perf_counter_ns()
                 vs = sync_lat[-1] if len(sync_lat) > n_sync0 else 0.0
+            if getattr(APP, 'dx', None) is not None and not APP.args.mock:   # 11-14 (user): live end-to-end FastTrackTr replaces the tracker rows when chosen on the page
+                e2e_live.apply(APP.dx); er_ = e2e_live.step(g)
+                if er_ is not None: tr_rows = er_
             base_rows = tr_rows; rl_ms = 0.0
             if APP.relabeler is not None and APP.RULES['relabel']:   # --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
