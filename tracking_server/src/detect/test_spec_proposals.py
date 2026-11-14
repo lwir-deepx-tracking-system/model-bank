@@ -47,6 +47,9 @@ class SpecProposalTest(unittest.TestCase):
         for i, a in enumerate(out):
             for b in out[:i]:
                 self.assertLess(sp._inside(a[:4], b[:4]), 0.3)   # no window inside / mostly over another one
+                self.assertFalse(sp._same_column(a[:4], b[:4]))   # no head window right above a body window
+        self.assertTrue(sp._same_column((100, 40, 196, 136), (90, 140, 250, 300)))
+        self.assertFalse(sp._same_column((100, 40, 196, 136), (300, 140, 460, 300)))
         self.assertEqual(sp._inside((10, 10, 74, 74), (0, 0, 160, 160)), 1.0)
 
     def test_worker_fills_prop(self):

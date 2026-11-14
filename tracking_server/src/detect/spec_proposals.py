@@ -93,6 +93,16 @@ def _inside(a, b):
     return ix * iy / m if m > 0 else 0.0
 
 
+def _same_column(a, b):
+    """a person is tall and the windows square: a head window just above a body window is the same person.
+    x overlap >= 50 % of the narrower window and vertical gap <= 50 % of the smaller height. On the indoor GT recordings
+    (in-sample, close_range_20261113/fft_liveness/spec_dup_eval.py) this cut people with 2+ boxes 64 -> 46 while people
+    with a box went 228 -> 226."""
+    ox = min(a[2], b[2]) - max(a[0], b[0]); w = min(a[2] - a[0], b[2] - b[0])
+    gap = max(a[1], b[1]) - min(a[3], b[3]); h = min(a[3] - a[1], b[3] - b[1])
+    return ox >= 0.5 * w and gap <= 0.5 * h
+
+
 class Model:
     def __init__(self, path=MODEL_PATH):
         with open(path, encoding='utf-8') as fh:
@@ -120,7 +130,7 @@ class Model:
         for i in np.argsort(-s):
             if s[i] < self.thr or len(out) >= self.top:
                 break
-            if all(_inside(wins[i], o[:4]) < 0.3 for o in out):   # 11-14 (user): one box per person; a head window inside a body window has a low IoU
+            if all(_inside(wins[i], o[:4]) < 0.3 and not _same_column(wins[i], o[:4]) for o in out):   # 11-14 (user): one box per person (head inside / above the body)
                 out.append((*wins[i], float(s[i])))
         return out
 
