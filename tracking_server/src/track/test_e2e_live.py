@@ -51,7 +51,8 @@ class E2ELiveTests(unittest.TestCase):
         self.assertEqual(r2[0][4], tid)                                  # same place -> same number
         b1 = E.E2E['eng'].ebs[0]; self.assertTrue(np.all(b1.calls[0][3] == 0)); self.assertTrue(np.all(b1.calls[1][3] == 0.5))   # traj: zeros, then the last hs
         st = E.state(); self.assertTrue(st['available']); self.assertEqual(st['on'], 'ftt')
-        E.E2E['want'] = 'off'; E.apply(FakeDX); self.assertIsNone(E.step(g))
+        self.assertTrue(E.uses_own())                                    # frame loop skips the detector and KeepID
+        E.E2E['want'] = 'off'; E.apply(FakeDX); self.assertIsNone(E.step(g)); self.assertFalse(E.uses_own())
 
     def test_missing_files(self):
         os.remove(os.path.join(self.d, 'b1.dxnn')); E.E2E['want'] = 'ftt'; E.apply(FakeDX)

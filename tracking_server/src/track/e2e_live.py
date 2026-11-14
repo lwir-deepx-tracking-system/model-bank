@@ -4,10 +4,10 @@
 사람 상자를 내고, 앞 프레임 디코더 출력(traj)을 다음 프레임에 넘긴다. 구조와 내보내기: research/fasttracktr_npu/, 학습:
 close_range ftt_npu_train.py / ftt_trained_export.py (모델 폴더 INFO.json 에 출처).
 번호: research/fasttracktr_npu/ftt_stored_run.py 와 같은 임시 겹침 연결기 (IoU >= 0.3 이면 같은 번호, 30 프레임 못 보면 끝).
-FastTrackTr 고유의 번호 붙이기(id_words)는 아직 붙이지 않았다. KeepID 는 그대로 이 행들에 적용된다(검출 행 번호 k = -1 이라 외형 조각은 못 자른다).
+FastTrackTr 고유의 번호 붙이기(id_words)는 아직 붙이지 않았다. 켜져 있는 동안 KeepID 는 쓰지 않는다(11-14, 겹치는 기능은 끔).
 
 모델 파일: models/e2e/fasttracktr/INFO.json = {"label": 화면 이름, "files": {"ae": ..., "b0": ..., "b1": ...}, ...}
-코어: AE 와 디코더 모두 NPU 1 (검출 모델은 0, KeepID 외형은 2 를 쓴다). 서버의 검출 모델은 계속 돌고(상자만 안 쓴다) 화면 지연은 그만큼 늘어난다.
+코어: AE 와 디코더 모두 NPU 1. 켜져 있는 동안 프레임 루프는 검출 모델을 돌리지 않는다(uses_own(), 11-14 사용자 "겹치는 거 다 꺼야지"); 페이지도 그 줄들을 잠근다.
 """
 import json
 import os
@@ -108,6 +108,11 @@ def step(gray_canvas):
         E2E.update(want='off', on='off', eng=None, err='실행 오류: %s' % repr(e)[:120]); print('E2E live error', repr(e)[:200], flush=True); return None
     E2E['ms'].append((time.perf_counter() - t) * 1e3); del E2E['ms'][:-50]
     return rows
+
+
+def uses_own():
+    """True while the end-to-end model makes the rows: the frame loop then skips the detector and KeepID."""
+    return E2E['on'] == 'ftt' and E2E['eng'] is not None
 
 
 def state():

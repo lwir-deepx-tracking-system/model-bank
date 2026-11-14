@@ -95,5 +95,9 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'C++',note:hasNative?'기본':'',sel:!python,lock:hasNative?'':(p.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 빌드가 없습니다'),u:Q('tracker='+encodeURIComponent(p.key)+'&engine=auto')},
       {name:'Python',sel:python,u:Q('tracker='+encodeURIComponent(p.key)+'&engine=python')}]});
   });
+  if(el&&(el.on==='ftt'||el.want==='ftt')){   // 11-14 (user): the end-to-end model replaces these, so they are locked while it runs
+    const OFF=['전처리','검출 모델','검출 뒤 Filter','Tracker','ByteTrack 옵션','위치 기억 · 신뢰도','KeepID','KeepID 찾는 범위','외형 비교','외형 모델'],why='엔드투엔드(FastTrackTr) 사용 중 · 엔드투엔드를 끄면 다시 고를 수 있습니다';
+    const off=new Set();T.forEach((t,i)=>{if(OFF.includes(t.lab)||/ 엔진$/.test(t.lab))off.add(i);});
+    T.forEach((t,i)=>{if(off.has(i)||(t.kidOf!=null&&off.has(t.kidOf))){t.sub='엔드투엔드 사용 중 · 쓰이지 않음';(t.n||[]).forEach(n=>{n.lock=why;n.sel=false;});}});}
   if(E2E){T.forEach(t=>{if(t.kidOf!=null)t.kidOf++;});T.unshift(E2E);}   // 11-14: first row; child rows keep pointing at their parent
   return T;}

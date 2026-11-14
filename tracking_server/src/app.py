@@ -592,7 +592,7 @@ def main():
                 g_k, _ = read_frame(k_)
                 if g_k is None:
                     break
-                ahead.append((g_k, submit_tiles(g_k, k_))); gmc_submit(k_, g_k)
+                ahead.append((g_k, submit_tiles(g_k, k_), True)); gmc_submit(k_, g_k)   # 11-14: (gray, submit ns, submitted to the detector?)
         do_model_swap = page_settings.do_model_swap
         for i, im in enumerate(APP.images):
             if APP.LIVE is not None and APP.LIVE.restart_stop:
@@ -600,11 +600,12 @@ def main():
             vid = im['extra_info']['video_id']; reset = vid != prev_vid
             if APP.MODEL['req'] is not None:   # v23: a model change was asked for; taken here, between two frames
                 rq_ = APP.MODEL['req']; APP.MODEL['busy'] = True
-                for _ in ahead: APP.a.wait()   # frames already submitted to the old model: collected and dropped, they go in again below
+                for a_ in ahead:   # frames already submitted to the old model: collected and dropped, they go in again below
+                    if a_[2]: APP.a.wait()
                 if APP.FEED is not None: APP.FEED.pause()
                 code_ = do_model_swap(rq_['det'])
                 if APP.FEED is not None: APP.FEED.resume(code_)
-                if APP.args.pipeline and code_ != 5: ahead[:] = [(g_, submit_tiles(g_, i + n_)) for n_, (g_, _) in enumerate(ahead)]
+                if APP.args.pipeline and code_ != 5: ahead[:] = [(g_, submit_tiles(g_, i + n_) if s_ else t_, s_) for n_, (g_, t_, s_) in enumerate(ahead)]
                 with APP.MODEL['lock']:
                     APP.MODEL['req'] = None; APP.MODEL['busy'] = False
                     APP.MODEL['last'] = dict(id=rq_['id'], result=code_, text=APP.MODEL_TEXT.get(code_, '?'), at=time.strftime('%H:%M:%S'), seconds=round(time.time() - rq_['t'], 1))
@@ -670,11 +671,11 @@ def main():
                     g = APP.live_next(fresh_only=True)
                     if g is None:
                         break
-                    t0 = submit_tiles(g, i)
+                    sub_ = not e2e_live.uses_own(); t0 = submit_tiles(g, i) if sub_ else time.perf_counter_ns()   # 11-14: no detector while the end-to-end model is on
                     gmc_submit(i, g)
                 else:
-                    g, t0 = ahead.pop(0)
-                ra = APP.a.wait(); rb = APP.b.wait() if APP.b is not None else None; t1 = time.perf_counter_ns()
+                    g, t0, sub_ = ahead.pop(0)
+                ra = APP.a.wait() if sub_ else None; rb = (APP.b.wait() if APP.b is not None else None) if sub_ else None; t1 = time.perf_counter_ns()
                 read_ms = 0.0
                 next_i = i + APP.args.npu_depth
                 if next_i < len(APP.images):
@@ -684,18 +685,18 @@ def main():
                     else:
                         g_n, read_ms = read_frame(next_i)
                     if g_n is not None:
-                        ahead.append((g_n, submit_tiles(g_n, next_i)))
+                        sn_ = not e2e_live.uses_own(); ahead.append((g_n, submit_tiles(g_n, next_i) if sn_ else time.perf_counter_ns(), sn_))
                         gmc_submit(next_i, g_n)
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                       # one sync per frame; the ViT job overlaps detection of i+1
-                t_nms0 = time.perf_counter_ns(); p = detect(ra, rb); t2 = time.perf_counter_ns(); t3 = t2
+                t_nms0 = time.perf_counter_ns(); p = detect(ra, rb) if sub_ else np.zeros((0, 6), np.float32); t2 = time.perf_counter_ns(); t3 = t2
             else:
                 g, _ = read_frame(i); read_ms = 0.0
                 if g is None:
                     break
-                t0 = submit_tiles(g, i)
+                sub_ = not e2e_live.uses_own(); t0 = submit_tiles(g, i) if sub_ else time.perf_counter_ns()   # 11-14
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                          # sync point 1
-                ra = APP.a.wait(); rb = APP.b.wait() if APP.b is not None else None; t1 = time.perf_counter_ns(); t_nms0 = t1
-                p = detect(ra, rb); t2 = time.perf_counter_ns()
+                ra = APP.a.wait() if sub_ else None; rb = (APP.b.wait() if APP.b is not None else None) if sub_ else None; t1 = time.perf_counter_ns(); t_nms0 = t1
+                p = detect(ra, rb) if sub_ else np.zeros((0, 6), np.float32); t2 = time.perf_counter_ns()
                 if async_vit: vw += vit_sync(g, prev_gray, i)                                                   # sync point 2
                 t3 = time.perf_counter_ns()
             if APP.LIVE is not None and APP.LIVE.restart_stop:
@@ -800,7 +801,7 @@ def main():
                 e2e_live.apply(APP.dx); er_ = e2e_live.step(g)
                 if er_ is not None: tr_rows = er_
             base_rows = tr_rows; rl_ms = 0.0
-            if APP.relabeler is not None and APP.RULES['relabel']:   # --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
+            if APP.relabeler is not None and APP.RULES['relabel'] and not e2e_live.uses_own():   # 11-14: not with the end-to-end model (its own numbers). --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
                 mamba_kw_ = dict(warp=W_, ts_ns=None if APP.args.live_port else (i + 1) * 33333333) if APP.args.mamba else {}
@@ -869,7 +870,8 @@ def main():
             if stall_diag.ON: stall_diag.loop_frame(row, t5)
             if (i + 1) % 500 == 0: print('FRAMES', i + 1, round(time.monotonic() - t_start, 1), 'vit delivered', delivered, flush=True)
         if APP.LIVE is not None and APP.LIVE.restart_pending:
-            for _ in ahead:
+            for a_ in ahead:
+                if not a_[2]: continue
                 APP.a.wait()
                 if APP.b is not None:
                     APP.b.wait()
