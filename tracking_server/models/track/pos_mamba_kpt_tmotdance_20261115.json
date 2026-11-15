@@ -1,0 +1,21 @@
+{
+ "status": "관절 입력 Mamba 위치 기억 (TMOT+DanceTrack, 우리 근거리·원거리 자세 검출 출력으로 학습) · 장치 미확인",
+ "source": "pos_refine_20261115 pos_train.py mamba_kpt config a (from scratch lr 2e-3), epoch 26 of 30, val-A sel 0.2432",
+ "inputs": "프레임당 68개 (서버 position_memory 와 같은 식, 카메라 움직임 보정 포함). 관절 순서 = 우리 검출기(COCO) 그대로 (posetrack 이름이 아니므로 관절 1, 2 를 지우지 않음)",
+ "output": "15프레임 동안 보정 없는 Kalman 예측 상자에 더하는 보정(중심 ±1 키, 크기 ±50%)",
+ "choices": {
+  "a": {
+   "sel": 0.24322850505510968,
+   "epoch": 26
+  },
+  "b": {
+   "sel": 0.26567376405000687,
+   "epoch": 28
+  }
+ },
+ "kalman_valA": {
+  "all": 0.3445054292678833,
+  "syn": 0.35287488500277203
+ },
+ "sha256": "dd541077f68f6fbca9af5ff249f62456b6a9aadba25064bee96e627d8ee459be"
+}

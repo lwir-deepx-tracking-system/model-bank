@@ -1,0 +1,21 @@
+{
+ "status": "관절 입력 GRU 위치 기억 (TMOT+DanceTrack, 우리 근거리·원거리 자세 검출 출력으로 학습) · 장치 미확인",
+ "source": "pos_refine_20261115 pos_train.py gru_kpt config a (from scratch lr 2e-3), epoch 26 of 30, val-A sel 0.2417",
+ "inputs": "프레임당 68개 (서버 position_memory 와 같은 식, 카메라 움직임 보정 포함). 관절 순서 = 우리 검출기(COCO) 그대로 (posetrack 이름이 아니므로 관절 1, 2 를 지우지 않음)",
+ "output": "15프레임 동안 보정 없는 Kalman 예측 상자에 더하는 보정(중심 ±1 키, 크기 ±50%)",
+ "choices": {
+  "a": {
+   "sel": 0.2417414759596189,
+   "epoch": 26
+  },
+  "b": {
+   "sel": 0.2588633944590886,
+   "epoch": 21
+  }
+ },
+ "kalman_valA": {
+  "all": 0.3445054292678833,
+  "syn": 0.35287488500277203
+ },
+ "sha256": "8339e57a557f27697ea3436fd4242c39d1b41e6dc45804810950905b7dea1fb1"
+}

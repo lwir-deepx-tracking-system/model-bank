@@ -154,14 +154,20 @@ def _pos_feat(v, whp, inn, flag, cam, m1, m2, cnt):
     return np.clip(np.r_[v / h, inn, flag, cam / h, (m1[:2] - m2[:2]) / h, np.log(lo(m1[2:4]) / lo(m2[2:4])), np.log(h / 100.), np.log(w / h), cnt], -5.0, 5.0)
 
 
+def _pos_date_key(f):
+    """Sort key for pos_<arm>_kpt_<data>_<YYYYMMDD>.npz: the date first, so a newer file wins whatever its data name (a file without a date sorts first)."""
+    b = f[:-4].rsplit('_', 1)
+    return (b[1] if len(b) == 2 and len(b[1]) == 8 and b[1].isdigit() else '', f)
+
+
 def pos_scan():
     """Look for the weight files (cheap: one stat per file; a file is read again only when it changed and is older than 5 s = not being copied)."""
     d = POSP['dir'] or os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'models', 'track')
     with POSP['lock']:
         for key, cls in (('gru_kpt', PosKpt), ('mamba_kpt', PosKpt)):   # 11-14: box-only pos_gru / pos_mamba removed (user)
             p = os.path.join(d, 'pos_%s.npz' % key)
-            if key.endswith('_kpt'):   # 11-14: newest pos_<arm>_kpt_*.npz (name carries data and date)
-                c_ = sorted(f_ for f_ in os.listdir(d) if f_.startswith('pos_%s_' % key) and f_.endswith('.npz')) if os.path.isdir(d) else []
+            if key.endswith('_kpt'):   # 11-14: newest pos_<arm>_kpt_*.npz (name carries data and date); 11-15: by the _YYYYMMDD date, then name
+                c_ = sorted((f_ for f_ in os.listdir(d) if f_.startswith('pos_%s_' % key) and f_.endswith('.npz')), key=_pos_date_key) if os.path.isdir(d) else []
                 if not c_: POSP['avail'].pop(key, None); continue
                 p = os.path.join(d, c_[-1])
             try: mt = os.path.getmtime(p)

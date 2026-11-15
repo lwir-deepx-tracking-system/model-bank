@@ -370,7 +370,7 @@ def do_model_swap(new_det, checked=False):
     print('MODEL changed %s -> %s in %.1f s' % (old_det, new_det, time.perf_counter() - t_), flush=True); return 0
 
 
-AUTO_KPT_POS = 'gru_kpt'   # 11-15 (user): position memory picked when the detector becomes a keypoint (pose) model. models/README: PoseTrack18 val 21% (lost 22%) more accurate than Kalman; not yet measured on the device camera
+AUTO_KPT_POS = 'gru_kpt'   # 11-15 (user): position memory picked when the detector becomes a keypoint (pose) model. models/README: files trained on our pose detectors' outputs (TMOT+DanceTrack), inside the server's own tracker loop 10-16% less error than Kalman on real losses; not yet measured on the device camera
 
 
 def det_changed(new_det, key_):
