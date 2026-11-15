@@ -226,7 +226,7 @@ class GuardV2Tests(unittest.TestCase):
         self.assertEqual([d['reselect'] for d in out if d['reselect']], [9])
 
 
-class PublishTests(unittest.TestCase):
+class PublishFixture(unittest.TestCase):
     def setUp(self):
         self.saved = APP.__dict__.copy()
         APP.tracker = object()
@@ -260,6 +260,8 @@ class PublishTests(unittest.TestCase):
         for k in range(n):
             self.frame([person(7, 300. + 3. * k)])
 
+
+class PublishTests(PublishFixture):
     def test_pred_only_while_missing_and_only_to_a_coast_bridge(self):
         self.follow()
         self.assertNotIn(' PRED ', self.frame([person(7, 330.)]))
@@ -296,6 +298,99 @@ class PublishTests(unittest.TestCase):
             self.assertEqual(APP.GB.state['guard'][3], 0)
             self.assertIsNotNone(APP.GB.state['guard'][2])
             self.assertIn('7 555.0', self.frame([person(7, 600.)]))   # never hidden
+
+
+class CoastSwitchTests(PublishFixture):
+    """11-15 live A/B: LWIR_COAST_SWITCH=<file> turns the coast on / off at run time without a bridge restart."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.dir.name, 'coast_on')
+        self.env = patch.dict(os.environ, {'LWIR_COAST_SWITCH': self.path, 'LWIR_FOLLOW_PREDICT_LOG': '1'})
+        self.env.start()
+        self.fast = patch.object(live_tracks, 'COAST_SWITCH_S', 0.)   # read the file on every frame
+        self.fast.start()
+        live_tracks.COAST_SWITCH.update(path=None, said=None)
+
+    def tearDown(self):
+        self.fast.stop()
+        self.env.stop()
+        self.dir.cleanup()
+        live_tracks.COAST_SWITCH.update(path=None, said=None)
+        super().tearDown()
+
+    def switch(self, word=None):
+        if word is None:
+            if os.path.exists(self.path): os.remove(self.path)
+        else:
+            with open(self.path, 'w') as f: f.write(word + '\n')
+
+    def run_lines(self, prepare):
+        """the frame lines of a fixed follow / loss / return sequence, from a fresh fixture (prepare(self) sets it up)"""
+        self.tearDown(); self.setUp()
+        prepare(self)
+        lines = [self.frame([person(7, 300.)], acknowledge=True)]
+        APP.GB.state.update(id=7, auto=1)
+        APP.GB.selection_reset = False
+        for k in range(8): lines.append(self.frame([person(7, 300. + 3. * k)]))
+        for k in range(6): lines.append(self.frame([]))
+        for k in range(3): lines.append(self.frame([person(7, 340. + 3. * k)]))
+        return lines
+
+    def test_off_sends_exactly_what_a_bridge_without_coast_gets(self):
+        def off_coast_bridge(t): t.switch(None)
+        def old_bridge(t):   # the deployed server: no coast bridge, no switch, no prediction log
+            APP.GB.coast_control_supported = False
+            os.environ.pop('LWIR_COAST_SWITCH', None)
+            os.environ.pop('LWIR_FOLLOW_PREDICT_LOG', None)
+        off = self.run_lines(off_coast_bridge)
+        self.assertEqual(APP.GB.state['coast_sw'], 'off')
+        self.assertEqual(APP.GB.state['guard'][3], 0)   # the prediction is still logged, never sent
+        old = self.run_lines(old_bridge)
+        self.assertNotIn('coast_sw', APP.GB.state)
+        self.assertNotIn('guard', APP.GB.state)
+        self.assertTrue(all(' PRED ' not in line for line in off))
+        self.assertEqual(off, old)
+
+    def test_on_sends_pred_while_missing(self):
+        self.switch('')
+        self.follow()
+        self.assertNotIn(' PRED ', self.frame([person(7, 330.)]))
+        self.assertIn(' PRED 7 ', self.frame([]))
+        self.assertEqual(APP.GB.state['coast_sw'], 'vel')
+        self.assertEqual(APP.GB.state['guard'][3], 1)
+
+    def test_toggle_keeps_the_selection_and_takes_effect_at_the_next_frame(self):
+        self.switch('vel')
+        self.follow()
+        self.assertIn(' PRED 7 ', self.frame([]))
+        self.switch(None)
+        self.assertNotIn(' PRED ', self.frame([]))
+        self.assertEqual((APP.GB.state['coast_sw'], APP.GB.state['guard'][3]), ('off', 0))
+        self.switch('vel')
+        self.assertIn(' PRED 7 ', self.frame([]))
+        self.assertEqual(APP.GB.state['id'], 7)
+        self.assertFalse([c for c in APP.GB.wq if c.startswith(b'A ')])   # no new selection was sent
+
+    def test_the_word_in_the_file_picks_the_mode(self):
+        self.switch('fused')
+        self.follow()
+        sent = self.frame([])
+        self.assertEqual(APP.GB.state['coast_sw'], 'fused')
+        x, y, w, h = map(float, sent.split(' PRED 7 ')[1].split()[:4])
+        self.assertAlmostEqual(x + w / 2, 320., delta=1.)   # keep in view: the person is inside the picture, no motion
+        self.switch('vel')
+        x, y, w, h = map(float, self.frame([]).split(' PRED 7 ')[1].split()[:4])
+        self.assertGreater(x + w / 2, 330.)   # the velocity prediction itself
+
+    def test_without_the_variable_nothing_changes(self):
+        os.environ.pop('LWIR_COAST_SWITCH', None)
+        self.follow()
+        self.assertIn(' PRED 7 ', self.frame([]))
+        self.assertNotIn('coast_sw', APP.GB.state)
+        self.assertEqual(live_tracks.coast_switch(), (True, None))
 
 
 if __name__ == '__main__':

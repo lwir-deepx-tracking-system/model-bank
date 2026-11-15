@@ -270,6 +270,43 @@ def coast_enabled(gb):
     return bool(getattr(gb, 'coast_control_supported', False))
 
 
+# 11-15 (live A/B test on the real camera): a runtime switch for the coast that keeps the bridge and the follow selection.
+# LWIR_COAST_SWITCH=<file>: the coast is on only while that file exists. Its first word 'vel' / 'fused' (optional) overrides
+# LWIR_COAST_MODE. The file is read at most every COAST_SWITCH_S. Off = no PRED is sent, so a --coast 1 bridge stops on a
+# loss exactly as a bridge without --coast. Without the variable: always on (the bridge's --coast 1 decides, as before).
+COAST_SWITCH_S = 0.1
+COAST_SWITCH = dict(path=None, checked=float('-inf'), on=True, mode=None, said=None)
+
+
+def coast_switch():
+    """-> (on, mode or None). See COAST_SWITCH."""
+    path = os.environ.get('LWIR_COAST_SWITCH')
+    if not path:
+        return True, None
+    s = COAST_SWITCH
+    now = time.monotonic()
+    if s['path'] != path or now - s['checked'] >= COAST_SWITCH_S:
+        try:
+            with open(path, encoding='ascii', errors='replace') as f:
+                word = (f.read(64).split() or [''])[0]
+            on, mode = True, (word if word in ('vel', 'fused') else None)
+        except OSError:
+            on, mode = False, None
+        s.update(path=path, checked=now, on=on, mode=mode)
+        if s['said'] != (on, mode):
+            s['said'] = (on, mode)
+            print('COAST switch %s' % (('on (%s)' % (mode or coast_mode_env())) if on else 'off: no PRED is sent'), flush=True)
+    return s['on'], s['mode']
+
+
+def coast_switch_state():
+    """'off' / 'vel' / 'fused' for /gimbal/people state 'coast_sw' (only with LWIR_COAST_SWITCH), else None."""
+    if not os.environ.get('LWIR_COAST_SWITCH'):
+        return None
+    on, mode = coast_switch()
+    return (mode or coast_mode_env()) if on else 'off'
+
+
 def guard_enabled():
     """11-15: LWIR_FOLLOW_GUARD=1 (v1, position and motion) or 2 (v2, + appearance; off by default): the wrong-person guard of
     follow_guard.py decides what the gimbal follows."""
@@ -326,10 +363,15 @@ def _kalman_box(selected):
     return None
 
 
+def coast_mode_env():
+    return 'fused' if os.environ.get('LWIR_COAST_MODE') == 'fused' else 'vel'
+
+
 def coast_mode():
     """11-15: LWIR_COAST_MODE = vel (default: follow the velocity prediction) | fused (keep the velocity prediction and the
-    tracker's position memory in the picture with the smallest motion, follow_guard.keep_in_view)"""
-    return 'fused' if os.environ.get('LWIR_COAST_MODE') == 'fused' else 'vel'
+    tracker's position memory in the picture with the smallest motion, follow_guard.keep_in_view). The first word of the
+    LWIR_COAST_SWITCH file overrides it."""
+    return coast_switch()[1] or coast_mode_env()
 
 
 GUARD_PHASES = {'track': 0, 'risk': 1, 'lost': 2, 'masked': 3}
@@ -338,8 +380,12 @@ GUARD_PHASES = {'track': 0, 'risk': 1, 'lost': 2, 'masked': 3}
 def _guard_locked(gb, selected, frame_t):
     """Called with gb.wcond held, after gb.people is set for this frame. -> (id to hide from the bridge this frame or 0,
     predicted (cx, cy, w, h) in gb.people coordinates for the PRED suffix or None). follow_guard.py; off unless the bridge
-    has --coast 1, LWIR_FOLLOW_GUARD=1 or LWIR_FOLLOW_PREDICT_LOG=1 (log only)."""
-    on_guard, on_coast = guard_enabled(), coast_enabled(gb)
+    has --coast 1, LWIR_FOLLOW_GUARD=1 or LWIR_FOLLOW_PREDICT_LOG=1 (log only). The coast part also needs the runtime
+    switch LWIR_COAST_SWITCH (when that is set)."""
+    sw = coast_switch_state()
+    if sw is not None:
+        gb.state['coast_sw'] = sw   # read by /gimbal/people (live A/B log)
+    on_guard, on_coast = guard_enabled(), coast_enabled(gb) and coast_switch()[0]
     if (not (on_guard or on_coast or predict_log_enabled()) or not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0)
             or getattr(gb, 'mover', None) or getattr(gb, 'selection_reset', False) or not getattr(gb, 'people_t', 0.0)):
         if not selected or not gb.state.get('auto'):
