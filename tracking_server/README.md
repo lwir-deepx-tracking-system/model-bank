@@ -14,7 +14,7 @@
 |---|---|
 | 실시간 보기 | 카메라 영상에서 검출 박스와 추적 번호를 확인합니다. 오른쪽 **설정**에서 모델, 추적기, 필터를 확인하거나 바꿉니다. 설정을 바꾸면 접속 중인 화면에 함께 반영됩니다. |
 | 녹화 재생 | 오른쪽 **녹화 재생**에서 시퀀스를 고릅니다. 영상 아래에서 재생·일시정지, ±10초, 위치 막대, 프레임 번호 이동을 사용합니다. |
-| C++ ByteTrack | [설치·선택 방법](src/track/README.md#c-bytetrack-설치와-비교). 카메라에서는 Tracker → **ByteTrack · C++**, 녹화에서는 재생의 추적기에서 고릅니다. |
+| C++ ByteTrack | [설치·선택 방법](src/track/README.md#c-bytetrack-설치와-비교). 카메라에서는 Tracker → **ByteTrack** 칸 아래 ByteTrack 옵션의 **C++**, 녹화에서는 재생의 추적기에서 고릅니다. |
 | 정답과 비교 | [8770 라벨 서버](../label_server/README.md)에서 검수한 녹화를 재생합니다. 영상 아래에서 오검출·놓침·ID 변경·IDF1·MOTA를 확인합니다. **정답 상자 그리기**를 켜면 정답 박스도 화면에서 확인할 수 있습니다. |
 | 지연 측정 | **측정**을 시작하고 끝내면 프레임 처리 지연과 연속 결과의 출력 간격이 각각 기록됩니다. |
 
@@ -750,9 +750,9 @@ PC 에서 점수가 같은지 볼 때는 서버의 채점 코드(`src/track/gt_s
   - `/stream` 은 보는 사람마다 앞 사진이 다 나간 뒤 가장 새 사진만 보냅니다. 사진마다 JPEG 주석 `LWIR n= t= s=` (카메라 프레임 도착·보낸 때, unix 초).
   - 페이지는 `/stream?p=<페이지 id>&n=<번호>` 로 엽니다. 같은 페이지의 새 영상이 열리면 옛 영상은 닫힙니다. 코드 `src/web/stream_sender.py`
   - 사진 한 장이 회선에서 12 ms 넘게 걸리는 viewer 는 한 단계 가벼운 사진을 받습니다 (`LWIR_STREAM_LIGHT`, 기본 `0.75,60;0.5,60` = 480x360, 320x240; 끄기 `0`; 기준 `LWIR_STREAM_DOWN_MS`·`LWIR_STREAM_UP_MS`). 왕복이 긴 viewer 는 회선이 한 왕복 동안 나르는 만큼은 확인을 기다리지 않고 보냅니다 (`LWIR_STREAM_INFLIGHT`, 기본 32768 바이트, 끄기 0). 서버가 viewer 마다 초당 5장쯤의 도착 시각을 잽니다(그 viewer 의 수신 확인, TCP_INFO).
-  - `GET /time?p=<페이지 id>` — 서버 시각 `t` 와 그 페이지 영상의 숫자 `v` (fps, 사진 단계, 서버 처리 ms, 도착까지 ms, 합 `est_ms`). 사진 바이트를 못 읽는 브라우저(아이폰)는 이 값으로 '내 화면 지연 약 N ms (추정)' 을 보여 줍니다.
+  - `GET /time?p=<페이지 id>` — 서버 시각 `t` 와 그 페이지 영상의 숫자 `v` (fps, 사진 단계, 서버 처리 ms, 도착까지 ms, 합 `est_ms`). 사진 바이트를 못 읽는 브라우저(아이폰)는 이 값으로 '지연 약 N ms' 를 보여 줍니다.
   - 연결은 HTTP/1.1 로 유지됩니다(요청마다 TCP 연결을 새로 맺지 않음). `/stream`, `/overlay` 만 `Connection: close`.
-  - 페이지는 영상을 fetch 로 읽어 사진마다 카메라 시각을 보고, 영상 위 '내 화면 지연 … ms · … fps'(작은 사진이면 '· 작은 사진')를 보여 줍니다. 시계 차이는 `GET /time`. 다른 영상 길도 `pictureShown(t, light, source)`, `streamStats(source)` 를 씁니다 (`page/js/picture_stream.js`).
+  - 페이지는 영상을 fetch 로 읽어 사진마다 카메라 시각을 보고, 영상 위 '지연 … ms (그중 서버 …)'(작은 사진이면 '· 작은 사진', 내 화면 fps 는 추적보다 느릴 때만)를 보여 줍니다. 시계 차이는 `GET /time`. 다른 영상 길도 `pictureShown(t, light, source)`, `streamStats(source)` 를 씁니다 (`page/js/picture_stream.js`).
   - '사진 먼저'(`LWIR_PICTURE_FIRST=1` 또는 화면 표시 줄, 기본 꺼짐): 카메라 프레임이 들어오자마자 그 사진을 보내고(검출 전), 상자는 `GET /overlay`(server-sent events)로 따로 보내 페이지가 그립니다. 녹화 재생·흔들림 보정·다른 표시 중에는 예전처럼. `src/web/picture_first.py`, `page/js/picture_first.js`
 - `/healthz` — 살아 있는지, 지연 값, 멈춘 그림 수(`frozen_frames`), 만든 그림 수(`pictures`), 보는 사람 수(`viewers`)
 - `/model` — 검출 모델 목록과 지금 쓰는 모델

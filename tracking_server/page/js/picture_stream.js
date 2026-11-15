@@ -94,9 +94,11 @@ function timeSync(){if(document.hidden)return;const t0=Date.now();
 function lightText(level){if(!level)return '';const sv=serverStats(),n=sv&&sv.levels||1;return level>=n?' · 작은 사진':' · 중간 사진';}   // the lightest level = 작은 사진 (320x240)
 function delayTick(){const el=$('vage'),st=streamStats();if(!el)return;
   if(document.hidden||!st.pictures||(!st.measured&&!PS.on)){el.hidden=true;return;}
-  const fps=(st.fps<10?st.fps.toFixed(1):Math.round(st.fps))+' fps'+lightText(st.light);
-  if(st.measured){const med=st.age_ms;el.textContent='내 화면 '+(med!=null&&med<5000?'지연 '+Math.round(Math.max(0,med))+' ms · ':'')+fps;}
-  else el.textContent='내 화면 '+(st.est_ms!=null?'지연 약 '+Math.round(st.est_ms)+' ms (추정) · ':'')+fps;   // <img> stream: the server's numbers for this page
+  // 11-16 (design review 6): '지연 78 ms (그중 서버 47)'. The server's part is this page's own stream (GET /time), so it is never more than the whole;
+  // this screen's fps only when it is clearly under the tracking speed (the chip above already says the tracking fps).
+  const tf=typeof hzPrev!=='undefined'&&hzPrev?hzPrev.track_fps:null,slow=Number.isFinite(tf)&&st.fps<tf*0.8?' · 내 화면 '+(st.fps<10?st.fps.toFixed(1):Math.round(st.fps))+' fps':'';
+  const sv=serverStats(),sm=sv&&Number.isFinite(sv.server_ms)?sv.server_ms:null,d=st.measured?(st.age_ms!=null&&st.age_ms<5000?Math.max(0,st.age_ms):null):st.est_ms;   // <img> stream: the server's numbers for this page ('약')
+  el.textContent=(d!=null?'지연 '+(st.measured?'':'약 ')+Math.round(d)+' ms'+(sm!=null&&sm<=d?' (그중 서버 '+Math.round(sm)+')':''):'지연 재는 중')+lightText(st.light)+slow;
   el.hidden=false;}
 timeSync();setTimeout(timeSync,700);setTimeout(timeSync,1400);setInterval(timeSync,2000);setInterval(delayTick,1000);
 openStream();   // the first stream (the img has no src in the HTML): after this fragment's constants exist

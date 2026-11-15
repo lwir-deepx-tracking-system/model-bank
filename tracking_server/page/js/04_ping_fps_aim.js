@@ -9,7 +9,7 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)stopStream(
 function hztick(){if(document.hidden)return;fetch('/healthz',{cache:'no-store'}).then(r=>r.json()).then(h=>{lastOk=Date.now();
   const r0=v=>Number.isFinite(v)?Math.round(v):'–';$('fps').textContent='카메라 '+r0(h.cam_fps)+' · 추적 '+r0(h.track_fps)+' fps';hzPrev=h;   // 11-13: the server's speeds
   const rs=(typeof rpLast!=='undefined'&&rpLast&&rpLast.state)||{},vc=$('vchip');   // 11-13: picture chip (was a text bar drawn into the picture); 11-15: '서버 처리' = the server's part only, this screen's delay is the chip under it (picture_stream.js)
-  if(vc){const rp=!!rs.on;vc.className='vchip num'+(rp?' replay':'');vc.textContent=(rp?'녹화 재생 · '+(rs.name||''):'실시간')+' · 추적 '+r0(h.track_fps)+' fps'+(Number.isFinite(h.delay_p50)?' · 서버 처리 '+Math.round(h.delay_p50)+' ms':'');vc.hidden=false;}
+  if(vc){const rp=!!rs.on;vc.className='vchip num'+(rp?' replay':'');vc.textContent=(rp?'녹화 · '+String(rs.name||'').split('/').pop():'실시간')+' · '+r0(h.track_fps)+' fps';vc.hidden=false;}
   }).catch(()=>{});}
 setInterval(hztick,2000);hztick();
 // Match the bridge's configured reference height when displaying framing error.

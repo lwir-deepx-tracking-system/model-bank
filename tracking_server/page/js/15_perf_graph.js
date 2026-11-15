@@ -1,6 +1,6 @@
 // v26d: small speed / delay graphs below the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
-const PF={rows:[],span:60,off:0,busy:false,on:true,marks:[],seen:null};   /* marks: setting changes seen while this page is open, drawn as vertical lines */
-try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if(s_.on===false)PF.on=false;if([60,300,900].includes(s_.span))PF.span=s_.span;}catch(_){}
+const PF={rows:[],span:60,off:0,busy:false,on:!MOB.matches,marks:[],seen:null};   /* marks: setting changes seen while this page is open, drawn as vertical lines */
+try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if(typeof s_.on==='boolean')PF.on=s_.on;if([60,300,900].includes(s_.span))PF.span=s_.span;}catch(_){}
 const PF_LATENCY_LIMIT=100;
 const PFC=[
   {cv:$('pfc0'),series:[[2,'--c2',1.8],[1,'--c1',2.5]],min:30,labels:true},
@@ -100,7 +100,7 @@ function pftick(){pfmark();if(document.hidden||!PF.on||PF.busy)return;PF.busy=tr
   fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
     for(const r of p.rows){   // r[7] = arrival -> picture ready (server, mean of the second)
-      const [age,guess]=pfdelay();$('pft6').textContent=guess?'영상 지연 (추정)':'영상 지연';
+      const [age,guess]=pfdelay();$('pft6').textContent=guess?'내 화면 (추정)':'내 화면';
       r[8]=Number.isFinite(r[7])?r[7]:null;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&Number.isFinite(age)?age:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
 const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({on:PF.on,span:PF.span}));}catch(_){}};
 $('pfbtn').addEventListener('click',e=>{e.stopPropagation();PF.on=!PF.on;pfsave();pfdraw();pftick();});

@@ -19,8 +19,8 @@
 .pfo .pfx #pfc2{margin-bottom:0}
 .pfo .pf-overflow{margin:3px 0 0;color:var(--c3);font-weight:600;overflow-wrap:anywhere}
 @media (max-width:900px){
-  .pfo{width:100%;font-size:13px}
-  .pfo .pfb button{height:26px;padding:0 9px}
+  .pfo{width:auto;font-size:13px}   /* 11-16: was 100% plus the side margins = 8 px wider than the screen */
+  .pfo .pfb button{height:36px;padding:0 12px}
   .pfo .pfx{padding:5px 6px}
   .pfo .pfh{column-gap:12px}
   .pfo .pfx canvas{height:68px}
