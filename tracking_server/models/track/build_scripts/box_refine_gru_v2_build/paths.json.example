@@ -1,0 +1,1 @@
+{"tmot_train": "<TMOT train in MOT layout: tmot_seqN/img1, gt/gt.txt>", "tmot_val": "<TMOT val 640x480 copy: seqN/images, tracks_mot.txt>", "dance": "<DanceTrack grey 640x480 letterbox copy: train/, val/>", "worktree": "<tracking_server folder of this repository>"}

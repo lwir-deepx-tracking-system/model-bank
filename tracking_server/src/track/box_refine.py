@@ -4,7 +4,7 @@
 짐벌 보내기 바로 전에 apply 를 부른다. 추적기 안의 상자(Kalman 상태), 짝짓기, KeepID, 녹화 채점, 검출 모델 자동 선택, 측정 기록, 피부 온도는
 그대로 원래 상자를 쓴다.
 
-모드 (/rules/set?box_refine=off|euro|gru|size, last_selection.json 에 남음):
+모드 (/rules/set?box_refine=off|euro|gru|size|gru2, last_selection.json 에 남음):
   off   아무것도 안 함 (기본). 이때 apply 는 받은 행을 그대로 돌려주고 아무 상태도 만들지 않는다.
   size  크기만 부드럽게 (11-15 v2). 위치는 추적기 행 그대로(SIZE['anchor']: 'top' = 위 가장자리와 가로 중심, 'centre' = 중심, 'aim' = 짐벌 조준점
         위 + aim_y x 키 를 추적기 행과 똑같이 둠(aim_y = 돌고 있는 짐벌 프로그램의 --aim-y, 없으면 --gimbal-aim-y): 짐벌 조준은 지금과 같고 그리는 크기만 바뀜), 상자 크기
@@ -19,6 +19,13 @@
         카메라 움직임 보정) 값을 읽고 지금 상자를 고친다(중심 +-0.5 키, 크기 x/ 2.5 안). 이번 프레임 뒤는 보지 않는다(인과).
         목표는 몸 네모 하나의 정의(머리 위 ~ 골반)라서 먼 거리 모델이 작은 사람에게 내는 전신 상자도 같은 정의로 바꾸도록 배웠다.
         관절을 내는 검출 모델([관절])에서만 고를 수 있다(관절 없는 모델로 바뀌면 쉰다). 학습: pos_refine_20261115.
+  gru2  학습 GRU 2판 (11-15, models/track/box_refine_gru_v2_*.npz, 이름순 마지막). 1판의 두 문제(새 사람 첫 프레임에 상자가 튐, 빠른 사람 뒤로 처짐)를
+        고친 것. 바탕 = 검출 상자를 변환표(검출 상자 높이 x 가로세로 비 -> 몸 네모, 학습 분할에서 맞춤, 겹선형 보간)로 바꾼 상자. 출력 = 앞 출력을
+        그 바탕 쪽으로 성분마다 배운 비율만큼 옮기고 작은 보정을 더한 것(중심 +-0.4 키, 크기 x/ 2.2). 새 사람은 바탕 상자에서 시작한다.
+        그 프레임의 사람 모두를 한 번에 계산한다(G2Engine = 오프라인 채점 코드 g2_lib.Engine 과 같은 식). 그 뒤 크기(log 가로, log 세로)만
+        One Euro 로 한 번 더 거른다(값은 가중치 파일의 size_euro). 속도는 고정 이득 필터(Kalman 없음). 관절을 내는 검출 모델에서만.
+        다시 시작 규칙은 엔진 것 하나(빠진 프레임 > 30, 카메라 움직임으로 옮긴 앞 검출에서 키의 1.5배 넘게 떨어짐). 번호 넘겨받기는 다른 모드와 같다.
+        변환표의 검출 상자 170 px 이상 두 줄은 그대로(130-170 px 줄)로 고친 것이다(가까운 사람 상자가 0.64 배로 줄던 결함, models/README).
 섞기 (/rules/set?box_blend=초, 0 = 끔, 기본 끔): 검출 모델이 바뀌면(자동 선택, 두 모델 상주) 사람마다, 그 사람의 앞 출력이 앞 모델에서 나왔고
   3 프레임 안이며 0.15 초(낮은 프레임 속도에서는 그 사람의 앞 프레임 간격 x 2) 안이면, 앞 출력(카메라 움직임만큼 옮기고, 카메라 몫을 뺀 그 사람의
   마지막 한 프레임 움직임을 초당으로 바꿔 지난 시간만큼 앞으로 옮김)과 새 출력의 차이(중심 / 키, log 크기)를 시작할 때의 섞기 시간 동안 1 에서 0 으로
@@ -44,8 +51,10 @@ import numpy as np
 from ..common.state import APP
 from ..common.shared_values import PERSON_CLS
 
-MODES = ('off', 'euro', 'gru', 'size')
-MODE_KO = dict(off='끔', euro='One Euro 필터', gru='학습 GRU (몸 네모 하나로)', size='크기만 부드럽게')
+MODES = ('off', 'euro', 'gru', 'size', 'gru2')
+MODE_KO = dict(off='끔', euro='One Euro 필터', gru='학습 GRU (몸 네모 하나로)', size='크기만 부드럽게', gru2='학습 GRU 2판 (시작 튐·뒤처짐 고침)')
+KPT_MODES = ('gru', 'gru2')   # modes that read keypoints: only with a keypoint detector
+V2_PREFIX = 'box_refine_gru_v2_'   # version-2 weight files; the version-1 loader skips them
 # One Euro values chosen on val-A (pos_refine_20261115/results/euro_valA.json): centre min_cutoff Hz, beta (per box height per s), size min_cutoff Hz, beta
 EURO = dict(mc=3.0, beta=3.0, mc_s=0.4, beta_s=0.3, dcut=1.0)   # grid min_cutoff 0.05..8 Hz x beta 0..3; centre beta at the grid's top (flat: 3.0 / 1.0 within 0.1 %)
 # size mode (v2, pos_refine_20261115/v2/PREREG_V2.json): One Euro on log w / log h, min_cutoff Hz, beta (per log unit per s), derivative cutoff Hz;
@@ -70,9 +79,10 @@ NF = 70
 REF_C, REF_S, CLIP = 0.5, math.log(2.5), 5.0
 KP_IOU = 0.9           # the row's detection and a keypoint detection of the same frame are the same box (detect_frame.KP holds the NMS rows)
 ERR_MAX = 50           # errors in a row before the module switches itself off
+_KP0 = np.zeros((17, 3))   # no keypoints for a person (gru2 batch)
 
 BR = dict(mode='off', blend_s=0.0, lock=threading.Lock(), tr={}, frame=0, ms=0.0, ms_max=0.0, ms_track=0.0, n=0, frames=0, err='', errors=0, errors_all=0,
-          model=None, file=None, note='', mt=None, reset_key=None, blends=0, handovers=0, why='', dir=None)
+          model=None, file=None, note='', mt=None, reset_key=None, blends=0, handovers=0, why='', dir=None, model2=None, file2=None, note2='', mt2=None)
 
 
 # ------------------------------------------------------------------------------------------------ pieces (no APP)
@@ -139,6 +149,116 @@ class GRUNp:
         return self.wo @ h + self.bo, h
 
 
+class G2Model:
+    """GRU box refiner version 2: weights, lookup conversion table and constants of one models/track/box_refine_gru_v2_*.npz."""
+    def __init__(self, w):
+        g = lambda k: np.asarray(w[k], np.float64)
+        self.wih, self.whh, self.bih, self.bhh, self.wo, self.bo = g('cell.weight_ih'), g('cell.weight_hh'), g('cell.bias_ih'), g('cell.bias_hh'), g('head.weight'), g('head.bias')
+        self.n = self.whh.shape[1]; assert self.wih.shape == (3 * self.n, G2_NF) and self.wo.shape == (8, self.n) and str(w['arch']) == 'gate'
+        self.tab, self.lh_cen, self.ar_cen = g('lut_tab'), g('lut_lh_cen'), g('lut_ar_cen'); assert self.tab.shape == (len(self.lh_cen), len(self.ar_cen), 4)
+        self.kc, self.ks, self.vb, self.clip = float(w['kc']), float(w['ks']), float(w['vb']), float(w['clip'])
+        self.lost_max, self.jump_h = int(w['lost_max']), float(w['jump_h']); self.size = tuple(float(v) for v in np.asarray(w['size_euro']).ravel()); assert len(self.size) == 3
+
+    def conv_delta(self, z):
+        """the lookup table read with bilinear interpolation between the bin centres -> [N,4] (dx / h, dy / h, log w ratio, log h ratio)."""
+        tab, lh_cen, ar_cen = self.tab, self.lh_cen, self.ar_cen; lh = np.log(np.maximum(z[:, 3], 1.)); ar = z[:, 2] / np.maximum(z[:, 3], 1.)
+        i = np.clip(np.searchsorted(lh_cen, lh, 'right') - 1, 0, len(lh_cen) - 2); t = np.clip((lh - lh_cen[i]) / (lh_cen[i + 1] - lh_cen[i]), 0., 1.)[:, None]
+        j = np.clip(np.searchsorted(ar_cen, ar, 'right') - 1, 0, len(ar_cen) - 2); u = np.clip((ar - ar_cen[j]) / (ar_cen[j + 1] - ar_cen[j]), 0., 1.)[:, None]
+        return (1 - t) * (1 - u) * tab[i, j] + (1 - t) * u * tab[i, j + 1] + t * (1 - u) * tab[i + 1, j] + t * u * tab[i + 1, j + 1]
+
+    def step(self, x, h):
+        """x [N,78], h [N,n] -> o [N,8], h' [N,n] (torch GRUCell gate order r, z, n)"""
+        n = self.n; gi = x @ self.wih.T + self.bih; gh = h @ self.whh.T + self.bhh
+        r = 1. / (1. + np.exp(-(gi[:, :n] + gh[:, :n]))); zz = 1. / (1. + np.exp(-(gi[:, n:2 * n] + gh[:, n:2 * n])))
+        c = np.tanh(gi[:, 2 * n:] + r * gh[:, 2 * n:]); h = (1. - zz) * c + zz * h
+        return h @ self.wo.T + self.bo, h
+
+
+class G2Engine:
+    """the version-2 engine: all people of a frame in one batch (= pos_refine_20261115/gru_v2/scripts/g2_lib.Engine + model_step_np, the code the
+    offline numbers were made with). step(ids, Z [N,4] detection cxcywh, KP [N,17,3] (zeros = none), H = this frame's camera warp or None, t s)
+    -> dict(out [N,4] GRU output, out_f [N,4] the same with the size filter, start [N] state started on this frame, k [N] rows since the start).
+    State per id in arrays over slots: previous detection zp and previous output op (kept in the current frame's coordinates: every live id is
+    moved by every frame's warp), velocity v (px per frame, fixed-gain filter), cam, frames missed, rows since the start, GRU state, size filter."""
+    SPEC = dict(zp=((4,), np.float64, 1.), op=((4,), np.float64, 1.), v=((2,), np.float64, 0.), cam=((2,), np.float64, 0.), sx=((2,), np.float64, 0.),
+                sdx=((2,), np.float64, 0.), lsc=((), np.float64, 0.), tl=((), np.float64, 0.), miss=((), np.int64, 0), k=((), np.int64, 0), alive=((), bool, False))
+
+    def __init__(self, model, cap=64):
+        self.m = model; self.slot = {}; self.free = []; self.cap = 0; self.spec = dict(self.SPEC, h=((model.n,), np.float64, 0.))
+        for k, (shp, dt, fill) in self.spec.items(): setattr(self, k, np.full((0,) + shp, fill, dt))
+        self._grow(cap)
+
+    def _grow(self, cap):
+        for k, (shp, dt, fill) in self.spec.items():
+            b = np.full((cap,) + shp, fill, dt); b[:self.cap] = getattr(self, k); setattr(self, k, b)
+        self.free = list(range(cap - 1, self.cap - 1, -1)) + self.free; self.cap = cap
+
+    def _slot(self, i):
+        s = self.slot.get(i)
+        if s is None:
+            if not self.free: self._grow(self.cap * 2)
+            s = self.free.pop(); self.slot[i] = s; self.alive[s] = False
+        return s
+
+    def drop(self, i):
+        s = self.slot.pop(i, None)
+        if s is not None: self.alive[s] = False; self.free.append(s)
+
+    def rename(self, old, new):
+        """hand the state of id old over to id new (KeepID gave the person another number)."""
+        if old not in self.slot: return
+        self.drop(new); self.slot[new] = self.slot.pop(old)
+
+    def step(self, ids, Z, KP, H=None, t=0.0):
+        m = self.m; a = np.flatnonzero(self.alive)
+        if len(a):   # every live id: one more frame, camera warp of the kept boxes
+            self.miss[a] += 1
+            dead = a[self.miss[a] > m.lost_max + 1]
+            if len(dead):
+                self.alive[dead] = False; ds = set(dead.tolist())
+                for i in [i for i, s in self.slot.items() if s in ds]: self.free.append(self.slot.pop(i))
+                a = np.flatnonzero(self.alive)
+            if H is not None and len(a):
+                Rm = H[:2, :2]; tr = H[:2, 2]; sc = math.sqrt(abs(Rm[0, 0] * Rm[1, 1] - Rm[0, 1] * Rm[1, 0])); c0 = self.zp[a, :2]
+                self.zp[a, :2] = c0 @ Rm.T + tr; self.zp[a, 2:] *= sc; self.cam[a] = self.zp[a, :2] - c0
+                self.op[a, :2] = self.op[a, :2] @ Rm.T + tr; self.op[a, 2:] *= sc; self.v[a] = self.v[a] @ Rm.T; self.lsc[a] += math.log(max(sc, 1e-6))
+            else: self.cam[a] = 0.
+        N = len(ids)
+        if N == 0: return dict(out=np.zeros((0, 4)), out_f=np.zeros((0, 4)), start=np.zeros(0, bool), k=np.zeros(0, np.int64))
+        Z = np.asarray(Z, np.float64).reshape(N, 4); Z = np.c_[Z[:, :2], np.maximum(Z[:, 2:], 1.)]
+        s = np.array([self._slot(i) for i in ids]); new = ~self.alive[s]; zp = self.zp[s]; h = Z[:, 3]; w = Z[:, 2]
+        jump = ~new & (np.hypot(Z[:, 0] - zp[:, 0], Z[:, 1] - zp[:, 1]) > m.jump_h * np.maximum(zp[:, 3], 1.))
+        st = new | jump; gap = np.where(st, 0, self.miss[s] - 1); n1 = (gap + 1.)[:, None]
+        v0 = np.where(st[:, None], 0., self.v[s]); zpc = np.where(st[:, None], Z[:, :2], zp[:, :2]); zps = np.where(st[:, None], Z[:, 2:], zp[:, 2:])
+        inn = (Z[:, :2] - (zpc + v0 * n1)) / h[:, None]; v = v0 + m.vb * ((Z[:, :2] - zpc) / n1 - v0)
+        dC = m.conv_delta(Z); Cb = np.stack([Z[:, 0] + dC[:, 0] * h, Z[:, 1] + dC[:, 1] * h, w * np.exp(dC[:, 2]), h * np.exp(dC[:, 3])], 1)
+        X = np.empty((N, G2_NF))
+        X[:, 0:2] = v / h[:, None]; X[:, 2:4] = inn; X[:, 4:6] = (Z[:, :2] - zpc) / h[:, None]; X[:, 6:8] = np.log(Z[:, 2:] / np.maximum(zps, 1.))
+        X[:, 8] = np.log(h / 100.); X[:, 9] = np.log(w / h)
+        X[:, 10] = (Z[:, 0] - w / 2) / h; X[:, 11] = (XW - (Z[:, 0] + w / 2)) / h; X[:, 12] = (Z[:, 1] - h / 2 - ROW0) / h; X[:, 13] = (ROW1 - (Z[:, 1] + h / 2)) / h
+        KP = np.asarray(KP, np.float64).reshape(N, 17, 3); vis = (KP[:, :, 2] >= 0.5).astype(np.float64)
+        X[:, 14:65] = np.stack([(KP[:, :, 0] - Z[:, None, 0]) / h[:, None] * vis, (KP[:, :, 1] - Z[:, None, 1]) / h[:, None] * vis, vis], 2).reshape(N, 51)
+        kk = np.where(st, 0, self.k[s] + 1)
+        X[:, 65] = np.minimum(gap, m.lost_max) / 15.; X[:, 66:68] = np.where(st[:, None], 0., self.cam[s]) / h[:, None]; X[:, 68:72] = dC
+        X[:, 72] = st; X[:, 73] = np.minimum(kk, 10) / 10.
+        # the previous output against the converted box, the GRU step, the gated update (g2_lib.model_step_np)
+        Cs = np.c_[Cb[:, :2], np.log(Cb[:, 2:])]; hc = Cb[:, 3:4]; op = self.op[s]
+        ops = np.c_[op[:, :2], np.log(np.maximum(op[:, 2:], 1e-3))]; ops = np.where(st[:, None], Cs, ops)
+        X[:, 74:76] = (ops[:, :2] - Cs[:, :2]) / hc; X[:, 76:78] = ops[:, 2:] - Cs[:, 2:]; np.clip(X, -m.clip, m.clip, out=X)
+        o, hn = m.step(X, np.where(st[:, None], 0., self.h[s]))
+        base = ops + (1. / (1. + np.exp(-o[:, :4]))) * (Cs - ops)
+        out = np.c_[base[:, :2] + m.kc * hc * np.tanh(o[:, 4:6]), np.exp(base[:, 2:] + m.ks * np.tanh(o[:, 6:8]))]
+        self.h[s] = hn; self.op[s] = out
+        # size filter: One Euro on log w / log h (the centre stays the GRU's; the GRU's own feedback op stays unfiltered)
+        mcs, bs, dcut = m.size; ls = np.log(np.maximum(out[:, 2:], 1e-3)); dt = np.maximum(t - self.tl[s], 1e-3)[:, None]
+        xp = self.sx[s] + self.lsc[s][:, None]; d = (ls - xp) / dt; ad = _alpha(dcut, dt); dx = ad * d + (1 - ad) * self.sdx[s]
+        al = _alpha(mcs + bs * np.abs(dx), dt); xn = al * ls + (1 - al) * xp
+        xn = np.where(st[:, None], ls, xn); dx = np.where(st[:, None], 0., dx); self.sx[s] = xn; self.sdx[s] = dx
+        self.zp[s] = Z; self.v[s] = v; self.miss[s] = 0; self.k[s] = kk; self.alive[s] = True; self.lsc[s] = 0.; self.tl[s] = t
+        return dict(out=out, out_f=np.c_[out[:, :2], np.exp(xn)], start=st, k=kk)
+
+
+G2_NF = 78
 SP, SV = 1 / 20, 1 / 160
 F8 = np.eye(8); F8[np.arange(4), np.arange(4, 8)] = 1.0
 
@@ -235,12 +355,14 @@ def size_box(zr, lw, lh, anchor, aim_y=AIM_Y):
 class Refiner:
     """the per-id state machine (no APP): step(list of (id, z = detection cxcywh, kp or None[, the row's own box cxcywh]), t s, H = this frame's
     camera warp or None, det_key, new_det_ready) -> {id: box cxcywh}. Mode 'off' (blend only) starts from the row's own box (the tracker's box),
-    'size' takes the position from the row's own box, the other modes start from the detection. The state of id k after a step is self.tr[k]
+    'size' takes the position from the row's own box, the other modes start from the detection. 'gru2' computes all ids of the frame in one
+    batch (G2Engine, which also owns the reset rule: gap > LOST_MAX, jump; the hand-over is the same). The state of id k after a step is self.tr[k]
     ('k' = rows since that state started, 'new' = started on this frame, 'hs' = camera warp since the id's previous frame or None)."""
     def __init__(self, mode, model=None, euro=None, blend_s=0.0, size=None, aim_y=AIM_Y):
         self.mode = mode; self.model = model; self.euro = dict(euro or EURO); self.size = dict(SIZE, **(size or {})); self.blend_s = float(blend_s)
         self.aim_y = float(aim_y)   # the gimbal's aim point (size anchor 'aim'); apply() sets the running bridge's value every frame
         self.tr = {}; self.frame = 0; self.eff_key = None; self.blends = 0; self.handovers = 0
+        self.eng = G2Engine(model) if mode == 'gru2' and model is not None else None   # gru2: one batched engine for all ids
 
     @staticmethod
     def _recent_s(st):
@@ -267,7 +389,10 @@ class Refiner:
         if det_key is not None and new_ready: self.eff_key = det_key   # the detector whose boxes this frame carries (resident switch: not before its own frame)
         cur = set(it[0] for it in items)
         gone = [k for k, s in self.tr.items() if s['f'] == fr - 1 and k not in cur] if self.tr else []
-        for it in items:
+        eng = self.eng; work = []
+        fresh = lambda z_: dict(f=fr, t=t, z=z_, lost=0, m=None, c=None, zp=None, h=None, eu=None, se=None, Hacc=None, out=None, out1=None, f1=None,
+                                t1=None, bl=None, dk=None, k=-1, new=True, hs=None)
+        for it in items:   # 1) every person: whose state (hand-over, reset)
             tid, z, kp = it[:3]; zr = it[3] if len(it) > 3 and it[3] is not None else z; st = self.tr.get(tid)
             if gone and (st is None or st['f'] != fr - 1):   # hand-over: KeepID gave the person another id this frame
                 best, bi = HANDOVER_IOU, -1
@@ -275,18 +400,29 @@ class Refiner:
                     sg = self.tr[g]; v = iou_c(z, sg['z'] if H is None else warp_box(sg['z'], H))
                     if v >= best: best, bi = v, j
                 if bi >= 0:
-                    st = self.tr[tid] = self.tr.pop(gone.pop(bi)); self.handovers += 1
+                    g = gone.pop(bi); st = self.tr[tid] = self.tr.pop(g); self.handovers += 1
+                    if eng is not None: eng.rename(g, tid)
             Hs = None   # camera motion since this id's previous frame (its missing frames included)
             if st is not None:
                 Hs = H if st['Hacc'] is None else (st['Hacc'] if H is None else compose(H, st['Hacc']))
-                if fr - st['f'] - 1 > LOST_MAX or self._jump(st, z, Hs): st = None
+                if eng is None and (fr - st['f'] - 1 > LOST_MAX or self._jump(st, z, Hs)): st = None   # gru2: the engine's own (same) rule, below
             if st is None:
-                st = self.tr[tid] = dict(f=fr, t=t, z=z, lost=0, m=None, c=None, zp=None, h=None, eu=None, se=None, Hacc=None, out=None, out1=None, f1=None,
-                                         t1=None, bl=None, dk=None, k=-1, new=True, hs=None)
-                Hs = None
+                st = self.tr[tid] = fresh(z); Hs = None
+                if eng is not None: eng.drop(tid)
             else:
                 st['new'] = False
-            if self.mode == 'size':
+            work.append((tid, z, kp, zr, st, Hs))
+        g2 = None
+        if eng is not None:   # gru2: all people of the frame in one batch (also with nobody: the missing frame counts, the kept boxes move with the camera)
+            g2 = eng.step([w_[0] for w_ in work], np.array([w_[1] for w_ in work], np.float64).reshape(-1, 4),
+                          np.array([w_[2] if w_[2] is not None else _KP0 for w_ in work], np.float64).reshape(-1, 17, 3), H, t)
+            for i, w_ in enumerate(work):
+                if g2['start'][i] and not w_[4]['new']:   # the engine restarted this id (gap, jump): everything restarts together
+                    work[i] = w_[:4] + (fresh(w_[1]), None); self.tr[w_[0]] = work[i][4]
+        for i, (tid, z, kp, zr, st, Hs) in enumerate(work):   # 2) every person: the box
+            if g2 is not None:
+                b = g2['out_f'][i].copy()
+            elif self.mode == 'size':
                 p = self.size; src = z if p['src'] == 'det' else zr
                 if st['se'] is None: st['se'] = SizeEuro(p['mc_s'], p['beta_s'], p['dcut'])
                 lw, lh = st['se'].step(math.log(max(src[2], 1.)), math.log(max(src[3], 1.)), t - st['t'] if st['out'] is not None else 0.04, log_scale(Hs))
@@ -333,9 +469,9 @@ def model_dir():
 
 
 def scan():
-    """newest models/track/box_refine_gru_*.npz (a file is read again only when it changed and is older than 5 s)."""
+    """newest models/track/box_refine_gru_*.npz of version 1 (a file is read again only when it changed and is older than 5 s)."""
     d = model_dir()
-    try: c_ = sorted(f for f in os.listdir(d) if f.startswith('box_refine_gru_') and f.endswith('.npz'))
+    try: c_ = sorted(f for f in os.listdir(d) if f.startswith('box_refine_gru_') and not f.startswith(V2_PREFIX) and f.endswith('.npz'))
     except OSError: c_ = []
     if not c_: BR.update(model=None, file=None, note='가중치 파일 없음', mt=None); return None
     p = os.path.join(d, c_[-1])
@@ -349,6 +485,31 @@ def scan():
     except Exception as e_:
         BR.update(model=None, file=c_[-1], mt=mt, note='가중치 파일을 읽지 못함: %s' % type(e_).__name__)
     return BR['model']
+
+
+def scan2():
+    """newest models/track/box_refine_gru_v2_*.npz (gru2; read again only when it changed and is older than 5 s)."""
+    d = model_dir()
+    try: c_ = sorted(f for f in os.listdir(d) if f.startswith(V2_PREFIX) and f.endswith('.npz'))
+    except OSError: c_ = []
+    if not c_: BR.update(model2=None, file2=None, note2='가중치 파일 없음', mt2=None); return None
+    p = os.path.join(d, c_[-1])
+    try: mt = os.path.getmtime(p)
+    except OSError: return None
+    if BR['file2'] == c_[-1] and BR['mt2'] == mt: return BR['model2']
+    if time.time() - mt < 5: return BR['model2']
+    try:
+        z = np.load(p, allow_pickle=False); m = G2Model({k: z[k] for k in z.files})
+        r = G2Engine(m, 2).step([1], np.array([[320., 256., 40., 100.]]), np.zeros((1, 17, 3)), None, 0.0)   # one step must give a finite box
+        assert r['out_f'].shape == (1, 4) and np.isfinite(r['out_f']).all()
+        BR.update(model2=m, file2=c_[-1], mt2=mt, note2='')
+    except Exception as e_:
+        BR.update(model2=None, file2=c_[-1], mt2=mt, note2='가중치 파일을 읽지 못함: %s' % type(e_).__name__)
+    return BR['model2']
+
+
+def _model(mode):
+    return BR['model2'] if mode == 'gru2' else BR['model'] if mode == 'gru' else None
 
 
 def _e2e_on():
@@ -369,7 +530,7 @@ def _new_ready():
 
 
 def _det_kpt():
-    """the running detector gives keypoints (model_scan kind six_kpt): only then can gru read them (detect_frame.KP is not cleared by other models)."""
+    """the running detector gives keypoints (model_scan kind six_kpt): only then can gru / gru2 read them (detect_frame.KP is not cleared by other models)."""
     try:
         from ..detect.model_scan import KPT_DETS
         a = _app('args')
@@ -446,15 +607,16 @@ def apply(rows, dets=None, t=None):
     try:
         with BR['lock']:
             if _e2e_on(): BR['why'] = '엔드투엔드 사용 중: 검출 상자와 관절이 없어 그대로 둠'; BR['tr'] = {}; BR.pop('obj', None); return rows
-            if BR['mode'] == 'gru' and not _det_kpt():
+            mode = BR['mode']; learned = mode in KPT_MODES
+            if learned and not _det_kpt():
                 BR['why'] = '관절 없는 검출 모델: 학습 GRU 쉼 (그대로 둠)'; BR.pop('obj', None); return rows
             key = _reset_key(); obj = BR.get('obj')
-            if obj is None or not _same_key(key, BR['reset_key']) or obj.mode != BR['mode'] or (BR['mode'] == 'gru' and obj.model is not BR['model']):
-                obj = BR['obj'] = Refiner(BR['mode'], BR['model'], EURO, BR['blend_s'], SIZE); BR['reset_key'] = key
+            if obj is None or not _same_key(key, BR['reset_key']) or obj.mode != mode or (learned and obj.model is not _model(mode)):
+                obj = BR['obj'] = Refiner(mode, _model(mode), EURO, BR['blend_s'], SIZE); BR['reset_key'] = key
             obj.blend_s = BR['blend_s']; obj.aim_y = _aim_y()   # a new blend time keeps every person's state
-            if BR['mode'] == 'gru' and obj.model is None:
+            if learned and obj.model is None:
                 BR['why'] = 'GRU 가중치 파일이 없어 그대로 둠'; return rows
-            kpd = _kp_cur() if BR['mode'] == 'gru' else None; items = []; idx = []
+            kpd = _kp_cur() if learned else None; items = []; idx = []
             for i, r in enumerate(rows):
                 if int(r[6]) != PERSON_CLS: continue
                 bx = (float(r[0]), float(r[1]), float(r[2]), float(r[3])); zr = np.array([(bx[0] + bx[2]) / 2, (bx[1] + bx[3]) / 2, max(bx[2] - bx[0], 1.), max(bx[3] - bx[1], 1.)])
@@ -496,10 +658,12 @@ def apply(rows, dets=None, t=None):
 
 def state():
     m = scan() if BR['mode'] == 'gru' or BR['model'] is None else BR['model']
-    obj = BR.get('obj'); kpt = _det_kpt()
+    m2 = scan2() if BR['mode'] == 'gru2' or BR['model2'] is None else BR['model2']
+    obj = BR.get('obj'); kpt = _det_kpt(); soon = _det_kpt_soon(); have = dict(gru=m is not None, gru2=m2 is not None)
     return dict(mode=BR['mode'], mode_name=MODE_KO.get(BR['mode']), blend_s=BR['blend_s'],
-                modes=[dict(key=k, name=MODE_KO[k], available=(k != 'gru' or (m is not None and _det_kpt_soon()))) for k in MODES],
+                modes=[dict(key=k, name=MODE_KO[k], available=(k not in KPT_MODES or (have[k] and soon))) for k in MODES],
                 gru_file=BR['file'], gru_note=BR['note'] or ('' if kpt else '관절을 내는 검출 모델에서만'), euro=dict(EURO), size=dict(SIZE),
+                gru2_file=BR['file2'], gru2_note=BR['note2'] or ('' if kpt else '관절을 내는 검출 모델에서만'), gru2_size=list(m2.size) if m2 is not None else None,
                 ms=round(BR['ms'], 3), ms_max=round(BR['ms_max'], 3), ms_track=round(BR['ms_track'], 3),
                 tracks=len(obj.tr) if obj is not None else 0, people=BR['n'], frames=BR['frames'], blends=BR['blends'], handovers=BR['handovers'], why=BR['why'],
                 err=BR['err'], errors=BR['errors'], errors_all=BR['errors_all'])
@@ -515,9 +679,10 @@ def parse_request(q_):
     mode = None; blend = None
     if 'box_refine' in q_:
         v_ = str(q_['box_refine'][0]).strip().lower()
-        if v_ not in MODES: return False, '상자 다듬기는 off, euro, gru, size 가운데 하나', None
+        if v_ not in MODES: return False, '상자 다듬기는 off, euro, gru, size, gru2 가운데 하나', None
         if v_ == 'gru' and scan() is None: return False, 'GRU 상자 다듬기 가중치 파일이 없음 (models/track/box_refine_gru_*.npz)', None
-        if v_ == 'gru' and not _det_kpt_soon(): return False, '학습 GRU 는 관절을 내는 검출 모델([관절])을 먼저 고르세요', None
+        if v_ == 'gru2' and scan2() is None: return False, 'GRU 2판 상자 다듬기 가중치 파일이 없음 (models/track/%s*.npz)' % V2_PREFIX, None
+        if v_ in KPT_MODES and not _det_kpt_soon(): return False, '학습 GRU 는 관절을 내는 검출 모델([관절])을 먼저 고르세요', None
         mode = v_
     if 'box_blend' in q_:
         try: blend = float(q_['box_blend'][0])
@@ -530,6 +695,7 @@ def parse_request(q_):
             if blend is not None: BR['blend_s'] = blend
             BR['err'] = ''; BR['errors'] = 0; BR['why'] = ''; BR['ms'] = 0.0; BR['ms_max'] = 0.0   # no status of the earlier choice stays on the page
             if BR['mode'] == 'gru': scan()
+            if BR['mode'] == 'gru2': scan2()
         print('RULES set box_refine %s blend %g s' % (BR['mode'], BR['blend_s']), flush=True)
         sel_ = _app('sel_save')
         if sel_ is not None: sel_(box_refine=BR['mode'], box_blend=BR['blend_s'])
