@@ -80,9 +80,31 @@ class PictureFirstTests(PublishFixture):
                     self.publish()
         msg = json.loads(self.live.overlay)
         self.assertEqual(len(msg['p']), 1)
-        x1, y1, x2, y2, tid, lab, last, pts, rad, col = msg['p'][0]
+        x1, y1, x2, y2, tid, lab, last, pts, rad, col, alpha = msg['p'][0]
+        self.assertAlmostEqual(alpha, 0.9, delta=0.03)   # 11-16: fades while it stays lost (lost_marks): 5 frames of a 1 s wait (no --reacquire-ms here)
         self.assertEqual((x1, y1, x2, y2, tid, rad), (280, 120, 320, 280, 42, 20))
-        self.assertEqual((last, pts, lab, col), ([120, 200, 40, 160], [[130, 204]], '42 Kalman 5f', 'rgb(255,220,0)'))
+        self.assertEqual((last, pts, lab, col), ([120, 200, 40, 160], [[300, 200]], '42 Kalman 5f', 'rgb(255,220,0)'))   # 11-16: the path is kept by lost_marks from the frame the person is first drawn as lost
+
+    def test_marks_of_the_followed_person_outlive_the_tracker_memory_and_end_when_seen_again(self):
+        """11-16 (user: the marks vanish too quickly): the tracker forgets a lost track after 30 frames; the page keeps the
+        marks while the gimbal still waits for the number, and drops them in the frame the number has a box again."""
+        self.enable(True)
+        page.lost_marks.reset()
+        info = dict(src='kalman', n=30, last=(120.0, 216.0, 40.0, 160.0), pts=(), r=320.0)
+        APP_GB = page.APP.GB
+        with patch.object(APP_GB, 'state', dict(APP_GB.state)), patch.object(page.live_tracks, 'publish', return_value=42),                 patch.object(page.live_tracks, '_bridge_option', return_value='10000'):
+            with patch.dict(page.POSP, show=True, boxes_t=time.monotonic(), boxes=[(42, (300.0, 216.0, 40.0, 160.0), info)]):
+                self.publish()
+            with patch.dict(page.POSP, show=True, boxes_t=time.monotonic(), boxes=[]):   # the tracker dropped the lost track
+                self.publish()
+                msg = json.loads(self.live.overlay)
+                self.assertEqual(len(msg['p']), 1)
+                self.assertEqual(msg['p'][0][:5], [280, 120, 320, 280, 42])
+                self.assertTrue(msg['p'][0][5].startswith('42 lost 1.'), msg['p'][0][5])
+                self.assertEqual(msg['p'][0][8], int(160 * (0.5 + 0.05 * 31)))   # the circle keeps growing
+                self.publish(np.array([[100, 116, 140, 276, 42, .9, 0]], np.float32))   # number 42 has a box again
+                self.assertEqual(json.loads(self.live.overlay)['p'], [])
+        page.lost_marks.reset()
 
     def test_boxes_are_the_smoothed_rows_sent_to_the_gimbal(self):
         """11-15 box_refine: with picture first the page draws the same (smoothed) boxes the gimbal gets, not the tracker rows."""

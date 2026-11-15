@@ -117,9 +117,10 @@ class PictureWorker:
 def overlay_message(frame_t, boxes, follow, now_perf, now_unix, width=640, height=480, predictions=()):
     """One overlay as JSON bytes: t = the boxes' camera frame time (unix s), b = [x1, y1, x2, y2, id, followed] in picture
     pixels, f = the followed id (0 = none), p = predicted boxes of lost people [x1, y1, x2, y2, id, label, last seen
-    [cx, cy, w, h] or null, path [[x, y], ...], search radius, 'rgb(..)'] (page_handler._predictions at scale 1)."""
-    p = [[a[0], a[1], b_[0], b_[1], int(tid), str(lab), list(last) if last else None, [list(q) for q in pts], int(rad),
-          'rgb(%d,%d,%d)' % (col[2], col[1], col[0])] for a, b_, col, tid, lab, last, pts, rad in predictions]
+    [cx, cy, w, h] or null, path [[x, y], ...], search radius, 'rgb(..)', alpha] (page_handler._predictions at scale 1;
+    11-16: alpha 1 -> 0.4 while the person stays lost, see lost_marks.py)."""
+    p = [[q[0][0], q[0][1], q[1][0], q[1][1], int(q[3]), str(q[4]), list(q[5]) if q[5] else None, [list(v) for v in q[6]], int(q[7]),
+          'rgb(%d,%d,%d)' % (q[2][2], q[2][1], q[2][0]), float(q[8]) if len(q) > 8 else 1.0] for q in predictions]
     return json.dumps(dict(pf=1, t=round(now_unix - (now_perf - frame_t), 4), w=width, h=height, f=int(follow),
                            b=[[int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)), int(tid), int(fol)]
                               for x1, y1, x2, y2, tid, fol in boxes], p=p), separators=(',', ':')).encode()

@@ -22,6 +22,7 @@ from . import system_buttons
 from . import preview_worker
 from . import stream_sender   # 11-15 (user: 화면 전송 지연): GET /stream, one viewer
 from . import picture_first   # 11-15 (user: total delay about one camera frame): picture at frame arrival, boxes drawn by the page
+from . import lost_marks   # 11-16 (user: the prediction marks vanish too quickly): marks kept while the number can still come back
 from ..camera import replay_eval   # 11-12: ground-truth comparison while a labelled recording is replayed
 from ..camera import stall_diag   # 11-13: stall log (LWIR_STALL_DIAG=1 only)
 
@@ -41,37 +42,66 @@ def init_preview(live, *, transition_jpeg=None):
     live.picture_worker = picture_first.PictureWorker(live, APP.cv2, fixed_map=fixed_map)   # 11-15: acts only while picture first is on
 
 
-def _predictions(sc_, rows_, now_, gb_id_):
+def _lost_marks(t_in, rows_, gb_id_, fps_):
+    """11-16: the lost people to draw this frame (lost_marks.update: the tracker's lost pool, then our own memory of it for as
+    long as the number can come back). Once per published frame, before the picture / overlay of that frame."""
+    if not POSP['show']:
+        return lost_marks.update(t_in, (), 0)
+    try:
+        def app_(name_):   # APP raises NameError for a value that was never set (PC tests)
+            try: return getattr(APP, name_)
+            except (NameError, AttributeError): return None
+        rl_ = app_('relabeler')
+        if rl_ is not None and not (app_('RULES') or {}).get('relabel', True): rl_ = None   # KeepID switched off on the page
+        idm_ = getattr(rl_, 'id_map', None) if rl_ is not None else None
+        follow_s_ = lost_marks.FOLLOW_S
+        if APP.GB is not None and gb_id_:
+            ms_ = live_tracks._bridge_option(APP.GB, '--reacquire-ms')
+            try: follow_s_ = max(1.0, float(ms_) / 1000.0) if ms_ is not None else 1.0   # the bridge's own default is 1 s
+            except ValueError: pass
+        return lost_marks.update(t_in, {int(r_[4]) for r_ in rows_}, int(gb_id_ or 0), tracker=app_('tracker'),
+                                 id_map=idm_ if isinstance(idm_, dict) else None, keepid=idm_ is not None,
+                                 fresh=time.perf_counter() - POSP['boxes_t'] < 0.5, motion=_canvas_motion,
+                                 follow_s=follow_s_, fps=min(60.0, max(5.0, fps_)) if fps_ else 30.0)
+    except Exception:   # noqa: BLE001  (display only)
+        return []
+
+
+def _canvas_motion(t0, t1):
+    return live_tracks._motion(t0, t1)   # the GMC warps of the frame pairs, canvas coordinates (as the tracker's boxes)
+
+
+def _predictions(sc_, marks_, gb_id_):
     """Predicted boxes of lost people (위치 기억 · 예측 이동), in picture pixels times sc_. 11-15: also sent to the page for
-    'picture first' (picture_first.overlay_message)."""
+    'picture first' (picture_first.overlay_message). 11-16: from lost_marks (output ids; kept after the tracker's own
+    memory, fading: the 9th value is the alpha)."""
     predictions = []
-    if POSP['show'] and now_ - POSP['boxes_t'] < 0.5:
-        try:
-            seen_ = {int(r_[4]) for r_ in rows_}
-            src_name_ = {'kalman': 'Kalman', 'gru': 'GRU', 'mamba': 'Mamba', 'gru_kpt': 'GRU+kpt', 'mamba_kpt': 'Mamba+kpt'}
-            for e_ in POSP['boxes']:
-                tid_, b_ = e_[0], e_[1]; inf_ = e_[2] if len(e_) > 2 else {}
-                if tid_ in seen_ or (APP.GB is not None and tid_ != gb_id_): continue
-                pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_)
-                p1_ = (int((b_[0] - b_[2] / 2) * sc_), int((b_[1] - b_[3] / 2 - 16) * sc_)); p2_ = (int((b_[0] + b_[2] / 2) * sc_), int((b_[1] + b_[3] / 2 - 16) * sc_))
-                # 11-14 (user): predicted path (예측 이동) from the last seen place (위치 기억), predictor name and lost frames in the label
-                lab_ = '%d %s %df' % (int(tid_), src_name_.get(inf_.get('src'), str(inf_.get('src', ''))), int(inf_.get('n', 0))) if inf_ else '%d predict' % int(tid_)
-                l_ = inf_.get('last') if inf_ else None
-                last_ = (int(l_[0] * sc_), int((l_[1] - 16) * sc_), int(l_[2] * sc_), int(l_[3] * sc_)) if l_ else None
-                pts_ = tuple((int(x_ * sc_), int((y_ - 16) * sc_)) for x_, y_ in (inf_.get('pts') or ()))
-                rad_ = int(inf_.get('r', 0) * sc_) if inf_ else 0   # 11-14: growing search range
-                predictions.append((p1_, p2_, pc_, int(tid_), lab_, last_, pts_, rad_))
-        except Exception: pass
+    try:
+        src_name_ = {'kalman': 'Kalman', 'gru': 'GRU', 'mamba': 'Mamba', 'gru_kpt': 'GRU+kpt', 'mamba_kpt': 'Mamba+kpt'}
+        for tid_, b_, inf_ in marks_:
+            if APP.GB is not None and tid_ != gb_id_: continue
+            pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_)
+            p1_ = (int((b_[0] - b_[2] / 2) * sc_), int((b_[1] - b_[3] / 2 - 16) * sc_)); p2_ = (int((b_[0] + b_[2] / 2) * sc_), int((b_[1] + b_[3] / 2 - 16) * sc_))
+            # 11-14 (user): predicted path (예측 이동) from the last seen place (위치 기억), predictor name and lost frames in the label
+            # 11-16: after the tracker's own memory the label says how long the person has been lost
+            lab_ = ('%d lost %.1fs' % (int(tid_), inf_['age']) if inf_.get('mem')
+                    else '%d %s %df' % (int(tid_), src_name_.get(inf_.get('src'), str(inf_.get('src', ''))), int(inf_.get('n', 0))))
+            l_ = inf_.get('last')
+            last_ = (int(l_[0] * sc_), int((l_[1] - 16) * sc_), int(l_[2] * sc_), int(l_[3] * sc_)) if l_ else None
+            pts_ = tuple((int(x_ * sc_), int((y_ - 16) * sc_)) for x_, y_ in (inf_.get('pts') or ()))
+            rad_ = int(inf_.get('r', 0) * sc_)   # 11-14: growing search range
+            predictions.append((p1_, p2_, pc_, int(tid_), lab_, last_, pts_, rad_, round(float(inf_.get('alpha', 1.0)), 2)))
+    except Exception: pass
     return predictions
 
 
 def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
                       rows_, row_, npers_, now_, fps_, gb_id_, *, owned, click_people=None,
-                      click_ticket=None, replay_position=None):
+                      click_ticket=None, replay_position=None, marks=()):
     gt_boxes = ()
     if gtd_ is not None and replay_eval.DRAW[0]:
         gt_boxes = tuple(tuple(b) for b in replay_eval.draw_boxes(t_in, gtd_, sC_))
-    predictions = _predictions(sc_, rows_, now_, gb_id_) if overlay_rows is None and camera_rows is None else []
+    predictions = _predictions(sc_, marks, gb_id_) if overlay_rows is None and camera_rows is None else []
     txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
     rp_ = getattr(APP.LIVE, 'replay', None)
     if camera_rows is not None:
@@ -241,6 +271,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
                     and not any(getattr(APP.LIVE, flag, False) for flag in ('cam_lost', 'cam_hold', 'stopped', 'restart_stop', 'restart_pending')))
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
                                     frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_)
+    marks_ = _lost_marks(t_in, display_rows, gb_id_, fps_)   # 11-16: every frame, so the kept marks follow the camera motion
     if skin_temp.TEMP['show']:   # 11-14: person boxes in real camera coordinates against the newest temperature map (no labels on a recording); after the gimbal frame (display only)
         skin_temp.on_frame(t_in, [(int(b_[4]), float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0) for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0],
                            ok=raw_valid_ and not rep_ and not replay_link.frame_blocked(t_in))
@@ -266,7 +297,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         click_people, click_ticket = (live_tracks.preview_people(t_in, {b_[4] for b_ in boxes_})
                                       if has_gimbal_ and healthy_ else (None, None))
         msg_ = picture_first.overlay_message(t_in, boxes_, gb_id_, time.perf_counter(), time.time(),
-                                             predictions=_predictions(1.0, display_rows, now_, gb_id_))
+                                             predictions=_predictions(1.0, marks_, gb_id_))
         with APP.LIVE.jcond:
             picture_first.publish_overlay_locked(APP.LIVE, msg_, people=click_people, ticket=click_ticket, frame_t=t_in)
     if not pf_ and preview_allowed_ and (required or APP.LIVE.viewers > 0
@@ -297,7 +328,8 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
             click_people, click_ticket = live_tracks.preview_people(t_in, {d[3] for d in draw_})
         frame_ = _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
                                    rows_, row_, npers_, now_, fps_, gb_id_, owned=async_live_ or async_replay_,
-                                   click_people=click_people, click_ticket=click_ticket, replay_position=position)
+                                   click_people=click_people, click_ticket=click_ticket, replay_position=position,
+                                   marks=marks_)
         if async_live_ or async_replay_:
             worker_.submit(token_, frame_, requested_at=now_)
         else:

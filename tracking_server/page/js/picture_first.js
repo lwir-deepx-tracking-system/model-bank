@@ -21,14 +21,14 @@ function ovDraw(){const cv=OV.cv;if(!cv)return;
       x.fillStyle='rgb(255,220,0)';x.fillRect(L-2,ty-18,tw+10,18);x.fillStyle='#141414';x.fillText(lab,L+3,ty-3);}
     else{const c=ovColor(id);x.strokeStyle=c;x.lineWidth=2;x.strokeRect(L,T,R-L,B-T);x.fillStyle=c;x.fillText(String(id),L,Math.max(T-3,14));}}
   x.font='12px sans-serif';
-  for(const [x1,y1,x2,y2,id,lab,last,pts,rad,col] of d.p||[]){const X=v=>ox+v*k,Y=v=>oy+v*k;   // predicted boxes of lost people (pred_show), as the server drew them
-    x.strokeStyle=x.fillStyle=col;
+  for(const [x1,y1,x2,y2,id,lab,last,pts,rad,col,al] of d.p||[]){const X=v=>ox+v*k,Y=v=>oy+v*k;   // predicted boxes of lost people (pred_show), as the server drew them
+    x.strokeStyle=x.fillStyle=col;x.globalAlpha=al==null?1:Math.max(0.2,Math.min(1,al));   // 11-16: fades while the person stays lost (src/web/lost_marks.py)
     if(rad>0){x.lineWidth=1;x.beginPath();x.arc(X((x1+x2)/2),Y((y1+y2)/2),rad*k,0,2*Math.PI);x.stroke();}
     if(last){const [lx,ly,lw,lh]=last;x.setLineDash([3,3]);x.lineWidth=1;x.strokeRect(X(lx-lw/2),Y(ly-lh/2),lw*k,lh*k);x.setLineDash([]);
       x.lineWidth=2;x.beginPath();x.arc(X(lx),Y(ly),4,0,2*Math.PI);x.stroke();x.fillText('last seen',X(lx-lw/2),Y(ly+lh/2)+14);
       if(pts&&pts.length){x.lineWidth=1;x.beginPath();x.moveTo(X(lx),Y(ly));for(const [px,py] of pts)x.lineTo(X(px),Y(py));x.stroke();}}
     x.setLineDash([7,7]);x.lineWidth=2;x.strokeRect(X(x1),Y(y1),(x2-x1)*k,(y2-y1)*k);x.setLineDash([]);
-    x.fillText(lab,X(x1),Math.max(Y(y1)-4,12));}
+    x.fillText(lab,X(x1),Math.max(Y(y1)-4,12));x.globalAlpha=1;}
   x.restore();}
 function ovOpen(){if(OV.es||typeof EventSource!=='function')return;
   OV.es=new EventSource('/overlay');

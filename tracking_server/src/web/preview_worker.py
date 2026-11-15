@@ -96,6 +96,8 @@ def render_preview(cv2, frame, keep=None):
         p1, p2, col, tid = pr[:4]
         lab = pr[4] if len(pr) > 4 else '%d predict' % tid
         last = pr[5] if len(pr) > 5 else None; pts = pr[6] if len(pr) > 6 else (); rad = pr[7] if len(pr) > 7 else 0
+        if len(pr) > 8 and pr[8] < 1.0:   # 11-16: the marks fade while the person stays lost (lost_marks): a darker colour
+            col = tuple(int(c * max(0.0, pr[8])) for c in col)
         if rad > 0:   # 11-14: growing search range around the predicted centre (where the person may come back)
             cv2.circle(img, ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2), int(rad), col, 1, cv2.LINE_AA)
         if last is not None:   # 11-14 (user): where the person was last seen = 위치 기억 (thin box + centre), path since then = 예측 이동
