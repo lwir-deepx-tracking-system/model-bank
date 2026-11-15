@@ -163,6 +163,39 @@ class ChooserTest(unittest.TestCase):
         got = run(auto_det.Chooser(), frames(3, None), 'near', fast=frames(3, True))   # a lost person is never deferred
         self.assertAlmostEqual(got[0][0], 0.5, delta=1.0 / FPS + 1e-9)
 
+    def run_models(self, ch, seconds, far_px, near_px, current, t0=0.0, occl=True):
+        """Like the device on 11-15: what each model sees differs. far_px / near_px: px (or None) the far / near model gives."""
+        out = []
+        for k in range(int(round(seconds * FPS))):
+            t = t0 + k / FPS
+            px = far_px if current == 'far' else near_px
+            w = ch.step(t, px, current, occl and px is not None)
+            if w is not None: out.append((round(t, 2), w)); current = w; ch.switched(t)
+        return out, current
+
+    def test_near_that_sees_nobody_backs_off(self):
+        # 11-15 device: the far model saw a giant cut box on a blank picture, the near model saw nothing -> near / far every few seconds.
+        # Now: near once, its model sees nobody -> far, and the next near waits 30 s, then 60 s, ... (at most near_backoff_max_s)
+        ch = auto_det.Chooser()
+        got, cur = self.run_models(ch, 120, 300.0, None, 'far')
+        times = [tt for tt, w in got if w == 'near']
+        self.assertAlmostEqual(times[0], 1.0, delta=0.1)
+        self.assertGreaterEqual(times[1] - times[0], 30.0)
+        self.assertGreaterEqual(times[2] - times[1], 60.0)
+        self.assertEqual(len(times), 3)                      # 120 s: near at about 1, 34, 97 s instead of every 8 s
+        self.assertIn('쉼', ch.reason)
+        self.assertEqual(ch.backoff, 120.0)                 # grew 30 -> 60 -> 120 s
+        self.assertEqual([w for _, w in got][:2], ['near', 'far'])
+
+    def test_near_that_sees_the_person_clears_the_back_off(self):
+        ch = auto_det.Chooser()
+        got, cur = self.run_models(ch, 6, 300.0, None, 'far')         # near, nobody -> far, pause 30 s
+        self.assertEqual(ch.backoff, 30.0)
+        got, cur = self.run_models(ch, 40, 300.0, 300.0, cur, t0=6.0)  # near again after the pause, and now the near model sees the person
+        self.assertEqual(cur, 'near'); self.assertEqual(ch.backoff, 0.0)
+        got, cur = self.run_models(ch, 5, 300.0, None, cur, t0=46.0)  # the person leaves: far as usual, no pause added
+        self.assertEqual(cur, 'far'); self.assertEqual(ch.backoff, 0.0)
+
     def test_one_switch_told_twice_counts_once(self):
         ch = auto_det.Chooser()
         ch.switched(1.0); ch.switched(1.4, count=False)
@@ -234,6 +267,13 @@ class SmoothObserveTest(unittest.TestCase):
         self.assertFalse(auto_det.observe([person(7, 470, top=20.0)], 7, p)['edge'])                  # bottom at picture y 474
         o = auto_det.observe([person(1, 60, x=0.0), person(2, 200)], 0, p)
         self.assertEqual((o['px'], o['edge'], o['n']), (200.0, False, 2))   # scene: the cut person is left out of the median
+
+    def test_observe_drops_impossible_boxes(self):
+        p = auto_det.PARAMS
+        self.assertEqual(auto_det.observe([person(1, 5000, top=-2000)], 0, p)['src'], 'none')   # 11-15 device: ~5000 px boxes on a blank picture
+        o = auto_det.observe([person(1, 5000, top=-2000), person(2, 200)], 0, p)
+        self.assertEqual((o['px'], o['n']), (200.0, 1))
+        self.assertEqual(auto_det.observe([person(1, 1400, top=-500)], 0, p)['px'], 1400.0)    # a very close person is still a person
 
     def test_observe_keypoints_say_hidden(self):
         p = auto_det.PARAMS

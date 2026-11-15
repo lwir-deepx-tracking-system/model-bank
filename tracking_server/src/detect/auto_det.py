@@ -46,10 +46,11 @@ FAR_KEY = 'yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480'   #
 # reasons for every default: research_model_selection_20261115/RECOMMENDATION.md + the plan README section 8 (model bank lwir_pose_plan)
 PARAMS = dict(far_px=100.0, near_px=140.0, hold_s=1.0, dwell_s=5.0, empty_hold_s=3.0, min_score=0.25,
               lost_s=0.5, lost_occl_s=3.0, median_s=1.0, edge_px=3.0, kpt_min=12.0, kpt_seen=3.0, kpt_vis=0.5,
-              max_per_min=4.0, fast_hps=1.0, defer_s=3.0)
+              max_per_min=4.0, fast_hps=1.0, defer_s=3.0, max_px=1440.0, near_backoff_s=30.0, near_backoff_max_s=300.0)
 LIMITS = dict(far_px=(4.0, 480.0), near_px=(4.0, 480.0), hold_s=(0.0, 30.0), dwell_s=(0.0, 600.0), empty_hold_s=(0.0, 600.0),
               min_score=(0.0, 1.0), lost_s=(0.0, 60.0), lost_occl_s=(0.0, 600.0), median_s=(0.0, 10.0), edge_px=(0.0, 100.0),
-              kpt_min=(0.0, 17.0), kpt_seen=(0.0, 17.0), kpt_vis=(0.0, 1.0), max_per_min=(1.0, 60.0), fast_hps=(0.0, 100.0), defer_s=(0.0, 60.0))
+              kpt_min=(0.0, 17.0), kpt_seen=(0.0, 17.0), kpt_vis=(0.0, 1.0), max_per_min=(1.0, 60.0), fast_hps=(0.0, 100.0), defer_s=(0.0, 60.0),
+              max_px=(100.0, 10000.0), near_backoff_s=(0.0, 3600.0), near_backoff_max_s=(0.0, 3600.0))
 PERSON_CLS = 0
 YOFF = 16.0            # tracker rows: 640x512 canvas, the 640x480 picture starts at y 16 (as page_handler)
 KP_IOU = 0.5           # a track box and a detection box with keypoints are the same person at IoU >= this (as position_memory)
@@ -108,6 +109,7 @@ def observe(rows, followed_id=0, p=None, stab=None, kp_sets=(), wh=(640.0, 480.0
             b = [float(r[0]), float(r[1]), float(r[2]), float(r[3])]
             h = b[3] - b[1]
             if not h > 0: continue
+            if h > p.get('max_px', PARAMS['max_px']): continue   # 11-15 device: the far model gave ~5000 px boxes on a featureless picture (nobody there). 1440 px = 3 picture heights: a head-to-hip box that tall needs a person closer than about 0.3 m
             x1, x2, y1, y2 = b[0] - cx_, b[2] - cx_, b[1] - cy_ - YOFF, b[3] - cy_ - YOFF
             edge = x1 <= m or y1 <= m or x2 >= W - m or y2 >= H - m
             people.append(dict(id=int(r[4]), h=h, score=float(r[5]), box=b, edge=edge))
@@ -175,6 +177,9 @@ class Chooser:
         self.last_switch_t = None
         self.times = collections.deque()   # switch times (the last minute)
         self.last_occl = False             # how the person looked the last time they were seen
+        self.near_seen = True              # 11-15: the near model has seen somebody since the last switch to it (False right after an automatic switch to near)
+        self.backoff = 0.0                 # 11-15: current pause before the next switch to near (s); grows while the near model keeps seeing nobody
+        self.near_block_until = None       # no automatic switch to near before this time
         self.clear()
 
     def clear(self):   # forget the collected time (not the last switch: the dwell stays)
@@ -206,6 +211,7 @@ class Chooser:
 
     def _step(self, t, px, current, occl, fast):
         p = self.p
+        if px is not None and current == 'near' and not self.near_seen: self.near_seen = True; self.backoff = 0.0   # the near model confirms: no pause
         if px is None:
             if self.empty_t is None: self.empty_t = t
             gap = t - self.empty_t
@@ -213,7 +219,11 @@ class Chooser:
             wait = p['lost_occl_s'] if self.last_occl else p['lost_s']
             how = '가려진 채로 ' if self.last_occl else ''
             if current == 'far': self.reason = '사람 안 보임 %.1f초 · 먼 거리 모델 유지' % gap; return None
-            if gap >= wait: return self._want('far', t, '%s사람 안 보임 %.1f초 → 먼 거리' % (how, gap), force=True)
+            if gap >= wait:
+                if current == 'near' and not self.near_seen:   # 11-15 device: switched to near for a box the near model never saw -> the next near switch waits, longer each time
+                    self.backoff = min(max(self.backoff * 2.0, p['near_backoff_s']), p['near_backoff_max_s']); self.near_block_until = t + self.backoff
+                    return self._want('far', t, '근거리 모델이 아무도 못 봄 %.1f초 → 먼 거리, 근거리로 다시 가기 %.0f초 쉼' % (gap, self.backoff), force=True)
+                return self._want('far', t, '%s사람 안 보임 %.1f초 → 먼 거리' % (how, gap), force=True)
             self.reason = '%s사람 안 보임 %.1f초 · %g초 넘으면 먼 거리' % (how, gap, wait); return None
         if self.empty_t is not None:
             if t - self.empty_t > p['empty_hold_s']: self.below_t = self.above_t = None
@@ -246,6 +256,8 @@ class Chooser:
         if force:
             self.reason = why + ' (사람을 잃어 머무름·횟수 제한 없이)'; self.forced = True
             return to
+        if to == 'near' and self.near_block_until is not None and t < self.near_block_until:
+            self.reason = why + ' · 근거리 모델이 못 봐서 %.0f초 쉼 (%.0f초 남음)' % (self.backoff, self.near_block_until - t); return None
         left = self.dwell_left(t)
         if left > 0:
             self.reason = why + ' · 바꾼 뒤 %g초 유지 (%.1f초 남음)' % (self.p['dwell_s'], left); return None
@@ -258,6 +270,7 @@ class Chooser:
             if t - self.due_t < self.p['defer_s']:
                 self.reason = why + ' · 빠르게 움직이는 중이라 미룸 (%.1f/%g초)' % (t - self.due_t, self.p['defer_s']); return None
         self.reason = why
+        if to == 'near': self.near_seen = False   # until the near model shows somebody
         return to
 
 
