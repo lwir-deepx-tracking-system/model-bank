@@ -58,6 +58,19 @@ def attach_kpts(dec, kraw, p_, h, w, yoff):
         print('KPT attach failed', repr(e)[:120], flush=True)
 
 
+MAX_PERSON_H = 1440.0   # 11-15 (device, live camera): px, 3 picture heights. The far pose model gave ~5000 px person boxes on a featureless picture
+GIANT = [0]             # (nobody there); a head-to-hip box that tall needs a person closer than about 0.3 m. Count of dropped boxes.
+
+
+def drop_giant(arr, person_cls=0, max_h=MAX_PERSON_H):
+    """Detections [N,6] (x1,y1,x2,y2,conf,cls) without person boxes taller than max_h: impossible as a person, they only make phantom tracks."""
+    if arr is None or not len(arr): return arr
+    big_ = (arr[:, 5] == person_cls) & ((arr[:, 3] - arr[:, 1]) > max_h)
+    if not big_.any(): return arr
+    GIANT[0] += int(big_.sum())
+    return arr[~big_]
+
+
 def _detect(ra, rb):     # raw NPU outputs -> NMS detections in FRAME coordinates (512x640), columns x1,y1,x2,y2,conf,cls
     if APP.args.det in E2E_DETS:   # v30: end-to-end head; rows are x1,y1,x2,y2,score,class in model pixels, already one box per object (no host NMS)
         p_ = ra[0].reshape(-1, 6); p_ = p_[(p_[:, 4] > .001) & (p_[:, 2] > p_[:, 0]) & (p_[:, 3] > p_[:, 1])].astype(np.float32); p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff

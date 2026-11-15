@@ -268,6 +268,16 @@ class SmoothObserveTest(unittest.TestCase):
         o = auto_det.observe([person(1, 60, x=0.0), person(2, 200)], 0, p)
         self.assertEqual((o['px'], o['edge'], o['n']), (200.0, False, 2))   # scene: the cut person is left out of the median
 
+    def test_detector_output_drops_impossible_person_boxes(self):
+        import numpy as np
+        from . import detect_frame
+        n0 = detect_frame.GIANT[0]
+        arr = np.array([[0, -2000, 600, 3000, 0.45, 0], [100, 50, 160, 250, 0.9, 0], [0, -2000, 600, 3000, 0.8, 2]], np.float32)
+        out = detect_frame.drop_giant(arr, 0)
+        self.assertEqual(out.shape[0], 2); self.assertEqual(detect_frame.GIANT[0], n0 + 1)   # the giant person goes; a normal person and other classes stay
+        self.assertEqual(detect_frame.drop_giant(arr[1:2], 0).shape[0], 1)
+        self.assertEqual(len(detect_frame.drop_giant(arr[:0], 0)), 0)
+
     def test_observe_drops_impossible_boxes(self):
         p = auto_det.PARAMS
         self.assertEqual(auto_det.observe([person(1, 5000, top=-2000)], 0, p)['src'], 'none')   # 11-15 device: ~5000 px boxes on a blank picture

@@ -104,7 +104,7 @@ def rules_state():
                     restart_pending=bool(getattr(APP.LIVE, 'restart_pending', False)), warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
                     gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker), engine=tracker_engine(),
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
-                    warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
+                    warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), giant_dropped=_giant(), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
                     det_kpt=det_has_kpt(), e2e_live=e2e_live.state(), relink_pred=(bool(getattr(APP.relabeler, 'pred_gate', False)) if APP.relabeler is not None and hasattr(APP.relabeler, 'pred_gate') else None),   # 11-14: the current or the waiting detector gives keypoints -> the keypoint position memories may be chosen
                     predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state(), **_temp_keys())   # v32. v40: app / lead / gimbal / warm_on. 11-14: temp_show / temp
 
@@ -279,6 +279,14 @@ def rules_request_2(q_):
 def _prop_state():
     from ..detect import spec_proposals
     return spec_proposals.state()
+
+
+def _giant():   # 11-15: person boxes dropped as impossibly tall (src/detect/detect_frame.drop_giant)
+    try:
+        from ..detect import detect_frame
+        return int(detect_frame.GIANT[0])
+    except Exception:
+        return None
 
 
 def _temp_keys():   # 11-14: the skin-temperature switch and its numbers for the page (src/detect/skin_temp.py)

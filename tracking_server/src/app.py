@@ -772,6 +772,7 @@ def main():
                         m_, c_ = gmc_warp(t_.mean[None].copy(), t_.cov[None], W_); t_.mean, t_.cov = m_[0], c_[0]
                 gmc_ms = (time.perf_counter_ns() - tg_) / 1e6
             stab_c_ = APP.LIVE.stabq[0] if APP.LIVE is not None and APP.LIVE.stabq else None; STAB_M[0] = stab_margins(stab_c_)   # stab: correction of frame i (same pairing as LIVE.rawq[0])
+            arr = detect_frame.drop_giant(arr, PERSON_CLS)   # 11-15 (device): person boxes over 3 picture heights are not people (far pose model on a blank picture)
             if APP.LIVE is not None and (settings.WARM_MIN > 0 or settings.WARM_MAX > 0) and len(arr) and APP.LIVE.rawq:   # v24f warmth veto: a person box must contain pixels as warm as a person (raw p95 >= WARM_MIN)
                 raw_i_ = APP.LIVE.rawq[0]; keep_ = np.ones(len(arr), bool)
                 if stab_c_ is not None: raw_i_ = stab_shift(raw_i_, stab_c_)   # stab: a box in stabilized coordinates reads the 16-bit pixels under it
