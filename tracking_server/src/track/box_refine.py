@@ -57,6 +57,9 @@ pos_refine_20261115/unified/judge/JUDGE_RESULT_20261116.md 의 A = U0): 화면�
     다시 시작하면 버린다.
   - size: 가로 중심과 짐벌 조준점(위 + aim_y x 키)은 추적기 놓친 상자 그대로, 크기만 적어 둔 크기(보일 때의 size_box 와 같은 규칙).
     body: 보일 때와 같은 변환표(그 프레임의 놓친 사람 모두를 한 번에)와 같은 기준점(aim / top / centre), 크기는 적어 둔 크기.
+    변환표 계열은 그 번호가 마지막으로 보인 프레임의 검출 모델 것: 놓친 동안 검출 모델이 바뀌어도(자동 선택은 사람을 잃고 0.5 초, 가려졌으면 3 초 뒤 원거리로 바꿈)
+    추적기 놓친 상자는 앞 모델 상자 정의 그대로이므로 점선 상자도 그대로 둔다. 그 프레임에 모델 바뀜 넘어가기가 돌고 있었으면 그 진행 그대로
+    섞는다(보일 때 검출과 짝지어지지 않은 행과 같은 규칙; 11-16 검토: 자세 <-> 일반 검출 바뀜에서 점선 상자가 키의 0.25 만큼 튀었음).
     off: 추적기 상자 그대로(지금과 같음; 켜면 놓친 첫 장의 빈 장만 없어진다).
   - 오류가 나면 그 프레임은 추적기 상자를 그리고 센다(lost_errors). 보일 때 상자(apply 결과)는 켜도 끄도 비트까지 같다.
 """
@@ -331,9 +334,10 @@ class Refiner:
 
 
 class LostHold:
-    """lost_same (11-16, judge A = U0, no APP): per output id its own copy [log w, log h, frames unseen] of the Refiner's filtered size after the
-    id's last seen step, + the camera log scale of every frame since (unified_srv.UnifiedStore.hold). Own copy: the Refiner's KeepID hand-over
-    (HANDOVER_IOU) may move a lost id's filter state to another id. Reads the Refiner, never writes it (the drawn / gimbal rows stay the same).
+    """lost_same (11-16, judge A = U0, no APP): per output id its own copy [log w, log h, frames unseen, detector key, switch transition] of the
+    Refiner's state after the id's last seen step (filtered size, st['dk'], st['tw'] as (old delta, progress) or None), + the camera log scale of
+    every frame since (unified_srv.UnifiedStore.hold). Own copy: the Refiner's KeepID hand-over (HANDOVER_IOU) may move a lost id's filter state
+    to another id. Reads the Refiner, never writes it (the drawn / gimbal rows stay the same).
     step(seen ids, H) once per frame right after ref.step; boxes(items) -> (lost boxes, converted, bad) for the lost tracks of the same frame."""
     __slots__ = ('ref', 'h', 'hold_max')
 
@@ -349,13 +353,18 @@ class LostHold:
             e[0] += ls; e[1] += ls
         for tid in seen:
             st = self.ref.tr.get(tid); se = st.get('se') if st is not None else None
-            if se is not None and se.x0 is not None and math.isfinite(se.x0) and math.isfinite(se.x1): self.h[tid] = [se.x0, se.x1, 0]
+            if se is not None and se.x0 is not None and math.isfinite(se.x0) and math.isfinite(se.x1):
+                tw = st.get('tw'); self.h[tid] = [se.x0, se.x1, 0, st.get('dk'), (tw[0], tw[3]) if tw is not None else None]
 
     def boxes(self, items):
         """items [(output id, tracker lost box cxcywh, lost step)] -> ([box cxcywh per item], converted, bad). A box is the tracker's own box when the
         id has no held size, in mode 'off' (blend only), in body without a table, or when the result is not finite (bad). size: centre x and the
-        gimbal aim point top + aim_y x h of the tracker box stay, the size is the held one (size_box, the seen rule). body: the table of the
-        detector in effect for all of them in ONE call, the running body anchor (aim / top / centre), the held size."""
+        gimbal aim point top + aim_y x h of the tracker box stay, the size is the held one (size_box, the seen rule). body: the running body anchor
+        (aim / top / centre) and the held size around the box converted as the seen path converts a row no detection updated (z = the row): with
+        the family of the detector of the id's last seen step (the tracker lost box is still in that detector's box definition: a detector change
+        while the id is lost does not move it; review 11-16: pose <-> plain moved it 0.25 h), and a switch transition running on that step stays
+        at its progress a ((1 - a) old delta + a delta). One table call per family (all of them in ONE call when they share it, the usual case);
+        sw off (the first version) converts with the running family, as its seen path."""
         ref = self.ref; out = []; use = []
         for i, it in enumerate(items):
             z = np.array(it[1], np.float64).reshape(4); out.append(z)
@@ -369,10 +378,16 @@ class LostHold:
                 if np.isfinite(b).all(): out[i] = b; n += 1
                 else: bad += 1
             return out, n, bad
-        Z = np.array([out[i] for i in use], np.float64).reshape(-1, 4); Z[:, 2:] = np.maximum(Z[:, 2:], 1.)
-        D = ref.table.conv_delta(Z, ref.family_of(ref.eff_key)); an = ref.body.get('anchor', 'aim')
+        Z = np.array([out[i] for i in use], np.float64).reshape(-1, 4); Z[:, 2:] = np.maximum(Z[:, 2:], 1.); an = ref.body.get('anchor', 'aim')
+        sw = ref.body.get('sw', True); fam = [ref.family_of(self.h[items[i][0]][3] if sw else ref.eff_key) for i in use]
+        if all(f == fam[0] for f in fam): D = ref.table.conv_delta(Z, fam[0])
+        else:   # ids last seen under different detector families (one was lost before a detector change): one call per family
+            D = np.empty((len(use), 4))
+            for f in set(fam):
+                m = np.array([f_ == f for f_ in fam]); D[m] = ref.table.conv_delta(Z[m], f)
         for k, i in enumerate(use):
             e = self.h[items[i][0]]; zr = Z[k]; d = D[k]
+            if sw and e[4] is not None: d = (1.0 - e[4][1]) * e[4][0] + e[4][1] * d   # the seen transition of its last step, at that progress
             hc = zr[3] * math.exp(d[3]); cx = zr[0] + d[0] * zr[3]; cy = zr[1] + d[1] * zr[3]; top = cy - hc / 2; h_ = math.exp(e[1])
             tf = top + ref.aim_y * (hc - h_) if an == 'aim' else top if an == 'top' else cy - h_ / 2
             b = np.array([cx, tf + h_ / 2, math.exp(e[0]), h_])

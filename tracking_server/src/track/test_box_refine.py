@@ -819,6 +819,53 @@ class LostSameTests(unittest.TestCase):
             np.testing.assert_allclose(b, [z[0] + d[0] * z[3], top + 0.5 * (hc - h_) + h_ / 2, math.exp(lw), h_], atol=1e-9)
         self.assertLess(together[0][3] / items[0][1][3], 0.7)   # the small whole-person box is drawn as a body box (today: the whole-person box)
 
+    def test_a_detector_change_while_lost_does_not_move_the_lost_box(self):
+        """review 11-16: body mode, the detector family changes (pose <-> plain; auto_det goes far 0.5 s after a loss, a resident or a manual
+        change) while a person is lost. The tracker lost box is still in the last seen detector's box definition, so it is converted as the seen
+        path converts a row no detection updated (the family of its last seen frame): a still person is drawn exactly as when last seen (the aim
+        point moved 50 px = 0.25 h before the fix), and its aim point is the one drawn for a still person seen without a detection at the same
+        place (id 7), switch transition on and off (off = the first version: the running family, as its seen rows)."""
+        z = np.array([300., 250., 80., 200.]); c = lambda r: np.array([(r[0] + r[2]) / 2, (r[1] + r[3]) / 2, r[2] - r[0], r[3] - r[1]])
+        for d0, d1 in ((POSE, PLAIN), (PLAIN, POSE)):
+            for sw in (True, False):
+                APP.args.det = d0; self.choose('body', True); APP.tracker = object(); BR.BR.pop('obj', None)
+                for k in range(8):
+                    out = BR.apply(rows_at([(4, *z), (7, *z)]), None, k / 25.)
+                    if k == 0: BR.BR['obj'].body['sw'] = sw
+                seen = c(out[0]); b = None
+                for j in range(1, 6):
+                    if j == 3: APP.args.det = d1
+                    o7 = BR.apply(rows_at([(7, *z)]), None, (7 + j) / 25.); b = BR.lost_boxes([(4, z, j)])[0]; self.assertEqual(BR.BR['lost_n'], 1)
+                    np.testing.assert_allclose(aim_pt(b, 0.5), aim_pt(c(o7[0]), 0.5), atol=1e-9, err_msg=str((d0, sw, j)))   # = the seen rule
+                    if sw: np.testing.assert_allclose(b, seen, atol=1e-9, err_msg=str((d0, j)))
+                self.assertEqual(BR.BR['obj'].switches, 1 if sw else 0)
+                if not sw: self.assertGreater(abs(aim_pt(b, 0.5) - aim_pt(seen, 0.5))[1], 0.2 * z[3])
+
+    def test_lost_during_a_switch_transition_keeps_its_progress(self):
+        """review 11-16: the person is seen (matched) through a detector change, the switch transition is running (progress a), and it is lost:
+        the lost box keeps the transition at a (the tracker lost box is the last row), so lost step 1 continues the last seen box (0.11-0.20 h
+        jump before the fix). Two lost ids last seen under different families: one table call per family, each box = the box made alone."""
+        body = np.array([300., 250., 80., 200.]); to, kh, kw = BR.scan_table().person; H = body[3] / kh
+        whole = np.array([300., body[1] - body[3] / 2 - to * H + H / 2, 100., H])   # the plain detector's box of the same person
+        c = lambda r: np.array([(r[0] + r[2]) / 2, (r[1] + r[3]) / 2, r[2] - r[0], r[3] - r[1]]); x12 = lambda b: [b[0] - b[2] / 2, b[1] - b[3] / 2, b[0] + b[2] / 2, b[1] + b[3] / 2, 0.9, 0.]
+        far = np.array([520., 150., 20., 50.])
+        for n in (1, 3):
+            APP.args.det = POSE; self.choose('body', True); APP.tracker = object(); BR.BR.pop('obj', None); row = body.copy(); out = None
+            for k in range(10 + n):
+                if k == 10: APP.args.det = PLAIN
+                if k >= 10: row = row + 0.3 * (whole - row)   # the Kalman row moves to the new definition over a few frames
+                rows = rows_at([(4, *row)] + ([(6, *far)] if k < 9 else [])); dets = np.array([x12(body if k < 10 else whole)] + ([x12(far)] if k < 9 else []))
+                out = BR.apply(rows, dets, k / 25.)
+            tw = BR.BR['obj'].tr[4]['tw']; self.assertIsNotNone(tw); self.assertTrue(0.2 < tw[3] < 0.9, tw[3]); seen = c(out[0])
+            for j in range(1, 4):
+                BR.apply([], None, (9 + n + j) / 25.); b = BR.lost_boxes([(4, row, j)])[0]
+                np.testing.assert_allclose(b, seen, atol=1e-9, err_msg=str((n, j)))
+            tab = BR.BR['obj'].table; calls = []; real = tab.conv_delta; items = [(4, row, 4), (6, far, 4 + n)]   # id 6: last seen before the change
+            with patch.object(tab, 'conv_delta', side_effect=lambda z_, f: calls.append(f) or real(z_, f)):
+                together = BR.lost_boxes(items)
+            self.assertEqual(sorted(calls), ['person', 'pose'])
+            for it, b in zip(items, together): np.testing.assert_array_equal(b, BR.lost_boxes([it])[0])
+
     def test_keepid_handover_keeps_the_held_size(self):
         """the Refiner's KeepID hand-over gives the lost id's filter state to the new id at its place; the lost box of the old id keeps the old
         id's own held size (and the new id goes on from the handed-over state, as before)."""
