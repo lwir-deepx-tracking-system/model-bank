@@ -40,14 +40,11 @@ def init_preview(live, *, transition_jpeg=None):
     live.picture_worker = picture_first.PictureWorker(live, APP.cv2, fixed_map=fixed_map)   # 11-15: acts only while picture first is on
 
 
-def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
-                      rows_, row_, npers_, now_, fps_, gb_id_, *, owned, click_people=None,
-                      click_ticket=None, replay_position=None):
-    gt_boxes = ()
-    if gtd_ is not None and replay_eval.DRAW[0]:
-        gt_boxes = tuple(tuple(b) for b in replay_eval.draw_boxes(t_in, gtd_, sC_))
+def _predictions(sc_, rows_, now_, gb_id_):
+    """Predicted boxes of lost people (위치 기억 · 예측 이동), in picture pixels times sc_. 11-15: also sent to the page for
+    'picture first' (picture_first.overlay_message)."""
     predictions = []
-    if overlay_rows is None and camera_rows is None and POSP['show'] and now_ - POSP['boxes_t'] < 0.5:
+    if POSP['show'] and now_ - POSP['boxes_t'] < 0.5:
         try:
             seen_ = {int(r_[4]) for r_ in rows_}
             src_name_ = {'kalman': 'Kalman', 'gru': 'GRU', 'mamba': 'Mamba', 'gru_kpt': 'GRU+kpt', 'mamba_kpt': 'Mamba+kpt'}
@@ -64,6 +61,16 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
                 rad_ = int(inf_.get('r', 0) * sc_) if inf_ else 0   # 11-14: growing search range
                 predictions.append((p1_, p2_, pc_, int(tid_), lab_, last_, pts_, rad_))
         except Exception: pass
+    return predictions
+
+
+def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
+                      rows_, row_, npers_, now_, fps_, gb_id_, *, owned, click_people=None,
+                      click_ticket=None, replay_position=None):
+    gt_boxes = ()
+    if gtd_ is not None and replay_eval.DRAW[0]:
+        gt_boxes = tuple(tuple(b) for b in replay_eval.draw_boxes(t_in, gtd_, sC_))
+    predictions = _predictions(sc_, rows_, now_, gb_id_) if overlay_rows is None and camera_rows is None else []
     txt_ = 'TRACK %.0f fps | CAM %.0f fps | delay %.0f ms | compute %.0f ms | persons %d | newID %d relink %d' % (fps_, APP.LIVE.cam_fps, (now_ - t_in) * 1000, row_['frame_total_ms'], npers_, APP.relabeler.stats['new_ids'] if APP.relabeler is not None else 0, APP.relabeler.stats['relabelled'] if APP.relabeler is not None else 0)
     rp_ = getattr(APP.LIVE, 'replay', None)
     if camera_rows is not None:
@@ -253,7 +260,8 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
             boxes_.append((float(r_[0]), float(r_[1]) - 16.0, float(r_[2]), float(r_[3]) - 16.0, tid_, 1 if gb_id_ else 0))
         click_people, click_ticket = (live_tracks.preview_people(t_in, {b_[4] for b_ in boxes_})
                                       if has_gimbal_ and healthy_ else (None, None))
-        msg_ = picture_first.overlay_message(t_in, boxes_, gb_id_, time.perf_counter(), time.time())
+        msg_ = picture_first.overlay_message(t_in, boxes_, gb_id_, time.perf_counter(), time.time(),
+                                             predictions=_predictions(1.0, display_rows, now_, gb_id_))
         with APP.LIVE.jcond:
             picture_first.publish_overlay_locked(APP.LIVE, msg_, people=click_people, ticket=click_ticket, frame_t=t_in)
     if not pf_ and preview_allowed_ and (required or APP.LIVE.viewers > 0

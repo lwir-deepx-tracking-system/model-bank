@@ -85,7 +85,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
      sel:!!r.prop_show,lock:r.prop_show==null?OLDSRV:'',u:Q('prop_show='+(r.prop_show?0:1))},   // 11-14: research feature (src/detect/spec_proposals.py)
     {name:'피부 온도 (카메라 온도)',note:'카메라가 잰 온도로 사람 상자 옆에 °C · 초록 = 30-38 °C 덩어리(얼굴·손) 있음, 회색 = 상자의 가장 뜨거운 곳 · 표시만'+(r.temp&&r.temp.show?(r.temp.fresh?' · 온도 지도 '+r.temp.age.toFixed(1)+' s 전':' · 온도 지도 없음 (서버를 --cam-temp 로 켜야 함)'):''),
      sel:!!r.temp_show,lock:r.temp_show==null?OLDSRV:(!r.temp_show&&r.temp&&r.temp.enabled===false)?'이 서버는 카메라 온도 지도를 받지 않습니다. 11-15 장치 시험: 이 카메라는 온도 계산(CalcTemp)이 모든 화소 0 이라 켜도 온도가 나오지 않습니다':'',u:Q('temp_show='+(r.temp_show?0:1))},   // 11-14: research feature (src/detect/skin_temp.py), not kept over a restart. 11-15 (user: options must work live): locked when the server has no temperature map
-    {name:'사진 먼저 (지연 줄임)',note:'카메라 사진을 검출 전에 바로 보내고 상자는 이 화면에서 그림 · 상자는 사진보다 두 장쯤 늦음 · 녹화 재생·흔들림 보정·다른 표시를 켜면 예전처럼'+(r.picture_first_state&&r.picture_first&&!r.picture_first_state.active?' · 지금은 예전처럼':''),
+    {name:'사진 먼저 (지연 줄임)',note:'카메라 사진을 검출 전에 바로 보내고 상자는 이 화면에서 그림 · 상자는 사진보다 두 장쯤 늦음 · 녹화 재생·흔들림 보정·사람 후보·피부 온도 표시 중에는 예전처럼'+(r.picture_first_state&&r.picture_first&&!r.picture_first_state.active?' · 지금은 예전처럼':''),
      sel:!!r.picture_first,lock:r.picture_first==null?OLDSRV:'',u:Q('picture_first='+(r.picture_first?0:1))},   // 11-15 (src/web/picture_first.py, page/js/picture_first.js)
     {name:'예측 상자 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.predictors?'':OLDSRV,u:Q('pred_show='+(r.pred_show?0:1))}]});
   if(bt){

@@ -50,7 +50,9 @@ class PictureFirstTests(PublishFixture):
         self.live.replay = {'name': 'x'}
         self.assertFalse(self.live.picture_worker.offer(time.perf_counter(), raw))
         self.live.replay = None
-        for target in (page.POSP, pf.spec_proposals.PROP, pf.skin_temp.TEMP):
+        with patch.dict(page.POSP, show=True):   # predicted boxes go in the overlay: no reason to stop
+            self.assertTrue(pf.active(self.live))
+        for target in (pf.spec_proposals.PROP, pf.skin_temp.TEMP):
             with patch.dict(target, show=True):
                 self.assertFalse(pf.active(self.live))
         with patch.dict(pf.STAB, on=True):
@@ -67,6 +69,20 @@ class PictureFirstTests(PublishFixture):
         self.assertEqual(msg['pf'], 1)
         self.assertEqual(msg['b'], [[100, 100, 140, 260, 7, 0]])   # picture pixels (the canvas rows are 16 lower)
         self.assertEqual(self.live.click_frame_t, stamp)
+
+    def test_predicted_boxes_go_in_the_overlay(self):
+        self.enable(True)
+        info = dict(src='kalman', n=5, last=(120.0, 216.0, 40.0, 160.0), pts=((130.0, 220.0),), r=20.0)
+        with patch.dict(page.POSP, show=True, boxes_t=time.monotonic(), boxes=[(42, (300.0, 216.0, 40.0, 160.0), info)]):
+            APP_GB = page.APP.GB
+            with patch.object(APP_GB, 'state', dict(APP_GB.state)):
+                with patch.object(page.live_tracks, 'publish', return_value=42):
+                    self.publish()
+        msg = json.loads(self.live.overlay)
+        self.assertEqual(len(msg['p']), 1)
+        x1, y1, x2, y2, tid, lab, last, pts, rad, col = msg['p'][0]
+        self.assertEqual((x1, y1, x2, y2, tid, rad), (280, 120, 320, 280, 42, 20))
+        self.assertEqual((last, pts, lab, col), ([120, 200, 40, 160], [[130, 204]], '42 Kalman 5f', 'rgb(255,220,0)'))
 
     def test_click_uses_the_people_of_the_drawn_boxes(self):
         self.enable(True)

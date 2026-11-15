@@ -7,8 +7,8 @@ arrived instead of after detection and tracking (about 57 ms on the device); the
 A click still picks from the people of the newest boxes sent to the page (click_people / click_ticket, see
 page_handler._click_live), which are the boxes the viewer sees.
 
-Used only for the live camera with nothing else drawn into the picture: during a replay, with image stabilisation, or
-while predicted boxes, people proposals or skin temperatures are shown, the server draws the picture as before.
+Used only for the live camera: during a replay, with image stabilisation, or while people proposals or skin temperatures
+are shown, the server draws the picture as before. Predicted boxes of lost people (pred_show) go in the overlay too.
 Switch: LWIR_PICTURE_FIRST=1 at start, POST /rules/set?picture_first=1|0 live (not kept over a restart).
 """
 import json
@@ -19,7 +19,6 @@ import time
 import numpy as np
 
 from ..track.stabilizer import STAB
-from ..track.position_memory import POSP
 from ..detect import spec_proposals, skin_temp
 from . import preview_worker
 
@@ -29,7 +28,7 @@ PF = dict(on=os.environ.get('LWIR_PICTURE_FIRST') == '1', pictures=0, overlays=0
 def active(live):
     """True when the page picture comes from this module (and the boxes from the overlay)."""
     return bool(PF['on'] and live is not None and getattr(live, 'replay', None) is None and not STAB['on']
-                and not POSP['show'] and not spec_proposals.PROP['show'] and not skin_temp.TEMP['show'])
+                and not spec_proposals.PROP['show'] and not skin_temp.TEMP['show'])
 
 
 def set_on(on, live=None):
@@ -114,12 +113,15 @@ class PictureWorker:
                 self.last = time.perf_counter()
 
 
-def overlay_message(frame_t, boxes, follow, now_perf, now_unix, width=640, height=480):
+def overlay_message(frame_t, boxes, follow, now_perf, now_unix, width=640, height=480, predictions=()):
     """One overlay as JSON bytes: t = the boxes' camera frame time (unix s), b = [x1, y1, x2, y2, id, followed] in picture
-    pixels, f = the followed id (0 = none)."""
+    pixels, f = the followed id (0 = none), p = predicted boxes of lost people [x1, y1, x2, y2, id, label, last seen
+    [cx, cy, w, h] or null, path [[x, y], ...], search radius, 'rgb(..)'] (page_handler._predictions at scale 1)."""
+    p = [[a[0], a[1], b_[0], b_[1], int(tid), str(lab), list(last) if last else None, [list(q) for q in pts], int(rad),
+          'rgb(%d,%d,%d)' % (col[2], col[1], col[0])] for a, b_, col, tid, lab, last, pts, rad in predictions]
     return json.dumps(dict(pf=1, t=round(now_unix - (now_perf - frame_t), 4), w=width, h=height, f=int(follow),
                            b=[[int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)), int(tid), int(fol)]
-                              for x1, y1, x2, y2, tid, fol in boxes]), separators=(',', ':')).encode()
+                              for x1, y1, x2, y2, tid, fol in boxes], p=p), separators=(',', ':')).encode()
 
 
 def publish_overlay_locked(live, message, *, people=None, ticket=None, frame_t=None):
