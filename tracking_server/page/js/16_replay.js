@@ -242,6 +242,7 @@ setInterval(()=>{$('vhint').hidden=autoNow||camIdle>3;const ex=((rlast&&rlast.gi
 // 11-13 (pass 4): camera-not-answering note (Korean, with what to do) and follow notes over the picture
 setInterval(()=>{const d=$('vdead'),live=!document.body.classList.contains('replay-mode'),fz=rlast?.cam_frozen;
   if(live&&fz){d.hidden=false;d.classList.remove('wait');$('vdeadt').textContent=fz.title;$('vdeads').textContent=fz.text;return;}   // 11-15: frozen camera (from /rules, also without the gimbal): replug notice
+  const sc=rlast?.cam_scene;if(live&&sc&&camIdle<=3){d.hidden=false;d.classList.toggle('wait',!!sc.reset);$('vdeadt').textContent=sc.title;$('vdeads').textContent=sc.text;return;}   // 11-15: frames without a scene (cam_pipe v2.13 SCENE_LOST)
   if(!live||camIdle<=3){d.hidden=true;return;}const s=Math.round(camIdle);d.hidden=false;d.classList.toggle('wait',!(camFail>0));
   $('vdeadt').textContent=camFail>0?'카메라 USB 응답 없음':'카메라 영상을 기다리는 중';
   $('vdeads').textContent=camFail>0?'카메라 USB 케이블을 뽑았다가 다시 꽂으세요 · '+s+'초째 영상 없음 (자동 복구 '+camFail+'회 실패)':s+'초째 영상 없음 · 카메라가 스스로 다시 연결하는 중 (보통 30초 안)';},500);

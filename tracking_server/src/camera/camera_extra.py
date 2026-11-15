@@ -42,6 +42,7 @@ from ..common.state import APP
 from ..common.shared_values import HERE
 from . import replay_eval   # 11-12: frames of the replay program carry their png number (flags bit 2)
 from . import cam_frozen   # 11-15: a camera frame clears the frozen-camera state
+from . import cam_scene   # 11-15: cam_pipe v2.13 SCENE_LOST / SCENE_BACK lines -> the page notice (read in _tail)
 
 # ---------------------------------------------------------------- A. 지워지지 않는 카메라 기록
 LOG_NAME = 'camera_events.log'
@@ -130,6 +131,7 @@ def _tail():   # cam_pipe 가 쓰는 <결과 폴더>/cam_pipe.log 에 새로 붙
         for ln_ in lines_:
             t_ = ln_.decode('utf-8', 'replace').strip()
             if t_ and not t_.startswith('CAMFPS'): note('cam_pipe', t_)
+            if t_.startswith('SCENE_'): cam_scene.on_line(APP.LIVE, t_)   # 11-15: picture without a scene (cam_pipe v2.13)
     return True
 
 

@@ -7,9 +7,12 @@
 //                   ok,<frames>,<op>,<result>,<reset>   the open works; RecvImage gives <frames> different 64 x 48 frames (-1 = no end), then only "no frame" (4);
 //                                                       from the first empty read on GetLastUsbDiagnostic says operation <op>, result <result>;
 //                                                       ResetMainBoard returns <reset> (0 or 1)
+//                   ok,<frames>,<op>,<result>,<reset>,<blank_from>,<blank_to>   (11-15, cam_pipe v2.13) the same, and frames number blank_from (counted from 1
+//                                                       in this open) up to before blank_to (-1 = to the end) have no scene: the middle half of the picture is one value
 //                   fail,<op>,<result>                  OpenTE_A returns nullptr; the diagnostic says <op>, <result>
 //                   gone                                ScanTE finds no camera (cam_pipe: NO_CAMERA_FOUND after its 10 scans)
 //   FAKE_I3_LOG   file that gets one line per SDK event: "open N ok", "open N fail", "stop N", "reset N sent=S", "close N", "scan none"
+//   FAKE_I3_LOG_CAL=1  also "cal N" for every ShutterCalibrationOn (11-15, cam_pipe v2.13 tests; off so that the v2.12 tests see the same lines as before)
 // Operation codes: 2 open, 3 control, 4 send, 5 receive. Results: -7 libusb_timeout, -4 libusb_no_device, 1 success, 7 device_not_connected.
 #include "i3system_TE.h"
 
@@ -23,7 +26,7 @@
 #include <vector>
 
 namespace {
-struct Step { std::string kind = "gone"; long frames = -1; int op = 0, result = 1; bool reset = false; };
+struct Step { std::string kind = "gone"; long frames = -1; int op = 0, result = 1; bool reset = false; long blank_from = 0, blank_to = -1; };
 std::vector<Step> g_plan;
 bool g_parsed = false;
 size_t g_next = 0;                         // index of the step the next OpenTE_A takes
@@ -40,8 +43,8 @@ void parse()
   {
     size_t b = s.find(';', a); if(b == std::string::npos) b = s.size();
     const std::string part = s.substr(a, b - a);
-    Step st; long f = -1; int op = 0, res = 1, rs = 0;   // anything else than ok,... or fail,... = gone
-    if(std::sscanf(part.c_str(), "ok,%ld,%d,%d,%d", &f, &op, &res, &rs) == 4) { st.kind = "ok"; st.frames = f; st.op = op; st.result = res; st.reset = rs != 0; }
+    Step st; long f = -1, bf = 0, bt = -1; int op = 0, res = 1, rs = 0;   // anything else than ok,... or fail,... = gone
+    if(std::sscanf(part.c_str(), "ok,%ld,%d,%d,%d,%ld,%ld", &f, &op, &res, &rs, &bf, &bt) >= 4) { st.kind = "ok"; st.frames = f; st.op = op; st.result = res; st.reset = rs != 0; st.blank_from = bf; st.blank_to = bt; }
     else if(std::sscanf(part.c_str(), "fail,%d,%d", &op, &res) == 2) { st.kind = "fail"; st.op = op; st.result = res; }
     g_plan.push_back(st);
     a = b + 1;
@@ -70,7 +73,9 @@ int TE_A::RecvImage(unsigned short* px, bool)
   if(!closed_ && (st.frames < 0 || sent_ < st.frames))
   {
     ++value_; ++sent_;
+    const bool blank = st.blank_from > 0 && sent_ >= st.blank_from && (st.blank_to < 0 || sent_ < st.blank_to);
     for(int i = 0; i < 64 * 48; ++i) px[i] = static_cast<unsigned short>(value_ + i);   // every frame differs from the one before: the duplicate filter keeps none back
+    if(blank) for(int y = 12; y < 36; ++y) for(int x = 16; x < 48; ++x) px[y * 64 + x] = 30000;   // no scene: the middle half one value, the rim still changes
     return 1;
   }
   if(!stopped_) { stopped_ = true; g_diag.operation = st.op; g_diag.result = st.result; g_diag.deviceIndex = 0; logf("stop %d", step_ + 1); }
@@ -86,7 +91,7 @@ void TE_A::GetSetting(TE_SETTING* s) { std::memset(s, 0, sizeof *s); }
 bool TE_A::SetShutterMode(unsigned short) { return true; }
 bool TE_A::SetShutterTime(unsigned short) { return true; }
 bool TE_A::SetShutterTemperature(unsigned short) { return true; }
-bool TE_A::ShutterCalibrationOn() { return true; }
+bool TE_A::ShutterCalibrationOn() { const char* c = std::getenv("FAKE_I3_LOG_CAL"); if(c && c[0] == '1') logf("cal %d", step_ + 1); return true; }
 float TE_A::GetFpaTemp() { return 30.0f; }
 float TE_A::GetShutterPt100Temp() { return 30.0f; }
 

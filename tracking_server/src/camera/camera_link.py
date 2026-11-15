@@ -10,6 +10,7 @@ from . import replay_link   # 11-12: recording replay from the page (does nothin
 from . import camera_extra   # 2026-11-11: 지워지지 않는 카메라 기록(기본 켜짐), 프레임 시간표와 공유 메모리(환경 변수로만 켜짐)
 from . import stall_diag   # 2026-11-13: 서버가 잠깐 멈춘 까닭을 찾는 기록 (LWIR_STALL_DIAG=1 일 때만. 기본 꺼짐)
 from . import cam_frozen   # 11-15: the camera's USB chip froze (cam_pipe exit 8): wait for a replug, no usbreset, 5 V step only behind the switchable hub
+from . import cam_scene   # 11-15: frames without a scene (cam_pipe v2.13 SCENE_LOST): page notice
 
 
 class LiveImages:   # endless list of camera frames; it ends (IndexError) when the live time is over
@@ -59,6 +60,7 @@ def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a ne
 
 def lv_spawn():   # v21: open (or reopen) the camera process and its reader
     invalidate_preview(APP.LIVE, before=time.perf_counter())
+    cam_scene.on_spawn(APP.LIVE)   # 11-15: a new cam_pipe checks the picture again (SCENE_LOST comes back after its LWIR_CAM_BLANK_S if there is still no scene)
     if getattr(APP.LIVE, 'replay', None) is not None: return replay_link.spawn()   # 11-12: the replay program, always with frame headers and png numbers (the camera start below is unchanged)
     cam_frozen.on_spawn(APP.LIVE)   # 11-15: where the camera is on USB (for the reset button); while it is frozen also the USB entry this try starts with (a later change = replug)
     if camera_extra.wanted(): return camera_extra.spawn()   # LWIR_CAM_STAMP=1 (off by default): the same start with the setting passed on to cam_pipe
@@ -297,9 +299,12 @@ def cam_reset_work():   # v33: runs in its own thread. LIVE.cam_hold keeps lv_ca
     # says to replug the cable. A camera off the bus gets the 5 V step only when it was last seen behind the hub. Everything else (stop and restart cam_pipe) as before.
     say_ = lambda t_, busy_=True: (setattr(APP.LIVE, 'cam_reset', dict(busy=busy_, text=t_, at=time.strftime('%H:%M:%S'))), camera_extra.say('CAMRESET ' + t_))
     try:
-        dead_ = time.monotonic() - APP.LIVE.last_frame_t > 10
+        blank_ = cam_scene.state(APP.LIVE) is not None   # 11-15: frames come but without a scene (cam_pipe v2.13 SCENE_LOST): handled like a dead camera (only a power cut is left)
+        dead_ = time.monotonic() - APP.LIVE.last_frame_t > 10 or blank_
         if cam_frozen.state(APP.LIVE) is not None and (cam_frozen.where(APP.LIVE) or cam_frozen.last_place(APP.LIVE)) != 'hub':   # 11-15: last cam_pipe ended frozen (exit 8), no power switch for its port:
             say_(cam_frozen.notice(False), False); return                                                                             # nothing to do from software, a new cam_pipe would only time out again
+        if blank_ and (cam_frozen.where(APP.LIVE) or cam_frozen.last_place(APP.LIVE)) != 'hub':   # 11-15: no scene and no power switch for its port: a new open does not help (11-15 16:38)
+            say_(cam_scene.notice(False), False); return
         t0_ = getattr(APP.LIVE, 'cam_reset_t', None)   # v35: when the last reset started cam_pipe again
         el_ = None if t0_ is None or APP.LIVE.last_frame_t >= t0_ else time.monotonic() - t0_   # seconds since that reset, only while no frame came after it
         if dead_ and el_ is not None and el_ < 90 and getattr(APP.LIVE, 'cam_reset_lock', True): say_('방금 초기화함(%d초 전). 영상을 기다리는 중. 90초가 지나도 안 나오면 다시 누르세요' % el_, False); return

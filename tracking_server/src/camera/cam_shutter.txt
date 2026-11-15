@@ -9,3 +9,6 @@ T120
 # n (no shutter call); a trailing x = no calibration at the open. A second word "info" right after the setting logs the engine's saved settings once
 # (so these comment lines start with "#", never with "info").
 # To change it on the board: edit the first word, then end cam_pipe with SIGTERM (pkill -TERM -x cam_pipe); the server starts it again at once.
+# v2.13 (11-15): the calibration at the open is skipped when cam_pipe's own calibration on the same camera power-on is less than LWIR_CAM_CAL_REUSE_S
+# (default 1800 s) old (~/.cam_pipe_state; every open moved the shutter before, and a flat field followed many opens on 11-15). A changed setting here
+# always calibrates at the next open.

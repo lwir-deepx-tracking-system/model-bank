@@ -1,5 +1,28 @@
 // Camera -> stdout pipe for the live tracker (DX-M1 host). Writes every received 16-bit frame (w*h*2 bytes, native endian) to stdout and prints stats to stderr.
 // Opens the camera like the team runtime (runtime/src/camera/camera.cpp). Optional frame-rate setting: ./cam_pipe [fps_code] [seconds]   fps_code: 0 = 30 fps, 1 = 25 fps, -1 = leave as is (default)
+// v2.13 (11-15): FEWER SHUTTER MOVES, A PICTURE WITHOUT A SCENE, NO CLOSE WHILE THE SHUTTER IS SHUT. On 11-15 the camera was opened about 25 times in 2.5 hours
+//   (server restarts, plus a gimbal-speed tool and a temperature probe that open it themselves) and every open moved the shutter (ShutterCalibrationOn). Between
+//   16:35:25 and 16:38:04 the picture became a flat field while frames still came at 30 fps: the middle of the picture one single value, only a noisy rim in the
+//   shape of the shutter blade. Moving the gimbal changed nothing and the calibrations of the next opens did not bring the scene back; a hand replug on site did.
+//   (a) CALIBRATION REUSE. The engine keeps its correction while it is powered, so the first open of a process skips ShutterCalibrationOn when the state file
+//       ~/.cam_pipe_state says the last calibration of ours was less than LWIR_CAM_CAL_REUSE_S seconds ago (default 1800; 0 = calibrate at every open, the
+//       behaviour up to v2.12) on the same camera power-on (same boot, same USB entry and device number: a replug or a power cut changes the number), with the
+//       same shutter setting and no ResetMainBoard sent since. A calibration counts only once frames have run CAL_SETTLE_S after it (a process ended during
+//       its calibration leaves none). The shutter mode and time are still set at every open; a reopen after a stall always calibrates. A CALIBRATION line at
+//       every open says what was done and why; the SHUTTER line says calibration_at_open=-2 when it was reused.
+//   (b) OPEN COUNT. Every open goes into the state file and an OPENS line says how many opens this camera power-on had in the last 10 min and hour and which
+//       program started this cam_pipe. Programs other than the server should use the server's frames instead of opening the camera (HANDOFF.md, section 7).
+//   (c) NO SCENE. Once a second the middle half of the picture just passed on (every 2nd pixel) is checked: centre_same = the share of its most common value.
+//       Real pictures of this camera: at most 0.10 (8 recordings 11-09..11-13, 350 frames, median about 0.02); the 11-15 16:38 flat field: 0.985.
+//       centre_same >= 0.5 at every check for LWIR_CAM_BLANK_S seconds (default 20; 0 = no check) -> SCENE_LOST line and ONE engine reset (ResetMainBoard, close,
+//       20 s, reopen with a calibration: the steps of the stall repair) per camera power-on, kept in the state file so that a restarted cam_pipe does not repeat
+//       it (LWIR_CAM_BLANK_RESET=0: no reset, lines only). After that only the SCENE_LOST line (again every 10 min while it lasts): replug the camera. Once the
+//       picture has a scene again (centre_same < 0.2 for 5 s) a SCENE_BACK line follows. A SCENE_CHECK line every 10 min gives the largest centre_same seen.
+//       The server puts SCENE_LOST on the page (src/camera/cam_scene.py).
+//   (d) A stop signal within CAL_SETTLE_S of a calibration waits until that time has passed before CloseTE (CLOSE_WAIT line): the camera is never closed
+//       while the shutter may be shut for its calibration.
+//   State file: "key value" lines, times in seconds since boot (CLOCK_BOOTTIME), written to <file>.tmp and renamed; one cam_pipe at a time (the lock).
+//   LWIR_CAM_SYSFS points the camera's USB lookup at another folder (tests). Test without a camera: test_cam_pipe_scene.py (fake_i3/).
 // v2.12 (11-15): FROZEN CAMERA, EXIT 8. Since 11-12 every hard camera loss looked the same: the camera's own USB chip (0547:0080) stops answering while it stays on the bus.
 //   The stall's DIAG says op=3(control) or op=4(send) result=-7(libusb_timeout), ResetMainBoard() is refused (sent=0) because the engine cannot be reached, and every open
 //   after it fails with op=4(send) libusb_timeout. Only cutting its power cleared it (a hand replug: its board root port has no software 5 V switch); the 20 s reopen loop,
@@ -74,6 +97,7 @@
 // Build: g++ -O2 cam_pipe.cpp -o cam_pipe -D_LINUX -I/usr/local/include/i3system $(pkg-config --cflags --libs opencv4) -li3system_te_64 -li3system_usb_64 -li3system_imgproc_impl_64 -lpthread
 //   (v2.11: the same line; nothing new to link. Checked 11-14 with g++ 11.4 on the board, also with -Wall -Wextra: no warning from the v2.11 code.)
 //   (v2.12: the same line. Checked 11-15 with g++ 11.4 on the board, also with -Wall -Wextra: no warning.)
+//   (v2.13: the same line; nothing new to link.)
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -90,6 +114,7 @@
 #include <cstring>
 #include <ctime>
 #include <sys/prctl.h>
+#include <dirent.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/file.h>
@@ -238,6 +263,79 @@ static std::string exe_dir()
   b[n] = 0; const std::string s(b); const size_t p = s.rfind('/'); return p == std::string::npos ? "." : s.substr(0, p);
 }
 
+// v2.13 (11-15): the state file (calibration reuse, open count, one blank-picture reset per camera power-on). See the top of this file.
+static std::string home_dir() { return std::getenv("HOME") ? std::getenv("HOME") : "/tmp"; }
+static double boot_s() { timespec ts; clock_gettime(CLOCK_BOOTTIME, &ts); return static_cast<double>(ts.tv_sec) + static_cast<double>(ts.tv_nsec) * 1e-9; }
+static std::string read_word(const std::string& path)   // the first word of a small file, "" = cannot be read
+{
+  FILE* f = std::fopen(path.c_str(), "r"); if(!f) return "";
+  char b[160] = {0}; const int n = std::fscanf(f, "%159s", b); std::fclose(f); return n == 1 ? b : "";
+}
+static std::string boot_id() { return read_word("/proc/sys/kernel/random/boot_id"); }
+static std::string usb_entry()   // "<sysfs name>:<busnum>:<devnum>" of the camera (0547:0080; the first by name), "" = not found. Reads only idVendor/idProduct/busnum/devnum
+{
+  const char* e = std::getenv("LWIR_CAM_SYSFS"); const std::string root = e && *e ? e : "/sys/bus/usb/devices";
+  DIR* d = opendir(root.c_str()); if(!d) return "";
+  std::vector<std::string> hits;
+  while(dirent* de = readdir(d))
+  {
+    const std::string n = de->d_name; if(n.empty() || n[0] == '.') continue;
+    const std::string p = root + "/" + n + "/";
+    if(read_word(p + "idVendor") != "0547" || read_word(p + "idProduct") != "0080") continue;
+    const std::string b = read_word(p + "busnum"), v = read_word(p + "devnum");
+    if(!b.empty() && !v.empty()) hits.push_back(n + ":" + b + ":" + v);
+  }
+  closedir(d);
+  if(hits.empty()) return "";
+  std::sort(hits.begin(), hits.end()); return hits[0];
+}
+static long env_long(const char* name, long dflt, long lo, long hi)   // a whole number lo..hi from the environment, else dflt
+{
+  const char* e = std::getenv(name); if(!e || !*e) return dflt;
+  char* end = nullptr; const long v = std::strtol(e, &end, 10);
+  return end != e && *end == 0 && v >= lo && v <= hi ? v : dflt;
+}
+typedef std::map<std::string, std::string> KV;
+static std::string state_path() { return home_dir() + "/.cam_pipe_state"; }
+static KV state_read()
+{
+  KV kv; FILE* f = std::fopen(state_path().c_str(), "r"); if(!f) return kv;
+  char line[2048];
+  while(std::fgets(line, sizeof line, f))
+  {
+    std::string s(line); while(!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+    const size_t sp = s.find(' '); if(sp == std::string::npos || sp == 0) continue;
+    kv[s.substr(0, sp)] = s.substr(sp + 1);
+  }
+  std::fclose(f); return kv;
+}
+static void state_write(const KV& kv)   // never fails loudly: without the file every open just calibrates (the old behaviour)
+{
+  const std::string p = state_path(), t = p + ".tmp";
+  FILE* f = std::fopen(t.c_str(), "w"); if(!f) return;
+  for(const auto& x : kv) std::fprintf(f, "%s %s\n", x.first.c_str(), x.second.c_str());
+  const bool ok = std::fflush(f) == 0; std::fclose(f);
+  if(ok) std::rename(t.c_str(), p.c_str()); else unlink(t.c_str());
+}
+static double kv_num(const KV& kv, const char* key, double dflt) { const auto it = kv.find(key); if(it == kv.end() || it->second.empty()) return dflt; char* end = nullptr; const double v = std::strtod(it->second.c_str(), &end); return end != it->second.c_str() ? v : dflt; }
+static std::string kv_str(const KV& kv, const char* key) { const auto it = kv.find(key); return it == kv.end() ? "" : it->second; }
+static std::string num_s(double v) { char b[32]; std::snprintf(b, sizeof b, "%.1f", v); return b; }
+static std::string parent_text()   // "<name> (pid N): <command line>" of the program that started this cam_pipe
+{
+  const pid_t pp = getppid(); char p[64]; std::snprintf(p, sizeof p, "/proc/%d/", static_cast<int>(pp));
+  std::string name = read_word(std::string(p) + "comm"), cmd;
+  FILE* f = std::fopen((std::string(p) + "cmdline").c_str(), "r");
+  if(f) { char b[240] = {0}; const size_t n = std::fread(b, 1, sizeof b - 1, f); std::fclose(f); for(size_t i = 0; i < n; ++i) cmd += b[i] ? b[i] : ' '; }
+  while(!cmd.empty() && cmd.back() == ' ') cmd.pop_back();
+  char b[64]; std::snprintf(b, sizeof b, " (pid %d)", static_cast<int>(pp));
+  return (name.empty() ? std::string("?") : name) + b + (cmd.empty() ? "" : ": " + cmd);
+}
+static KV g_state;                 // read at the first open, written at every change
+static std::string g_boot, g_usb;  // this boot, the camera's USB entry at the last open
+static int g_opens_here = 0;       // opens in this process
+static const double CAL_SETTLE_S = 5.0;   // a calibration counts (state file) once frames ran this long after it
+static const double CLOSE_WAIT_S = 2.5;   // no CloseTE sooner than this after a calibration of ours (the shutter is shut about 1.4 s, 40 repeated frames)
+
 static unsigned g_prod = 0, g_core = 0;   // from the last scan: product (1 Q1, 2 V1, 3 EQ1, 4 EV1, 9 M1, 12 EQ2, 13 EV2) and core id
 static int scan_device(int attempts)
 {
@@ -286,20 +384,80 @@ static ShutterSet read_shutter_setting()
 static ShutterSet g_shutter;                 // the setting used at the last open
 static clk::time_point g_t_cal = clk::now();  // last ShutterCalibrationOn() of ours (or the open, when none was done)
 static bool g_cal_done = false, g_info_done = false; static int g_own_cals = 0;
+static bool g_cal_pending = false;            // v2.13: a calibration of ours was accepted and is not yet in the state file (it counts after CAL_SETTLE_S of frames)
+static double g_cal_pending_up = 0;           // its time since boot
+
+// v2.13 (a): may this open skip ShutterCalibrationOn? true = reuse; *why = the reason either way (for the CALIBRATION line)
+static bool cal_reuse(const ShutterSet& s, std::string* why)
+{
+  const long reuse_s = env_long("LWIR_CAM_CAL_REUSE_S", 1800, 0, 86400);
+  if(!s.cal_at_open || s.mode == -2) { *why = "the shutter setting asks for no calibration at the open"; return false; }
+  if(reuse_s == 0) { *why = "LWIR_CAM_CAL_REUSE_S=0: calibration at every open"; return false; }
+  if(g_opens_here > 1) { *why = "reopen after an engine reset"; return false; }
+  if(g_usb.empty()) { *why = "the camera's USB entry cannot be read, so the same power-on cannot be told"; return false; }
+  const double cal = kv_num(g_state, "cal_up", -1), now = boot_s(), age = now - cal;
+  if(g_boot.empty() || kv_str(g_state, "cal_boot") != g_boot || cal < 0) { *why = "first calibration of ours since the board started"; return false; }
+  if(kv_str(g_state, "cal_usb") != g_usb) { *why = "the camera was plugged in or powered again since the last calibration (USB " + kv_str(g_state, "cal_usb") + " -> " + g_usb + ")"; return false; }
+  if(kv_str(g_state, "cal_setting") != s.text) { *why = "the shutter setting changed (" + kv_str(g_state, "cal_setting") + " -> " + s.text + ")"; return false; }
+  if(kv_str(g_state, "reset_boot") == g_boot && kv_num(g_state, "reset_up", -1) >= cal) { *why = "an engine reset (ResetMainBoard) was sent after the last calibration"; return false; }
+  if(age < 0 || age >= static_cast<double>(reuse_s)) { *why = "the last calibration of ours was " + num_s(age) + " s ago (reuse limit " + std::to_string(reuse_s) + " s)"; return false; }
+  *why = "the last calibration of ours was " + num_s(age) + " s ago on this camera power-on (USB " + g_usb + "), setting " + s.text + ", no engine reset since (reuse limit "
+         + std::to_string(reuse_s) + " s, LWIR_CAM_CAL_REUSE_S)";
+  return true;
+}
+
+static void cal_commit()   // v2.13: the pending calibration ran CAL_SETTLE_S with frames: it goes into the state file
+{
+  if(!g_cal_pending) return;
+  g_cal_pending = false;
+  g_state["cal_up"] = num_s(g_cal_pending_up); g_state["cal_usb"] = g_usb; g_state["cal_setting"] = g_shutter.text; g_state["cal_boot"] = g_boot;
+  state_write(g_state);
+}
+
+static void note_reset(bool sent)   // v2.13: an engine reset that was sent makes the calibration on record useless for reuse
+{
+  g_cal_pending = false;
+  if(!sent) return;
+  g_state["reset_up"] = num_s(boot_s()); g_state["reset_boot"] = g_boot; state_write(g_state);
+}
 
 static void apply_shutter(i3::TE_A* te)
 {
-  const ShutterSet& s = g_shutter; int rm = -1, rv = -1, rc = -1;   // -1 = not called, 1 = the engine accepted it, 0 = refused
+  const ShutterSet& s = g_shutter; int rm = -1, rv = -1, rc = -1;   // -1 = not called, 1 = the engine accepted it, 0 = refused, -2 = reused (v2.13)
+  std::string why; const bool reuse = cal_reuse(s, &why);
   if(s.mode != -2)
   {
     rm = te->SetShutterMode(static_cast<unsigned short>(s.mode)) ? 1 : 0;
     if(s.mode == I3_TEMP_SHUTTER) rv = te->SetShutterTemperature(static_cast<unsigned short>(s.value)) ? 1 : 0;
     else if(s.mode == I3_TIME_SHUTTER) rv = te->SetShutterTime(static_cast<unsigned short>(s.value)) ? 1 : 0;
-    if(s.cal_at_open) rc = te->ShutterCalibrationOn() ? 1 : 0;
+    if(s.cal_at_open && !reuse) rc = te->ShutterCalibrationOn() ? 1 : 0;
+    else if(reuse) rc = -2;
   }
   g_t_cal = clk::now(); g_cal_done = rc >= 0;
+  if(rc == 1) { g_cal_pending = true; g_cal_pending_up = boot_s(); }
+  std::fprintf(stderr, "CALIBRATION %s: %s\n", reuse ? "REUSED (no ShutterCalibrationOn at this open)" : rc == 1 ? "at this open" : rc == 0 ? "at this open REFUSED by the engine" : "none at this open", why.c_str());
   std::fprintf(stderr, "SHUTTER setting=%s (%s) mode=%s value=%d set_mode=%d set_value=%d calibration_at_open=%d own_timer=%.0f s at %s\n", s.text.c_str(), s.source.c_str(),
                s.mode == -2 ? "untouched" : s.mode == I3_TEMP_SHUTTER ? "TEMP" : s.mode == I3_TIME_SHUTTER ? "TIME" : "MANUAL", s.value, rm, rv, rc, s.own_period_s, hms().c_str());
+}
+
+static void note_open()   // v2.13 (b): this open into the state file (opens of this camera power-on, last hour) and the OPENS line
+{
+  if(g_opens_here == 1) { g_state = state_read(); g_boot = boot_id(); }
+  g_usb = usb_entry();
+  const double now = boot_s();
+  const bool same = kv_str(g_state, "boot") == g_boot && !g_usb.empty() && kv_str(g_state, "usb") == g_usb;   // same camera power-on as the opens on record
+  std::vector<double> t; std::string keep;
+  if(same)
+  {
+    const std::string s = kv_str(g_state, "opens"); size_t a = 0;
+    while(a < s.size()) { size_t b = s.find(',', a); if(b == std::string::npos) b = s.size(); const double v = std::atof(s.substr(a, b - a).c_str()); if(v > 0 && now - v < 3600 && now >= v) t.push_back(v); a = b + 1; }
+  }
+  t.push_back(now);
+  int n10 = 0; for(const double v : t) { if(now - v < 600) ++n10; if(!keep.empty()) keep += ","; keep += num_s(v); }
+  g_state["boot"] = g_boot; g_state["usb"] = g_usb; g_state["opens"] = keep;
+  state_write(g_state);
+  std::fprintf(stderr, "OPENS this camera power-on (USB %s): %d in the last 10 min, %zu in the last hour; open %d of this cam_pipe, started by %s\n",
+               g_usb.empty() ? "not found" : g_usb.c_str(), n10, t.size(), g_opens_here, parent_text().c_str());
 }
 
 static UsbDiag g_open_diag;   // v2.12: the DIAG of the last OpenTE_A that failed (have = false: the last open_camera did not fail in OpenTE_A)
@@ -313,6 +471,7 @@ static i3::TE_A* open_camera(int* w, int* h)
   *w = te->GetImageWidth(); *h = te->GetImageHeight();
   std::fprintf(stderr, "CAMERA %d %d\n", *w, *h);
   std::fprintf(stderr, "ENGINE product=%u core=%u at %s\n", g_prod, g_core, hms().c_str());
+  ++g_opens_here; note_open();   // v2.13 (b): state file, OPENS line
   g_shutter = read_shutter_setting();
   if(g_shutter.info && !g_info_done)   // asked for in cam_shutter.txt: what the engine itself has stored (once per process, before the first frame)
   {
@@ -460,6 +619,89 @@ static void temp_stats()   // from the CAMFPS block: one TEMP_STATS line every T
   g_temp.win_calls = 0; g_temp.win_sum = 0; g_temp.win_top = 0; g_temp.t_win = clk::now();
 }
 
+// v2.13 (c): NO SCENE (see the top of this file). centre_same = share of the most common value in the middle half of the picture, every 2nd pixel.
+static double centre_same(const unsigned short* px, int w, int h)
+{
+  static std::vector<unsigned short> v; v.clear();
+  for(int y = h / 4; y < 3 * h / 4; y += 2) for(int x = w / 4; x < 3 * w / 4; x += 2) v.push_back(px[static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)]);
+  if(v.size() < 2) return 0;
+  std::sort(v.begin(), v.end());
+  size_t best = 1, run = 1;
+  for(size_t i = 1; i < v.size(); ++i) { run = v[i] == v[i - 1] ? run + 1 : 1; if(run > best) best = run; }
+  return static_cast<double>(best) / static_cast<double>(v.size());
+}
+static const double SCENE_LOST_AT = 0.5, SCENE_BACK_BELOW = 0.2, SCENE_BACK_S = 5.0, SCENE_LINE_S = 600.0, SCENE_CHECK_S = 1.0;
+struct SceneWatch
+{
+  long hold_s = 20; bool may_reset = true;
+  bool bad = false, good = false, lost = false, announced = false;   // bad / good = a run of checks above SCENE_LOST_AT / below SCENE_BACK_BELOW is going on
+  clk::time_point bad_since = clk::now(), good_since = clk::now(), t_check = clk::now(), t_line = clk::now(), t_lost_line = clk::now(), lost_at = clk::now();
+  double win_max = 0, last = 0; long checks = 0;
+};
+static SceneWatch g_scene;
+static void scene_restart()   // after a reopen: a new run of checks (an announced loss stays announced until SCENE_BACK)
+{
+  g_scene.bad = g_scene.good = g_scene.lost = false; g_scene.t_check = clk::now();
+}
+// One check (every SCENE_CHECK_S, on the frame just passed on). Returns true = do the one engine reset now (the caller runs the stall repair steps).
+static bool scene_check(const unsigned short* px, int w, int h, bool no_recover)
+{
+  const auto now = clk::now(); g_scene.t_check = now;
+  const double s = centre_same(px, w, h); g_scene.last = s; ++g_scene.checks; g_scene.win_max = std::max(g_scene.win_max, s);
+  if(std::chrono::duration<double>(now - g_scene.t_line).count() >= SCENE_LINE_S)
+  {
+    std::fprintf(stderr, "SCENE_CHECK %ld checks in %.0f s, centre_same largest %.3f, now %.3f (no scene at %.2f for %ld s), at %s\n", g_scene.checks,
+                 std::chrono::duration<double>(now - g_scene.t_line).count(), g_scene.win_max, s, SCENE_LOST_AT, g_scene.hold_s, hms().c_str());
+    g_scene.checks = 0; g_scene.win_max = 0; g_scene.t_line = now;
+  }
+  if(s >= SCENE_LOST_AT) { g_scene.good = false; if(!g_scene.bad) { g_scene.bad = true; g_scene.bad_since = now; } }
+  else
+  {
+    g_scene.bad = false;
+    if(s < SCENE_BACK_BELOW) { if(!g_scene.good) { g_scene.good = true; g_scene.good_since = now; } }
+    else g_scene.good = false;
+  }
+  if(g_scene.good && std::chrono::duration<double>(now - g_scene.good_since).count() >= SCENE_BACK_S)
+  {
+    g_scene.lost = false;
+    if(g_scene.announced)
+    {
+      g_scene.announced = false;
+      std::fprintf(stderr, "SCENE_BACK the picture has a scene again (centre_same %.3f for %.0f s), %.0f s after SCENE_LOST, at %s\n", s, SCENE_BACK_S,
+                   std::chrono::duration<double>(now - g_scene.lost_at).count(), hms().c_str());
+    }
+    return false;
+  }
+  if(g_scene.lost)
+  {
+    if(std::chrono::duration<double>(now - g_scene.t_lost_line).count() >= SCENE_LINE_S)
+    {
+      g_scene.t_lost_line = now;
+      std::fprintf(stderr, "SCENE_LOST still no scene (centre_same %.3f), %.0f s after it began; no automatic repair left: unplug the camera USB cable for 10 s and plug it back, at %s\n",
+                   s, std::chrono::duration<double>(now - g_scene.lost_at).count(), hms().c_str());
+    }
+    return false;
+  }
+  if(!g_scene.bad || std::chrono::duration<double>(now - g_scene.bad_since).count() < static_cast<double>(g_scene.hold_s)) return false;
+  g_scene.lost = true; g_scene.t_lost_line = now; if(!g_scene.announced) g_scene.lost_at = g_scene.bad_since;
+  g_scene.announced = true;
+  // one engine reset per camera power-on: the same boot and USB entry as the last one on record means it was already tried
+  const bool tried = kv_str(g_state, "blank_boot") == g_boot && kv_str(g_state, "blank_usb") == g_usb;
+  char head[200]; std::snprintf(head, sizeof head, "SCENE_LOST no scene in the picture for %ld s (centre_same %.3f: the middle of the picture is one value; seen 11-15 16:38 when the shutter stayed shut)",
+                                g_scene.hold_s, s);
+  if(no_recover || !g_scene.may_reset || tried)
+  {
+    std::fprintf(stderr, "%s; no automatic repair %s: unplug the camera USB cable for 10 s and plug it back, at %s\n", head,
+                 no_recover ? "(CAM_NO_RECOVER)" : !g_scene.may_reset ? "(LWIR_CAM_BLANK_RESET=0)" : ("left (the one engine reset of this camera power-on was at " + num_s(kv_num(g_state, "blank_up", 0)) + " s after boot)").c_str(),
+                 hms().c_str());
+    return false;
+  }
+  g_state["blank_up"] = num_s(boot_s()); g_state["blank_boot"] = g_boot; g_state["blank_usb"] = g_usb; state_write(g_state);   // before the reset: a cam_pipe killed in the middle does not repeat it
+  std::fprintf(stderr, "%s; one engine reset now (ResetMainBoard, close, %.0f s, reopen with a calibration), the only one on this camera power-on (USB %s), at %s\n",
+               head, RESET_WAIT_S, g_usb.empty() ? "not found" : g_usb.c_str(), hms().c_str());
+  return true;
+}
+
 int main(int argc, char** argv)
 {
   const int fps_code = argc > 1 ? std::atoi(argv[1]) : -1; (void)fps_code;   // kept for the old command line; SetFrameRate is not in our header
@@ -492,6 +734,10 @@ int main(int argc, char** argv)
   const bool no_recover = std::getenv("CAM_NO_RECOVER") != nullptr, telemetry = std::getenv("CAM_TELEMETRY") != nullptr;   // experiment switches (11-09): no_recover = log the stall and exit with code 7; telemetry = FPA and shutter temperature in the CAMFPS line (read once per 2 s)
   const double test_stall_at = std::getenv("CAM_PIPE_TEST_STALL_AT") ? std::atof(std::getenv("CAM_PIPE_TEST_STALL_AT")) : 0; bool test_done = false;   // test hook: pretend the stream stopped once at this time (tests ResetMainBoard + reopen on a healthy camera)
   const bool test_frozen = test_stall_at > 0 && env_is_1("CAM_PIPE_TEST_FROZEN");   // v2.12 test hook: that simulated stall takes the frozen path (exit 8), see the top of this file
+  g_scene.hold_s = env_long("LWIR_CAM_BLANK_S", 20, 0, 3600); g_scene.may_reset = env_long("LWIR_CAM_BLANK_RESET", 1, 0, 1) == 1;   // v2.13 (c)
+  bool scene_reset_now = false;   // v2.13 (c): the no-scene check asks for its one engine reset (the stall repair steps below)
+  std::fprintf(stderr, "SCENE_WATCH %s\n", g_scene.hold_s > 0 ? ("on: no scene = centre_same >= " + num_s(SCENE_LOST_AT) + " for " + std::to_string(g_scene.hold_s) + " s, then "
+               + (g_scene.may_reset ? std::string("one engine reset per camera power-on") : std::string("lines only (LWIR_CAM_BLANK_RESET=0)"))).c_str() : "off (LWIR_CAM_BLANK_S=0)");
   // v2.7 (11-13): READ PACING. The engine sends 30 frames a second (GetSetting frameRate 0). RecvImage waits at most about 26 ms
   // for a frame and returns 4 when none completed in that time, and a read that takes a frame returns after 17 ms (no AGC) to
   // 27 ms (AGC). Calling it again at once therefore starts a second read in the middle of the frame period: that read times
@@ -597,8 +843,11 @@ int main(int argc, char** argv)
       if(g_shutter.own_period_s > 0 && since(g_t_cal) >= g_shutter.own_period_s)   // v2.5 (setting mN): the engine is in MANUAL mode, the calibration is ours and it is in the log
       {
         const auto tc = clk::now(); const bool okc = te->ShutterCalibrationOn(); g_t_cal = clk::now(); g_cal_done = true; ++g_own_cals;
+        if(okc) { g_cal_pending = true; g_cal_pending_up = boot_s(); }   // v2.13 (a): counts like a calibration at the open
         std::fprintf(stderr, "SHUTTER_CAL own timer #%d ok=%d took %.2f s, %ld frames and %.1f s after this open, at %s\n", g_own_cals, (int)okc, since(tc), ok - ok_open, since(t_open), hms().c_str());
       }
+      if(g_cal_pending && since(g_t_cal) >= CAL_SETTLE_S) cal_commit();   // v2.13 (a): frames ran CAL_SETTLE_S after the calibration: it counts
+      if(g_scene.hold_s > 0 && since(g_scene.t_check) >= SCENE_CHECK_S) scene_reset_now = scene_check(buf.data(), w, h, no_recover);   // v2.13 (c)
       double dt = std::chrono::duration<double>(now - tl).count();
       if(dt >= 2.0)
       {
@@ -607,31 +856,39 @@ int main(int argc, char** argv)
         std::fputc(10, stderr); okl = 0; tl = now;
         temp_stats();   // v2.11: every 30 s while the maps are on, nothing otherwise
       }
-      continue;
+      if(!scene_reset_now) continue;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    const double idle = since(frame_since_open ? t_frame : t_open);
-    if(idle < (frame_since_open ? STALL_S : FIRST_STALL_S)) continue;
-    if(no_recover)   // experiment: measure how long the camera lives, do not repair it
+    if(!scene_reset_now)
     {
-      std::fprintf(stderr, "CAMERA_STALL_NO_RECOVER after %ld frames, no frame for %.1f s, run time %.1f s, shutter=%s", ok, idle, since(t0), std::getenv("CAM_SHUTTER") ? std::getenv("CAM_SHUTTER") : "d");
-      std::fputc(10, stderr); diag("stall"); exit_code = 7; break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      const double idle = since(frame_since_open ? t_frame : t_open);
+      if(idle < (frame_since_open ? STALL_S : FIRST_STALL_S)) continue;
+      if(no_recover)   // experiment: measure how long the camera lives, do not repair it
+      {
+        std::fprintf(stderr, "CAMERA_STALL_NO_RECOVER after %ld frames, no frame for %.1f s, run time %.1f s, shutter=%s", ok, idle, since(t0), std::getenv("CAM_SHUTTER") ? std::getenv("CAM_SHUTTER") : "d");
+        std::fputc(10, stderr); diag("stall"); exit_code = 7; break;
+      }
     }
-    // stalled: reboot the camera engine from software, then reopen
+    // stalled (or v2.13: no scene): reboot the camera engine from software, then reopen
     ++recoveries;
     if(++failed_recoveries > MAX_FAILED_RECOVERIES) { std::fprintf(stderr, "CAMERA_UNRECOVERABLE after %d resets without a frame: power-cycle the camera or reboot the board\n", MAX_FAILED_RECOVERIES); exit_code = 6; break; }
-    std::fprintf(stderr, "CAMERA_STALL no frame for %.1f s after %ld frames (%s): ResetMainBoard #%d (failed in a row: %d)\n", idle, ok, frame_since_open ? "stream stopped" : "no first frame", recoveries, failed_recoveries);
-    {   // v2.5: how long this open lived and where the last shutter call of ours was
-      const double lived = frame_since_open ? std::chrono::duration<double>(t_frame - t_open).count() : 0.0;
-      char calb[96] = "none"; const double cd = std::chrono::duration<double>(t_frame - g_t_cal).count();
-      if(g_cal_done) { if(cd >= 0) std::snprintf(calb, sizeof calb, "%.1f s before the last frame", cd); else std::snprintf(calb, sizeof calb, "%.1f s after the last frame (no frame since it)", -cd); }
-      std::fprintf(stderr, "STALL_INFO this open: %ld frames, last frame %.1f s after the open, shutter=%s, own calibrations %d, last shutter call of ours: %s, at %s\n", ok - ok_open, lived, g_shutter.text.c_str(), g_own_cals, frame_since_open ? calb : "n/a", hms().c_str());
-      // v2.9: was the picture standing still (shutter closed) when the stream stopped?
-      if(dup_run > 0) std::fprintf(stderr, "STALL_REPEATS the stream stopped DURING a run of identical frames: %ld so far, begun %.2f s before the last frame read\n", dup_run, std::chrono::duration<double>(last_read_start - rep_start).count());
-      else if(rep_seen) std::fprintf(stderr, "STALL_REPEATS last long run of identical frames: %ld frames, ended %.1f s before the last frame\n", rep_len, std::chrono::duration<double>(t_frame - rep_end).count());
-      else std::fprintf(stderr, "STALL_REPEATS no long run of identical frames since this program started\n");
+    if(scene_reset_now) std::fprintf(stderr, "CAMERA_RESET_FOR_SCENE frames still come (%ld so far) but show no scene: ResetMainBoard #%d\n", ok, recoveries);
+    else
+    {
+      const double idle = since(frame_since_open ? t_frame : t_open);
+      std::fprintf(stderr, "CAMERA_STALL no frame for %.1f s after %ld frames (%s): ResetMainBoard #%d (failed in a row: %d)\n", idle, ok, frame_since_open ? "stream stopped" : "no first frame", recoveries, failed_recoveries);
+      {   // v2.5: how long this open lived and where the last shutter call of ours was
+        const double lived = frame_since_open ? std::chrono::duration<double>(t_frame - t_open).count() : 0.0;
+        char calb[96] = "none"; const double cd = std::chrono::duration<double>(t_frame - g_t_cal).count();
+        if(g_cal_done) { if(cd >= 0) std::snprintf(calb, sizeof calb, "%.1f s before the last frame", cd); else std::snprintf(calb, sizeof calb, "%.1f s after the last frame (no frame since it)", -cd); }
+        std::fprintf(stderr, "STALL_INFO this open: %ld frames, last frame %.1f s after the open, shutter=%s, own calibrations %d, last shutter call of ours: %s, at %s\n", ok - ok_open, lived, g_shutter.text.c_str(), g_own_cals, frame_since_open ? calb : "n/a", hms().c_str());
+        // v2.9: was the picture standing still (shutter closed) when the stream stopped?
+        if(dup_run > 0) std::fprintf(stderr, "STALL_REPEATS the stream stopped DURING a run of identical frames: %ld so far, begun %.2f s before the last frame read\n", dup_run, std::chrono::duration<double>(last_read_start - rep_start).count());
+        else if(rep_seen) std::fprintf(stderr, "STALL_REPEATS last long run of identical frames: %ld frames, ended %.1f s before the last frame\n", rep_len, std::chrono::duration<double>(t_frame - rep_end).count());
+        else std::fprintf(stderr, "STALL_REPEATS no long run of identical frames since this program started\n");
+      }
     }
-    UsbDiag sd = diag("stall");
+    UsbDiag sd = diag(scene_reset_now ? "scene" : "stall");
     bool sent = false;
     if(test_stall_now && test_frozen)   // v2.12 test hook (CAM_PIPE_TEST_FROZEN=1): this stall is taken as frozen
     {
@@ -642,6 +899,7 @@ int main(int argc, char** argv)
     {
       sent = te->ResetMainBoard();
       std::fprintf(stderr, "ResetMainBoard sent=%d\n", (int)sent);
+      note_reset(sent);   // v2.13 (a): no calibration reuse across an engine reset
     }
     if(!sent && chip_mute(sd))   // v2.12 (a): the engine cannot be reached and the chip does not answer: a reopen would only time out again
     {
@@ -664,6 +922,7 @@ int main(int argc, char** argv)
     if(static_cast<size_t>(w) * h != buf.size()) buf.assign(static_cast<size_t>(w) * h, 0);
     temp_after_reopen(te, w, h);   // v2.11: emissivity again on the new handle; maps stop if the picture size changed
     t_open = clk::now(); frame_since_open = false; tprev = t_open; tl = t_open; okl = 0; ok_open = ok; gp_have = false; gp_fail = 0; gp_empty = 0; gp_max_call = 0; gp_max_wait = 0;
+    scene_reset_now = false; scene_restart();   // v2.13 (c): checks start again on the new handle
   }
   double secs = since(t0);
   std::fprintf(stderr, "DUPLICATE_FRAMES held back %ld, passed on %ld\n", dups_dropped, dups_passed);
@@ -675,6 +934,12 @@ int main(int argc, char** argv)
                  g_temp.top_ms, g_temp.over, g_temp.max_ms, g_tring.maps, g_temp.on ? "on to the end" : "stopped earlier (TEMP_OFF)");
   ring_close();
   temp_ring_close();
+  if(te && g_cal_pending && since(g_t_cal) < CLOSE_WAIT_S)   // v2.13 (d): a stop signal right after a calibration of ours: let the shutter open again first
+  {
+    const double wait = CLOSE_WAIT_S - since(g_t_cal);
+    std::fprintf(stderr, "CLOSE_WAIT the shutter calibration of this open began %.1f s ago: closing the camera in %.1f s, after it\n", since(g_t_cal), wait);
+    std::this_thread::sleep_for(std::chrono::milliseconds(static_cast<long>(wait * 1000.0) + 1));
+  }
   if(te) te->CloseTE();
   return exit_code;
 }
