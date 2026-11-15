@@ -588,7 +588,7 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 - PC(i7-1165G7) 시간, 사람 30명: 크기만 0.49 ms(11-15 `apply()`, 사람 한 명당 0.016 ms). 11-16 다시 잰 `apply()`(행 읽기·검출 짝 확인 포함, 한 가닥) 10 / 20 / 30명: 크기만 0.60 / 1.16 / 1.66 ms, 상체 네모 2판 0.98 / 1.57 / 2.20 ms(모델이 바뀌는 중에도 같음). 장치 CPU 시간과 실카메라 효과는 아직 재지 않았습니다.
 - 학습·채점: LIG-Data `pos_refine_20261115` (TMOT·DanceTrack, 우리 근거리·원거리 자세 검출기 출력), v2 는 그 안 `v2/`, v3 는 `v2/v3/`(만든 스크립트 사본 `models/track/build_scripts/box_refine_tmotdance_build/v2/`, `v2/v3/`). 뺀 GRU 의 결과는 `models/README.md` 2절에 한 줄로 남김.
 
-**놓친 상자 = 보일 때 상자** (`lost_same`, 2026-11-16, 기본 꺼짐, 장치에서 아직 안 재 봄)
+**놓친 상자 = 보일 때 상자** (`lost_same`, 2026-11-16, 코드 기본 꺼짐, 장치는 켬)
 
 설정 구역 "놓친 상자" 줄(또는 `POST /rules/set?lost_same=1|0`). 놓친 사람의 점선 상자(예측 상자 표시)를 보일 때 그린 상자와 같은 모양·크기로 그립니다. 표시만 바꿉니다. 추적기, 위치 기억, 번호 잇기, KeepID, 짐벌은 그대로입니다.
 
@@ -603,7 +603,7 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 - 오류가 나면 그 상자는 추적기 상자로 그리고 셉니다(`/rules` 의 `box_refine.lost_errors`). 끄면 지금과 똑같습니다(시험으로 확인).
 - 상태: `/rules` 의 `box_refine` — `lost_same`, `lost_ms`, `lost_n`, `lost_held`, `lost_errors`, `lost_err`, `lost_why`. 고른 것은 `last_selection.json` 에 남습니다.
 - 확인(PC): val-A 324개 실행에서 추적기 행이 켜도 끄도 비트까지 같고, 그리는 보일 때 상자도 같음. 놓친 첫 장이 빈 경우 8194번 → 0번. 크기만 모드 조준점 차이 6e-14 px.
-- PC 비용(한 가닥, 프레임당 늘어난 중앙값): 크기만 0.01~0.12 ms, 상체 네모 0.02~0.26 ms(10·30명, 1·3·6명 놓침). 장치에서는 아직 재지 않았습니다.
+- PC 비용(한 가닥, 프레임당 늘어난 중앙값): 크기만 0.01~0.12 ms, 상체 네모 0.02~0.26 ms(10·30명, 1·3·6명 놓침). 장치 CPU(11-16): 크기만 +0.03~0.29 ms(p99 최대 +0.55), 상체 네모 +0.17~0.45 ms; C++ BoT-SORT 의 놓친 목록 읽기 28명에 0.12 ms. 장치 재생 네 번(끔/켬)에서 채점 숫자와 번호 바뀜 목록이 모두 같고, 실카메라 켬에서 초당 30장·지연 28.5 ms 그대로. 자세한 숫자 `HANDOFF.md` 4절.
 - 근거: LIG-Data `pos_refine_20261115/unified/judge/JUDGE_RESULT_20261116.md`(A), 확인 스크립트 LIG-Data `lost_same_20261116/`. 코드 `src/track/box_refine.py`(`LostHold`, `lost_boxes`), `src/web/lost_marks.py`(`pool_now`), `src/web/page_handler.py`(`_lost_marks`).
 
 **녹화 재생** (2026-11-12)
