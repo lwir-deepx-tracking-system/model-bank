@@ -205,6 +205,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     if APP.LIVE.meas is not None:   # v22
         with APP.LIVE.meas_lock:
             if APP.LIVE.meas is not None: APP.LIVE.meas['boxes'].append((t_in, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0, int(b_[4]), float(b_[5]), int(b_[6])) for b_ in stab_rows_real(display_rows, sC_)]))   # v22d
+            if APP.LIVE.meas is not None and not APP.LIVE.meas['video']: APP.LIVE.meas.setdefault('image_ids', []).append(row_.get('image_id'))   # 11-15: without the video, tracks_by_result.csv names each result by its frame name
             if APP.LIVE.meas is not None: APP.LIVE.meas['rows'].append((now_, (now_ - t_in) * 1000.0, float(row_.get('frame_total_ms', 0.0)), float(row_.get('pre_model_ms', 0.0)), float(row_.get('tracker_ms', 0.0)), float(APP.LIVE.cam_fps)))
     fps_ = (len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0
     # v26c: track output timing, independent of whether a JPEG is made.

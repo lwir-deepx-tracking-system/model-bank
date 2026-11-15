@@ -108,7 +108,7 @@ def rules_state():
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), giant_dropped=_giant(), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
                     det_kpt=det_has_kpt(), e2e_live=e2e_live.state(), relink_pred=(bool(getattr(APP.relabeler, 'pred_gate', False)) if APP.relabeler is not None and hasattr(APP.relabeler, 'pred_gate') else None),   # 11-14: the current or the waiting detector gives keypoints -> the keypoint position memories may be chosen
-                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state(), **_temp_keys(), **_pf_keys())   # v32. v40: app / lead / gimbal / warm_on. 11-14: temp_show / temp
+                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state(), **_temp_keys(), **_pf_keys(), **_fast_keys())   # v32. v40: app / lead / gimbal / warm_on. 11-14: temp_show / temp
 
 
 def rules_state_2():
@@ -229,6 +229,9 @@ def rules_request(q_):
         from . import picture_first
         picture_first.set_on(q_['picture_first'][0] in ('1', 'true', 'on'), APP.LIVE)
         print('RULES set picture_first %d' % picture_first.PF['on'], flush=True)
+    if any(k_ in q_ for k_ in ('fast_embed', 'fast_kpts', 'fast_kpts_check')):   # 11-15: same-result speedups of the frame loop (src/common/fast_path.py; NOT kept over a restart)
+        from ..common import fast_path
+        print('RULES set %s -> %s' % (' '.join(fast_path.set_from(q_)), {k_: v_ for k_, v_ in fast_path.state().items() if k_ != 'fast_stat'}), flush=True)
     if 'temp_show' in q_:   # 11-14: skin-temperature labels from the camera's temperature map (display only; NOT kept over a restart)
         from ..detect import skin_temp
         skin_temp.set_show(q_['temp_show'][0] in ('1', 'true', 'on'))
@@ -293,6 +296,14 @@ def _giant():   # 11-15: person boxes dropped as impossibly tall (src/detect/det
         return int(detect_frame.GIANT[0])
     except Exception:
         return None
+
+
+def _fast_keys():   # 11-15: same-result speedups (src/common/fast_path.py)
+    try:
+        from ..common import fast_path
+        return fast_path.state()
+    except Exception:   # noqa: BLE001
+        return {}
 
 
 def _pf_keys():   # 11-15: picture first (src/web/picture_first.py)

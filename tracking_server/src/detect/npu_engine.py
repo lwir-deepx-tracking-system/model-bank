@@ -85,6 +85,7 @@ class AsyncEmbedder:
         self.outs = [np.empty(self.b.get_output_tensor_sizes()[0] // 4, np.float32) for _ in range(n)]
         self.ins = [np.zeros((1, self.H, self.W, 3), np.uint8) for _ in range(n)]; self.sub_ms = []; self.col_ms = []; self.inflight = 0
         self.quarantined = False
+        self.reserved = None   # 11-15: (slots below this number may be busy, jobs in flight) while refresh crops wait for collect(); rl_embed uses the slots above
 
     def _require_usable(self):
         if self.quarantined:
@@ -134,11 +135,12 @@ class AsyncEmbedder:
         except BaseException:
             self._drain_known(job for _, job in jobs)
             raise
+        self.reserved = (min(len(ks), self.n), len(jobs))
         self.sub_ms.append((time.perf_counter_ns() - t_) / 1e6)
 
         def collect():
             self._require_usable()
-            t2 = time.perf_counter_ns(); got = dict(extra)
+            t2 = time.perf_counter_ns(); got = dict(extra); self.reserved = None
             try:
                 while jobs:
                     k_, job = jobs.popleft()

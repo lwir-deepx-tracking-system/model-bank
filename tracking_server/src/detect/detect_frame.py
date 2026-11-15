@@ -3,6 +3,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import PERSON_CLS
+from ..common.fast_path import FAST, STAT
 from ..detect.model_scan import S6_DETS, W480_DETS, E2E_DETS, RAW_DETS, KPT_DETS
 
 
@@ -36,6 +37,36 @@ def _kp_grid(h, w):
     return g
 
 
+def _kp_anchors_loop(d, rows, only=None):
+    """Anchor index of each NMS person row: among the anchors whose person score equals the row's score (all anchors when none does),
+    the one whose box corner is nearest to the row's. One pass over all anchors per row. only = row numbers to do (default all)."""
+    x1 = d[0] - d[2] * .5; y1 = d[1] - d[3] * .5; idx = []
+    for r in (rows if only is None else rows[only]):
+        c = np.flatnonzero(np.abs(d[4] - r[4]) < 1e-6)
+        if len(c) == 0: c = np.arange(d.shape[1])
+        idx.append(int(c[np.argmin(np.abs(x1[c] - r[0]) + np.abs(y1[c] - r[1]))]))
+    return np.array(idx, dtype=np.int64)
+
+
+def _kp_anchors(d, rows):
+    """2026-11-15: the same anchors as _kp_anchors_loop, for all rows at once. Only anchors whose person score is at least the lowest
+    row score (less a margin ten times the match tolerance) can match a row, so the comparison runs on those few (in anchor order,
+    so a tie goes to the same anchor) with the same float32 arithmetic. A row without a matching anchor, or whose best corner
+    distance is not a finite number, is done by the loop."""
+    n = len(rows)
+    if n == 0: return np.zeros(0, np.int64)
+    s = d[4]; r4 = rows[:, 4]
+    S = np.flatnonzero(s > r4.min() - 1e-5)
+    if len(S) == 0 or len(S) * n > 4000000: return _kp_anchors_loop(d, rows)
+    hit = np.abs(s[S][None, :] - r4[:, None]) < 1e-6
+    x1 = d[0][S] - d[2][S] * .5; y1 = d[1][S] - d[3][S] * .5
+    cost = np.abs(x1[None, :] - rows[:, 0:1]) + np.abs(y1[None, :] - rows[:, 1:2]); cost[~hit] = np.inf
+    j = np.argmin(cost, axis=1); idx = S[j].astype(np.int64)
+    redo = np.flatnonzero(~np.isfinite(cost[np.arange(n), j]))
+    if len(redo): STAT['kpts_loop_rows'] += len(redo); idx[redo] = _kp_anchors_loop(d, rows, redo)
+    return idx
+
+
 def attach_kpts(dec, kraw, p_, h, w, yoff):
     """11-14: keypoints of the person boxes NMS kept. dec = decoded candidates [1,20,N] (model px), kraw = raw keypoints [1,51,N] in the same anchor order,
     p_ = NMS rows (model px, before the y shift). A row's anchor is the one whose person score and box equal the row (NMS copies them).
@@ -44,12 +75,11 @@ def attach_kpts(dec, kraw, p_, h, w, yoff):
     try:
         m = p_[:, 5] == 0
         if not m.any(): KP['cur'] = dict(boxes=np.zeros((0, 4), np.float32), kpts=np.zeros((0, 17, 3), np.float32)); return
-        d = dec[0]; x1 = d[0] - d[2] * .5; y1 = d[1] - d[3] * .5; gx, gy, gs = _kp_grid(h, w); rows = p_[m]; idx = []
-        for r in rows:
-            c = np.flatnonzero(np.abs(d[4] - r[4]) < 1e-6)
-            if len(c) == 0: c = np.arange(d.shape[1])
-            idx.append(int(c[np.argmin(np.abs(x1[c] - r[0]) + np.abs(y1[c] - r[1]))]))
-        idx = np.array(idx); k = kraw[0][:, idx].reshape(17, 3, -1).transpose(2, 0, 1).astype(np.float32)
+        d = dec[0]; gx, gy, gs = _kp_grid(h, w); rows = p_[m]
+        idx = _kp_anchors(d, rows) if FAST['kpts'] else _kp_anchors_loop(d, rows)
+        if FAST['kpts_check']:   # both ways on the same frame (a check on a recording)
+            STAT['kpts_checked'] += 1; STAT['kpts_differ'] += int(not np.array_equal(_kp_anchors(d, rows), _kp_anchors_loop(d, rows)))
+        k = kraw[0][:, idx].reshape(17, 3, -1).transpose(2, 0, 1).astype(np.float32)
         out = np.empty_like(k); out[:, :, 0] = (k[:, :, 0] + gx[idx, None]) * gs[idx, None]; out[:, :, 1] = (k[:, :, 1] + gy[idx, None]) * gs[idx, None] + yoff
         out[:, :, 2] = 1. / (1. + np.exp(-k[:, :, 2]))
         b = rows[:, :4].astype(np.float32).copy(); b[:, 1] += yoff; b[:, 3] += yoff

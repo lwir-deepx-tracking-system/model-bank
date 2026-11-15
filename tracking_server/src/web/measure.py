@@ -77,13 +77,18 @@ def meas_stop(memo_=None):
                 i_ = ix_.get(t_)
                 if i_ is None: continue
                 for x1_, y1_, x2_, y2_, tid_, cf_, cl_ in bs_: ft_.write('%d,%d,%d,%.4f,%.2f,%.2f,%.2f,%.2f\n' % (i_, tid_, cl_, cf_, x1_, y1_, x2_ - x1_, y2_ - y1_))
+    if not vinfo_ and len(m_.get('image_ids') or ()) == len(m_['boxes']):   # 11-15: no video: the tracker's boxes per published result, named by the server's frame name (to compare two runs of one recording)
+        with open(md_ / 'tracks_by_result.csv', 'w', encoding='utf-8', newline='') as ft_:
+            ft_.write('result,image_id,track_id,class_id,confidence,x,y,width,height\n')
+            for i_, ((t_, bs_), im_) in enumerate(zip(m_['boxes'], m_['image_ids'])):
+                for x1_, y1_, x2_, y2_, tid_, cf_, cl_ in bs_: ft_.write('%d,%s,%d,%d,%.4f,%.2f,%.2f,%.2f,%.2f\n' % (i_, im_, tid_, cl_, cf_, x1_, y1_, x2_ - x1_, y2_ - y1_))
     (md_ / 'README_KO.txt').write_text('측정 %d: %s\n시작 %s, %.1f초\n메모: %s\n\n' % (m_['n'], m_['name'], m_['wall'], secs_, m_['memo']) + (('주의: ' + res_['replay_note'] + '\n\n') if m_.get('replay') else '') +
         'summary.json  요약(지연·처리 시간 p50/p95/p99), 이름·메모, 항목 설명, 프레임별 시간\n'
         'timing.csv    프레임별 시간, 한글 열 이름 (엑셀)\n'
         + ('frames.raw.gz 측정 동안 카메라가 보낸 모든 프레임. 16비트 원본값, 640x480, 리틀 엔디언, 앞에서부터 이어 붙임 (%d장, 놓친 프레임 %d장)\n' % (vinfo_['frames'], vinfo_['dropped']) +
            '              (frames.raw.gz = 무손실 압축. 풀면 원본과 똑같음: gzip -dk frames.raw.gz 또는 파이썬 gzip.open)\n'
            'frames.json   프레임 크기·형식, 각 프레임 도착 시각(측정 시작 후 초)\n'
-           'tracks.csv    우리 추적기 출력: raw_frame(영상 안의 프레임 번호, 0부터), 추적 번호, 클래스(0=사람), 점수, 박스 x,y,w,h (640x480 좌표)\n' if vinfo_ else '영상 저장 안 함\n'), encoding='utf-8')
+           'tracks.csv    우리 추적기 출력: raw_frame(영상 안의 프레임 번호, 0부터), 추적 번호, 클래스(0=사람), 점수, 박스 x,y,w,h (640x480 좌표)\n' if vinfo_ else '영상 저장 안 함\ntracks_by_result.csv 우리 추적기 출력: result(내보낸 결과 순번, 0부터), image_id(서버가 붙인 프레임 이름), 추적 번호, 클래스(0=사람), 점수, 박스 x,y,w,h (640x480 좌표). 사람이 없는 결과는 줄이 없음\n'), encoding='utf-8')
     with open(md_ / 'timing.csv', 'w', encoding='utf-8-sig', newline='') as fc_:   # utf-8-sig: Excel reads the Korean header
         fc_.write('# 측정 ' + str(m_['n']) + ': ' + m_['name'].replace(',', ' ') + ' | 시작 ' + m_['wall'] + ' | 메모: ' + m_['memo'].replace('\n', ' / ').replace(',', ' ') + '\n')
         fc_.write('프레임순번,측정시작후_초,입력출력지연_ms,처리시간_ms,NPU대기_ms,트래커_ms,카메라_fps\n')

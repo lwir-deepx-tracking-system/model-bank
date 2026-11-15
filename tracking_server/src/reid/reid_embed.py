@@ -5,6 +5,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE, PERSON_CLS, sha
+from ..common import fast_path
 
 
 def _crop_into(gray, box, output, width, height):
@@ -17,11 +18,11 @@ def _crop_into(gray, box, output, width, height):
     return True
 
 
-def _embed_slot_batch(engine, keys, gray, boxes, got):
+def _embed_slot_batch(engine, keys, gray, boxes, got, base=0):
     start = time.perf_counter_ns()
     jobs = deque()
     try:
-        for slot, key in enumerate(keys):
+        for slot, key in enumerate(keys, base):
             if not _crop_into(gray, boxes[key], engine.ins[slot], engine.W, engine.H):
                 continue
             jobs.append((key, engine._submit_slot(slot), engine.outs[slot].size))
@@ -39,26 +40,41 @@ def _embed_slot_batch(engine, keys, gray, boxes, got):
         raise
     if count:
         if not engine.birth_pipeline_batches:
-            print('REID same-frame pipeline active: max 2 jobs, shared KeepID/BoT-SORT/refresh-overflow path', flush=True)
+            print('REID same-frame pipeline active: max %d jobs, shared KeepID/BoT-SORT/refresh-overflow path' % (fast_path.EMBED_MAX if fast_path.FAST['embed'] else 2), flush=True)
         engine.birth_pipeline_batches.append((count, (time.perf_counter_ns() - start) / 1e6))
+
+
+def _free_slots(engine):
+    """(first free slot, crops at a time) of the slot engine, or None when the crops must go one by one.
+    Nothing in flight: all slots. 2026-11-15 (fast_path 'embed'): while only KeepID's refresh crops of the last frame are in flight
+    (AsyncEmbedder.submit wrote down which slots they may hold), the slots above them are free, and up to EMBED_MAX crops go together."""
+    fast = fast_path.FAST['embed']
+    if engine.inflight == 0:
+        return 0, (min(fast_path.EMBED_MAX, engine.n) if fast else 2)
+    held = getattr(engine, 'reserved', None)
+    if not fast or held is None or held[1] != engine.inflight or engine.n - held[0] < 2:
+        return None
+    return held[0], min(fast_path.EMBED_MAX, engine.n - held[0])
 
 
 def rl_embed(ks, g_, boxes):
     """Return features within this call for KeepID, BoT-SORT, and refresh overflow.
 
-    Optional slot batches use at most two batch-1 jobs. Their wall time is recorded
+    Optional slot batches use a few batch-1 jobs at a time (see _free_slots). Their wall time is recorded
     separately from serial per-crop and deferred-refresh timings.
     """
     if os.environ.get('LWIR_REID_BIRTH_PIPELINE') == '1':
         engine = vars(APP).get('rl_async')
-        if engine is not None and not engine.quarantined and engine.inflight == 0 and engine.n > 1:
+        free = _free_slots(engine) if engine is not None and not engine.quarantined and engine.n > 1 else None
+        if free is not None:
             ks = tuple(ks)
             if len(ks) > 1:
                 if not hasattr(engine, 'birth_pipeline_batches'):
                     engine.birth_pipeline_batches = deque(maxlen=512)
-                got = {}
-                for start in range(0, len(ks), 2):
-                    _embed_slot_batch(engine, ks[start:start + 2], g_, boxes, got)
+                got = {}; base, step = free
+                for start in range(0, len(ks), step):
+                    _embed_slot_batch(engine, ks[start:start + step], g_, boxes, got, base)
+                    fast_path.STAT['embed_batches'] += 1; fast_path.STAT['embed_beside_refresh'] += int(base > 0)
                 return got
 
     got = {}
