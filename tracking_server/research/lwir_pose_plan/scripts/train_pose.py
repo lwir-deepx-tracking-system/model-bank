@@ -39,6 +39,8 @@ def main():
     # Occlude v4 (2026-11-15): real office patches (tools/build_occluder_bank.py), heavy-occluder share ramp start end n_epochs, keep box-only people
     ap.add_argument('--office-bank', default=None); ap.add_argument('--bank-share', type=float, default=0.5)
     ap.add_argument('--heavy-ramp', type=float, nargs=3, default=None); ap.add_argument('--keep-unlabelled', type=int, default=0)
+    ap.add_argument('--box-only-body', type=int, default=1)   # 11-15: box-only people get a body box by the measured ratio (pose_partial.BOX_ONLY); 0 = the runs before 11-15
+    ap.add_argument('--save-period', type=int, default=10)   # 11-15: pick the epoch by our indoor + far scores, not by the noisy val fitness
     # Fine-tuning settings. The first run (optimizer=auto -> AdamW 0.002, warmup_bias_lr 0.1 for 3 epochs) fell from pose mAP 0.79 to 0.20 after
     # epoch 1 and needed 12 epochs to get back to 0.65. Lower rate, short warm-up, no bias boost.
     ap.add_argument('--lr0', type=float, default=0.0005); ap.add_argument('--warmup-epochs', type=float, default=1.0)
@@ -55,16 +57,17 @@ def main():
     Trainer = pose_partial.make_trainer(partial_p=a.partial_p, body_box_template=a.template, occlude_p=a.occlude_p, thermal_look=bool(a.thermal_look),
                                         office_bank=a.office_bank, bank_share=a.bank_share, heavy_ramp=a.heavy_ramp, keep_unlabelled=bool(a.keep_unlabelled))
     over = dict(model=a.weights, data=a.data, epochs=a.epochs, batch=a.batch, imgsz=a.imgsz, device=a.device, workers=a.workers, seed=a.seed,
-                project=a.project, name=a.name, exist_ok=False, fraction=a.fraction, plots=True, save_period=10, patience=a.patience,
+                project=a.project, name=a.name, exist_ok=False, fraction=a.fraction, plots=True, save_period=a.save_period, patience=a.patience,
                 amp=True, deterministic=not a.fast, cache='ram' if a.fast else False,
                 optimizer='AdamW', lr0=a.lr0, lrf=0.1, warmup_epochs=a.warmup_epochs, warmup_bias_lr=0.0,
                 mosaic=0.0, close_mosaic=0, mixup=0.0, copy_paste=0.0, scale=0.5, translate=0.2, degrees=5.0, fliplr=0.5, hsv_h=0.0, hsv_s=0.0,
                 hsv_v=0.0 if a.thermal_look else 0.4)          # ThermalLook does the brightness changes itself
+    pose_partial.BOX_ONLY['on'] = bool(a.box_only_body)
     t = Trainer(overrides=over)
     manifest = dict(started=time.strftime('%Y-%m-%d %H:%M:%S'), args=vars(a), overrides=over, ultralytics=ultralytics.__version__, torch=torch.__version__,
                     cuda=torch.version.cuda, gpu=torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
                     sha256=dict(weights=sha(a.weights), train_pose=sha(__file__), pose_partial=sha(Path(__file__).with_name('pose_partial.py')), data_yaml=sha(a.data)),
-                    patches=dict(hidden_flag=pose_partial.HIDDEN, ignore_flag=getattr(pose_partial, 'IGNORE', None), area_thr=pose_partial.AREA_THR, occlude_p=a.occlude_p, body_box=a.template is not None, thermal_look=bool(a.thermal_look), office_bank=a.office_bank, bank_share=a.bank_share, heavy_ramp=a.heavy_ramp, keep_unlabelled=bool(a.keep_unlabelled)))
+                    patches=dict(box_only=dict(pose_partial.BOX_ONLY), hidden_flag=pose_partial.HIDDEN, ignore_flag=getattr(pose_partial, 'IGNORE', None), area_thr=pose_partial.AREA_THR, occlude_p=a.occlude_p, body_box=a.template is not None, thermal_look=bool(a.thermal_look), office_bank=a.office_bank, bank_share=a.bank_share, heavy_ramp=a.heavy_ramp, keep_unlabelled=bool(a.keep_unlabelled)))
     t.save_dir.mkdir(parents=True, exist_ok=True)
     (t.save_dir / 'RUN_MANIFEST.json').write_text(json.dumps(manifest, indent=1))
     t.train()

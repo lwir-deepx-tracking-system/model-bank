@@ -36,10 +36,25 @@ _INSTALLED = [False]
 # ---- body-box mode (user decision 2026-11-13: "let the model learn the stable box itself") ------------------------------------------------
 # When BODY['template'] is set, the box label of every person is no longer the visible part but the BODY BOX: the fixed rectangle of the
 # template skeleton (head top to hips, tools/skeleton_box.py) fitted to that person's labelled keypoints. It is NOT clipped to the picture, so a
-# person who is cut off keeps the same box and the network has to regress it from whatever it sees. People with fewer than 2 labelled keypoints
-# (or a degenerate fit) keep their original box. Validation uses the same body box clipped to the picture, because the stock validator clips
-# predictions to the picture as well.
+# person who is cut off keeps the same box and the network has to regress it from whatever it sees. Validation uses the same body box clipped to
+# the picture, because the stock validator clips predictions to the picture as well.
+# People with fewer than 2 labelled keypoints (or a degenerate fit): until 2026-11-15 they kept their ORIGINAL full box. 23 % of the COCO people
+# (25,598 of 111,513, median height 36 px) are such box-only people, so the models learned a whole-person box for small people (public check
+# 11-15: the far model's box reaches the feet under ~100 px and is head-to-hip above, a ~2x jump). Plan 6-1 already said to convert them with a
+# fixed ratio; the training and validation transforms now do (convert_box_only=True): the body box is placed inside the person's own box with the
+# median relation of well-labelled people (>= 12 visible keypoints) of COCO, where nearly all box-only people are: top +0.002 h, height 0.531 h,
+# centre -0.006 w, width 0.681 w (n 32,951; height IQR 0.487-0.582; MOT17 0.505 at every size from <50 to 200 px, so it is scale-free).
+# Measured by measure_bodybox_ratio.py, result close_range_20261113/stage1/bodybox_ratio_20261115.json. Set BOX_ONLY['on'] = False to train
+# exactly like the runs before 11-15.
 BODY = dict(template=None)
+BOX_ONLY = dict(on=True, top=0.002, height=0.531, cx=-0.006, width=0.681)
+
+
+def box_only_body(b):
+    """Body box inside the person's own box (xyxy) with the BOX_ONLY median relation (for people without enough keypoints)."""
+    x1, y1, x2, y2 = (float(v) for v in b[:4]); w, h = x2 - x1, y2 - y1
+    cx = 0.5 * (x1 + x2) + BOX_ONLY['cx'] * w; top = y1 + BOX_ONLY['top'] * h; bw, bh = BOX_ONLY['width'] * w, BOX_ONLY['height'] * h
+    return np.array([cx - 0.5 * bw, top, cx + 0.5 * bw, top + bh], np.float32)
 
 
 def _sb():
@@ -58,19 +73,28 @@ def set_body_box(template_points_npy):
     BODY['template'] = SB.template_from_points(np.load(str(template_points_npy)))
 
 
-def to_body_boxes(bboxes, keypoints, size=None):
-    """bboxes (N, 4) xyxy pixels, keypoints (N, 17, 3) pixels -> body boxes (N, 4). size=(w, h) only limits absurd fits."""
+def to_body_boxes(bboxes, keypoints, size=None, convert_box_only=False):
+    """bboxes (N, 4) xyxy pixels, keypoints (N, 17, 3) pixels -> body boxes (N, 4). size=(w, h) only limits absurd fits.
+    convert_box_only (11-15, the training / validation transforms): a person with < 2 usable keypoints or a failed fit gets box_only_body(box)
+    instead of keeping the full box (other callers, e.g. scoring scripts that pass a dummy box, keep the old behaviour)."""
     T = BODY['template']
     if T is None or keypoints is None or len(bboxes) == 0: return bboxes
     SB = _sb(); out = np.asarray(bboxes, np.float32).copy()
     lim = 6.0 * max(size) if size else 1e9
     for i, k in enumerate(np.asarray(keypoints, float)):
         use = (k[:, 2] > 0) & (k[:, 2] != IGNORE)
-        if use.sum() < 2: continue
+        conv = convert_box_only and BOX_ONLY['on']
+        if use.sum() < 2:
+            if conv: out[i] = box_only_body(out[i])
+            continue
         f = SB.fit(T, k[:, :2], use)
-        if f is None: continue
+        if f is None:
+            if conv: out[i] = box_only_body(out[i])
+            continue
         b = SB.box_of(T, f)
-        if not np.isfinite(b).all() or (b[3] - b[1]) < 4 or (b[2] - b[0]) < 4 or (b[3] - b[1]) > lim: continue
+        if not np.isfinite(b).all() or (b[3] - b[1]) < 4 or (b[2] - b[0]) < 4 or (b[3] - b[1]) > lim:
+            if conv: out[i] = box_only_body(out[i])
+            continue
         out[i] = b
     return out
 
@@ -84,7 +108,7 @@ class BodyBoxVal:
         inst.convert_bbox(format='xyxy')
         h, w = labels['img'].shape[:2]
         if inst.normalized: inst.denormalize(w, h)
-        b = to_body_boxes(inst.bboxes, inst.keypoints, (w, h))
+        b = to_body_boxes(inst.bboxes, inst.keypoints, (w, h), convert_box_only=True)
         c = b.copy(); c[:, [0, 2]] = c[:, [0, 2]].clip(0, w); c[:, [1, 3]] = c[:, [1, 3]].clip(0, h)
         ok = ((c[:, 2] - c[:, 0]) > 2) & ((c[:, 3] - c[:, 1]) > 2)
         inst.bboxes[ok] = c[ok]
@@ -571,7 +595,7 @@ def install():
         instances.convert_bbox(format='xyxy')
         instances.denormalize(*params['orig_shape'][::-1])
         M = params['M']; w, h = params['size']
-        body = to_body_boxes(instances.bboxes, instances.keypoints, params['orig_shape'][::-1])
+        body = to_body_boxes(instances.bboxes, instances.keypoints, params['orig_shape'][::-1], convert_box_only=True)
         bboxes = self.apply_bboxes(body, M)
         keypoints = self.apply_keypoints(instances.keypoints, M, params['size'])
         clipped = bboxes.copy(); clipped[:, [0, 2]] = clipped[:, [0, 2]].clip(0, w); clipped[:, [1, 3]] = clipped[:, [1, 3]].clip(0, h)

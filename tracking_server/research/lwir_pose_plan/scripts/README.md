@@ -7,7 +7,9 @@
 
 | 파일 | 하는 일 |
 | --- | --- |
-| `pose_partial.py` | Ultralytics 를 그 프로세스 안에서만 고친다: 화면 밖으로 나간 관절은 "안 보임(1)"으로 남김, 보임 출력은 "보임(2)"으로 학습, 머리~엉덩이 몸 상자(뼈대 틀 맞추기), 부분 잘라 확대(PartialCrop), 가림(Occlude v3/v4), 열화상 화질 흉내(ThermalLook), 무시 표시(3: 자료에 없는 칸은 위치·보임·몸 상자 계산에서 모두 뺌), 상자만 있는 사람 지우지 않기(keep_unlabelled) |
+| `pose_partial.py` | Ultralytics 를 그 프로세스 안에서만 고친다: 화면 밖으로 나간 관절은 "안 보임(1)"으로 남김, 보임 출력은 "보임(2)"으로 학습, 머리~엉덩이 몸 상자(뼈대 틀 맞추기), 부분 잘라 확대(PartialCrop), 가림(Occlude v3/v4), 열화상 화질 흉내(ThermalLook), 무시 표시(3: 자료에 없는 칸은 위치·보임·몸 상자 계산에서 모두 뺌), 상자만 있는 사람 지우지 않기(keep_unlabelled) 11-15: 관절 2개 미만인 사람도 학습·검증 변환에서 몸 상자로 바꿈(`BOX_ONLY`, 잰 비율 0.531). |
+| `test_box_only.py` | 11-15: 상자만 있는 사람이 학습·검증 변환에서 비율대로 몸 상자가 되고, 다른 호출은 그대로인지 시험 (`TP=<template_points.npy>` 로 틀 경로를 줄 수 있음). |
+| `measure_bodybox_ratio.py` | 11-15: 학습 자료마다 몸 상자가 사람 상자 안에 어디 놓이는지(관절 12개 이상 보이는 사람의 가운뎃값)와 상자만 있는 사람 수를 잼. 결과 `../results/bodybox_ratio_20261115.json`. |
 | `train_pose.py` | 학습 실행. `--office-bank --bank-share --heavy-ramp --keep-unlabelled` 는 가림 v4. 실행 폴더에 RUN_MANIFEST.json(인자, 판, sha256) |
 | `skeleton_box.py`, `template_points.npy` | 뼈대 틀과 몸 상자 계산 |
 | `otp2_coco_mot17.yaml` | 실험 E·R0 자료 (OTP2 + 흑백 COCO + 흑백 MOT17) |
