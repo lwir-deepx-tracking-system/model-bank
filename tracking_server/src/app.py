@@ -145,7 +145,7 @@ def main():
     ap.add_argument('--live-cam', default='', help='v14: path of the cam_pipe helper (default: src/camera/cam_pipe)')
     ap.add_argument('--cam-temp', type=int, default=0, help='11-14 research (default 0 = off = unchanged): pass LWIR_CAM_TEMP=N to cam_pipe (v2.11): it puts the camera\'s temperature map of some frames into /dev/shm/lwir_temp_ring_<uid> (src/camera/temp_ring.py) for the skin-temperature labels (/rules/set?temp_show=1). A LWIR_CAM_TEMP in the environment is passed on as well')
     ap.add_argument('--live-map', choices=['fixed', 'pct'], default='pct', help='v14: 16 -> 8 bit mapping: fixed = linear 0..65535 (team runtime), pct = smoothed 1..99 percentile window')
-    ap.add_argument('--live-scale', type=float, default=1.5, help='v14: display scale of the streamed picture')
+    ap.add_argument('--live-scale', type=float, default=float(os.environ.get('LWIR_LIVE_SCALE', '1.0')), help='v14: display scale of the streamed picture. 11-15 (user: 화면 전송 지연): default 1.0 = 640x480 (was 1.5 = 960x720, 2.25x the bytes); LWIR_LIVE_SCALE=1.5 for the old size')
     ap.add_argument('--mamba', default='', help='v18: folder of the Mamba relabeler (replaces --judge); needs --relabel and --gmc')
     ap.add_argument('--mamba-crops', type=int, default=3, help='v18: appearance crops per frame for the Mamba relabeler')
     ap.add_argument('--gimbal', default='', help='v19: serial device of the gimbal (e.g. /dev/ttyUSB0). Live server only: a click on a person on the web page makes the gimbal follow that ID')

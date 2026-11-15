@@ -19,6 +19,27 @@ from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
 from . import system_buttons
 from . import preview_worker
+
+try:   # 11-15 (user: 화면 전송 지연): bytes still queued in a viewer's socket (Linux TIOCOUTQ = not yet acknowledged), see /stream
+    import fcntl as _fcntl
+    import struct as _struct
+    import termios as _termios
+
+    def stream_outq(sock):
+        try:
+            return _struct.unpack('i', _fcntl.ioctl(sock.fileno(), _termios.TIOCOUTQ, b'\0\0\0\0'))[0]
+        except (OSError, ValueError, _struct.error):
+            return 0
+    STREAM_OUTQ = int(os.environ.get('LWIR_STREAM_OUTQ', '4096'))   # wait while more than this many bytes are queued; < 0 turns the wait off
+    if STREAM_OUTQ < 0:
+        STREAM_OUTQ = None
+except ImportError:   # not Linux: no wait (old behaviour)
+    STREAM_OUTQ = None
+
+    def stream_outq(sock):
+        return 0
+STREAM_FIRST_PART = b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
+STREAM_NEXT_PART = b'\r\n' + STREAM_FIRST_PART
 from ..camera import replay_eval   # 11-12: ground-truth comparison while a labelled recording is replayed
 from ..camera import stall_diag   # 11-13: stall log (LWIR_STALL_DIAG=1 only)
 
@@ -465,9 +486,10 @@ def make_lv_Handler():
                 if self.path.startswith('/stream'):
                     self.send_response(200); self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame'); self.send_header('Cache-Control', 'no-cache'); self.end_headers()
                     try:   # v26b: a slow viewer must get the newest picture, not a queue of old ones: small send buffer (about 2 pictures), no Nagle delay; a viewer that takes nothing for 30 s is closed (the page opens the stream again)
-                        self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.setsockopt(APP.lv_sock.SOL_SOCKET, APP.lv_sock.SO_SNDBUF, 65536); self.connection.settimeout(30)
+                        self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.setsockopt(APP.lv_sock.SOL_SOCKET, APP.lv_sock.SO_SNDBUF, 32768); self.connection.settimeout(30)   # 11-15: 32 KB (was 64 KB); the queue wait below keeps at most one picture in flight
                     except OSError: pass
                     last_ = 0; fresh_ = False
+                    self.wfile.write(STREAM_FIRST_PART)   # 11-15: the first part's boundary and headers now; each picture is followed by the next part's (no Content-Length)
                     with APP.LIVE.jcond: APP.LIVE.viewers += 1   # 11-12: pictures are made for every frame while this is above 0
                     try:
                      while not APP.LIVE.stopped:
@@ -480,7 +502,14 @@ def make_lv_Handler():
                              if APP.LIVE.seq == last_ and (APP.LIVE.stopped or not APP.LIVE.jpeg): fresh_ = False; continue
                              fresh_ = APP.LIVE.seq != last_
                              last_ = APP.LIVE.seq; jb_ = APP.LIVE.jpeg
-                         self.wfile.write(b'--frame\r\nContent-Type: image/jpeg\r\nContent-Length: %d\r\n\r\n' % len(jb_) + jb_ + b'\r\n')
+                         if STREAM_OUTQ is not None:   # 11-15 (user: 화면 전송 지연): on a slow link the old ~128 KB socket queue held about 1 s of
+                             # pictures per viewer. Wait until the previous picture has left this socket (unacknowledged bytes below
+                             # LWIR_STREAM_OUTQ), then send the NEWEST picture: a slow viewer gets fewer pictures, never old ones.
+                             t_w_ = time.monotonic()
+                             while not APP.LIVE.stopped and stream_outq(self.connection) > STREAM_OUTQ and time.monotonic() - t_w_ < 30: time.sleep(0.01)
+                             with APP.LIVE.jcond:
+                                 if APP.LIVE.jpeg: last_ = APP.LIVE.seq; jb_ = APP.LIVE.jpeg
+                         self.wfile.write(jb_ + STREAM_NEXT_PART)   # the next part's boundary and headers go right after each picture: browsers draw a part only once the next part's headers arrive (Chromium/WebKit/Firefox checked 11-15), so this removes one picture interval of delay
                     finally:
                         with APP.LIVE.jcond: APP.LIVE.viewers -= 1
                 elif self.path.startswith('/gimbal/people') and APP.GB is not None:   # v19: read only

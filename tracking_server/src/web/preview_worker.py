@@ -10,6 +10,8 @@ import time
 # 11-13 (user, design review): the page shows mode, speed and gimbal state as chips, so the red / black text bars are no
 # longer drawn into the picture. LWIR_PICTURE_BANNER=1 draws them again (for viewers of /stream without the page).
 PICTURE_BANNER = os.environ.get('LWIR_PICTURE_BANNER') == '1'
+# 11-15 (user: 화면 전송 지연): the page picture's JPEG quality (was 80). 70 makes the noisy thermal picture smaller for slow links.
+JPEG_QUALITY = min(95, max(30, int(os.environ.get('LWIR_STREAM_JPEG_Q', '70'))))
 FOLLOW_COLOR = (0, 220, 255)   # the colour page_handler gives the followed person's box
 
 import numpy as np
@@ -123,7 +125,7 @@ def render_preview(cv2, frame):
     if PICTURE_BANNER and frame.gimbal_text is not None:
         cv2.rectangle(img, (0, 26), (ww, 50), (0, 0, 0), -1)
         cv2.putText(img, frame.gimbal_text, (8, 44), font, 0.55, frame.gimbal_color, 1)
-    ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
     return buf.tobytes() if ok and buf is not None else None
 
 

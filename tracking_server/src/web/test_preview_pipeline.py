@@ -526,7 +526,7 @@ class PublishTests(PublishFixture):
         with self.live.jcond:
             self.assertTrue(self.live.jcond.wait_for(lambda: self.live.seq == 2, timeout=3))
         image = cv2.imdecode(np.frombuffer(self.live.jpeg, np.uint8), cv2.IMREAD_COLOR)
-        self.assertEqual(image[350, 350].tolist(), [75, 75, 75])
+        self.assertTrue(all(abs(v - 75) <= 3 for v in image[350, 350].tolist()), image[350, 350].tolist())   # JPEG rounding (quality is LWIR_STREAM_JPEG_Q); 255 would mean the later frame leaked in
         self.assertGreater(int(image[100:104, 100:140].max()), 100)
         self.assertEqual(self.controls[-1][0][0], 7)
 
