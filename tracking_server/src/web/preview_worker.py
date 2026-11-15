@@ -42,6 +42,7 @@ class PreviewFrame:
     replay_position: tuple | None = None
     proposals: tuple = ()   # 11-14: ((x1, y1), (x2, y2), score, covered) people proposals from the spatial spectrum
     temps: tuple = ()   # 11-14: ((x1, y1), (x2, y2), text, colour) skin-temperature labels of person boxes (src/detect/skin_temp.py)
+    seek: tuple | None = None   # 11-16: (phase, cx, cy, sweep half-width, target offset or None) of the gimbal's search, picture px x scale (gimbal/search_follow.py)
 
 
 def transition_jpeg(cv2):
@@ -111,6 +112,13 @@ def render_preview(cv2, frame, keep=None):
                 cv2.arrowedLine(img, path[-2] if len(path) > 2 else path[0], path[-1], col, 2, tipLength=0.4)
         _dash_rect(cv2, img, p1, p2, col, 2, 7)
         cv2.putText(img, lab, (p1[0], max(p1[1] - 4, 12)), font, 0.55, col, 2)
+    if frame.seek is not None and frame.seek[0] in (2, 3):   # 11-16: the gimbal is searching: the span its centre sweeps around the predicted place, and where it is heading
+        ph, sx, sy, sa, sto = frame.seek
+        sx, sy, sa = int(sx), int(sy), int(sa)
+        cv2.line(img, (sx - sa, sy), (sx + sa, sy), FOLLOW_COLOR, 1, cv2.LINE_AA)
+        for ex in (sx - sa, sx + sa): cv2.line(img, (ex, sy - 8), (ex, sy + 8), FOLLOW_COLOR, 2)
+        if sto is not None: cv2.circle(img, (sx + int(sto), sy), 5, FOLLOW_COLOR, -1, cv2.LINE_AA)
+        cv2.putText(img, 'SEARCH' if ph == 2 else 'BACK', (max(2, sx - sa), max(14, sy - 12)), font, 0.55, FOLLOW_COLOR, 2)
     for p1, p2, sc_, cov_ in frame.proposals:   # 11-14 (user: an aid for what the detector missed)
         if cov_:   # on a person the detector has: faint thin dashes, no text
             _dash_rect(cv2, img, p1, p2, (140, 60, 140), 1, 4)

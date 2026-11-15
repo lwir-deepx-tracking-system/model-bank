@@ -11,7 +11,7 @@ import numpy as np
 
 from ..common.state import APP
 from ..track.stabilizer import stab_people_real
-from . import follow_guard, predictive_lead
+from . import follow_guard, predictive_lead, search_follow
 from .gimbal_link import reset_lead, without_lead
 
 
@@ -307,6 +307,64 @@ def coast_switch_state():
     return (mode or coast_mode_env()) if on else 'off'
 
 
+# 11-16 (user: while the prediction is shown the gimbal should search there too): SEEK, see search_follow.py. On when the
+# running bridge said SEEK_CONTROL 1 (started with --seek 1); that one option is the switch. For tests, LWIR_SEEK_SWITCH=<file>
+# makes it a runtime switch like LWIR_COAST_SWITCH: on only while the file exists (read at most every COAST_SWITCH_S).
+SEEK_SWITCH = dict(path=None, checked=float('-inf'), on=True, said=None)
+
+
+def seek_enabled(gb):
+    if not getattr(gb, 'seek_control_supported', False):
+        return False
+    path = os.environ.get('LWIR_SEEK_SWITCH')
+    if not path:
+        return True
+    s = SEEK_SWITCH
+    now = time.monotonic()
+    if s['path'] != path or now - s['checked'] >= COAST_SWITCH_S:
+        s.update(path=path, checked=now, on=os.path.exists(path))
+        if s['said'] != s['on']:
+            s['said'] = s['on']
+            print('SEEK switch %s' % ('on' if s['on'] else 'off: no SEEK is sent'), flush=True)
+    return s['on']
+
+
+def _seek_locked(gb, g, d, selected, frame_t, kal, on_guard, v2):
+    """Called by _guard_locked after the guard's step of this frame. -> the box the gimbal should look at (gb.people
+    coordinates) or None. Also sets /gimbal/people state 'seek' = [phase, cx, cy, radius, amplitude, pan, target or None]
+    (search_follow.PHASES; the circle and the sweep the page draws) and the guard's wide gate for the next frame."""
+    sk = getattr(gb, 'fseek', None)
+    if sk is None or sk.sel != selected:
+        sk = gb.fseek = search_follow.Seek(selected)
+    lost = bool(d['mask']) or not any(int(q[0]) == selected for q in gb.people)
+    if not lost or g.trust is None:
+        if g.trust is not None and g.trust_t == frame_t:
+            sk.seen(g.trust, gb.people, getattr(g, 'partners', ()))
+        elif sk.phase != 'idle':
+            sk.seen_untrusted()
+        if v2: g.wide = None
+        gb.state.pop('seek', None)
+        gb.seek_phase = None
+        return None
+    sy = _bridge_option(gb, '--aim-screen-y')
+    try: sy = float(sy) if sy is not None else .5
+    except ValueError: sy = .5
+    ay = _bridge_aim_y(gb)
+    can = (not on_guard) or (v2 and bool(g.tmpl))
+    if getattr(g, 'partners', None):   # another box was on ours when it went missing: someone is right there
+        sk.near = max(sk.near, 1)
+    box, st = sk.step(frame_t, g.age(frame_t), g.trust, (g.vx, g.vy), kal, g.pred, _motion, (float(APP.LIVE_W), float(APP.LIVE_H)),
+                      (APP.LIVE_W / 2., sy * APP.LIVE_H), .5 if ay is None else ay, hidden=bool(d['mask']), can_reaccept=can)
+    if v2:   # the same number may come back anywhere in the displayed circle, by appearance (not in a crowd)
+        g.wide = (st['c'][0], st['c'][1], st['r']) if st['phase'] not in ('crowd', 'blind') else None
+    if st['phase'] != getattr(gb, 'seek_phase', None):
+        gb.seek_phase = st['phase']
+        if st['phase'] in ('sweep', 'return', 'crowd', 'blind'):
+            print('SEEK %d: %s (circle %.0f px, sweep +-%.0f px, %d near, %d others)' % (selected, st['phase'], st['r'], st['a'], st['near'], st['others']), flush=True)
+    gb.state['seek'] = [st['ph'], st['c'][0], st['c'][1], st['r'], st['a'], st['pan'], st['to']]
+    return box
+
+
 def guard_enabled():
     """11-15: LWIR_FOLLOW_GUARD=1 (v1, position and motion) or 2 (v2, + appearance; off by default): the wrong-person guard of
     follow_guard.py decides what the gimbal follows."""
@@ -386,11 +444,15 @@ def _guard_locked(gb, selected, frame_t):
     if sw is not None:
         gb.state['coast_sw'] = sw   # read by /gimbal/people (live A/B log)
     on_guard, on_coast = guard_enabled(), coast_enabled(gb) and coast_switch()[0]
-    if (not (on_guard or on_coast or predict_log_enabled()) or not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0)
+    on_seek = seek_enabled(gb)   # 11-16
+    gb.seek_out = None
+    if (not (on_guard or on_coast or on_seek or predict_log_enabled()) or not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0)
             or getattr(gb, 'mover', None) or getattr(gb, 'selection_reset', False) or not getattr(gb, 'people_t', 0.0)):
         if not selected or not gb.state.get('auto'):
             gb.fguard = None
+            gb.fseek = None
             gb.state.pop('guard', None)
+            gb.state.pop('seek', None)
         return 0, None
     v2 = os.environ.get('LWIR_FOLLOW_GUARD') == '2'
     g = getattr(gb, 'fguard', None)
@@ -410,6 +472,13 @@ def _guard_locked(gb, selected, frame_t):
         k = kal if kal is not None and math.hypot(kal[0] - d['pred'][0], kal[1] - d['pred'][1]) <= follow_guard.COAST_MAX_H * d['pred'][3] else None
         d['pred'] = follow_guard.keep_in_view([d['pred'], k], g.age(frame_t), (APP.LIVE_W / 2., sy * APP.LIVE_H), ay,
                                               (float(APP.LIVE_W), float(APP.LIVE_H)))
+    if on_seek and not d['reselect']:   # 11-16: where to look once the prediction is no longer trusted (search_follow.py)
+        gb.seek_out = _seek_locked(gb, g, d, selected, frame_t, kal, on_guard, v2)
+        if gb.seek_out is not None:
+            d['pred'] = None   # one target per frame: the search has taken over from the coast
+    elif not on_seek:
+        gb.state.pop('seek', None)
+        if v2: g.wide = None
     # read by /gimbal/people (tests): phase, mask, velocity prediction (cx, cy, h), PRED sent, tracker position memory (cx, cy, h),
     # the PRED box centre sent
     gb.state['guard'] = [GUARD_PHASES.get(d['phase'], -1), int(d['mask']),
@@ -425,6 +494,10 @@ def _guard_locked(gb, selected, frame_t):
         gb.guard_n = getattr(gb, 'guard_n', 0) + 1
         print('FOLLOW guard %d -> %d (%s)' % (selected, d['reselect'], d['why']), flush=True)
         return 0, None
+    if v2 and g.wide_reaccepts > getattr(g, 'wide_said', 0):   # 11-16: taken back away from the predicted place (search)
+        g.wide_said = g.wide_reaccepts
+        gb.wide_n = getattr(gb, 'wide_n', 0) + 1
+        print('FOLLOW guard: %d followed again inside the search circle (%s)' % (selected, g.why), flush=True)
     if d['mask'] and not getattr(gb, 'guard_masking', False):
         print('FOLLOW guard: %d hidden from the gimbal (%s)' % (selected, d['why']), flush=True)
     gb.guard_masking = bool(d['mask'])
@@ -542,6 +615,14 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
             if all(map(math.isfinite, q[1:5])):
                 pr = ' PRED %d %.1f %.1f %.1f %.1f' % (selected, q[1], q[2], q[3] - q[1], q[4] - q[2])
                 text = text.replace(' LEAD ', pr + ' LEAD ', 1) if ' LEAD ' in text else text + pr
+        seek = getattr(gb, 'seek_out', None)
+        if seek is not None:   # 11-16: where to look while the person stays lost, for the bridge's --seek 1 (like PRED)
+            cx, cy, w, h = seek
+            q = stab_people_real([(selected, cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2., 1.0)], correction,
+                                 float(APP.LIVE_W), float(APP.LIVE_H))[0]
+            if all(map(math.isfinite, q[1:5])):
+                sk_ = ' SEEK %d %.1f %.1f %.1f %.1f' % (selected, q[1], q[2], q[3] - q[1], q[4] - q[2])
+                text = text.replace(' LEAD ', sk_ + ' LEAD ', 1) if ' LEAD ' in text else text + sk_
         vel = _search_velocity_locked(gb, selected, real, rows, frame_t, correction)
         if vel:   # before LEAD: without_lead() cuts from LEAD to the end of the line
             text = text.replace(' LEAD ', vel + ' LEAD ', 1) if ' LEAD ' in text else text + vel

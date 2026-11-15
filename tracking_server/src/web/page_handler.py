@@ -97,7 +97,7 @@ def _predictions(sc_, marks_, gb_id_):
 
 def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
                       rows_, row_, npers_, now_, fps_, gb_id_, *, owned, click_people=None,
-                      click_ticket=None, replay_position=None, marks=()):
+                      click_ticket=None, replay_position=None, marks=(), seek=None):
     gt_boxes = ()
     if gtd_ is not None and replay_eval.DRAW[0]:
         gt_boxes = tuple(tuple(b) for b in replay_eval.draw_boxes(t_in, gtd_, sC_))
@@ -110,7 +110,7 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
     gtxt_, gc_ = None, (255, 255, 255)
     if APP.GB is not None and rp_ is None:
         st_ = APP.GB.state
-        gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else ('gimbal: lost %d, waiting' % st_['id'] if st_['lost'] else 'gimbal: following %d' % st_['id'] if st_['auto'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle, click a person')
+        gtxt_ = 'gimbal: not running' if not st_['running'] else 'gimbal: ERROR' if st_['error'] else (('gimbal: lost %d, searching' if seek and seek[0] in (2, 3) else 'gimbal: lost %d, waiting') % st_['id'] if st_['lost'] else 'gimbal: following %d' % st_['id'] if st_['auto'] else 'gimbal: manual, moving' if st_['moving'] else 'gimbal: idle, click a person')
         if APP.GB.gui: gu_ = st_['gui']; gtxt_ += ' | GUI %s: sent %d, failed %d' % ('connected' if gu_['client'] else 'no client', gu_['sent'], gu_['failed'])
         if st_['auto']: gc_ = (0, 220, 255)
     gray_ = g_[16:496]
@@ -126,7 +126,9 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
     temps_ = skin_temp.preview_labels(t_in, sc_, sC_, {d_[3] for d_ in draw_}) if skin_temp.TEMP['show'] and overlay_rows is None else ()   # 11-14
     return preview_worker.PreviewFrame(t_in, gray_, sc_, tuple(draw_), gt_boxes,
                                        tuple(predictions), txt_, rp_ is not None, gtxt_, gc_,
-                                       click_people, click_ticket, replay_position, proposals_, temps=temps_)
+                                       click_people, click_ticket, replay_position, proposals_, temps=temps_,
+                                       seek=((int(seek[0]), seek[1] * sc_, seek[2] * sc_, seek[4] * sc_, None if seek[6] is None else seek[6] * sc_)
+                                             if seek and overlay_rows is None and camera_rows is None else None))
 
 
 def _click_live(x, y):
@@ -272,6 +274,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
                                     frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_)
     marks_ = _lost_marks(t_in, display_rows, gb_id_, fps_)   # 11-16: every frame, so the kept marks follow the camera motion
+    seek_ = APP.GB.state.get('seek') if has_gimbal_ and gb_id_ else None   # 11-16: the gimbal's search while the followed person is lost (bridge --seek 1)
     if skin_temp.TEMP['show']:   # 11-14: person boxes in real camera coordinates against the newest temperature map (no labels on a recording); after the gimbal frame (display only)
         skin_temp.on_frame(t_in, [(int(b_[4]), float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0) for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0],
                            ok=raw_valid_ and not rep_ and not replay_link.frame_blocked(t_in))
@@ -297,7 +300,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         click_people, click_ticket = (live_tracks.preview_people(t_in, {b_[4] for b_ in boxes_})
                                       if has_gimbal_ and healthy_ else (None, None))
         msg_ = picture_first.overlay_message(t_in, boxes_, gb_id_, time.perf_counter(), time.time(),
-                                             predictions=_predictions(1.0, marks_, gb_id_))
+                                             predictions=_predictions(1.0, marks_, gb_id_), seek=seek_)
         with APP.LIVE.jcond:
             picture_first.publish_overlay_locked(APP.LIVE, msg_, people=click_people, ticket=click_ticket, frame_t=t_in)
     if not pf_ and preview_allowed_ and (required or APP.LIVE.viewers > 0
@@ -329,7 +332,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         frame_ = _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
                                    rows_, row_, npers_, now_, fps_, gb_id_, owned=async_live_ or async_replay_,
                                    click_people=click_people, click_ticket=click_ticket, replay_position=position,
-                                   marks=marks_)
+                                   marks=marks_, seek=seek_)
         if async_live_ or async_replay_:
             worker_.submit(token_, frame_, requested_at=now_)
         else:

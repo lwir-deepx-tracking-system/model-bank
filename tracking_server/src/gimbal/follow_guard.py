@@ -332,6 +332,12 @@ def keep_in_view(estimates, age, aim, aim_frac, size=(640., 480.)):
 #     prediction or of the tracker's Kalman memory (fused), (d) for N frames in a row.
 # Without a fresh feature for the box in question it falls back to the v1 rules for that frame.
 APP_KEEP, APP_NEAR, APP_MIN, APP_MARGIN, APP_FRESH = 5, 2.0, 0.55, 0.05, 6   # APP_FRESH: feature at most this many frames old
+# 11-16 (gimbal search, search_follow.py): while the gimbal looks for the person inside the displayed search circle, the SAME
+# number may come back anywhere in that circle (KeepID gives it back by appearance and its own search range), not only inside
+# the motion gate. The guard then asks more of the appearance: at least APP_WIDE_MIN, APP_WIDE_MARGIN above every
+# distractor, a height within WIDE_HR x of the last trusted box, and no other box on it. .wide = (cx, cy, radius) of the
+# circle in the coordinates of this frame, or None (= the motion gate only, as before).
+APP_WIDE_MIN, APP_WIDE_MARGIN, WIDE_HR = 0.65, 0.10, 2.0
 
 
 def unit(v):
@@ -351,6 +357,19 @@ class FollowGuardV2(FollowGuard):
         self.tmpl = []
         self.distract = {}
         self.app_masks = self.app_swaps = 0
+        self.wide = None
+        self.wide_reaccepts = 0
+
+    def _wide_ok(self, c, f):
+        """the followed number's box c with feature f is inside the search circle and clearly looks like the person"""
+        if self.wide is None or f is None or self.trust is None:
+            return False
+        if math.hypot(c[0] - self.wide[0], c[1] - self.wide[1]) > self.wide[2]:
+            return False
+        if max(c[3], self.trust[3]) / max(1e-6, min(c[3], self.trust[3])) > WIDE_HR:
+            return False
+        st_, sd = self._sims(f)
+        return st_ is not None and st_ >= APP_WIDE_MIN and st_ >= sd + APP_WIDE_MARGIN
 
     def _feat(self, oid):
         a = self.app(int(oid))
@@ -435,7 +454,16 @@ class FollowGuardV2(FollowGuard):
                 self.partners |= {int(q[0]) for q in people if int(q[0]) != self.sel and iou(mine[1:5], q[1:5]) > RISK_IOU}
             if self.phase in ('risk', 'masked', 'lost') or ov > RISK_IOU:
                 look = self._looks(f)
-                if look == 'distractor' or not self._in_gate(c, t):
+                gate = self._in_gate(c, t)
+                if not gate and ov <= RISK_IOU and self.phase in ('lost', 'masked') and self._wide_ok(c, f):
+                    self.reaccepts += 1; self.wide_reaccepts += 1   # 11-16: found again inside the search circle
+                    self.why = 're-catch in the search circle by appearance'
+                    self._accept(t, c, people, motion, velocity=False)
+                    self.vx = self.vy = 0.
+                    self.phase = 'track'; self.cand_n = 0
+                    self.partners, self.mask_from_risk = set(), False
+                    return self._finish(out, t, mine)
+                if look == 'distractor' or not gate:
                     if self.phase != 'masked':
                         self.app_masks += 1
                         self._mask('looks like a person near it' if look == 'distractor' else 'outside the gate', self.phase == 'risk')

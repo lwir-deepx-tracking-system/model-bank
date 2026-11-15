@@ -38,7 +38,7 @@ function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;n
   let txt,cls='good',sq='';
   if(!t.running){txt='짐벌 프로그램이 꺼져 있습니다';cls='bad';sq='bad';}
   else if(t.error){txt='짐벌 오류: 서버를 다시 켜야 합니다';cls='bad';sq='bad';}
-  else if(t.lost){txt=t.id+'번 놓침, 잠시 기다립니다';cls='warn';sq='lost';}
+  else if(t.lost){const sp=t.seek?t.seek[0]:0;txt=t.id+'번 놓침, '+(sp===2?'짐벌이 주변을 찾는 중':sp===3?'예측 자리로 돌아가는 중':sp===5?'주변에 다른 사람이 있어 훑지 않고 기다립니다':'잠시 기다립니다');cls='warn';sq='lost';}   // 11-16: t.seek = the gimbal's search (bridge --seek 1)
   else if(t.auto){txt=t.id+'번을 따라가는 중';sq='auto';}
   else if(t.moving){txt='수동으로 움직이는 중';sq='man';}
   else if(t.ready===false){txt='짐벌 준비 중';cls='';}

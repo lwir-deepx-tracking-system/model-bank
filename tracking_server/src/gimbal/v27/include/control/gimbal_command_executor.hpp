@@ -19,7 +19,7 @@ struct ControlSnapshot {
     bool moving = false;
     bool error = false;
     std::uint32_t selected_id = 0;
-    int search = 0; // v27: 0 none, 1 grace, 2 follow-through, 3 sweep, 4 done (holding)
+    int search = 0; // v27: 0 none, 1 grace, 2 follow-through, 3 sweep, 4 done (holding); 5 = following the server's SEEK box (--seek 1)
     std::uint64_t command_generation = 0;
     double pan_estimate = 50.0;
     double tilt_estimate = 50.0;
@@ -94,6 +94,8 @@ class GimbalCommandExecutor {
     Track coast_track_{};
     bool coasting_ = false, coasted_ = false;   // following the PRED box now / during this loss
     const Track* coast_target(Clock::time_point now);
+    bool seeking_ = false;   // v27 seek (SmoothingConfig::seek): coast_track_ is the server's SEEK box now
+    const Track* seek_target(Clock::time_point now);
 
     void run();
     void search_step(Clock::time_point now);

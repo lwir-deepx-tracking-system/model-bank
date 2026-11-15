@@ -92,7 +92,8 @@ class PictureFirstTests(PublishFixture):
         page.lost_marks.reset()
         info = dict(src='kalman', n=30, last=(120.0, 216.0, 40.0, 160.0), pts=(), r=320.0)
         APP_GB = page.APP.GB
-        with patch.object(APP_GB, 'state', dict(APP_GB.state)), patch.object(page.live_tracks, 'publish', return_value=42),                 patch.object(page.live_tracks, '_bridge_option', return_value='10000'):
+        with patch.object(APP_GB, 'state', dict(APP_GB.state)), patch.object(page.live_tracks, 'publish', return_value=42), \
+                patch.object(page.live_tracks, '_bridge_option', return_value='10000'):
             with patch.dict(page.POSP, show=True, boxes_t=time.monotonic(), boxes=[(42, (300.0, 216.0, 40.0, 160.0), info)]):
                 self.publish()
             with patch.dict(page.POSP, show=True, boxes_t=time.monotonic(), boxes=[]):   # the tracker dropped the lost track
@@ -105,6 +106,34 @@ class PictureFirstTests(PublishFixture):
                 self.publish(np.array([[100, 116, 140, 276, 42, .9, 0]], np.float32))   # number 42 has a box again
                 self.assertEqual(json.loads(self.live.overlay)['p'], [])
         page.lost_marks.reset()
+
+    def test_the_gimbals_search_goes_in_the_overlay_only_while_following(self):
+        """11-16 (bridge --seek 1): /gimbal/people state 'seek' (search_follow) is sent as 's' so the page can draw
+        '찾는 중' and the span of the sweep; nothing without it or when nobody is followed."""
+        self.enable(True)
+        APP_GB = page.APP.GB
+        with patch.object(APP_GB, 'state', dict(APP_GB.state, seek=[2, 400.4, 240.0, 612.0, 211.0, -80.0, 211.0])):
+            with patch.object(page.live_tracks, 'publish', return_value=42):
+                self.publish()
+            self.assertEqual(json.loads(self.live.overlay)['s'], [2, 400, 240, 612, 211, -80, 211])
+            with patch.object(page.live_tracks, 'publish', return_value=0):
+                self.publish()
+            self.assertNotIn('s', json.loads(self.live.overlay))
+        with patch.object(page.live_tracks, 'publish', return_value=42):
+            self.publish()
+        self.assertNotIn('s', json.loads(self.live.overlay))
+
+    def test_the_drawn_picture_shows_the_search_too(self):
+        from .preview_worker import PreviewFrame, render_preview
+        gray = np.full((480, 640), 75, np.uint8)
+        base = PreviewFrame(time.perf_counter(), gray, 1., (), (), (), 'x', False, None, (255, 255, 255))
+        plain = cv2.imdecode(np.frombuffer(render_preview(cv2, base), np.uint8), cv2.IMREAD_COLOR)
+        import dataclasses
+        drawn = cv2.imdecode(np.frombuffer(render_preview(cv2, dataclasses.replace(base, seek=(2, 400., 240., 150., 150.))), np.uint8), cv2.IMREAD_COLOR)
+        self.assertGreater(int(np.abs(drawn.astype(int) - plain.astype(int)).sum()), 10000)   # the span, its ends, the target dot, 'SEARCH'
+        self.assertGreater(int(drawn[240, 548, 2]), 180)   # the yellow target dot at centre + 150 (a little left of it the end tick)
+        waiting = render_preview(cv2, dataclasses.replace(base, seek=(4, 400., 240., 150., None)))
+        self.assertEqual(waiting, render_preview(cv2, base))   # waiting: nothing drawn
 
     def test_boxes_are_the_smoothed_rows_sent_to_the_gimbal(self):
         """11-15 box_refine: with picture first the page draws the same (smoothed) boxes the gimbal gets, not the tracker rows."""

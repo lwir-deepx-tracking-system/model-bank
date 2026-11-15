@@ -21,6 +21,10 @@
 //   --coast <0|1>               follow the server's predicted place when the followed ID is missing (default 0 = off). With 1:
 //     --coast-ms (800) at most this long from the loss, only on fresh healthy frames whose PRED suffix names the followed ID;
 //     then as without it (STOP, or --search). stdout: COAST_CONTROL 1 at start (the server sends PRED only then).
+//   --seek <0|1>                look where the server points while the followed ID stays lost (default 0 = off). With 1: a fresh healthy
+//     frame whose SEEK suffix names the followed ID is followed with the normal controller, SPD at most --seek-speed (8), every change
+//     of direction through a full STOP, for at most --seek-ms (4500) from the loss; a coast (PRED) inside --coast-ms goes first.
+//     Not with --search 1. stdout: SEEK_CONTROL 1 at start (the server sends SEEK only then); SEARCH 5 while a SEEK box is followed.
 //   --arrival-control <0|1>     1 (default): the control step runs when a tracking result arrives; the 25 ms period timer stays for
 //     time-outs, ramps, coast, search and the heartbeat. 0: a result waits for the next 25 ms period (0..25 ms, as v25).
 //     Same control law, rates and time limits in real time (SmoothingConfig::arrival_control, V27_CHANGES.md).
@@ -36,7 +40,8 @@
 //   G <frame id> <capture time ns> <width> <height> <n> then n times: <id> <x> <y> <w> <h> <confidence>     same, followed (after the newline) by width*height*2 bytes:
 //                  the 16-bit camera frame, row major, native byte order. The people go to the gimbal executor as soon as the header line is read
 //                  (the executor uses only the size of the picture); the picture with the people goes to the PC GUI (video + metadata)
-//   F/G headers may carry optional LEAD <track id> <dx px> <dy px> <control epoch>
+//   F/G headers may carry optional LEAD <track id> <dx px> <dy px> <control epoch>,
+//   PRED <track id> <x> <y> <w> <h> (--coast 1), SEEK <track id> <x> <y> <w> <h> (--seek 1), VEL <track id> <vx> <vy> (--search 1)
 //   and OBS <0|1> suffixes in either order. OBS 1 indicates a validated live observation.
 //   Malformed suffixes cannot enable observation grace.
 //   P              heartbeat of the web page. The first one opens the session. Without one for --heartbeat-ms the executor stops the gimbal and drops the selection
@@ -284,6 +289,13 @@ Options parse(int argc, char** argv)
             s.coast = value == "1";
         }
         else if (name == "--coast-ms") s.coast_ms = std::stoi(value);
+        // v27 seek when lost (default off)
+        else if (name == "--seek") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--seek is 0 or 1");
+            s.seek = value == "1";
+        }
+        else if (name == "--seek-ms") s.seek_ms = std::stoi(value);
+        else if (name == "--seek-speed") s.seek_speed = std::stoi(value);
         // v27 arrival control (default on in this program; SmoothingConfig keeps the team default off)
         else if (name == "--arrival-control") {
             if (value != "0" && value != "1") throw std::invalid_argument("--arrival-control is 0 or 1");
@@ -330,6 +342,8 @@ Options parse(int argc, char** argv)
         throw std::invalid_argument("--search-*: grace/follow >= 0, timeout > grace, sweep > 0, widen 1..4, max >= sweep, tilt >= 0, "
                                     "speeds within --speed-min..--speed-max");
     if (s.coast && (s.coast_ms <= 0 || s.coast_ms > 3000)) throw std::invalid_argument("--coast-ms must be within 1..3000");
+    if (s.seek && (s.search || s.seek_ms <= 0 || s.seek_ms > 10000 || s.seek_speed < c.automatic.speed_min || s.seek_speed > c.automatic.speed_max))
+        throw std::invalid_argument("--seek: not with --search 1, --seek-ms within 1..10000, --seek-speed within --speed-min..--speed-max");
     if (c.gimbal.speed < 1 || c.gimbal.speed > c.gimbal.speed_limit || c.automatic.speed_max < c.automatic.speed_min || c.automatic.speed_max > c.gimbal.speed_limit)
         throw std::invalid_argument("speed outside the device range");
     if ((c.gimbal.x_sign != 1 && c.gimbal.x_sign != -1) || (c.gimbal.y_sign != 1 && c.gimbal.y_sign != -1))
@@ -462,7 +476,8 @@ public:
         TrackLead lead;
         TrackVelocity velocity;   // v27 search
         TrackPrediction prediction;   // v27 coast
-        bool seen_observation = false, seen_lead = false, seen_velocity = false, seen_prediction = false;
+        TrackPrediction seek;         // v27 seek
+        bool seen_observation = false, seen_lead = false, seen_velocity = false, seen_prediction = false, seen_seek = false;
         const int separator = in.peek();
         bool malformed = separator != std::char_traits<char>::eof() &&
             !std::isspace(static_cast<unsigned char>(separator));
@@ -487,6 +502,10 @@ public:
                 seen_prediction = true;
                 if (!read_token(prediction.track_id) || !read_token(prediction.x) || !read_token(prediction.y) ||
                     !read_token(prediction.width) || !read_token(prediction.height)) { malformed = true; break; }
+            } else if (suffix == "SEEK" && !seen_seek) {   // v27 seek: where to look while the followed track stays lost
+                seen_seek = true;
+                if (!read_token(seek.track_id) || !read_token(seek.x) || !read_token(seek.y) ||
+                    !read_token(seek.width) || !read_token(seek.height)) { malformed = true; break; }
             } else {
                 malformed = true;
                 break;
@@ -497,6 +516,7 @@ public:
             if (lead.matches(lead.track_id)) result->lead = lead;
             if (velocity.matches(velocity.track_id)) result->velocity = velocity;
             if (prediction.matches(prediction.track_id)) result->prediction = prediction;
+            if (seek.matches(seek.track_id)) result->seek = seek;
         }
         result->frame = context;
         result->enqueued_at = std::chrono::steady_clock::now();
@@ -656,7 +676,7 @@ int main(int argc, char** argv) try {
     std::atomic<bool> gui_picture{gui && !gui_gated};
     Bridge bridge(executor, gui.get(), session_changes,
                   options.smoothing.observation_grace_ms > 0 || options.smoothing.catchup_speed > 0 ||
-                  options.smoothing.predictive_brake || options.smoothing.search || options.smoothing.coast,
+                  options.smoothing.predictive_brake || options.smoothing.search || options.smoothing.coast || options.smoothing.seek,
                   gui ? &gui_picture : nullptr);
     say("READY");
     say("TRACK_CONTROL 1");
@@ -665,6 +685,7 @@ int main(int argc, char** argv) try {
     if (options.smoothing.search) say("SEARCH_CONTROL 1");
     if (gui) say(std::string("GUI_PICTURE ") + (gui_picture.load() ? "1" : "0"));   // 11-15: the server sends G lines (with the picture) only while 1
     bool reported_picture = gui_picture.load();
+    if (options.smoothing.seek) say("SEEK_CONTROL 1");   // v27: the server may send SEEK <id> <x> <y> <w> <h>
     if (options.smoothing.coast) say("COAST_CONTROL 1");   // v27: the server may send PRED <id> <x> <y> <w> <h>   // v27: the tracker may re-select a re-found person (SEARCH lines follow)
     int reported_search = 0;
     std::string pending, reported;

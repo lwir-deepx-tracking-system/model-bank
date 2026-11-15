@@ -73,6 +73,17 @@ struct SmoothingConfig {
     // or STOP ends it like following.
     bool coast = false;
     int coast_ms = 800;
+    // Seek when lost (11-16, user: "while the prediction is shown the gimbal should search there too"). false = unchanged.
+    // true: while the followed ID is missing and no coast applies, a fresh healthy frame may carry the server's SEEK box for
+    // it (search_follow.py: a point of the displayed search region; the server walks it left-right inside that region and
+    // measures the camera's real turning from the picture). The normal controller follows that box, with three limits that
+    // hold whatever the server sends: the shared SPD never exceeds seek_speed, a change of direction always goes through a
+    // full STOP, and nothing moves later than seek_ms after the loss. The state stays "lost" and the reacquire timeout
+    // runs. Any frame without SEEK, stale, unhealthy, heartbeat loss, mode change or STOP ends it like following.
+    // Not together with search (the open-loop pattern above).
+    bool seek = false;
+    int seek_ms = 4500;
+    int seek_speed = 8;
     // Control step at arrival (11-15, latency audit finding 2). false = the team rule: a new tracking result waits for the
     // worker's own period (period_ms, 25 ms; 0..25 ms, 12.5 ms on average). true: the control step runs as soon as a new
     // result is taken in, and the period timer restarts from there; the timer still runs the step every period_ms for

@@ -250,7 +250,7 @@ setInterval(()=>{const d=$('vdead'),live=!document.body.classList.contains('repl
 let fnPrev=null,fnT=0;
 function fnShow(txt,cls,ms){const v=$('vtoast');v.textContent=txt;v.className='vtoast'+(cls?' '+cls:'');v.hidden=false;fnT=ms?Date.now()+ms:0;}
 function followNote(t){const p=fnPrev||{auto:0,id:0,lost:0,h:t.handoffs||0};fnPrev={auto:t.auto,id:t.id,lost:t.lost,h:t.handoffs||0};
-  if(t.auto&&t.lost){fnShow(t.id+'번 놓침 · 다시 찾는 중'+(lostSince?' '+((Date.now()-lostSince)/1000).toFixed(0)+'초':''),'lost',0);return;}
+  if(t.auto&&t.lost){const sp=t.seek?t.seek[0]:0;fnShow(t.id+'번 놓침 · '+(sp===2?'짐벌이 주변을 찾는 중':sp===3?'예측 자리로 돌아가는 중':'다시 찾는 중')+(lostSince?' '+((Date.now()-lostSince)/1000).toFixed(0)+'초':''),'lost',0);return;}
   if(p.auto&&t.auto&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}
   if(!p.auto&&t.auto)fnShow(t.id+'번 따라가기 시작','',2000);
   else if(p.auto&&!t.auto)fnShow('따라가기 멈춤','',2000);

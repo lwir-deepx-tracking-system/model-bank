@@ -726,7 +726,7 @@ function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;n
   let txt,cls='good',sq='';
   if(!t.running){txt='짐벌 프로그램이 꺼져 있습니다';cls='bad';sq='bad';}
   else if(t.error){txt='짐벌 오류: 서버를 다시 켜야 합니다';cls='bad';sq='bad';}
-  else if(t.lost){txt=t.id+'번 놓침, 잠시 기다립니다';cls='warn';sq='lost';}
+  else if(t.lost){const sp=t.seek?t.seek[0]:0;txt=t.id+'번 놓침, '+(sp===2?'짐벌이 주변을 찾는 중':sp===3?'예측 자리로 돌아가는 중':sp===5?'주변에 다른 사람이 있어 훑지 않고 기다립니다':'잠시 기다립니다');cls='warn';sq='lost';}   // 11-16: t.seek = the gimbal's search (bridge --seek 1)
   else if(t.auto){txt=t.id+'번을 따라가는 중';sq='auto';}
   else if(t.moving){txt='수동으로 움직이는 중';sq='man';}
   else if(t.ready===false){txt='짐벌 준비 중';cls='';}
@@ -871,6 +871,12 @@ function ovDraw(){const cv=OV.cv;if(!cv)return;
       if(pts&&pts.length){x.lineWidth=1;x.beginPath();x.moveTo(X(lx),Y(ly));for(const [px,py] of pts)x.lineTo(X(px),Y(py));x.stroke();}}
     x.setLineDash([7,7]);x.lineWidth=2;x.strokeRect(X(x1),Y(y1),(x2-x1)*k,(y2-y1)*k);x.setLineDash([]);
     x.fillText(lab,X(x1),Math.max(Y(y1)-4,12));x.globalAlpha=1;}
+  const s=d.s;   // 11-16: the gimbal's search while the followed person is lost (bridge --seek 1, src/gimbal/search_follow.py)
+  if(s&&(s[0]===2||s[0]===3)){const [ph,cx,cy,r,a,pan,to]=s,X=v=>ox+v*k,Y=v=>oy+v*k,y=Y(cy);   // the span the camera centre sweeps around the predicted place, and where it is heading
+    x.strokeStyle=x.fillStyle='rgb(255,220,0)';x.lineWidth=1;x.beginPath();x.moveTo(X(cx-a),y);x.lineTo(X(cx+a),y);x.stroke();
+    x.lineWidth=3;x.beginPath();for(const e of [cx-a,cx+a]){x.moveTo(X(e),y-9);x.lineTo(X(e),y+9);}x.stroke();
+    if(to!=null){x.beginPath();x.arc(X(cx+to),y,6,0,2*Math.PI);x.fill();}
+    x.font='bold 14px sans-serif';x.fillText(ph===2?'찾는 중':'예측 자리로 돌아가는 중',Math.max(4,X(cx-a)),Math.max(16,y-14));}
   x.restore();}
 function ovOpen(){if(OV.es||typeof EventSource!=='function')return;
   OV.es=new EventSource('/overlay');
@@ -1847,7 +1853,7 @@ setInterval(()=>{const d=$('vdead'),live=!document.body.classList.contains('repl
 let fnPrev=null,fnT=0;
 function fnShow(txt,cls,ms){const v=$('vtoast');v.textContent=txt;v.className='vtoast'+(cls?' '+cls:'');v.hidden=false;fnT=ms?Date.now()+ms:0;}
 function followNote(t){const p=fnPrev||{auto:0,id:0,lost:0,h:t.handoffs||0};fnPrev={auto:t.auto,id:t.id,lost:t.lost,h:t.handoffs||0};
-  if(t.auto&&t.lost){fnShow(t.id+'번 놓침 · 다시 찾는 중'+(lostSince?' '+((Date.now()-lostSince)/1000).toFixed(0)+'초':''),'lost',0);return;}
+  if(t.auto&&t.lost){const sp=t.seek?t.seek[0]:0;fnShow(t.id+'번 놓침 · '+(sp===2?'짐벌이 주변을 찾는 중':sp===3?'예측 자리로 돌아가는 중':'다시 찾는 중')+(lostSince?' '+((Date.now()-lostSince)/1000).toFixed(0)+'초':''),'lost',0);return;}
   if(p.auto&&t.auto&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}
   if(!p.auto&&t.auto)fnShow(t.id+'번 따라가기 시작','',2000);
   else if(p.auto&&!t.auto)fnShow('따라가기 멈춤','',2000);

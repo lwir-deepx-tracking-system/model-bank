@@ -88,6 +88,7 @@ struct TrackingResult
     TrackLead lead;
     TrackVelocity velocity; // v27 search: VEL suffix
     TrackPrediction prediction; // v27 coast: PRED suffix
+    TrackPrediction seek; // v27 seek (11-16): SEEK suffix, where the gimbal should look while the followed track stays lost
     double aim_y = 0.5; // Control reference, measured from the top of the observed box.
 };
 

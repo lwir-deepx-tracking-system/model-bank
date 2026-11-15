@@ -88,6 +88,9 @@ GimbalCommandExecutor::GimbalCommandExecutor(ControlConfig config,
     }
     if (smoothing_.coast && (smoothing_.coast_ms <= 0 || smoothing_.coast_ms > 3000))   // v27 coast when lost
         throw std::invalid_argument("--coast-ms must be within 1..3000");
+    if (smoothing_.seek && (smoothing_.search || smoothing_.seek_ms <= 0 || smoothing_.seek_ms > 10000 ||   // v27 seek when lost
+        smoothing_.seek_speed < config_.automatic.speed_min || smoothing_.seek_speed > config_.automatic.speed_max))
+        throw std::invalid_argument("--seek: not with --search 1, --seek-ms within 1..10000, --seek-speed within --speed-min..--speed-max");
     worker_ = std::thread([this] { run(); });
     const bool started = invoke([this] { stop("startup"); return !state_.error; });
     if (!started) {
@@ -158,7 +161,7 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
         std::lock_guard<std::mutex> lock(mutex_);
         const auto received = Clock::now();
         if ((smoothing_.observation_grace_ms > 0 || smoothing_.catchup_speed > 0 ||
-             smoothing_.predictive_brake || smoothing_.search || smoothing_.coast) &&   // v27 search / coast move only on validated live frames
+             smoothing_.predictive_brake || smoothing_.search || smoothing_.coast || smoothing_.seek) &&   // v27 search / coast / seek move only on validated live frames
             input->model_generation == runtime_.generation.load() &&
             input->tracker_epoch == runtime_.tracker_epoch.load()) {
             if (published_model_ != input->model_generation || published_tracker_ != input->tracker_epoch) {
@@ -209,7 +212,7 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
 void GimbalCommandExecutor::publish_unsafe_observation()
 {
     if (smoothing_.observation_grace_ms == 0 && smoothing_.catchup_speed == 0 &&
-        !smoothing_.predictive_brake && !smoothing_.search && !smoothing_.coast) return;
+        !smoothing_.predictive_brake && !smoothing_.search && !smoothing_.coast && !smoothing_.seek) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (smoothing_.observation_grace_ms > 0) pending_ = {};
@@ -343,7 +346,7 @@ void GimbalCommandExecutor::failure(const std::exception& e)
     published_brake_target_.store(0);
     state_.automatic = false; state_.selected_id = 0; state_.lost = false;
     search_ = {}; state_.search = 0;   // v27
-    coasting_ = coasted_ = false;      // v27 coast
+    coasting_ = coasted_ = seeking_ = false;      // v27 coast / seek
     ++state_.command_generation;
     try { device_->stop(); } catch (const std::exception& stop_error) {
         Logger::error(std::string("[Control] STOP failed: ") + stop_error.what());
@@ -378,7 +381,7 @@ void GimbalCommandExecutor::invalidate(const char* reason)
     grace_deadline_ = {}; last_observed_capture_ = {}; observation_cadence_ = {};
     brake_ = {};
     search_ = {}; state_.search = 0; follow_x_ = follow_speed_ = 0; follow_error_x_ = follow_vx_ = 0; follow_v_at_ = {};   // v27
-    coasting_ = coasted_ = false;   // v27 coast
+    coasting_ = coasted_ = seeking_ = false;   // v27 coast / seek
     if (state_.moving) stop(reason);
 }
 void GimbalCommandExecutor::send(int x, int y, int speed, bool automatic)
@@ -591,6 +594,30 @@ const Track* GimbalCommandExecutor::coast_target(Clock::time_point now)
     if (!coasting_) Logger::debug("[Control] coast: following the predicted place of " + std::to_string(state_.selected_id));
     coast_track_ = t;
     coasting_ = coasted_ = true;
+    if (seeking_) { seeking_ = false; state_.search = 0; }
+    return &coast_track_;
+}
+
+// v27 seek when lost (SmoothingConfig::seek): the server's SEEK box of the selected ID as a Track for the normal controller,
+// or nullptr. The same conditions as the coast (fresh healthy frame that names the selected ID, control authority), for at
+// most seek_ms after the loss. tick() caps the speed and turns through STOP while this box is followed.
+const Track* GimbalCommandExecutor::seek_target(Clock::time_point now)
+{
+    if (!latest_ || !fresh() || !latest_healthy_ || !ready() || state_.selected_id == 0 ||
+        now - lost_since_ >= std::chrono::milliseconds(smoothing_.seek_ms)) return nullptr;
+    const auto& p = latest_->seek;
+    if (!p.matches(static_cast<int>(state_.selected_id))) return nullptr;
+    Track t;
+    t.track_id = p.track_id; t.class_id = 0; t.confidence = 1.0f;
+    t.x = float(p.x); t.y = float(p.y); t.width = float(p.width); t.height = float(p.height);
+    if (!controller_.valid(t, latest_->frame->image.cols, latest_->frame->image.rows, latest_->aim_y)) return nullptr;
+    if (!seeking_) Logger::debug("[Control] seek: looking where the server points for " + std::to_string(state_.selected_id));
+    // The server moves the SEEK point in steps (the next turn of its sweep). A step is a new target, not motion of a person:
+    // the controller starts again from the new point, so its D term cannot answer the step with a kick the wrong way.
+    if (coasted_ && (std::abs(t.x - coast_track_.x) > 32.0f || std::abs(t.y - coast_track_.y) > 32.0f)) controller_.reset();
+    coast_track_ = t;
+    coasting_ = coasted_ = seeking_ = true;
+    state_.search = 5;
     return &coast_track_;
 }
 
@@ -615,16 +642,20 @@ void GimbalCommandExecutor::tick(bool arrival)
     if (!t) {
         mark_lost(now);
         if (smoothing_.coast && search_.phase == Search::None) t = coast_target(now);   // v27 coast
+        if (!t && smoothing_.seek) t = seek_target(now);   // v27 seek: after (or without) the coast
         if (!t) {
             coasting_ = false;
+            if (seeking_) { seeking_ = false; state_.search = 0; }
             if (smoothing_.search) { search_step(now); return; }   // v27
             if (state_.moving && grace_deadline_ == Clock::time_point{}) stop("target lost/stale");
             return;
         }
     }
-    const bool coast = t == &coast_track_;   // v27 coast: still lost (the reacquire timeout runs), no lead/brake/catch-up
+    const bool coast = t == &coast_track_;   // v27 coast / seek: still lost (the reacquire timeout runs), no lead/brake/catch-up
+    const bool seek = coast && seeking_;     // v27 seek: SPD capped, a turn goes through STOP
     if (!coast) {
         coasting_ = coasted_ = false;
+        if (seeking_) { seeking_ = false; state_.search = 0; }
         if (state_.lost && smoothing_.observation_grace_ms > 0)
             lead_after_frame_ = latest_->frame->metadata.frame_id;
         if (search_.phase != Search::None) {   // v27: the same ID is back; the search output is the starting point of following
@@ -671,6 +702,7 @@ void GimbalCommandExecutor::tick(bool arrival)
     }
     const bool reverse_x = x_ && demand.x && x_ != demand.x;
     const bool reverse_y = y_ && demand.y && y_ != demand.y;
+    if (seek && (reverse_x || reverse_y)) { stop("seek turn"); return; }   // v27 seek: both axes halt, the new direction starts from rest
     int want_x = demand.x, want_y = demand.y;
     double want_speed = demand.speed;
     if (!smoothing_.axis_reversal) {
@@ -696,12 +728,14 @@ void GimbalCommandExecutor::tick(bool arrival)
                                          want_y ? demand.speed_y : 0.0),
                                 double(config_.automatic.speed_min), double(config_.automatic.speed_max));
     }
+    if (seek) want_speed = std::min(want_speed, double(smoothing_.seek_speed));   // v27 seek: a speed at which the detector still sees people
     const double step = config_.automatic.speed_rate * dt;
     // The minimum is the first usable device command; subsequent changes ramp.
     const double baseline = state_.moving ? limited_speed_ : config_.automatic.speed_min;
     limited_speed_ = state_.moving ?
         std::clamp(want_speed, std::max(double(config_.automatic.speed_min), baseline - step), baseline + step) :
         double(config_.automatic.speed_min);
+    if (seek) limited_speed_ = std::min(limited_speed_, double(smoothing_.seek_speed));   // v27 seek: the cap holds at once, also when a faster move was under way
     const double slew_limited_speed = limited_speed_;
     bool catchup_eligible = false, catchup_applied = false;
     if (smoothing_.catchup_speed > 0) {

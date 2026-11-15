@@ -29,6 +29,12 @@ function ovDraw(){const cv=OV.cv;if(!cv)return;
       if(pts&&pts.length){x.lineWidth=1;x.beginPath();x.moveTo(X(lx),Y(ly));for(const [px,py] of pts)x.lineTo(X(px),Y(py));x.stroke();}}
     x.setLineDash([7,7]);x.lineWidth=2;x.strokeRect(X(x1),Y(y1),(x2-x1)*k,(y2-y1)*k);x.setLineDash([]);
     x.fillText(lab,X(x1),Math.max(Y(y1)-4,12));x.globalAlpha=1;}
+  const s=d.s;   // 11-16: the gimbal's search while the followed person is lost (bridge --seek 1, src/gimbal/search_follow.py)
+  if(s&&(s[0]===2||s[0]===3)){const [ph,cx,cy,r,a,pan,to]=s,X=v=>ox+v*k,Y=v=>oy+v*k,y=Y(cy);   // the span the camera centre sweeps around the predicted place, and where it is heading
+    x.strokeStyle=x.fillStyle='rgb(255,220,0)';x.lineWidth=1;x.beginPath();x.moveTo(X(cx-a),y);x.lineTo(X(cx+a),y);x.stroke();
+    x.lineWidth=3;x.beginPath();for(const e of [cx-a,cx+a]){x.moveTo(X(e),y-9);x.lineTo(X(e),y+9);}x.stroke();
+    if(to!=null){x.beginPath();x.arc(X(cx+to),y,6,0,2*Math.PI);x.fill();}
+    x.font='bold 14px sans-serif';x.fillText(ph===2?'찾는 중':'예측 자리로 돌아가는 중',Math.max(4,X(cx-a)),Math.max(16,y-14));}
   x.restore();}
 function ovOpen(){if(OV.es||typeof EventSource!=='function')return;
   OV.es=new EventSource('/overlay');
