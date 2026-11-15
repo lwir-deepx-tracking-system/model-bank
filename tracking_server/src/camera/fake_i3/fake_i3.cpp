@@ -13,10 +13,18 @@
 //                   gone                                ScanTE finds no camera (cam_pipe: NO_CAMERA_FOUND after its 10 scans)
 //   FAKE_I3_LOG   file that gets one line per SDK event: "open N ok", "open N fail", "stop N", "reset N sent=S", "close N", "scan none"
 //   FAKE_I3_LOG_CAL=1  also "cal N" for every ShutterCalibrationOn (11-15, cam_pipe v2.13 tests; off so that the v2.12 tests see the same lines as before)
+//   FAKE_I3_FRAME_US=<n>  (11-15, cam_pipe v2.14, test_cam_pipe_pacing.py) the camera gets its own frame clock with a period of n microseconds, as measured on the board
+//                   on 11-15 with every read logged. A read with a frame takes FAKE_I3_CALL_US (default 17500), an empty read 25 ms. The clock starts at the first read
+//                   after an open; every read has a place = (its start - clock start) modulo n, between -n/2 and n/2. A read that follows a read with a frame:
+//                   place -11 ms .. +7.2 ms = a new picture; up to 2.5 ms later than that (on the camera this band is under 1 ms) (and at least 10 frames since the last empty read) = the same picture again
+//                   for 5 reads, then an empty read; any other place = an empty read. A read that follows an empty read always gets a new picture (cam_pipe retries
+//                   about 26 ms after the empty read began, 7 ms earlier in the frame). Lines "late" / "early" / "miss" go to FAKE_I3_LOG.
+//                   Unset: no clock, every read returns at once (the tests before v2.14 are unchanged).
 // Operation codes: 2 open, 3 control, 4 send, 5 receive. Results: -7 libusb_timeout, -4 libusb_no_device, 1 success, 7 device_not_connected.
 #include "i3system_TE.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -53,6 +61,20 @@ void parse()
 
 const Step& step(size_t i) { static const Step gone; parse(); return i < g_plan.size() ? g_plan[i] : gone; }
 
+// the camera's own frame clock (FAKE_I3_FRAME_US), see the top of this file
+struct FrameClock { int on = -1; double frame_us = 0, call_us = 17500; bool started = false, last_frame = false; std::chrono::steady_clock::time_point ref; long since_empty = 0; int bad = 0; };
+FrameClock g_clock;
+const double LATE_US = 7200.0, EARLY_US = 11000.0, LATE_ZONE_US = 2500.0; const int LATE_REPEATS = 5; const long LATE_MIN_FRAMES = 10;
+bool clock_on()
+{
+  if(g_clock.on < 0)
+  {
+    const char* f = std::getenv("FAKE_I3_FRAME_US"); g_clock.on = f && std::atof(f) > 0 ? 1 : 0;
+    if(g_clock.on) { g_clock.frame_us = std::atof(f); const char* c = std::getenv("FAKE_I3_CALL_US"); if(c && std::atof(c) >= 0) g_clock.call_us = std::atof(c); }
+  }
+  return g_clock.on == 1;
+}
+
 void logf(const char* fmt, ...)
 {
   const char* path = std::getenv("FAKE_I3_LOG");
@@ -72,7 +94,29 @@ int TE_A::RecvImage(unsigned short* px, bool)
   const Step& st = step(static_cast<size_t>(step_));
   if(!closed_ && (st.frames < 0 || sent_ < st.frames))
   {
-    ++value_; ++sent_;
+    bool again = false;   // the frame clock says: the same picture once more
+    if(clock_on())
+    {
+      FrameClock& c = g_clock; const auto t = std::chrono::steady_clock::now();
+      const auto empty = [&c](const char* word) { if(word) logf("%s", word); c.last_frame = false; c.since_empty = 0; c.bad = 0; std::this_thread::sleep_for(std::chrono::milliseconds(25)); return 4; };
+      if(!c.started) { c.started = true; c.ref = t; }
+      else if(c.last_frame)
+      {
+        double place = std::fmod(std::chrono::duration<double, std::micro>(t - c.ref).count(), c.frame_us);
+        if(place > c.frame_us / 2) place -= c.frame_us;
+        if(c.bad > 0)
+        {
+          if(c.bad >= LATE_REPEATS) return empty(nullptr);
+          ++c.bad; again = true;
+        }
+        else if(place > LATE_US && place <= LATE_US + LATE_ZONE_US && c.since_empty >= LATE_MIN_FRAMES) { logf("late"); c.bad = 1; again = true; }
+        else if(place < -EARLY_US || place > LATE_US) return empty(place < -EARLY_US && place >= -EARLY_US - LATE_ZONE_US ? "early" : "miss");
+      }
+      c.last_frame = true; ++c.since_empty;
+      std::this_thread::sleep_for(std::chrono::microseconds(static_cast<long>(c.call_us)));
+    }
+    if(!again) ++value_;
+    ++sent_;
     const bool blank = st.blank_from > 0 && sent_ >= st.blank_from && (st.blank_to < 0 || sent_ < st.blank_to);
     for(int i = 0; i < 64 * 48; ++i) px[i] = static_cast<unsigned short>(value_ + i);   // every frame differs from the one before: the duplicate filter keeps none back
     if(blank) for(int y = 12; y < 36; ++y) for(int x = 16; x < 48; ++x) px[y * 64 + x] = 30000;   // no scene: the middle half one value, the rim still changes
@@ -123,6 +167,7 @@ extern "C" TE_A* OpenTE_A(int idx)
   }
   g_diag.operation = I3_USB_OPERATION_OPEN; g_diag.result = 1; g_diag.deviceIndex = idx;
   logf("open %zu ok", i + 1);
+  g_clock.started = false; g_clock.last_frame = false; g_clock.bad = 0; g_clock.since_empty = 0;   // a new open: the frame clock starts at its first read
   return new TE_A(static_cast<int>(i));
 }
 }

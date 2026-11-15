@@ -1,5 +1,46 @@
 // Camera -> stdout pipe for the live tracker (DX-M1 host). Writes every received 16-bit frame (w*h*2 bytes, native endian) to stdout and prints stats to stderr.
 // Opens the camera like the team runtime (runtime/src/camera/camera.cpp). Optional frame-rate setting: ./cam_pipe [fps_code] [seconds]   fps_code: 0 = 30 fps, 1 = 25 fps, -1 = leave as is (default)
+// v2.14 (11-15): READS ON A GRID THAT FOLLOWS THE CAMERA. Since the CPU governor went to "performance" (11-15 19:32) the picture stood still for 0.16-0.30 s every
+//   3.7 s (445 REPEAT_RUN lines in 2486 s; while a person was followed the server sent "no people" for the repeated frames and the gimbal stopped and started
+//   again). Measured on the board the same evening with every read in a file (LWIR_CAM_READ_LOG below; the camera stayed open, settings changed while running):
+//   - The v2.7 pacing started a read 33.333 ms after the ACTUAL start of the read before, so each wake-up delay (64 us) added up: a read every 33.400 ms.
+//     The camera makes a picture every 33.3341 ms (30.00 a second), so the reads slid later by 66 us a read.
+//   - 7.2 ms later than the place where the stream was picked up, the camera gives the same picture 4-5 times and then no frame (return 4 after 25 ms): 0.23 s
+//     without a new picture. The read after the empty one starts at once, 7 ms earlier in the camera's frame, and all is well for the next 7.2 ms of sliding:
+//     108 reads = 3.6 s. With the slower governor the delay was about 117 us a read: the same thing every 2 s, with 2-3 repeats that the duplicate filter hid.
+//     So v2.8's "the engine itself repeats frames, it is not the read timing" was wrong: it is the read timing (every repeat was at this late edge).
+//     The repeats come only when the reads creep over that edge (under 1 ms past it); a read that jumps further past it (1 ms steps, or one late start)
+//     gets no frame at once, without repeats, and the retry is back inside: one gap of 59 ms.
+//   - 11 ms earlier than the pick-up place a read gets no frame at once (no repeats); cam_pipe's retries then give frame, empty, frame, empty, frame (three
+//     gaps of 59 ms, never a repeated picture) and the stream is steady again. So the reads may start anywhere in a window of about 18 ms of the 33.3 ms frame.
+//   - A read exactly one period late (66.667 ms after the one before) gets a new picture like any other: only the place inside the frame matters.
+//     A read 22 ms late got a picture, but the read 18.5 ms after it got none.
+//   - The call takes 17.5 ms wherever in the window it starts, so the place cannot be seen from the call time; only reaching an edge shows it.
+//   - With the reads on a fixed grid of 33.333 ms nothing was repeated or empty for 8 minutes (30.00 new pictures a second instead of 28.5); the grid then
+//     reached the EARLY edge, because the camera's frame is 0.77 us longer than 33.333 ms of the board's clock (23 ppm).
+//   What v2.14 does (LWIR_CAM_PACE_MODE=grid, the default; "after" = the v2.7 pacing exactly as before):
+//   (a) GRID. A read starts one period after the PLANNED start of the read before; waking up late does not move the next read. After an empty read the next
+//       read starts at once (as before) and begins a new grid. A read that would start more than 6 ms after its place (the server was slow to take the frame,
+//       or no CPU) waits for the next place: one picture is lost and the place in the camera's frame is kept.
+//   (b) THE PERIOD FOLLOWS THE CAMERA (LWIR_CAM_PACE_TRIM=1, the default). A grid that began at a pick-up knows where it is (7.2 ms before the late edge, 11 ms
+//       after the early one). When it ends in an empty read after N reads (600 or more), the period was wrong by the distance travelled / N: too long when
+//       repeated pictures came before the empty read (late edge), too short when none came (early edge). An empty read whose own start, or the start of
+//       the read before it, was more than 250 us late (LWIR_CAM_PACE_ON_TIME_US; the board wakes 64 us late, 111 us at the 99th percentile) teaches nothing:
+//       measured, a read 0.5 ms late near the late edge got a picture and the next read none, with no repeat to tell late from early. 80 % is corrected, at most 5 us at a time and
+//       10 us in all (300 ppm). The correction is kept in ~/.cam_pipe_state (pace_trim_ns, with the period it belongs to) and the next start begins with it.
+//       A grid that began at an open (or within 5 s of it: the shutter calibration there ends in an empty read of its own) or after a stall (3 or more
+//       empty reads in a row), or was moved by hand, teaches nothing and is not moved to the resting place. Each lesson is a PACE_RESYNC line.
+//   (c) RESTING PLACE (LWIR_CAM_PACE_CENTRE_US, default -4000). 30 reads after a pick-up the grid moves 4 ms earlier: 11.2 ms to the late edge (the costly
+//       one: 0.23 s and repeated pictures) and 7 ms to the early edge (three gaps of 59 ms). If an empty read comes within 100 reads of that move, the move is
+//       switched off for the rest of the process (PACE_CENTRE_OFF).
+//   (d) LINES. READ_PACING at the start (mode, period in use). READ_STATS every 5 minutes and at the end: reads, new pictures a second, repeats, empty reads,
+//       the longest time without a new picture, how often the reads came too early / too late, grid places skipped, the period in use.
+//   (e) TEST HOOKS, off unless set. LWIR_CAM_READ_LOG=<file>: one line per read (start ms, call ms, return code, kind 0 new / 1 repeat held back / 2 repeat
+//       passed on / - none, us late, period, mode). LWIR_CAM_PACE_FILE=<file>: settings read from that file whenever it changes (period_us= mode= shift_us=
+//       trim= centre_us= rephase_us= log=off), so that periods can be compared without opening the camera again. LWIR_CAM_PACE_REPHASE_US (0 = off): an
+//       experiment not yet seen working on the camera, moves the grid at the first repeated picture instead of waiting for the empty read.
+//   The duplicate filter, REPEAT_RUN, INPUT_GAP, the stall repair and everything else are unchanged. Without a camera: fake_i3/ has the frame clock as
+//   measured (FAKE_I3_FRAME_US) and test_cam_pipe_pacing.py runs old and new pacing against it.
 // v2.13 (11-15): FEWER SHUTTER MOVES, A PICTURE WITHOUT A SCENE, NO CLOSE WHILE THE SHUTTER IS SHUT. On 11-15 the camera was opened about 25 times in 2.5 hours
 //   (server restarts, plus a gimbal-speed tool and a temperature probe that open it themselves) and every open moved the shutter (ShutterCalibrationOn). Between
 //   16:35:25 and 16:38:04 the picture became a flat field while frames still came at 30 fps: the middle of the picture one single value, only a noisy rim in the
@@ -98,6 +139,7 @@
 //   (v2.11: the same line; nothing new to link. Checked 11-14 with g++ 11.4 on the board, also with -Wall -Wextra: no warning from the v2.11 code.)
 //   (v2.12: the same line. Checked 11-15 with g++ 11.4 on the board, also with -Wall -Wextra: no warning.)
 //   (v2.13: the same line; nothing new to link.)
+//   (v2.14: the same line; nothing new to link. Checked 11-15 with g++ 11.4 on the board, also with -Wall -Wextra: no warning.)
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -702,6 +744,188 @@ static bool scene_check(const unsigned short* px, int w, int h, bool no_recover)
   return true;
 }
 
+// v2.14 (11-15): READ PACING ON A GRID THAT FOLLOWS THE CAMERA. See the top of this file for what was measured.
+static const double PACE_LATE_US = 7200.0, PACE_EARLY_US = 11000.0;   // measured 11-15: how far a read may start after / before the place where the stream was picked up (the first read after an empty one)
+static const long PACE_SKIP_US = 6000;          // a read that would start more than this after its grid place (a slow send, no CPU) waits for the next place instead: one picture lost, the place in the camera's frame kept
+static const long PACE_CENTRE_CHECK_READS = 100; // an empty read sooner than this after the move to the resting place: the move was wrong, no more moves in this process
+static const long PACE_SETTLE_READS = 30;       // reads with a frame after a pick-up before the grid is moved to its resting place (LWIR_CAM_PACE_CENTRE_US); an empty read sooner than this belongs to the same pick-up
+static const long PACE_LEARN_MIN_READS = 600;   // an empty read sooner than this after the pick-up (20 s) teaches nothing about the period
+static const double PACE_LEARN_GAIN = 0.8, PACE_LEARN_STEP_NS = 5000.0, PACE_TRIM_MAX_NS = 10000.0;   // one lesson changes the period by at most 5 us, all lessons together by at most 10 us (300 ppm)
+static const double PACE_OPEN_S = 5.0;          // an empty read sooner than this after an open belongs to the shutter calibration there: the place after it is not taken as known
+static const double READ_STATS_S = 300.0;       // READ_STATS period (each line goes into camera_events.log)
+static const long READ_LOG_MAX_LINES = 4000000; // LWIR_CAM_READ_LOG closes itself after this many reads (about 37 hours, about 170 MB)
+struct Pace
+{
+  long period_us = 33333;      // LWIR_CAM_READ_PERIOD_US; 0 = no pacing
+  int mode = 1;                // LWIR_CAM_PACE_MODE: 1 = grid (v2.14), 0 = after (v2.7 to v2.13)
+  bool learn = true;           // LWIR_CAM_PACE_TRIM: the period follows the camera's own frame period
+  long centre_us = -4000;      // LWIR_CAM_PACE_CENTRE_US: where the grid rests relative to the pick-up place (negative = earlier)
+  long rephase_us = 0;         // LWIR_CAM_PACE_REPHASE_US (experiment, 0 = off): at the first repeated frame move the grid by this much at once
+  long on_time_us = 250;       // LWIR_CAM_PACE_ON_TIME_US: an empty read teaches only when it and the read before it started within this of their plan
+  double trim_ns = 0;          // learned: period in use = period_us + trim_ns
+  clk::time_point plan;        // grid: the planned start of the last paced read
+  bool have_plan = false;
+  bool anchored = false;       // this grid began at a pick-up (the first read with a frame after 1 or 2 empty reads), so pos_us is known
+  double pos_us = 0;           // where the grid is now relative to the pick-up place, not counting the slow drift
+  long grid_reads = 0;         // reads with a frame on this grid
+  bool centred = false, rephased = false;
+  int empties = 0;             // empty reads in a row just now
+  long rep_run = 0;            // identical pictures in a row just now
+  long prev_late_us = -1;      // how late the read before started (-1 = not paced)
+  bool pend = false, pend_late = false, pend_on_time = false, pend_anchored = false; long pend_reads = 0; double pend_pos = 0;   // the empty read that ended the last grid: what it can teach
+  // READ_STATS
+  clk::time_point st_t0 = clk::now(), st_last_new = clk::now(); bool st_have_new = false;
+  long st_reads = 0, st_new = 0, st_rep = 0, st_empty = 0, st_early = 0, st_late = 0, st_late_n = 0, st_late_max = 0, st_regrid = 0; double st_gap_ms = 0, st_late_sum = 0;
+  // test hooks
+  std::string ctl_path; time_t ctl_sec = 0; long ctl_nsec = 0; clk::time_point ctl_checked = clk::now();   // LWIR_CAM_PACE_FILE
+  FILE* log = nullptr; long log_lines = 0; clk::time_point log_t0 = clk::now();                             // LWIR_CAM_READ_LOG
+};
+static Pace g_pace;
+
+static double pace_period_us() { return static_cast<double>(g_pace.period_us) + g_pace.trim_ns / 1000.0; }
+static void pace_line(const std::string& why)
+{
+  if(g_pace.mode == 1)
+    std::fprintf(stderr, "READ_PACING period=%ld us (0 = off) mode=grid, period in use %.3f us (follows the camera: %s), rests %ld us from the pick-up place, move at a repeat %ld us%s%s\n", g_pace.period_us,
+                 pace_period_us(), g_pace.learn ? "yes" : "no", g_pace.centre_us, g_pace.rephase_us, why.empty() ? "" : "; ", why.c_str());
+  else std::fprintf(stderr, "READ_PACING period=%ld us (0 = off) mode=after (v2.7: counted from the actual start of the last read)%s%s\n", g_pace.period_us, why.empty() ? "" : "; ", why.c_str());
+}
+static void pace_new_grid() { g_pace.have_plan = false; g_pace.anchored = false; g_pace.pos_us = 0; g_pace.grid_reads = 0; g_pace.centred = false; g_pace.rephased = false; }
+// LWIR_CAM_PACE_FILE (a test hook, off unless set): a small text file with any of "period_us=<n> mode=<after|grid> shift_us=<n> trim=<0|1> centre_us=<n> rephase_us=<n>",
+// read again when it changes (looked at once a second), so that settings can be compared on ONE camera open. shift_us moves the grid once by that much; log=off closes LWIR_CAM_READ_LOG.
+static void pace_poll()
+{
+  if(g_pace.ctl_path.empty() || since(g_pace.ctl_checked) < 1.0) return;
+  g_pace.ctl_checked = clk::now();
+  struct stat st;
+  if(stat(g_pace.ctl_path.c_str(), &st) != 0 || (st.st_mtim.tv_sec == g_pace.ctl_sec && st.st_mtim.tv_nsec == g_pace.ctl_nsec)) return;
+  g_pace.ctl_sec = st.st_mtim.tv_sec; g_pace.ctl_nsec = st.st_mtim.tv_nsec;
+  FILE* f = std::fopen(g_pace.ctl_path.c_str(), "r"); if(!f) return;
+  char text[256]; const size_t n = std::fread(text, 1, sizeof text - 1, f); std::fclose(f); text[n] = 0;
+  long shift = 0; bool any = false;
+  const auto num = [](const char* tok, const char* key, long lo, long hi, long* out) -> bool
+  {
+    const size_t k = std::strlen(key); if(std::strncmp(tok, key, k)) return false;
+    char* end = nullptr; const long v = std::strtol(tok + k, &end, 10);
+    if(end == tok + k || *end != 0 || v < lo || v > hi) return false;
+    *out = v; return true;
+  };
+  for(char* tok = std::strtok(text, " \t\r\n"); tok; tok = std::strtok(nullptr, " \t\r\n"))
+  {
+    long v = 0;
+    if(num(tok, "period_us=", 0, 1000000, &v)) { g_pace.period_us = v; g_pace.trim_ns = 0; pace_new_grid(); any = true; }
+    else if(!std::strcmp(tok, "mode=after")) { g_pace.mode = 0; pace_new_grid(); any = true; }
+    else if(!std::strcmp(tok, "mode=grid")) { g_pace.mode = 1; pace_new_grid(); any = true; }
+    else if(num(tok, "shift_us=", -1000000, 1000000, &v)) { shift = v; any = true; }
+    else if(num(tok, "trim=", 0, 1, &v)) { g_pace.learn = v == 1; if(!g_pace.learn) g_pace.trim_ns = 0; any = true; }
+    else if(num(tok, "centre_us=", -10000, 6000, &v)) { g_pace.centre_us = v; any = true; }
+    else if(num(tok, "rephase_us=", -30000, 0, &v)) { g_pace.rephase_us = v; any = true; }
+    else if(!std::strcmp(tok, "log=off")) { if(g_pace.log) { std::fclose(g_pace.log); g_pace.log = nullptr; std::fprintf(stderr, "READ_LOG closed after %ld lines (settings file), at %s%c", g_pace.log_lines, hms().c_str(), 10); } }
+  }
+  if(!any) return;
+  if(shift && g_pace.mode == 1 && g_pace.have_plan) { g_pace.plan += std::chrono::microseconds(shift); g_pace.anchored = false; }   // moved by hand: the place is no longer known, nothing is learned from this grid
+  pace_line("from " + g_pace.ctl_path + " (shift " + std::to_string(shift) + " us) at " + hms());
+}
+// when the next read should start, after a read with a frame that started at last_start
+static clk::time_point pace_target(clk::time_point last_start)
+{
+  if(g_pace.mode != 1) return last_start + std::chrono::microseconds(g_pace.period_us);
+  const auto per = std::chrono::nanoseconds(static_cast<long long>(g_pace.period_us) * 1000 + static_cast<long long>(g_pace.trim_ns));
+  if(!g_pace.have_plan) { g_pace.plan = last_start; g_pace.have_plan = true; }
+  g_pace.plan += per;
+  const auto now = clk::now();   // measured 11-15: a read exactly one period late gets a new picture like any other, so a place is skipped, not moved
+  while(now - g_pace.plan > std::chrono::microseconds(PACE_SKIP_US)) { g_pace.plan += per; ++g_pace.st_regrid; }
+  return g_pace.plan;
+}
+// after every RecvImage. frame = it returned a picture, repeat = that picture is the one before again, late_us = how late it started (-1 = not paced)
+static void pace_after(bool frame, bool repeat, double open_age_s, long late_us)
+{
+  Pace& p = g_pace;
+  if(p.period_us <= 0) return;
+  if(!frame)
+  {
+    if(p.empties == 0)   // the read that ended a grid. Repeats right before it = the reads came too late (the period too long); none = too early (too short)
+    {
+      p.pend = p.grid_reads >= PACE_SETTLE_READS; p.pend_late = p.rep_run > 0; p.pend_on_time = late_us <= p.on_time_us && p.prev_late_us <= p.on_time_us; p.pend_anchored = p.anchored; p.pend_reads = p.grid_reads; p.pend_pos = p.pos_us;
+      if(p.centred && p.centre_us != 0 && p.grid_reads < PACE_SETTLE_READS + PACE_CENTRE_CHECK_READS)   // the resting place is not where it was measured to be
+      {
+        std::fprintf(stderr, "PACE_CENTRE_OFF an empty read %ld reads after the grid moved %ld us to its resting place: no such move any more in this process, at %s\n",
+                     p.grid_reads - PACE_SETTLE_READS, p.centre_us, hms().c_str());
+        p.centre_us = 0;
+      }
+    }
+    ++p.empties; p.rep_run = 0; p.prev_late_us = late_us; pace_new_grid();
+    return;
+  }
+  if(p.empties > 0)   // the stream was picked up again by this read
+  {
+    const bool clean = p.empties <= 2;   // more empty reads than that is a camera stall, not a read that came too early or too late
+    if(p.pend && clean)
+    {
+      if(p.pend_late) ++p.st_late; else if(p.pend_on_time) ++p.st_early;
+      const double before = pace_period_us();
+      const bool lesson = p.mode == 1 && p.learn && p.pend_anchored && p.pend_on_time && p.pend_reads >= PACE_LEARN_MIN_READS;
+      if(lesson)
+      {
+        const double travelled_us = p.pend_late ? PACE_LATE_US - p.pend_pos : -(PACE_EARLY_US + p.pend_pos);   // + = the reads slid later
+        double step_ns = -PACE_LEARN_GAIN * travelled_us * 1000.0 / static_cast<double>(p.pend_reads);
+        step_ns = std::max(-PACE_LEARN_STEP_NS, std::min(PACE_LEARN_STEP_NS, step_ns));
+        p.trim_ns = std::max(-PACE_TRIM_MAX_NS, std::min(PACE_TRIM_MAX_NS, p.trim_ns + step_ns));
+        g_state["pace_trim_ns"] = num_s(p.trim_ns); g_state["pace_period_us"] = std::to_string(p.period_us); state_write(g_state);   // the next start begins with it
+      }
+      if(p.mode == 1) std::fprintf(stderr, "PACE_RESYNC %s after %ld reads on this grid; read period %.3f -> %.3f us%s, at %s\n",
+                   p.pend_late ? "reads came too late (repeated pictures, then an empty read)" : p.pend_on_time ? "reads came too early (an empty read)" : "an empty read after a late start",
+                   p.pend_reads, before, pace_period_us(),
+                   lesson ? "" : !p.learn ? " (not following the camera)" : !p.pend_on_time ? " (nothing learned: a late start can land anywhere)" : " (nothing learned: the grid was too young or its place unknown)", hms().c_str());
+    }
+    p.pend = false; p.anchored = clean && p.mode == 1 && open_age_s > PACE_OPEN_S; p.pos_us = 0; p.grid_reads = 0; p.centred = false; p.rephased = false; p.empties = 0;
+  }
+  ++p.grid_reads;
+  const long rep_before = p.rep_run;
+  if(repeat) ++p.rep_run; else { p.rep_run = 0; p.rephased = false; }
+  if(p.anchored && !p.centred && p.grid_reads >= PACE_SETTLE_READS && !repeat && p.have_plan)   // the stream is steady again: go to the resting place
+  {
+    p.plan += std::chrono::microseconds(p.centre_us); p.pos_us += static_cast<double>(p.centre_us); p.centred = true;
+  }
+  p.prev_late_us = late_us;
+  if(repeat && p.rephase_us != 0 && !p.rephased && p.have_plan && rep_before == 0 && p.grid_reads > PACE_SETTLE_READS && open_age_s > PACE_OPEN_S)   // experiment: do not wait for the empty read
+  {
+    p.plan += std::chrono::microseconds(p.rephase_us); p.rephased = true; p.anchored = false;
+    std::fprintf(stderr, "PACE_REPHASE a repeated picture after %ld reads on this grid: the grid moves %ld us, at %s\n", p.grid_reads, p.rephase_us, hms().c_str());
+  }
+}
+// LWIR_CAM_READ_LOG (off unless set): one line per RecvImage call: start in ms since the log began, call time in ms, return code, kind (0 new, 1 repeat held back,
+// 2 repeat passed on, - no frame), how late the read started after its plan in us (-1 = not paced), the period in use in us and the mode (1 grid, 0 after).
+static void read_note(clk::time_point start, clk::time_point end, int r, int kind, long late_us)
+{
+  Pace& p = g_pace;
+  ++p.st_reads;
+  if(kind == 0)
+  {
+    ++p.st_new;
+    if(p.st_have_new) p.st_gap_ms = std::max(p.st_gap_ms, std::chrono::duration<double, std::milli>(end - p.st_last_new).count());
+    p.st_last_new = end; p.st_have_new = true;
+  }
+  else if(kind > 0) ++p.st_rep; else ++p.st_empty;
+  if(late_us >= 0) { ++p.st_late_n; p.st_late_sum += static_cast<double>(late_us); p.st_late_max = std::max(p.st_late_max, late_us); }
+  if(!p.log) return;
+  std::fprintf(p.log, "%.3f %.3f %d %c %ld %.3f %d\n", std::chrono::duration<double, std::milli>(start - p.log_t0).count(),
+               std::chrono::duration<double, std::milli>(end - start).count(), r, kind < 0 ? '-' : static_cast<char>('0' + kind), late_us, pace_period_us(), p.mode);
+  if(++p.log_lines % 30 == 0) std::fflush(p.log);
+  if(p.log_lines >= READ_LOG_MAX_LINES) { std::fclose(p.log); p.log = nullptr; std::fprintf(stderr, "READ_LOG full after %ld lines: closed\n", p.log_lines); }
+}
+static void read_stats(bool at_end)   // one READ_STATS line every READ_STATS_S, and one at the end
+{
+  Pace& p = g_pace;
+  const double dt = since(p.st_t0);
+  if((!at_end && dt < READ_STATS_S) || p.st_reads == 0) return;
+  std::fprintf(stderr, "READ_STATS %.0f s: reads %ld, new pictures %ld (%.2f a second), repeats %ld, empty reads %ld, longest time without a new picture %.0f ms, reads too early %ld, too late %ld, "
+               "grid places skipped after a late start %ld, period in use %.3f us (mode %s), reads started %.0f us after their plan on average (largest %ld), at %s\n", dt, p.st_reads, p.st_new, p.st_new / std::max(dt, 1e-9),
+               p.st_rep, p.st_empty, p.st_gap_ms, p.st_early, p.st_late, p.st_regrid, p.mode == 1 ? pace_period_us() : static_cast<double>(p.period_us), p.mode == 1 ? "grid" : "after",
+               p.st_late_n ? p.st_late_sum / static_cast<double>(p.st_late_n) : 0.0, p.st_late_max, hms().c_str());
+  p.st_t0 = clk::now(); p.st_reads = p.st_new = p.st_rep = p.st_empty = p.st_early = p.st_late = p.st_late_n = p.st_late_max = p.st_regrid = 0; p.st_gap_ms = 0; p.st_late_sum = 0;
+}
+
 int main(int argc, char** argv)
 {
   const int fps_code = argc > 1 ? std::atoi(argv[1]) : -1; (void)fps_code;   // kept for the old command line; SetFrameRate is not in our header
@@ -747,9 +971,30 @@ int main(int argc, char** argv)
   // (871 frames, 22 empty reads), same pictures (AGC unchanged). After an empty read the loop does not wait, so it finds the
   // phase again by itself. LWIR_CAM_READ_PERIOD_US changes the period in microseconds (40000 for an engine set to 25 fps);
   // 0 = no pacing, the behaviour up to v2.6.
-  long read_period_us = 33333;
-  if(const char* e = std::getenv("LWIR_CAM_READ_PERIOD_US")) { char* end = nullptr; const long v = std::strtol(e, &end, 10); if(end != e && v >= 0 && v <= 1000000) read_period_us = v; }
-  std::fprintf(stderr, "READ_PACING period=%ld us (0 = off)\n", read_period_us);
+  // v2.14 (11-15): "after the START of the last successful read" let every wake-up delay add up (a read every 33.400 ms); the reads are now on a grid
+  // (see the top of this file). LWIR_CAM_PACE_MODE=after gives this v2.7 pacing back.
+  if(const char* e = std::getenv("LWIR_CAM_READ_PERIOD_US")) { char* end = nullptr; const long v = std::strtol(e, &end, 10); if(end != e && v >= 0 && v <= 1000000) g_pace.period_us = v; }
+  {   // v2.14: the grid (see the top of this file)
+    if(const char* e = std::getenv("LWIR_CAM_PACE_MODE")) g_pace.mode = !std::strcmp(e, "after") ? 0 : 1;
+    g_pace.learn = env_long("LWIR_CAM_PACE_TRIM", 1, 0, 1) == 1;
+    g_pace.centre_us = env_long("LWIR_CAM_PACE_CENTRE_US", -4000, -10000, 6000);
+    g_pace.rephase_us = env_long("LWIR_CAM_PACE_REPHASE_US", 0, -30000, 0);
+    g_pace.on_time_us = env_long("LWIR_CAM_PACE_ON_TIME_US", 250, 50, 5000);
+    if(const char* e = std::getenv("LWIR_CAM_PACE_FILE")) g_pace.ctl_path = e;
+    std::string why;
+    if(g_pace.mode == 1 && g_pace.learn && kv_str(g_state, "pace_period_us") == std::to_string(g_pace.period_us))   // what earlier runs learned about this camera's frame period
+    {
+      g_pace.trim_ns = std::max(-PACE_TRIM_MAX_NS, std::min(PACE_TRIM_MAX_NS, kv_num(g_state, "pace_trim_ns", 0)));
+      why = "period from the state file";
+    }
+    if(!g_pace.ctl_path.empty()) why += std::string(why.empty() ? "" : ", ") + "settings file on (LWIR_CAM_PACE_FILE)";
+    pace_line(why);
+    if(const char* e = std::getenv("LWIR_CAM_READ_LOG")) if(*e)
+    {
+      g_pace.log = std::fopen(e, "w"); g_pace.log_t0 = clk::now();
+      std::fprintf(stderr, "READ_LOG %s %s\n", e, g_pace.log ? "on: one line per read (start ms, call ms, code, kind, late us, period us, mode)" : "cannot be written: off");
+    }
+  }
   bool last_read_ok = false; auto last_read_start = clk::now();
   // v2.8 (11-13): REPEATED FRAMES. The engine itself sends the same picture again, byte for byte, for 1 to 3 frames (seldom up to
   // 8) about once a second, and for about 40 frames (1.3 s) during the shutter calibration at an open. Measured with every read
@@ -760,6 +1005,9 @@ int main(int argc, char** argv)
   // drop_dup_max repeats in a row are held back and the pacing just continues. A picture that stays the same longer is passed on
   // from then, so the server's frozen-picture handling and the stall repair see a real freeze as before.
   // LWIR_CAM_DROP_DUP sets the limit (0 = send every frame, the behaviour up to v2.7).
+  // v2.14 (11-15): "not the read timing" was wrong. With every read logged over 30 minutes, each of these repeats came when the reads had slid 7.2 ms late in
+  // the camera's frame (see the top of this file); on the grid they are gone. The filter stays for the repeats that are left: the shutter calibration at an
+  // open, and a grid that reaches the late edge.
   long drop_dup_max = 3;
   if(const char* e = std::getenv("LWIR_CAM_DROP_DUP")) { char* end = nullptr; const long v = std::strtol(e, &end, 10); if(end != e && v >= 0 && v <= 1000) drop_dup_max = v; }
   std::vector<unsigned short> prev_frame; long dup_run = 0, dups_dropped = 0, dups_passed = 0;
@@ -781,7 +1029,15 @@ int main(int argc, char** argv)
   while(!g_stop && since(t0) < seconds)
   {
     // v2.7 (11-13): start each read one frame period after the START of the last successful read (see the note above the loop).
-    if(last_read_ok && read_period_us > 0) std::this_thread::sleep_until(last_read_start + std::chrono::microseconds(read_period_us));
+    // v2.14: mode "after" is this same wait; mode "grid" counts from the PLANNED start, so waking up late does not add up (pace_target)
+    pace_poll();
+    long late_us = -1;
+    if(last_read_ok && g_pace.period_us > 0)
+    {
+      const auto target = pace_target(last_read_start);
+      std::this_thread::sleep_until(target);
+      late_us = std::chrono::duration_cast<std::chrono::microseconds>(clk::now() - target).count();
+    }
     const auto read_start = clk::now();
     int r = te->RecvImage(buf.data(), true);
     const auto read_end = clk::now();
@@ -797,9 +1053,13 @@ int main(int argc, char** argv)
     bool test_stall_now = false;   // v2.12: this read is the simulated stall
     if(test_stall_at > 0 && !test_done && since(t0) > test_stall_at) { test_done = true; test_stall_now = true; std::fputs("TEST: simulated stall", stderr); std::fputc(10, stderr); nap(STALL_S + 1.0); r = 4; }
     ++codes[r];
+    if(r != 1) { read_note(read_start, read_end, r, -1, late_us); pace_after(false, false, since(t_open), late_us); }   // v2.14
     if(r == 1)
     {
-      const bool same = drop_dup_max > 0 && prev_frame.size() == buf.size() && std::memcmp(prev_frame.data(), buf.data(), buf.size() * sizeof(unsigned short)) == 0;
+      const bool identical = prev_frame.size() == buf.size() && std::memcmp(prev_frame.data(), buf.data(), buf.size() * sizeof(unsigned short)) == 0;   // v2.14: known also with the filter off (the grid needs it)
+      const bool same = drop_dup_max > 0 && identical;
+      read_note(read_start, read_end, r, identical ? (drop_dup_max > 0 && dup_run + 1 <= drop_dup_max ? 1 : 2) : 0, late_us);   // v2.14
+      pace_after(true, identical, since(t_open), late_us);
       if(gp_have)   // v2.10
       {
         const double gap_ms = std::chrono::duration<double, std::milli>(read_end - gp_last_ok).count();
@@ -830,6 +1090,7 @@ int main(int argc, char** argv)
           dup_run = 0; prev_frame = buf;
         }
       }
+      else if(g_pace.mode == 1 && !identical) prev_frame = buf;   // v2.14: filter off, grid on: the picture to compare the next one with
       auto now = clk::now();
       maxgap = std::max(maxgap, std::chrono::duration<double>(now - tprev).count()); tprev = now;
       t_frame = now; frame_since_open = true; failed_recoveries = 0;
@@ -855,6 +1116,7 @@ int main(int argc, char** argv)
         else std::fprintf(stderr, "CAMFPS %.1f", okl / dt);
         std::fputc(10, stderr); okl = 0; tl = now;
         temp_stats();   // v2.11: every 30 s while the maps are on, nothing otherwise
+        read_stats(false);   // v2.14: every 5 min
       }
       if(!scene_reset_now) continue;
     }
@@ -923,6 +1185,7 @@ int main(int argc, char** argv)
     temp_after_reopen(te, w, h);   // v2.11: emissivity again on the new handle; maps stop if the picture size changed
     t_open = clk::now(); frame_since_open = false; tprev = t_open; tl = t_open; okl = 0; ok_open = ok; gp_have = false; gp_fail = 0; gp_empty = 0; gp_max_call = 0; gp_max_wait = 0;
     scene_reset_now = false; scene_restart();   // v2.13 (c): checks start again on the new handle
+    pace_new_grid(); g_pace.pend = false; g_pace.empties = std::max(g_pace.empties, 3);   // v2.14: a new handle: a new grid at its first frame, its place unknown, nothing learned from the stall
   }
   double secs = since(t0);
   std::fprintf(stderr, "DUPLICATE_FRAMES held back %ld, passed on %ld\n", dups_dropped, dups_passed);
@@ -932,6 +1195,8 @@ int main(int argc, char** argv)
   if(g_temp.started)   // v2.11
     std::fprintf(stderr, "TEMP_TOTAL %ld CalcTemp calls, calc_ms mean %.1f max %.1f, %ld over %ld ms, maps %u, %s\n", g_temp.calls, g_temp.calls ? g_temp.sum_ms / static_cast<double>(g_temp.calls) : 0.0,
                  g_temp.top_ms, g_temp.over, g_temp.max_ms, g_tring.maps, g_temp.on ? "on to the end" : "stopped earlier (TEMP_OFF)");
+  read_stats(true);   // v2.14
+  if(g_pace.log) { std::fclose(g_pace.log); g_pace.log = nullptr; }
   ring_close();
   temp_ring_close();
   if(te && g_cal_pending && since(g_t_cal) < CLOSE_WAIT_S)   // v2.13 (d): a stop signal right after a calibration of ours: let the shutter open again first
