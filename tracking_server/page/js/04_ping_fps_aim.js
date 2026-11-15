@@ -3,8 +3,8 @@ function ping(){if(pingBusy)return;pingBusy=true;const c=new AbortController(),t
   fetch('/gimbal/ping',{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',signal:c.signal}).then(r=>r.json()).then(show).catch(()=>{}).finally(()=>{clearTimeout(t);pingBusy=false;netChip();});}
 setInterval(ping,400);ping();setInterval(netChip,500);
 const pageT0=Date.now();
-function wake(){grace=Date.now();ping();if(Date.now()-pageT0>3000)openStream();}   // screen back on / tab shown / network back: the picture stream may have died while the page slept
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)wake();});addEventListener('pageshow',wake);addEventListener('online',wake);
+function wake(){grace=Date.now();ping();if(Date.now()-pageT0>3000||!v.hasAttribute('src'))openStream();}   // screen back on / tab shown / network back: the picture stream may have died while the page slept (11-15: or the page stopped it while hidden)
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopStream();else wake();});addEventListener('pageshow',wake);addEventListener('online',wake);   // 11-15: no pictures while hidden
 // v25: frame rate from /healthz (read only): frames_in difference / up difference over the last 2 s
 function hztick(){if(document.hidden)return;fetch('/healthz',{cache:'no-store'}).then(r=>r.json()).then(h=>{lastOk=Date.now();
   const r0=v=>Number.isFinite(v)?Math.round(v):'–';$('fps').textContent='카메라 '+r0(h.cam_fps)+' · 추적 '+r0(h.track_fps)+' fps';hzPrev=h;   // 11-13: the server's speeds
