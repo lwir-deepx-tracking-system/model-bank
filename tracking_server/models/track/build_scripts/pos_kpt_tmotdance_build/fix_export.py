@@ -1,6 +1,6 @@
 """fix_export.py (= gru_mismatch_20261116 pf_export.py) - the val-A choice of fix_train.py -> the server file (float32 npz + json) and the parity check
 server (model-bank position_memory.pos_predict, the fixed warp order, picture rows of the dataset) == fixed builder + torch model, exactly.
-Usage: python fix_export.py <run dir> <arm> <out dir> <name>
+Usage: python fix_export.py <run dir> <arm> <out dir> <name> [status note: the result on our camera, shown on the page]
 """
 import hashlib
 import json
@@ -24,6 +24,7 @@ from src.track import position_memory as PM           # noqa: E402
 def parity(npz, arm, seqname, k):
     import torch
     z = np.load(npz); model = PM.PosKpt({kk: z[kk] for kk in z.files}); net = L.make_net(arm).double(); L.load_npz_into(net, npz); net.eval()
+    model.nokpt_kalman = False   # 11-16 review: parity of the network itself (the server's Kalman rule for big people without keypoints is not in the torch model)
     PM.POSP.update(key=arm, model=model, gen=PM.POSP['gen'] + 1, err=0, used=0, show=False)
     reg = {r['name']: r for r in P.registry()}; r = reg[seqname]; S = L.load_seq(F.PR, r); T = F.tracks_of(S, k); W = S['W']; n = S['n']
     y0, y1 = F.ROWS[r['ds']]; PM.KP_ROW0, PM.KP_ROW1 = y0, y1; worst = 0.; n_tr = 0; n_fb = 0
@@ -79,13 +80,22 @@ def main():
     R = json.loads((run / ('pf_%s_RESULT.json' % arm)).read_text()); ck = torch.load(run / ('pf_%s_best.pt' % arm), map_location='cpu')
     edges = ck.get('edges', True); F.EDGES[0] = edges
     extra = {} if edges else dict(opt_no_edges=np.array([1.0], np.float32))   # server: the picture-edge inputs held at 5 for this file
+    if ck.get('fixwarp', False): extra['opt_warp_fix'] = np.array([1.0], np.float32)   # 11-16 review: server: lost step 1 with the warp of its own frame (as trained)
     np.savez(out / (name + '.npz'), **{k: v.cpu().numpy().astype(np.float32) for k, v in ck['model'].items()}, **extra)
     sha = hashlib.sha256((out / (name + '.npz')).read_bytes()).hexdigest()
     par = [parity(out / (name + '.npz'), arm, 'dancetrack0099', 'near'), parity(out / (name + '.npz'), arm, R.get('tmot_seq', 'seq17'), 'far')]
-    info = dict(status=('관절 입력 %s 위치 기억 (TMOT+DanceTrack) · 11-16 고침: 화면에 잘린 정답의 목표 뺌, 놓친 1단계 카메라 보정 순서, ' % ('GRU' if arm.startswith('gru') else 'Mamba')) + ('화면 가장자리 입력을 실제 화면 줄로' if edges else '화면 가장자리 입력 없음(공개 자료 카메라 배치를 배우지 않게)'),
+    # 11-16 review: the page shows the first 120 characters of 'status': what the file is, the result on our camera (optional 5th argument), not on the device
+    status = '관절 입력 %s 위치 기억 (TMOT+DanceTrack) 11-16판: %s' % ('GRU' if arm.startswith('gru') else 'Mamba', '화면 가장자리 = 실제 화면' if edges else '화면 가장자리 입력 없음')
+    status += (' · ' + sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else '') + ' · 장치 미확인'
+    assert len(status) <= 120, len(status)
+    info = dict(status=status,
+                fixes='화면에 잘린 정답의 목표 뺌, 화면 가장자리 = 실제 화면 줄(DanceTrack 회색 띠 안쪽)' + ('' if edges else ', 가장자리 입력 없음(공개 자료 카메라 배치를 배우지 않게)') + (', 놓친 1장째 = 그 프레임의 카메라 움직임' if ck.get('fixwarp', False) else ''),
                 source='fix_train.py %s%s (pos_train.py config a recipe, fixed builder fix_lib.py), epoch %d of 30, val-A sel %.4f' % (arm, '' if edges else ' --no-edges', ck['epoch'], ck['sel']),
                 inputs='프레임당 68개 (서버 position_memory 와 같은 식, 카메라 움직임 보정 포함). ' + ('화면 가장자리 = 실제 화면 (DanceTrack 은 위아래 회색 띠 안쪽)' if edges else '화면 가장자리 넷은 늘 5') + '. 관절 순서 = 우리 검출기(COCO)',
-                output='15프레임 동안 보정 없는 Kalman 예측 상자에 더하는 보정(중심 ±1 키, 크기 ±50%)', warp_order='lost step s uses the camera warp of frame t+s (server 11-16)', edge_inputs=('picture edges (real picture rows)' if edges else 'none: the four edge inputs are always 5 (opt_no_edges = 1)'),
+                output='15프레임 동안 보정 없는 Kalman 예측 상자에 더하는 보정(중심 ±1 키, 크기 ±50%)',
+                warp_order=('lost step s uses the camera warp of frame t+s (opt_warp_fix = 1)' if ck.get('fixwarp', False) else 'old order: lost steps 1 and 2 use the warp of frame t+2 (no opt_warp_fix)'),
+                edge_inputs=('picture edges (real picture rows)' if edges else 'none: the four edge inputs are always 5 (opt_no_edges = 1)'),
+                nokpt_rule='targets = one per-height lookup in head-to-hip mode (no opt_box_mode_targets): the server gives a lost person of >= 64 px with no visible keypoint in its last seen row the plain Kalman path',
                 kalman_valA=R['kalman_valA'], best=dict(epoch=R['best']['epoch'], sel=R['best']['sel']), parity=par, sha256=sha)
     (out / (name + '.json')).write_text(json.dumps(info, ensure_ascii=False, indent=1), encoding='utf-8')
     ok = all(p['max_abs'] < 1e-6 and p['tracks'] > 0 for p in par)

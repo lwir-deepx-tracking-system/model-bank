@@ -55,6 +55,18 @@ class PosMamba:
 KP_NF, KP_HIST, KP_STEPS, KP_C, KP_S, KP_CLIP, KP_MINOBS = 68, 20, 15, 1.0, float(np.log(1.5)), 5.0, 4
 KP_ROW0, KP_ROW1 = 16.0, 496.0   # camera rows inside the 640x512 frame canvas
 _POS_EDGE_OFF = np.full(4, KP_CLIP)   # 11-16: the picture-edge inputs of a file trained without them (opt_no_edges)
+_KP_VIS = slice(18, 67, 3)   # the 17 'visible' flags of a seen input row (16 box values, then x, y, visible per keypoint)
+# 11-16 review: a lost person whose last seen box is at least KP_NOKPT_H px high and has no visible keypoint gets the plain Kalman path (no correction),
+# unless the file says its targets follow the detector's box mode (opt_box_mode_targets = 1). The training target of every file so far is the gt box
+# through ONE per-height lookup in head-to-hip mode (pos_kpt_tmotdance_build/assoc_build.py), but for such a person the detector mostly draws a whole-body box:
+# in the TMOT / DanceTrack train split (anchors by last seen box height, no visible keypoint in the last seen row) most of those targets ask for less
+# than 0.8x the plain path from 64 px up (64-90 px: 77 % / 97.5 %; 50-64 px: 11 % / 91 %), and the 11-16 GRU draws a still 90-200 px person without
+# keypoints at 0.67-0.70x and lifts the box (step 15: -0.18..-0.50 box heights). Our camera: 16 % of 64-90 px and 67 % of 90-130 px detections have none.
+KP_NOKPT_H = 64.0
+
+
+def _pos_flag(w, k):
+    return k in w and float(np.asarray(w[k]).ravel()[0]) > 0
 
 
 class PosKpt:
@@ -66,7 +78,11 @@ class PosKpt:
         w = {k[5:] if k.startswith('cell.') else k: v for k, v in w.items()}
         # 11-16: files with opt_no_edges = 1 were trained without the picture-edge inputs (always 5 = far from every edge): the edge distances of
         # the public fixed cameras worked as a scene prior (people near the picture bottom drawn smaller and higher) that our camera does not share
-        self.edges = not ('opt_no_edges' in w and float(np.asarray(w['opt_no_edges']).ravel()[0]) > 0)
+        self.edges = not _pos_flag(w, 'opt_no_edges')
+        # 11-16 review: lost step 1 takes the camera warp of its own frame only in files trained that way (opt_warp_fix = 1, fix_lib fixwarp); the
+        # Mamba file and the older files were trained with the old order (the warp of lost step 2 for steps 1 and 2, none for step 1's frame) and keep it
+        self.warp_fix = _pos_flag(w, 'opt_warp_fix')
+        self.nokpt_kalman = not _pos_flag(w, 'opt_box_mode_targets')   # see KP_NOKPT_H
         if 'cell.weight_ih' in w:
             self.cell = PosGRU(dict(w_ih=w['cell.weight_ih'], w_hh=w['cell.weight_hh'], b_ih=w['cell.bias_ih'], b_hh=w['cell.bias_hh'], w_o=w['head.weight'], b_o=w['head.bias']))
         else: self.cell = PosMamba(w)
@@ -122,6 +138,7 @@ def pos_predict_kpt(M, kf, pool, mean, cov):
         elif p is not None and p['gen'] == gen and 0 <= p['j'] < KP_STEPS:
             if p['j'] == 0:
                 if p['n'] < KP_MINOBS: p['j'] = -1; continue
+                if getattr(M, 'nokpt_kalman', False) and p['z'][3] >= KP_NOKPT_H and not p['hist'][-1][_KP_VIS].any(): p['j'] = -1; continue   # 11-16 review
                 st = M.init()
                 for x in p['hist']: _, st = M.step(x, st)
                 po = p['post']; p.update(st=st, v=po[4:6].copy(), c=po[:2].copy(), wh=po[2:4].copy(), vwh=po[6:8].copy(), pb=p['z'].copy(), h0=max(p['z'][3], 1.))
@@ -135,8 +152,8 @@ def pos_predict_kpt(M, kf, pool, mean, cov):
                 s = p['j'] + 1
                 if s > KP_STEPS: break
                 # 11-16: step 1 belongs to the frame before (its warp was stored at the last TRACKED call); before, step 1 took this frame's warp
-                # (applied twice) and the warp of the frame before was lost
-                Ws = p.get('w1', W) if (n_ == 2 and s == 1) else W
+                # (applied twice) and the warp of the frame before was lost. Only for files trained that way (warp_fix); the others keep the old order
+                Ws = p.get('w1', W) if (n_ == 2 and s == 1 and getattr(M, 'warp_fix', False)) else W
                 if Ws is not None:
                     R = Ws[:2, :2]; p['c'] = R @ p['c'] + Ws[:2, 2]; p['v'] = R @ p['v']
                 p['c'] = p['c'] + p['v']; wh = p['wh'] + (p['vwh'] if s == 1 else 0.); p['wh'] = wh

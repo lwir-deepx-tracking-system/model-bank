@@ -4,10 +4,17 @@ Fix 1 (picture rows per dataset): the picture-edge inputs measure the distance t
   16..496 of the 640x512 canvas for every dataset, but the DanceTrack copy is a letterbox (content rows 60..420 of the 480-row picture = canvas
   76..436), so DanceTrack people never came closer than 60 px to the 'bottom edge' the model saw.
 Fix 2 (no target where the gt box is cut by the picture): the detector-definition target is the gt box through a per-height lookup; for a gt box cut
-  by the picture edge the lookup is applied to the cut height and asks for a smaller, higher box than the person's (train v0, bottom-edge input < 1:
-  target / plain path height 0.47-0.77 and centre -0.12..-0.20 h; the deployed GRU learned it and applies it to everyone near the bottom). Those
-  target frames are dropped (NaN = no loss, no score), the inputs are unchanged.
+  by the picture edge the lookup is applied to the cut height and asks for a smaller, higher box. Those target frames are dropped (NaN = no loss,
+  no score), the inputs are unchanged. Small: 2.5 % (DanceTrack) / 3.1 % (TMOT) of the train gt rows; cut-bottom targets are 0.94x / 0.85x the
+  detector's own associated box (the 0.47-0.77x first quoted was against the plain Kalman path on 442 DanceTrack anchors = 0.35 % of v0).
 Fix 3 (server warp order, optional): lost step 1 uses the camera warp of frame t+1 (the old builder and server: the warp of t+2 twice, t+1 never).
+  fix_export writes opt_warp_fix = 1 into files trained this way; the server keeps the old order for files without it.
+Fixes 1 + 2 alone (v1, edge inputs kept) closed about 41 % of the gap to Kalman on our camera (TEST 0.243, old file 0.336, Kalman 0.110). Most of the
+  gain came from EDGES[0] = False (v2): the edge inputs carried the public cameras' scene layout (low in the picture = big person, cut by the bottom).
+Still open (11-16 review): the target is ONE per-height lookup in head-to-hip mode, but for a person >= 64 px with no visible keypoint the detector
+  mostly draws a whole-body box (train split, 64-130 px, far detector and TMOT near: det / gt 0.79-1.04 without keypoints, about 0.53 with), so
+  those targets ask for 0.55-0.69x of the detector's box. Not fixed here; the
+  server gives such losses the plain Kalman path (position_memory.KP_NOKPT_H) for files without opt_box_mode_targets = 1.
 Everything else is pos_lib / prcommon as they are (imported, not copied).
 """
 import math

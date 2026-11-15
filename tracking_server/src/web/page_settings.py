@@ -394,7 +394,11 @@ def do_model_swap(new_det, checked=False):
     print('MODEL changed %s -> %s in %.1f s' % (old_det, new_det, time.perf_counter() - t_), flush=True); return 0
 
 
-AUTO_KPT_POS = 'gru_kpt'   # 11-15 (user): position memory picked when the detector becomes a keypoint (pose) model. models/README: files trained on our pose detectors' outputs (TMOT+DanceTrack), inside the server's own tracker loop 10-16% less error than Kalman on real losses; not yet measured on the device camera
+AUTO_KPT_POS = 'gru_kpt'   # 11-15 (user): position memory picked when the detector becomes a keypoint (pose) model.
+# 11-16 numbers (models/README, GRU position memory): the 11-15 file beat Kalman by 10-16 % only on public val-B. On our labelled camera recordings the
+# 11-16 file is still slightly worse than Kalman on the lost box: TEST 0.118 with the no-keypoint Kalman rule (0.122 without) vs 0.110, worse in 9 of
+# 14 recordings; CHOOSE 0.103 vs 0.089; close people 0.138 vs 0.057 (10 losses); IDF1 / HOTA 74.7 / 74.6 vs 74.1 / 73.9 (no measurable difference).
+# Those recordings were already looked at (not a blind test); not measured on the device. Keeping this automatic pick is the user's decision.
 
 
 def det_changed(new_det, key_):

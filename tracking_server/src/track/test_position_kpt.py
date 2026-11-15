@@ -33,11 +33,20 @@ class KptDecodeTests(unittest.TestCase):
         self.assertEqual(DF.KP['cur']['kpts'].shape, (0, 17, 3))
 
 
+# COCO keypoints of a standing person relative to a head-to-hip box (centre, box height): nose at the top, hips at the bottom edge, knees / ankles below
+KP_REL = np.array([[0, -0.40], [-0.03, -0.43], [0.03, -0.43], [-0.07, -0.42], [0.07, -0.42], [-0.17, -0.20], [0.17, -0.20], [-0.22, 0.05], [0.22, 0.05],
+                   [-0.22, 0.28], [0.22, 0.28], [-0.10, 0.42], [0.10, 0.42], [-0.10, 0.80], [0.10, 0.80], [-0.10, 1.15], [0.10, 1.15]])
+
+
 class ZeroCell:
     kpt = True
     def init(self): return np.zeros(3)
     def step(self, x, st):
         assert x.shape == (PM.KP_NF,) and np.isfinite(x).all(); return np.zeros(4), st
+
+
+class ZeroCellFix(ZeroCell):
+    warp_fix = True   # a file trained with lost step 1 = the warp of its own frame (npz opt_warp_fix = 1)
 
 
 class FakeKF:
@@ -85,12 +94,22 @@ class KptMemoryTests(unittest.TestCase):
         return post, t.pk['c'].copy()
 
     def test_lost_step_1_uses_the_camera_warp_of_its_own_frame(self):
-        # 11-16: before, the first LOST call applied ITS warp to steps 1 and 2 and never the warp of step 1's frame
+        # 11-16: before, the first LOST call applied ITS warp to steps 1 and 2 and never the warp of step 1's frame (for files with opt_warp_fix)
+        PM.POSP.update(model=ZeroCellFix())
         shift = np.array([[1., 0., 10.], [0., 1., 0.]])
         post, c = self._seen_then_lost(shift, None)   # the camera moved 10 px in step 1's frame, stood still in step 2's
         np.testing.assert_allclose(c, post[:2] + [10., 0.] + 2 * post[4:6])
         post, c = self._seen_then_lost(None, shift)   # still in step 1's frame, moved in step 2's: the shift once, not twice
         np.testing.assert_allclose(c, post[:2] + [10., 0.] + 2 * post[4:6])
+
+    def test_files_without_the_warp_flag_keep_the_order_they_were_trained_with(self):
+        # 11-16 review: the Mamba file and the older files were trained with the old order (fix_lib fixwarp=False: the warp of lost step 2 for
+        # steps 1 and 2); the step-1 change must not reach them (the 11-16 server gave the Mamba file up to 10.8 px other boxes with a moving camera)
+        shift = np.array([[1., 0., 10.], [0., 1., 0.]])
+        post, c = self._seen_then_lost(shift, None)   # step 1's frame moved: the old order never applies it
+        np.testing.assert_allclose(c, post[:2] + 2 * post[4:6])
+        post, c = self._seen_then_lost(None, shift)   # step 2's frame moved: the old order applies it twice
+        np.testing.assert_allclose(c, post[:2] + [20., 0.] + 2 * post[4:6])
 
 
 class RecCell(ZeroCell):
@@ -120,12 +139,61 @@ class EdgeFlagTests(unittest.TestCase):
              'cell.cell.bias_hh': np.zeros(6), 'cell.head.weight': np.zeros((4, 2)), 'cell.head.bias': np.zeros(4)}   # export key names (torch PosNet.cell.*)
         self.assertTrue(PM.PosKpt(z).edges); self.assertFalse(PM.PosKpt(dict(z, opt_no_edges=np.array([1.], np.float32))).edges)
 
+    def test_file_flags_and_the_shipped_files(self):
+        # 11-16 review: opt_warp_fix (lost step 1 with its own frame's warp) and opt_box_mode_targets (no Kalman rule for big people without keypoints)
+        z = {'cell.cell.weight_ih': np.zeros((6, PM.KP_NF)), 'cell.cell.weight_hh': np.zeros((6, 2)), 'cell.cell.bias_ih': np.zeros(6),
+             'cell.cell.bias_hh': np.zeros(6), 'cell.head.weight': np.zeros((4, 2)), 'cell.head.bias': np.zeros(4)}
+        m = PM.PosKpt(z); self.assertFalse(m.warp_fix); self.assertTrue(m.nokpt_kalman)
+        m = PM.PosKpt(dict(z, opt_warp_fix=np.array([1.], np.float32), opt_box_mode_targets=np.array([1.], np.float32)))
+        self.assertTrue(m.warp_fix); self.assertFalse(m.nokpt_kalman)
+        d = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'models', 'track')
+        for f, warp_fix, edges in (('pos_gru_kpt_tmotdance_20261116.npz', True, False), ('pos_mamba_kpt_tmotdance_20261115.npz', False, True)):
+            p = os.path.join(d, f)
+            if not os.path.exists(p): continue
+            m = PM.PosKpt(dict(np.load(p)))
+            with self.subTest(f=f):   # the GRU was trained with fix_lib fixwarp=True and no edge inputs; the Mamba file with the old builder
+                self.assertEqual((m.warp_fix, m.edges, m.nokpt_kalman), (warp_fix, edges, True))
+
+
+class ShrinkCell(ZeroCell):
+    """constant output: height x exp(log 1.5 x tanh(-1)) = 0.74x, centre unchanged; counts its lost steps"""
+    def __init__(self, nokpt_kalman=True): self.nokpt_kalman = nokpt_kalman; self.lost_steps = 0
+    def step(self, x, st):
+        self.lost_steps += x[67] > 0; return np.array([0., 0., 0., -1.]), st
+
+
+class NoKeypointKalmanTests(unittest.TestCase):
+    """11-16 review: a lost person whose last seen box is >= 64 px with no visible keypoint gets the plain Kalman path (files without
+    opt_box_mode_targets: their targets ask such a person for a head-to-hip box although the detector draws the whole body)"""
+    def tearDown(self):
+        PM.POSP.update(key='kalman', model=None, gen=PM.POSP['gen'] + 1, err=0, used=0, show=False); DF.KP['cur'] = DF.KP['prev'] = None
+
+    def _lost_h(self, cell, h, n_vis):
+        PM.POSP.update(key='gru_kpt', model=cell, gen=PM.POSP['gen'] + 1, err=0, used=0, show=False)
+        t = SimpleNamespace(state=TRACKED, cls=0, track_id=4, pp_inn=np.zeros(4)); kf = FakeKF(); w = 0.4 * h
+        mean = np.array([[320., 200., w, h, 0., 0., 0., 0.]]); cov = np.zeros((1, 8, 8))
+        kp = np.zeros((1, 17, 3), np.float32); kp[0, :, 0] = 320.; kp[0, :, 1] = 200.; kp[0, :n_vis, 2] = 0.9
+        DF.KP['prev'] = dict(boxes=np.array([[320. - w / 2, 200. - h / 2, 320. + w / 2, 200. + h / 2]], np.float32), kpts=kp)
+        for _ in range(6): mean, cov = PM.pos_predict(kf, [t], mean, cov)
+        t.state = 2
+        for _ in range(5): mean, cov = PM.pos_predict(kf, [t], mean, cov)
+        self.assertEqual(PM.POSP['err'], 0)
+        return mean[0, 3] / h, cell.lost_steps
+
+    def test_big_person_without_keypoints_gets_the_kalman_path(self):
+        for h, n_vis, kalman in ((63., 0, False), (64., 0, True), (200., 0, True), (64., 1, False), (200., 17, False)):
+            with self.subTest(h=h, n_vis=n_vis):
+                r, n = self._lost_h(ShrinkCell(), h, n_vis)
+                if kalman: self.assertEqual((r, n), (1.0, 0))   # plain path: the still person keeps its box, the cell never steps a lost frame
+                else: self.assertLess(r, 0.8); self.assertEqual(n, 6)
+        r, n = self._lost_h(ShrinkCell(nokpt_kalman=False), 200., 0); self.assertLess(r, 0.8)   # a file with opt_box_mode_targets: the cell's box
+
 
 class ShippedGruNearBottomTests(unittest.TestCase):
     """11-16: the shipped GRU file must not shrink and lift a lost person because its box is near the picture bottom. The 11-15 file did
-    (on our camera the lost box at step 2 was 0.85x and 0.16 box heights higher, 3x the Kalman error): it was trained with DanceTrack's
-    letterbox measured as the device picture (no person closer than 60 px to the 'bottom') and with targets made from gt boxes cut by the
-    picture edge (a smaller, higher box near the bottom)."""
+    (on our camera the lost box at step 2 was 0.85x and 0.16 box heights higher, 3x the Kalman error), mainly because its picture-edge inputs
+    carried the public cameras' scene layout (holding them at 5 on the old file: TEST 0.116 vs Kalman 0.110); smaller parts: DanceTrack's
+    letterbox measured as the device picture and targets made from gt boxes cut by the picture edge. The 11-16 file has no edge inputs."""
     def setUp(self):
         self.dir0 = PM.POSP['dir']; PM.POSP['dir'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'models', 'track')
         PM.POSP['avail'].pop('gru_kpt', None); PM.pos_scan(); a = PM.POSP['avail'].get('gru_kpt')
@@ -137,13 +205,15 @@ class ShippedGruNearBottomTests(unittest.TestCase):
         PM.POSP.update(key='kalman', model=None, gen=PM.POSP['gen'] + 1, err=0, used=0, show=False); PM.POSP['dir'] = self.dir0
         PM.POSP['avail'].pop('gru_kpt', None)
 
-    def _lost_boxes(self, h, gap):
+    def _lost_boxes(self, h, gap, vis=False):
         """a person standing still, box height h, box bottom gap px above the picture bottom (canvas row 496), keypoints not visible
-        (as our camera's detector gives for most people): 20 seen frames, then 15 lost frames -> lost boxes of steps 2..15"""
+        (as our camera's detector gives for most people) or all 17 visible on a head-to-hip box (vis): 20 seen frames, then 15 lost frames
+        -> lost boxes of steps 2..15"""
         w = 0.4 * h; cy = PM.KP_ROW1 - gap - h / 2; box = np.array([320., cy, w, h])
         t = SimpleNamespace(state=TRACKED, cls=0, track_id=7, pp_inn=np.zeros(4)); kf = FakeKF()
-        mean = np.r_[box, np.zeros(4)][None]; cov = np.zeros((1, 8, 8))
-        DF.KP['prev'] = dict(boxes=np.array([[320. - w / 2, cy - h / 2, 320. + w / 2, cy + h / 2]], np.float32), kpts=np.zeros((1, 17, 3), np.float32))
+        mean = np.r_[box, np.zeros(4)][None]; cov = np.zeros((1, 8, 8)); kp = np.zeros((1, 17, 3), np.float32)
+        if vis: kp[0, :, 0] = 320. + KP_REL[:, 0] * h; kp[0, :, 1] = cy + KP_REL[:, 1] * h; kp[0, :, 2] = 0.9
+        DF.KP['prev'] = dict(boxes=np.array([[320. - w / 2, cy - h / 2, 320. + w / 2, cy + h / 2]], np.float32), kpts=kp)
         for _ in range(20): mean, cov = PM.pos_predict(kf, [t], mean, cov)
         t.state = 2; out = []
         for _ in range(14): mean, cov = PM.pos_predict(kf, [t], mean, cov); out.append(mean[0, :4].copy())
@@ -152,21 +222,32 @@ class ShippedGruNearBottomTests(unittest.TestCase):
 
     def test_lost_box_does_not_depend_on_the_distance_to_the_picture_bottom(self):
         # the same still person near the bottom and 250 px above it must get the same lost boxes (11-15 file: h 44 at 60 px 0.71x, at 250 px 0.97x)
-        for h, gap in ((30., 60.), (44., 60.), (64., 40.), (120., 20.)):
-            box, q = self._lost_boxes(h, gap); box2, q2 = self._lost_boxes(h, 250.)
-            with self.subTest(h=h, gap=gap):
+        for h, gap, vis in ((30., 60., False), (44., 60., False), (64., 40., False), (120., 20., False), (64., 40., True), (120., 20., True)):
+            box, q = self._lost_boxes(h, gap, vis); box2, q2 = self._lost_boxes(h, 250., vis)
+            with self.subTest(h=h, gap=gap, vis=vis):
                 self.assertLess(float(np.abs(q[:, 3] / box[3] - q2[:, 3] / box2[3]).max()), 0.03)
                 self.assertLess(float(np.abs((q[:, 1] - box[1]) - (q2[:, 1] - box2[1])).max() / h), 0.03)
 
     def test_small_still_person_near_the_bottom_keeps_its_box(self):
         # people < 50 px: our camera's detector gives them almost no visible keypoint (11-16: 10 of 26,528 outdoor detections have one)
-        # NOT asserted (known, 11-16 file): a still person of 64-200 px with NO visible keypoint is drawn 0.68-0.70x and up to 0.5 h higher
-        # when lost (public training data has such people almost only when occluded); see models/README.md, GRU position memory
+        # 64 px and more without a visible keypoint: test_big_still_person_without_keypoints_gets_the_kalman_box
         for h, gap in ((30., 60.), (44., 60.)):
             box, q = self._lost_boxes(h, gap)
             with self.subTest(h=h, gap=gap):
                 self.assertLess(float(np.abs(q[:, 3] / box[3] - 1).max()), 0.10)        # height within 10 %
                 self.assertLess(float(np.abs(q[:, 1] - box[1]).max() / box[3]), 0.10)   # centre within 0.1 box heights
+
+
+    def test_big_still_person_without_keypoints_gets_the_kalman_box(self):
+        # 11-16 review: the file itself draws a still 90-200 px person with no visible keypoint at 0.67-0.70x and lifts it (-0.18..-0.50 box
+        # heights at step 15), near the bottom or not: its training targets ask for a head-to-hip box (one per-height lookup) although the detector
+        # draws the whole body when it gives no keypoint. The server gives such a loss the plain Kalman path (position_memory.KP_NOKPT_H)
+        for h, gap in ((64., 250.), (90., 250.), (120., 20.), (200., 250.)):
+            used = PM.POSP['used']; box, q = self._lost_boxes(h, gap)
+            with self.subTest(h=h, gap=gap):
+                np.testing.assert_allclose(q, np.tile(box, (len(q), 1)), rtol=0, atol=1e-9)   # still person: the Kalman box = the last box
+                self.assertEqual(PM.POSP['used'], used)                                          # the file never corrected it
+        box, q = self._lost_boxes(120., 250., vis=True); self.assertGreater(PM.POSP['used'], 0)    # with keypoints the file still runs
 
 
 if __name__ == '__main__':
