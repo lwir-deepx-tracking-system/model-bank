@@ -210,6 +210,7 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
             sx = shape(sx, x * px, config_.deadband_x * 320.0);
             sy = shape(sy, y * px, config_.deadband_y * 240.0);
         }
+        d.speed_x = sx; d.speed_y = sy;
         d.speed = std::clamp(std::max(sx, sy), double(config_.speed_min), double(config_.speed_max));
     }
     if (smoothing_.catchup_speed > 0 && healthy_live) {

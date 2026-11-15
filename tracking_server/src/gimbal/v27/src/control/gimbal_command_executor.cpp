@@ -683,9 +683,10 @@ void GimbalCommandExecutor::tick()
         if (hold_x_) want_x = 0;
         if (hold_y_) want_y = 0;
         if (!want_x && !want_y) { stop("direction reversal"); return; }
-        // Shared SPD follows only the axes that actually move.
-        want_speed = std::clamp(std::max(want_x ? std::abs(demand.pid_x.value) : 0.0,
-                                         want_y ? std::abs(demand.pid_y.value) : 0.0),
+        // Shared SPD follows only the axes that actually move. speed_x/speed_y carry --far-gain and
+        // --brake-px-per-spd (they equal |pid value| when both are off), so those options work here too.
+        want_speed = std::clamp(std::max(want_x ? demand.speed_x : 0.0,
+                                         want_y ? demand.speed_y : 0.0),
                                 double(config_.automatic.speed_min), double(config_.automatic.speed_max));
     }
     const double step = config_.automatic.speed_rate * dt;

@@ -225,6 +225,34 @@ void test_soft_stop()
     for (int v : soft) std::printf(" %d", v);
     std::printf("\n");
 }
+
+// ---------- 7: the executor uses the shaped demand also with --axis-reversal 1 (it used to recompute the shared SPD
+// from the unshaped PID values, so --far-gain and --brake-px-per-spd did nothing there)
+int steady_speed(bool axis_reversal, double far_gain, double brake, double ex = 0.4, double ey = 0.0)
+{
+    SmoothingConfig s; s.axis_reversal = axis_reversal; s.far_gain = far_gain; s.brake_px_per_spd = brake;
+    Rig r(s);
+    if (!r.follow(ex, ey, 0.9)) return -1;
+    const auto got = r.rec.since(0);
+    for (auto c = got.rbegin(); c != got.rend(); ++c) if (!c->stop) return c->speed;
+    return -1;
+}
+
+void test_far_gain_with_axis_reversal()
+{
+    // 128 px right of the centre: PD demand 12; far gain 2 (64..160 px) is x 1.667 there -> 20
+    const int plain = steady_speed(false, 1.0, 0.0), plain_axis = steady_speed(true, 1.0, 0.0);
+    check(plain == 12 && plain_axis == 12, "far gain 1 (default): SPD = PD demand with and without axis_reversal (unchanged)");
+    const int far = steady_speed(false, 2.0, 0.0), far_axis = steady_speed(true, 2.0, 0.0);
+    check(far == 20, "far gain 2 without axis_reversal: SPD 20 at 128 px (as before)");
+    check(far_axis == 20, "far gain 2 with axis_reversal: the same SPD 20 (was 12: the gain was dropped)");
+    const int brake = steady_speed(false, 1.0, 20.0), brake_axis = steady_speed(true, 1.0, 20.0);
+    check(brake == 5 && brake_axis == 5, "brake 20 px/SPD: SPD (128 - 19.2) / 20 = 5 with and without axis_reversal");
+    // the shared SPD is the larger shaped axis: X 128 px (far gain -> 20), Y 48 px below (PD 6, under far_start)
+    check(steady_speed(true, 2.0, 0.0, 0.4, 0.2) == 20, "far gain 2 with axis_reversal, both axes moving: shared SPD = the larger shaped axis");
+    std::printf("      SPD plain %d/%d  far 2 %d/%d  brake 20 %d/%d (without/with axis_reversal)\n",
+                plain, plain_axis, far, far_axis, brake, brake_axis);
+}
 }
 
 int main()
@@ -234,6 +262,7 @@ int main()
     test_soft_stop();
     test_aim_screen_y();
     test_far_gain_and_brake();
+    test_far_gain_with_axis_reversal();
     std::printf(failures ? "FAILED %d\n" : "ALL OK\n", failures);
     return failures ? 1 : 0;
 }

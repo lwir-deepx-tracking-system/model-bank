@@ -184,6 +184,26 @@ void follows_the_prediction()
           "coast: the predicted place decides the direction (prediction left of the centre -> turn left)");
 }
 
+// --far-gain also speeds up the coast: the predicted box goes through the same controller and executor path.
+void far_gain_applies_to_coast()
+{
+    const auto coast_speed = [](double far_gain, bool& ready) {
+        SmoothingConfig s = coast_on(600);
+        s.axis_reversal = true; s.far_gain = far_gain;
+        Rig r{s};
+        ready = r.follow_then_lose(predicted(7, 480), 400);   // seen 80 px right, then predicted 160 px right: PD demand 15
+        std::this_thread::sleep_for(250ms);
+        const auto m = moves(r.recorder->read());
+        const auto snap = r.executor->snapshot();
+        return snap.moving && snap.lost && !m.empty() && m.back().x == 1 ? m.back().speed : -1;
+    };
+    bool ready_plain = false, ready_far = false;
+    const int plain = coast_speed(1.0, ready_plain), far = coast_speed(1.6, ready_far);
+    std::printf("      coast SPD at a predicted 160 px: far gain 1 -> %d, far gain 1.6 -> %d\n", plain, far);
+    check(ready_plain && plain == 15, "coast, far gain 1 (default): SPD = PD demand of the predicted place (unchanged)");
+    check(ready_far && far == 24, "coast, far gain 1.6 with axis_reversal: the predicted place is chased at SPD x 1.6");
+}
+
 void no_prediction_no_coast()
 {
     for (int which = 0; which < 3; ++which) {
@@ -316,6 +336,7 @@ int main()
     off_by_default();
     coasts_then_stops();
     follows_the_prediction();
+    far_gain_applies_to_coast();
     no_prediction_no_coast();
     safety();
     same_id_back();
