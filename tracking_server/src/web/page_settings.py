@@ -7,6 +7,7 @@ from ..common.state import APP
 from ..common.shared_values import HERE, CORE, DET, sha
 from ..detect.model_scan import BANK, KPT_DETS
 from ..detect import auto_det   # 11-15 (user): automatic NEAR / FAR detector choice (off by default)
+from ..detect import resident_det   # 11-15 (user): both models of that pair resident on NPU cores 0 and 1, instant switch (off by default)
 from ..track import native_backend
 from ..track.position_memory import POSP, POS_NAMES, pos_list, pos_select
 from ..track import e2e_live
@@ -109,7 +110,7 @@ def rules_state():
 
 
 def rules_state_2():
-    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg(), auto_det=auto_det.state())   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
+    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg(), auto_det=auto_det.state(), resident_det=resident_det.state())   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). resident_det (11-15): 두 모델 상주·즉시 전환 (src/detect/resident_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
 
 
 def prefer_cpp_bytetrack(q_, tracker_key, cam_tracker):
@@ -249,6 +250,13 @@ def rules_request(q_):
 
 
 def rules_request_2(q_):
+    if 'resident_det' in q_:   # 11-15: two detector models resident (src/detect/resident_det.py); checked first, changed only when the rest of the query was taken too (like auto_det below)
+        ok_, tx_, apply_ = resident_det.parse_request({'resident_det': q_['resident_det']})
+        if not ok_: return ok_, tx_
+        rest_ = {k_: x_ for k_, x_ in q_.items() if k_ != 'resident_det'}
+        ok_, tx2_ = rules_request_2(rest_) if rest_ else (True, tx_)
+        if ok_: apply_()
+        return ok_, tx2_
     ad_ = {k_: x_ for k_, x_ in q_.items() if k_ == 'auto_det' or k_.startswith('auto_det_')}
     if ad_:   # 11-15: checked first, changed only when the rest of the query was taken too (like stab below)
         ok_, tx_, apply_ = auto_det.parse_request(ad_)
@@ -325,7 +333,12 @@ def do_model_swap(new_det):
         print('MODEL creation of', key_, 'failed:', repr(e_)[:200], flush=True)
         try: APP.eng[old_key] = APP.Engine(old_key, CORE[old_key], APP.args.npu_depth); APP.a = APP.eng[old_key]; return 4
         except Exception as e2_: print('MODEL restore of', old_key, 'failed:', repr(e2_)[:200], flush=True); return 5
-    APP.a = APP.eng[key_]; APP.b = None; APP.det_names = [key_]; APP.det_yoff = DET[new_det]['yoff']; APP.args.det = new_det
+    APP.a = APP.eng[key_]; det_changed(new_det, key_)
+    print('MODEL changed %s -> %s in %.1f s' % (old_det, new_det, time.perf_counter() - t_), flush=True); return 0
+
+
+def det_changed(new_det, key_):
+    """The run-wide detector names after a change that worked: do_model_swap, and the instant switch of resident_det (11-15), which keeps APP.a (the arrival feed)."""
+    APP.b = None; APP.det_names = [key_]; APP.det_yoff = DET[new_det]['yoff']; APP.args.det = new_det
     if POSP['key'].endswith('_kpt') and new_det not in KPT_DETS:   # 11-14 (user): a keypoint position memory needs a keypoint detector
         pos_select('kalman'); print('POS predictor back to kalman: %s gives no keypoints' % new_det, flush=True)
-    print('MODEL changed %s -> %s in %.1f s' % (old_det, new_det, time.perf_counter() - t_), flush=True); return 0

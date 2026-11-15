@@ -46,6 +46,7 @@ from .common import result_summary
 from .common import stage_timing   # 2026-11-11: 단계별 시간 재기 (LWIR_STAGE_TIMING=1 일 때만, 기본 꺼짐)
 from .detect import frame_feed     # 2026-11-11: 도착하는 대로 검출기에 넣기 (LWIR_NPU_FEED=arrival 일 때만, 기본 꺼짐)
 from .detect import auto_det       # 2026-11-15: 검출 모델 자동 선택 (근거리 / 먼 거리, 화면이나 /rules/set?auto_det=1 로 켤 때만, 기본 꺼짐)
+from .detect import resident_det   # 2026-11-15: 두 모델 상주·즉시 전환 (LWIR_RESIDENT_DET=1 이나 /rules/set?resident_det=1 로 켤 때만, 기본 꺼짐)
 
 
 # ---------------------------------------------------------------------------------------------------------------- main
@@ -281,6 +282,7 @@ def main():
                  ('s6', 'S6', 'YOLO26s 640x640')]   # v34 (11-10): the old own-camera fine-tune entry was taken off the list on the user request (models/FT1.dxnn kept); the new indoor file is listed from dxnn/   # v32 (11-10): the v9 trial entry was taken off the list on the user request (file kept in dxnn/)
     APP.MODEL = dict(lock=md_th.Lock(), req=None, busy=False, last=None, history=[], catalog=[])
     auto_det.reset()   # 11-15: automatic detector choice starts off; a saved choice comes back with the other rules below
+    resident_det.reset()   # 11-15: off unless LWIR_RESIDENT_DET=1; a saved choice (below) wins over the environment
     if APP.args.det in [c_[0] for c_ in MODEL_CAT]:   # only for the single-engine detectors; the two-tile builds are not in the catalog
         APP.MODEL['catalog'] = [dict(id=0, det=c_[0], key=c_[1], name=c_[2]) for c_ in MODEL_CAT if APP.args.mock or (c_[1] in APP.man and (HERE / 'models' / 'links' / (c_[1] + '.dxnn')).exists())]
         for i_, c_ in enumerate(APP.MODEL['catalog']): c_['id'] = i_ + 1
@@ -313,7 +315,7 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det') if k_ in sv_})
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass
@@ -329,6 +331,7 @@ def main():
         if 'confirm_ms' in APP.SEL: qs_.append({'confirm_ms': [str(APP.SEL['confirm_ms'])]})   # 11-11: a value set on the page wins over --confirm-ms, like the other Filter numbers
         if isinstance(sv_, dict) and 'stab' in sv_: APP.SEL['stab'] = bool(sv_['stab']); qs_.append({'stab': ['1' if APP.SEL['stab'] else '0']})   # stab
         if 'auto_det' in APP.SEL: qs_.append(auto_det.restore_query(bool(APP.SEL['auto_det']), APP.SEL.get('auto_det_p')))   # 11-15: automatic detector choice on / off and the changed numbers
+        if 'resident_det' in APP.SEL: qs_.append({'resident_det': ['1' if APP.SEL['resident_det'] else '0']})   # 11-15: two detector models resident (the other pair is made by the frame loop)
         for q_ in qs_:
             if not q_: continue
             try: ok_, tx_ = APP.rules_request(q_)
@@ -608,12 +611,15 @@ def main():
             vid = im['extra_info']['video_id']; reset = vid != prev_vid
             if APP.MODEL['req'] is not None:   # v23: a model change was asked for; taken here, between two frames
                 rq_ = APP.MODEL['req']; APP.MODEL['busy'] = True
-                for a_ in ahead:   # frames already submitted to the old model: collected and dropped, they go in again below
-                    if a_[2]: APP.a.wait()
-                if APP.FEED is not None: APP.FEED.pause()
-                code_ = do_model_swap(rq_['det'])
-                if APP.FEED is not None: APP.FEED.resume(code_)
-                if APP.args.pipeline and code_ != 5: ahead[:] = [(g_, submit_tiles(g_, i + n_) if s_ else t_, s_) for n_, (g_, t_, s_) in enumerate(ahead)]
+                code_ = resident_det.instant(rq_)   # 11-15: 0 = switched at once to the resident pair of the other model (no engine made or released), None = the old path below
+                if code_ is None:
+                    for a_ in ahead:   # frames already submitted to the old model: collected and dropped, they go in again below
+                        if a_[2]: APP.a.wait()
+                    if APP.FEED is not None: APP.FEED.pause()
+                    resident_det.before_swap(rq_['det'])   # 11-15: the other resident pair (if any) is released first; nothing is on the NPU after pause
+                    code_ = do_model_swap(rq_['det'])
+                    if APP.FEED is not None: APP.FEED.resume(code_)
+                    if APP.args.pipeline and code_ != 5: ahead[:] = [(g_, submit_tiles(g_, i + n_) if s_ else t_, s_) for n_, (g_, t_, s_) in enumerate(ahead)]
                 with APP.MODEL['lock']:
                     APP.MODEL['req'] = None; APP.MODEL['busy'] = False
                     APP.MODEL['last'] = dict(id=rq_['id'], result=code_, text=APP.MODEL_TEXT.get(code_, '?'), at=time.strftime('%H:%M:%S'), seconds=round(time.time() - rq_['t'], 1))
@@ -623,6 +629,7 @@ def main():
                     from .camera import replay_link as rl_; rl_.restart_after_change('detector model %s' % rq_['det'])
                 if rq_['req'] is not None and APP.GB is not None: APP.gb_send('N %d %d' % (rq_['req'], code_))
                 if code_ == 5: raise RuntimeError('detector model could not be restored')
+            resident_det.frame_step(i)   # 11-15: makes / releases the other resident pair between two frames (only when LWIR_RESIDENT_DET=1 or resident_det=1)
             if APP.RULES['pending'] is not None and APP.tracker is not None:   # v24g: tracker preset / relabel switch between two frames
                 with APP.RULES['lock']: pd_ = APP.RULES['pending']; APP.RULES['pending'] = None
                 if 'relabel' in pd_: APP.RULES['relabel'] = pd_['relabel']
@@ -897,6 +904,7 @@ def main():
                 if APP.b is not None:
                     APP.b.wait()
         if APP.FEED is not None: APP.FEED.close()
+        resident_det.close()   # 11-15: the other resident pair (after the feed has taken its last frames)
         if APP.TIMING is not None: APP.TIMING.close()
         if APP.LIVE is not None: live_close()
         if vit is not None and inflight is not None: vit_sync(None, None, len(APP.images))
@@ -1043,6 +1051,7 @@ def main():
                 APP.FEED.close()
             except Exception as exc:
                 print('FEED cleanup failed: %r' % exc, flush=True)
+            resident_det.close()   # 11-15
         worker_ = getattr(APP.LIVE, 'preview_worker', None)
         if worker_ is not None: worker_.close()
         for e_ in list(APP.eng.values()):

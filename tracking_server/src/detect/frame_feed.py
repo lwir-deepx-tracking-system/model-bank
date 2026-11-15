@@ -24,6 +24,8 @@ arrival은 코어 0과 1을 번갈아 쓴다. 변경 요청이 들어오면 새 
   - Python 의 스레드 교대 간격을 5 ms 에서 1 ms 로 줄인다 (이 방식을 켰을 때만). 프레임 반복이 Python 계산을 하는 동안에도 카메라 읽기 스레드와 넣는 스레드가
     빨리 차례를 얻게 하려는 것이다. LWIR_NPU_FEED_SWITCH_MS=0 이면 건드리지 않는다.
   - 넣는 스레드에서 오류가 나면 이 방식을 끄고 그 자리에서 보통 읽기(live_next)로 넘어간다 (다음 프레임 미리 넣기는 없는 채로). 한 줄을 찍는다.
+  - 두 모델 상주 (11-15, resident_det.py, 기본 꺼짐): 넣는 곳(eng, busy)을 다른 모델의 엔진 짝으로 바로 돌릴 수 있다. 그래서 프레임마다 넣은 엔진 짝을
+    기억하고(_Rec.grp) 결과는 그 짝에서 받는다. 옛 짝이 아직 결과를 내지 않은 코어에는 새 짝도 넣지 않는다(held). 프레임 반복이 받아 가는 프레임은 on_take 로 알린다.
 
 켤 수 없는 경우 (시작할 때 한 줄을 찍고 보통 방식 그대로 간다)
   실시간 실행이 아님, --pipeline 없음, --npu-depth 가 1 이 아님, --no-vit 없음(또는 --vit-budget / --vit-bench-n), --zoom, 검출 모델이 두 개짜리(타일),
@@ -212,10 +214,14 @@ def _switch_interval():
 
 
 class _Rec:
-    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc')
+    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc', 'grp')
 
 
 class Feed:
+    held = None      # 11-15 resident_det: busy flags of the other model's engines on the same cores (one frame per core at a time), None = none
+    on_take = None   # 11-15 resident_det: called with each frame record the frame loop takes (frame thread), None = nothing
+    _tgt_e = None    # the engine the feeding thread is submitting to (chosen under the lock)
+
     def __init__(self, second_, *, hot_switch=False):
         self.eng = [APP.a] + ([second_] if second_ is not None else [])
         self.busy = [False] * len(self.eng)
@@ -239,17 +245,21 @@ class Feed:
         return getattr(self.eng[0], name_)
 
     # ---------------------------------------------------------------- 넣는 스레드
+    def _idle(self, e_):   # engine e_ of the pair in use is free, and so is its core (resident_det: the other pair may still run its last frame there)
+        h_ = self.held
+        return not self.busy[e_] and not (h_ is not None and e_ < len(h_) and h_[e_])
+
     def _free(self):
         if self.mode == 'normal':
-            return 0 if not self.busy[0] else None
+            return 0 if self._idle(0) else None
         n_ = len(self.eng)
         for k_ in range(1, n_ + 1):
             e_ = (self.last_e + k_) % n_
-            if not self.busy[e_]: return e_
+            if self._idle(e_): return e_
         return None
 
     def _run(self):
-        L_ = APP.LIVE; e_ = None
+        L_ = APP.LIVE; e_ = None; grp_ = None
         try:
             while True:
                 with L_.cond:
@@ -267,9 +277,10 @@ class Feed:
                         t_, raw_ = L_.q.popleft()
                         if camera_extra.replay_eval.lossless():
                             L_.cond.notify_all()
-                    if e_ >= 0: self.busy[e_] = True
+                    grp_ = (self.eng, self.busy)   # the pair chosen under the lock: resident_det may point the feed at the other pair before this frame is submitted
+                    if e_ >= 0: self.busy[e_] = True; self._tgt_e = self.eng[e_]
                     self.working = True
-                    if sum(self.busy) > 1: self.st['overlap'] += 1
+                    if sum(self.busy) + (sum(self.held) if self.held is not None else 0) > 1: self.st['overlap'] += 1
                 self._job = None
                 if r_ is None:
                     restart = camera_extra.replay_eval.reset_first_input(t_)
@@ -279,17 +290,17 @@ class Feed:
                     r_.gmc = self._gmc(gg_, restart) if APP.args.gmc_thread else None
                 if e_ >= 0: self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
                 else: r_.t_sub = time.perf_counter_ns(); self._job = None; e2e_live.prefetch(r_.gg)   # 11-15: the end-to-end AE starts on arrival
-                r_.e = e_; r_.job = self._job
+                r_.e = e_; r_.job = self._job; r_.grp = grp_ if e_ >= 0 else None; self._tgt_e = None
                 with L_.cond:
                     self.out.append(r_); self.working = False
                     if e_ >= 0: self.last_e = e_; self.st['submitted'] += 1; self.st['core'][e_] += 1
                     else: self.st['e2e_skip'] = self.st.get('e2e_skip', 0) + 1
                     self.st['max_ahead'] = max(self.st['max_ahead'], len(self.out))
-                    e_ = None; L_.cond.notify_all()
+                    e_ = None; grp_ = None; L_.cond.notify_all()
         except BaseException as x_:
             with L_.cond:
-                if e_ is not None and e_ >= 0 and self._job is None and e_ < len(self.busy): self.busy[e_] = False
-                self.err = repr(x_)[:200]; self.working = False; L_.cond.notify_all()
+                if e_ is not None and e_ >= 0 and self._job is None and grp_ is not None and e_ < len(grp_[1]): grp_[1][e_] = False
+                self._tgt_e = None; self.err = repr(x_)[:200]; self.working = False; L_.cond.notify_all()
 
     def _gmc(self, gg_, restart=False):   # camera_motion.gmc_submit 과 같은 일 (첫 프레임에서 계산 객체를 만들고, 작업 스레드에 순서대로 맡긴다). 프레임 번호는 받아 갈 때 붙는다
         if restart or not APP.gmc_objs:
@@ -298,7 +309,7 @@ class Feed:
 
     def submit(self, x_, f_):   # detect_frame.submit_tiles 가 APP.a.submit 으로 부른다
         if self.direct: return self.eng[0].submit(x_, f_)
-        e_ = self.eng[self.tgt]
+        e_ = self._tgt_e if self._tgt_e is not None else self.eng[self.tgt]
         self._job = e_.b.run_async(x_, user_arg={'f': f_}, output_buffer=e_.packed)
 
     # ---------------------------------------------------------------- 프레임 반복 (app.py) 이 부르는 것
@@ -368,12 +379,13 @@ class Feed:
 
     def _collect(self, r_, keep_):
         if r_.e < 0: return None   # 11-14: queued without the detector
-        e_ = self.eng[r_.e]
+        eng_, busy_ = r_.grp if r_.grp is not None else (self.eng, self.busy)   # 11-15: the pair it was submitted to (resident_det may have switched the feed since)
+        e_ = eng_[r_.e]
         try:
             APP.pending[e_.name] = r_.job; o_ = e_.wait()
             if keep_: o_ = [np.array(v_, copy=True) if np.may_share_memory(v_, e_.packed) else v_ for v_ in o_]   # 같은 엔진에 다음 프레임이 곧 들어간다
         finally:
-            with APP.LIVE.cond: self.busy[r_.e] = False; APP.LIVE.cond.notify_all()
+            with APP.LIVE.cond: busy_[r_.e] = False; r_.grp = None; APP.LIVE.cond.notify_all()   # grp dropped: a released engine must not stay referenced (do_model_swap frees it by gc)
         return o_
 
     def _next(self):   # camera_link.live_next 와 같은 일을 한다. 다른 점: 줄 대신 "검출기에 넣어 둔 프레임"에서 꺼내고, 8 비트 바꾸기·흔들림 보정은 넣는 스레드가 이미 했다
@@ -415,6 +427,7 @@ class Feed:
         if APP.GB is not None and APP.GB.gui: L_.raws.append(r_.raw if APP.args.gui_map == 'team' else (r_.g8.astype(np.uint16) * 257))
         L_.rawq.append(r_.raw)
         self.cur = r_
+        if self.on_take is not None: self.on_take(r_)   # 11-15 resident_det: the first frame of the new model after an instant switch (timing only)
         return r_.gg
 
     # ---------------------------------------------------------------- 멈추기, 모델 바꾸기, 끝내기
@@ -451,7 +464,7 @@ class Feed:
         APP.a = self.eng[0]
         for engine in self.eng[1:]:
             engine.b.dispose()
-        self.eng = []; self.busy = []   # 바꾸는 코드(do_model_swap)가 옛 첫째 엔진을 비우고 새 엔진을 만든다
+        self.eng = []; self.busy = []; self.held = None   # 바꾸는 코드(do_model_swap)가 옛 첫째 엔진을 비우고 새 엔진을 만든다 (상주하던 다른 짝은 resident_det.before_swap 이 놓는다)
 
     def resume(self, code_):   # 바꾼 뒤. code_ = do_model_swap 의 답 (5 = 되돌리기도 실패: 프레임 반복이 곧 오류로 끝난다)
         if self.direct or code_ == 5: return
