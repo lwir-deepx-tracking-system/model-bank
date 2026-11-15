@@ -29,3 +29,6 @@ const tname=k=>BT_KEYS.includes(k)?'ByteTrack':TN[k]?TN[k][0]:(k==='gate'?'없�
 const pend=(r,k)=>(r.pending&&r.pending[k]!=null)?r.pending[k]:r[k];   // a choice waiting for the next frame is shown as chosen
 function rdoc(k){if(BT_KEYS.includes(k))k='bytetrack';if(k===rdk)return;rdk=k;const dl=a=>'<dl class="legend">'+a.map(x=>'<dt>'+esc(x[0])+'</dt><dd>'+esc(x[1])+'</dd>').join('')+'</dl>';
   RD.innerHTML='<h4>'+esc(tname(k))+'</h4>'+(TD[k]?dl(TD[k]):'<dl class="legend"><dt>설명</dt><dd>아직 적어 두지 않았습니다.</dd></dl>')+'<h4>모든 추적기에 공통</h4>'+dl(TDC);}
+// 11-16 (design review 4): the rows in three groups, the rest folded as '고급 설정' (its title says what is switched on inside). Rows keep their order; a row not named here is 'advanced'.
+const OTG=[['',['엔드투엔드']],['사람 찾기 (검출)',['검출 모델 자동 선택','검출 모델']],['번호 붙이기 (추적)',['Tracker','위치 기억 · 신뢰도','KeepID']],['짐벌 · 화면',['제어','화면 표시']]];
+let otadv=false;try{otadv=localStorage.getItem('lwir_live_otadv')==='1';}catch(_){}

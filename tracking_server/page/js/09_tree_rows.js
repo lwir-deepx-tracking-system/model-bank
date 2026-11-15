@@ -87,7 +87,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'크기만 부드럽게',note:'위치·짐벌 조준점은 추적기 그대로 · 상자 크기만 천천히 바뀜(근거리↔먼 거리 바뀔 때도) · '+BRN,sel:bm==='size',u:Q('box_refine=size')}].concat(bd?[
       {name:'상체 네모로 통일 (변환표 + 크기 부드럽게)',note:'가까이든 멀리든 머리 위~골반 한 모양 · 먼 사람 전신 상자는 상체로 바꿈, 가까운 사람 상자는 그대로 · 짐벌 조준점은 바꾼 상자의 조준점 그대로, 크기만 부드럽게 · 자세 검출 모델은 변환표, 다른 모델은 사람 전체 상자의 위쪽 0.53 · 모델이 바뀌어도 이어짐 · 관절 필요 없음 · 장치에서 아직 재지 않음 · '+BRN,sel:bm==='body',lock:bd.available?'':(br.body_note||'변환표 파일이 없습니다'),u:Q('box_refine=body')}]:[])});   // body: 서버가 모드를 알 때만 줄을 보임 · 잠금 글은 서버가 아는 실제 까닭(없음 / 읽지 못함 / 방금 바뀜)
     T.push({lab:'모델 바뀔 때 섞기',sub:'검출 모델이 바뀌면 상자를 천천히 넘김',multi:1,n:[
-      {name:br.blend_s>0?'켬 '+br.blend_s+'초':'켬 ('+BLT+'초)',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · 끔·크기만 부드럽게에서 씀(상체 네모는 스스로 이어 줌) · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});
+      {name:'상자 섞기 '+(br.blend_s>0?br.blend_s:BLT)+'초',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · 끔·크기만 부드럽게에서 씀(상체 네모는 스스로 이어 줌) · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});
     if(br.lost_same!=null)T.push({lab:'놓친 상자',sub:'놓친 사람의 점선 상자'+(br.lost_same&&br.lost_why?' · '+br.lost_why:'')+(br.lost_same&&br.lost_errors?' · 오류 '+br.lost_errors+'번':''),multi:1,n:[   // 11-16 (judge A): lost box = seen box, display only, default off
       {name:'보일 때 상자와 같게',note:'놓친 첫 장부터 점선 상자를 그림 · 모양·크기는 보일 때 상자와 같음(상자 다듬기 모드, 마지막 크기 유지) · 크기만 부드럽게에서는 짐벌 조준점이 지금 점선 상자와 같음 · 추적기·짐벌은 그대로 · 예측 상자 표시가 켜져 있을 때 · 장치에서 아직 재지 않음',sel:!!br.lost_same,u:Q('lost_same='+(br.lost_same?0:1))}]});}
   T.push({lab:'화면 표시',sub:'여러 개 켜기',multi:1,n:[   // 11-13: it draws, it does not control
@@ -105,9 +105,9 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     const pythonPreset=BT_KEYS.includes(trk)?trk:bt.key;
     const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':camTransition?'추적기 전환이 끝난 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
     T.push({lab:'ByteTrack 옵션',kidOf:TRI,kidKey:'bytetrack',show:btSelected,multi:1,n:[
-      {name:'Python',sel:!cpp&&!camTransition&&!replayStored,lock:switching?'영상 전환 중입니다':'',
+      {name:'Python',pick:1,sel:!cpp&&!camTransition&&!replayStored,lock:switching?'영상 전환 중입니다':'',
        replayBackend:recording?'python':null,u:Q('tracker='+encodeURIComponent(pythonPreset))},
-      {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?(camNative?.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 라이브러리를 사용할 수 없습니다'):'',
+      {name:'C++',pick:1,sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?(camNative?.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 라이브러리를 사용할 수 없습니다'):'',
        note:recording?'녹화 재생':camCppNote,
        replayBackend:recording?'cpp_bytetrack':null,u:'/tracker/camera?backend=cpp_bytetrack'},
       {name:'위치 재결합',note:cpp?'C++에서 사용하지 않음':trk==='rebind'?'켜짐':'꺼짐',sel:!cpp&&!camTransition&&trk==='rebind',lock:optionLock,

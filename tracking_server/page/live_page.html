@@ -3,7 +3,7 @@
 <title>LWIR 추적</title>
 <style>
 /* v25: palette A (dark grey + orange). Orange is used only for the followed / selected state. */
-:root{--bg:#1b1b1b;--bar:#242424;--pan:#212121;--field:#161616;--line:#353535;--line2:#505050;--ink:#e6e6e6;--ink2:#b2b2b2;--mut:#838383;--acc:#e07a24;--acc-ink:#161616;--sel:#3a3a3a;--stop:#a92b23;--key:#2b2b2b;--warn:#d2a046;--bad:#c5473d;--r:3px;--bar-h:40px;--pan-w:clamp(340px,30vw,540px)}
+:root{--bg:#1b1b1b;--bar:#242424;--pan:#212121;--field:#161616;--line:#353535;--line2:#505050;--ink:#e6e6e6;--ink2:#b2b2b2;--mut:#969696;--acc:#e07a24;--acc-ink:#161616;--sel:#3a3a3a;--stop:#a92b23;--key:#2b2b2b;--warn:#d2a046;--bad:#c5473d;--r:3px;--bar-h:40px;--pan-w:clamp(340px,30vw,540px)}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:13.5px/1.45 "Malgun Gothic","Segoe UI","Noto Sans KR",-apple-system,sans-serif;display:flex;flex-direction:column;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
@@ -163,6 +163,9 @@ body:not(.adv) .adv-only{display:none!important}
 /* 11-13 (design review 3): the picture chip at the top right (top left covered box numbers); replay status line below the section titles */
 .vchip{left:auto;right:16px;max-width:calc(100% - 32px)}.vchip.replay{box-shadow:inset -3px 0 0 var(--acc)}
 #rpstatus{font-size:13px;font-weight:600;color:var(--ink2)}
+/* 11-16 (design review 14): the ID-change list under the replay picture is folded; replay buttons big enough for a finger on phones */
+.rpidsbtn{font:inherit;font-size:12.5px;font-weight:700;color:var(--ink);background:none;border:0;padding:2px 0;cursor:pointer}
+@media(max-width:900px){.rpr .btn.small,.rpidsbtn,.rpmorebtn{min-height:44px}.rpidsbtn{display:block;width:100%;text-align:left}}
 /* Performance graphs below the video and replay controls. */
 :root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--c5:#ffc46b;--c6:#ff8f8f;--pf-grid:#465363;--pf-label:#e1e8f2}
 .pfo{margin-top:8px;width:min(460px,100%);font-size:13px;line-height:1.35;color:var(--pf-label)}
@@ -308,6 +311,18 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
 .ot-hint{position:sticky;bottom:10px;z-index:5}   /* 3: the answer to a tap floats at the bottom of the screen (it was under the tree, off screen) */
 .ot-hint:not(:empty){background:#2b2618;border:1px solid var(--warn);border-radius:6px;padding:9px 12px;box-shadow:0 4px 14px rgba(0,0,0,.55);color:#f0d9a0;cursor:pointer}
 @media(max-width:900px){#ot-tree .ot-n{min-height:44px;min-width:56px}details.sec>summary{min-height:44px}}   /* 9: phones, tiles big enough for a finger */
+/* 11-16 (design review, round 2) */
+.ot-g{margin:14px 0 2px;font-size:12px;font-weight:700;color:var(--ink2);display:flex;align-items:center;gap:8px}   /* 4: group titles */
+.ot-g:after{content:"";flex:1;height:1px;background:var(--line)}
+.ot-adv{margin-top:16px;border:1px solid var(--line2);border-radius:6px;padding:0 10px}
+.ot-adv.open{padding-bottom:6px}
+.ot-advh{font:inherit;display:block;width:calc(100% + 20px);margin:0 -10px;text-align:left;background:rgba(255,255,255,.04);border:0;color:var(--ink);padding:9px 12px;cursor:pointer;min-height:44px;border-radius:6px}
+.ot-advh b{font-size:13px}.ot-advh small{display:block;font-size:12px;color:var(--ink2);margin-top:2px;word-break:keep-all;overflow-wrap:anywhere}
+.ot-advh:focus-visible{outline:1px solid var(--ink2);outline-offset:1px}
+.ot-box{display:inline-block;width:15px;height:15px;border:1.5px solid var(--ink2);border-radius:3px;margin-right:8px;vertical-align:-2px;position:relative}   /* 8: check box in the tiles of a switch-several row */
+.ot-box.on{background:var(--acc);border-color:var(--acc)}
+.ot-box.on:after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid var(--acc-ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.ot-sumtop{border-color:var(--line2);background:rgba(255,255,255,.04)}.ot-sumh{color:var(--ink2)}   /* 13: orange only means 'selected'; the summary box is not a tile */
 /* v40: phone joystick. A finger pressed on the picture and dragged moves the gimbal; the ring is drawn where the finger went down. The picture no longer scrolls the page under a finger (touch-action). */
 #v{touch-action:none}
 .joy{position:absolute;display:none;width:112px;height:112px;margin:-56px 0 0 -56px;border-radius:50%;border:1px solid var(--line2);background:rgba(24,24,24,.45);pointer-events:none;z-index:3}
@@ -1087,6 +1102,9 @@ const tname=k=>BT_KEYS.includes(k)?'ByteTrack':TN[k]?TN[k][0]:(k==='gate'?'없�
 const pend=(r,k)=>(r.pending&&r.pending[k]!=null)?r.pending[k]:r[k];   // a choice waiting for the next frame is shown as chosen
 function rdoc(k){if(BT_KEYS.includes(k))k='bytetrack';if(k===rdk)return;rdk=k;const dl=a=>'<dl class="legend">'+a.map(x=>'<dt>'+esc(x[0])+'</dt><dd>'+esc(x[1])+'</dd>').join('')+'</dl>';
   RD.innerHTML='<h4>'+esc(tname(k))+'</h4>'+(TD[k]?dl(TD[k]):'<dl class="legend"><dt>설명</dt><dd>아직 적어 두지 않았습니다.</dd></dl>')+'<h4>모든 추적기에 공통</h4>'+dl(TDC);}
+// 11-16 (design review 4): the rows in three groups, the rest folded as '고급 설정' (its title says what is switched on inside). Rows keep their order; a row not named here is 'advanced'.
+const OTG=[['',['엔드투엔드']],['사람 찾기 (검출)',['검출 모델 자동 선택','검출 모델']],['번호 붙이기 (추적)',['Tracker','위치 기억 · 신뢰도','KeepID']],['짐벌 · 화면',['제어','화면 표시']]];
+let otadv=false;try{otadv=localStorage.getItem('lwir_live_otadv')==='1';}catch(_){}
 // node = {name, note, sel, lock (why it cannot be picked; '' = open), u (POST url), model (answer is /model state), info (hint only, nothing sent), ask (confirm text)}
 function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const Q=q=>'/rules/set?'+q,trk=pend(r,'tracker'),rel=!!pend(r,'relabel'),prd=pend(r,'predictor')||'kalman',bot=trk==='botsort';
@@ -1176,7 +1194,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'크기만 부드럽게',note:'위치·짐벌 조준점은 추적기 그대로 · 상자 크기만 천천히 바뀜(근거리↔먼 거리 바뀔 때도) · '+BRN,sel:bm==='size',u:Q('box_refine=size')}].concat(bd?[
       {name:'상체 네모로 통일 (변환표 + 크기 부드럽게)',note:'가까이든 멀리든 머리 위~골반 한 모양 · 먼 사람 전신 상자는 상체로 바꿈, 가까운 사람 상자는 그대로 · 짐벌 조준점은 바꾼 상자의 조준점 그대로, 크기만 부드럽게 · 자세 검출 모델은 변환표, 다른 모델은 사람 전체 상자의 위쪽 0.53 · 모델이 바뀌어도 이어짐 · 관절 필요 없음 · 장치에서 아직 재지 않음 · '+BRN,sel:bm==='body',lock:bd.available?'':(br.body_note||'변환표 파일이 없습니다'),u:Q('box_refine=body')}]:[])});   // body: 서버가 모드를 알 때만 줄을 보임 · 잠금 글은 서버가 아는 실제 까닭(없음 / 읽지 못함 / 방금 바뀜)
     T.push({lab:'모델 바뀔 때 섞기',sub:'검출 모델이 바뀌면 상자를 천천히 넘김',multi:1,n:[
-      {name:br.blend_s>0?'켬 '+br.blend_s+'초':'켬 ('+BLT+'초)',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · 끔·크기만 부드럽게에서 씀(상체 네모는 스스로 이어 줌) · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});
+      {name:'상자 섞기 '+(br.blend_s>0?br.blend_s:BLT)+'초',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · 끔·크기만 부드럽게에서 씀(상체 네모는 스스로 이어 줌) · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});
     if(br.lost_same!=null)T.push({lab:'놓친 상자',sub:'놓친 사람의 점선 상자'+(br.lost_same&&br.lost_why?' · '+br.lost_why:'')+(br.lost_same&&br.lost_errors?' · 오류 '+br.lost_errors+'번':''),multi:1,n:[   // 11-16 (judge A): lost box = seen box, display only, default off
       {name:'보일 때 상자와 같게',note:'놓친 첫 장부터 점선 상자를 그림 · 모양·크기는 보일 때 상자와 같음(상자 다듬기 모드, 마지막 크기 유지) · 크기만 부드럽게에서는 짐벌 조준점이 지금 점선 상자와 같음 · 추적기·짐벌은 그대로 · 예측 상자 표시가 켜져 있을 때 · 장치에서 아직 재지 않음',sel:!!br.lost_same,u:Q('lost_same='+(br.lost_same?0:1))}]});}
   T.push({lab:'화면 표시',sub:'여러 개 켜기',multi:1,n:[   // 11-13: it draws, it does not control
@@ -1194,9 +1212,9 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     const pythonPreset=BT_KEYS.includes(trk)?trk:bt.key;
     const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':camTransition?'추적기 전환이 끝난 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
     T.push({lab:'ByteTrack 옵션',kidOf:TRI,kidKey:'bytetrack',show:btSelected,multi:1,n:[
-      {name:'Python',sel:!cpp&&!camTransition&&!replayStored,lock:switching?'영상 전환 중입니다':'',
+      {name:'Python',pick:1,sel:!cpp&&!camTransition&&!replayStored,lock:switching?'영상 전환 중입니다':'',
        replayBackend:recording?'python':null,u:Q('tracker='+encodeURIComponent(pythonPreset))},
-      {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?(camNative?.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 라이브러리를 사용할 수 없습니다'):'',
+      {name:'C++',pick:1,sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?(camNative?.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 라이브러리를 사용할 수 없습니다'):'',
        note:recording?'녹화 재생':camCppNote,
        replayBackend:recording?'cpp_bytetrack':null,u:'/tracker/camera?backend=cpp_bytetrack'},
       {name:'위치 재결합',note:cpp?'C++에서 사용하지 않음':trk==='rebind'?'켜짐':'꺼짐',sel:!cpp&&!camTransition&&trk==='rebind',lock:optionLock,
@@ -1229,13 +1247,14 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   return T;}
 function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const body=(t,i)=>{let h='';
-    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&n.sel?'✓ ':'')+wn(n.name)+(n.rec?'<span class="ot-rec">추천</span>':'')+(n.note?'<small>'+esc(n.note)+'</small>':'')+(n.lock&&n.lock!==n.note?'<small class="ot-why">'+esc(n.lock)+'</small>':'')+'</button>';   // 11-13: why a node is locked, shown in it
+    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&!n.pick?'<i class="ot-box'+(n.sel?' on':'')+'"></i>':'')+wn(n.name)+(n.rec?'<span class="ot-rec">추천</span>':'')+(n.note?'<small>'+esc(n.note)+'</small>':'')+(n.lock&&n.lock!==n.note?'<small class="ot-why">'+esc(n.lock)+'</small>':'')+'</button>';   // 11-13: why a node is locked, shown in it
     if(!t.f)t.n.forEach((n,j)=>{const kids=n.sel&&n.key?OTT.map((c,ki)=>[c,ki]).filter(([c])=>c.kidOf===i&&c.show&&c.kidKey===n.key):[];   // v42: a chosen tile that owns child rows becomes one box with the children inside. 11-16: all of them (only the first was drawn, so BoT-SORT had no engine row)
       if(!kids.length){h+=btn(n,j);return;}
       h+='<div class="ot-grp sel ot-own">'+btn(n,j)+kids.map(([c,ki])=>'<div class="ot-kid" data-kid="'+ki+'"><div class="ot-kidlab">'+esc(c.lab)+(c.sub?'<small>'+esc(c.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(c,ki)+'</div></div>').join('')+'</div>';});
     else{t.n.forEach((n,j)=>{if(!n.g||!t.f.includes(n.g))h+=btn(n,j);});
       const sg=(t.n.find(n=>n.sel&&n.g)||{}).g||'',op=(i in otopen)?otopen[i]:sg;
       t.f.forEach((f,k)=>{const inn=t.n.filter(n=>n.g===f),s=inn.find(n=>n.sel),all=inn.length&&inn.every(n=>n.lock);
+        if(inn.length===1){h+=btn(inn[0],t.n.indexOf(inn[0]));return;}   // 11-16 (design review 10): a folder that holds one model is that model's tile (one tap less)
         if(op===f)h+='<div class="ot-grp'+(s?' sel':'')+'">';
         h+='<button type="button" class="ot-n ot-f'+(s?' sel':!inn.length||all?' lock':'')+(op===f?' open':'')+'" data-f="'+i+'.'+k+'" aria-expanded="'+(op===f?'true':'false')+'">'+FD+' '+esc(f)+' '+(op===f?'▾':'▸')+'<small>'+(s?(op===f?'':'선택: '+wn(s.name)):inn.length?'모델 '+inn.length+'개'+(all?' · 모두 잠김':''):'모델 없음')+'</small></button>';
         if(op===f){let b='';const sz=[];inn.forEach(n=>{if(n.sg&&!sz.includes(n.sg))sz.push(n.sg);});sz.sort((a,b)=>szRank(a)-szRank(b));   // 11-13: size sub-folders smallest first (n, nano, tiny, s, m, l, x). the models sit inside the folder's own box
@@ -1246,9 +1265,11 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
             b+='</div>';});
           h+='<div class="ot-sub">'+(b||'<span class="ot-none">'+esc((t.fe&&t.fe[f])||'이 안에 모델이 없습니다')+'</span>')+'</div></div>';}});}
     return h;};
-  OTT.forEach((t,i)=>{if(t.kidOf!=null)return;   // v41: child rows are drawn inside their parent row
-    h+='<div class="ot-row'+(t.n.every(n=>n.lock)?' off':'')+'"><div class="ot-lab">'+esc(t.lab)+(t.sub?'<small>'+esc(t.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(t,i);
-    h+='</div></div>';});
+  const row=([t,i])=>'<div class="ot-row'+(t.n.every(n=>n.lock)?' off':'')+'"><div class="ot-lab">'+esc(t.lab)+(t.sub?'<small>'+esc(t.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(t,i)+'</div></div>';
+  const top=OTT.map((t,i)=>[t,i]).filter(([t])=>t.kidOf==null),adv=top.filter(([t])=>!OTG.some(g=>g[1].includes(t.lab)));   // v41: child rows are drawn inside their parent row
+  OTG.forEach(([g,labs])=>{const rows=top.filter(([t])=>labs.includes(t.lab));if(!rows.length)return;h+=(g?'<div class="ot-g">'+esc(g)+'</div>':'')+rows.map(row).join('');});
+  if(adv.length){const on=adv.map(([t])=>{const s=t.n.filter(n=>n.sel&&n.name!=='끔'&&!n.lock).map(n=>n.name);return s.length?t.lab+': '+s.join(', '):'';}).filter(Boolean);
+    h+='<div class="ot-adv'+(otadv?' open':'')+'"><button type="button" class="ot-advh" data-adv="1" aria-expanded="'+(otadv?'true':'false')+'"><b>고급 설정 '+adv.length+'개 '+(otadv?'▾':'▸')+'</b><small>'+(on.length?'켜진 것 · '+wn(on.join(' · ')):'켜진 것 없음')+'</small></button>'+(otadv?adv.map(row).join(''):'')+'</div>';}
   if(h!==othtml){othtml=h;OT.innerHTML=h;}   // redrawn only when something changed (keeps focus and the pressed look between the 1 s refreshes)
   const R=l=>OTT.find(t=>t.lab===l)||{n:[]};   // 11-13: rows by name (the '외형 모델' row moved the numbers)
   const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(R('전처리')),flt=on(R('검출 뒤 Filter')),ctl=(window.OTFOL?['따라가기']:[]).concat(on(R('제어')));
@@ -1264,7 +1285,8 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const det=one(R('검출 모델')),now=e2eUse?e2eOn:(one(R('Tracker'))||tname(trk))+' · KeepID '+(kp&&kp!=='끔'?'켬':'끔')+' · '+(det||'–')+(mlast&&mlast.busy?' (바꾸는 중…)':'');
   if(ON&&ON.textContent!==now)ON.textContent=now;}
 const ON=$('ot-now');OH.addEventListener('click',()=>{OH.textContent='';});   // 11-16: the answer strip floats over the tree; a tap puts it away
-OT.addEventListener('click',e=>{const sb=e.target.closest('.ot-sf'),fb=e.target.closest('.ot-f');
+OT.addEventListener('click',e=>{if(e.target.closest('[data-adv]')){otadv=!otadv;try{localStorage.setItem('lwir_live_otadv',otadv?'1':'0');}catch(_){}OH.textContent='';otdraw();return;}   // '고급 설정' fold: open / close, nothing is sent
+  const sb=e.target.closest('.ot-sf'),fb=e.target.closest('.ot-f');
   if(sb&&sb.dataset.s){otsub[sb.dataset.s]=sb.getAttribute('aria-expanded')!=='true';OH.textContent='';otdraw();return;}   // size sub-folder: open / close, nothing is sent
   if(fb&&fb.dataset.f){const x=fb.dataset.f.split('.'),t=OTT[+x[0]],f=t&&t.f&&t.f[+x[1]];if(!f)return;
     const sg=(t.n.find(n=>n.sel&&n.g)||{}).g||'',op=(+x[0] in otopen)?otopen[+x[0]]:sg;otopen[+x[0]]=op===f?'':f;OH.textContent='';otdraw();return;}
@@ -1704,6 +1726,11 @@ function evCoverage(e){const total=e.sequence_frames,done=e.pass_frames;if(total
 function evSwitches(e){const events=Array.isArray(e.id_switches)?e.id_switches:[];
   return events.length?'<b>ID 변경</b> · '+events.map(x=>'장 '+esc(x.frame)+': '+esc(x.from_id)+' → '+esc(x.to_id)+(x.gt_id!=null?' (정답 '+esc(x.gt_id)+')':'')).join('　'):'';
 }
+// 11-16 (design review 14): the ID-change list under the replay picture is folded and only the count shows; drawn again only when it changed (so the button keeps its press). The comparison panel still lists them all.
+let rpIdsOpen=false,rpIdsHtml='',rpIdsE=null;
+function rpIdsDraw(e){rpIdsE=e;const R=$('rpids'),sw=Array.isArray(e.id_switches)?e.id_switches.length:0,ih=sw?'<button type="button" class="rpidsbtn" aria-expanded="'+(rpIdsOpen?'true':'false')+'">번호 바뀐 장면 '+sw+'개 '+(rpIdsOpen?'▾':'▸')+'</button>'+(rpIdsOpen?'<div>'+evSwitches(e)+'</div>':''):'';
+  if(ih!==rpIdsHtml){rpIdsHtml=ih;R.innerHTML=ih;}}
+$('rpids').addEventListener('click',e=>{if(e.target.closest('.rpidsbtn')&&rpIdsE){rpIdsOpen=!rpIdsOpen;rpIdsDraw(rpIdsE);}});
 function evShow(e,emptyText){if(!e){EVSW.innerHTML='';EVMSG.textContent=emptyText||'비교 결과가 없습니다.';EVT.innerHTML='';return;}
   EVSW.innerHTML=e.scoring?evSwitches(e):'';
   if(Date.now()-evDrawT>3000)EVDR.checked=!!e.draw;
@@ -1779,7 +1806,7 @@ function barShow(r,viewEval){
   if(!e.name||(!on&&viewEval===undefined)||(!e.on&&viewEval===undefined)){RNUM.hidden=true;}
   else{RNUM.hidden=false;
     RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+(e.backend_label||rpBackendLabel(e.backend,r)):'');
-    if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';}
+    if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';rpIdsHtml='';}
     else{const n=e.new||{},o=e.old||{},c=e.counts||{};
       const big=(k,v,sub,cls)=>'<span class="rpbig'+(cls?' '+cls:'')+'"><small>'+esc(k)+'</small><b>'+esc(v)+'</b>'+(sub?'<i>'+esc(sub)+'</i>':'')+'</span>';   // 11-13 (design review)
       const x=(k,v,cls)=>nchip(k,v,cls).replace('class="rpc','class="rpx rpc');
@@ -1790,7 +1817,7 @@ function barShow(r,viewEval){
       if(same)ROLD.textContent='';else ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
       const total=e.sequence_frames,pass=e.pass_frames,scorable=e.scorable_frames;
       RFOOT.textContent=(evPhase(e)||'재생 채점')+' · 첫 재생 채점 '+(c.scored==null?'–':c.scored)+'장'+(pass!=null&&total!=null?' · 진행 '+pass+' / '+total+'장':'')+(scorable!=null?' · 정답 비교 가능 '+scorable+'장':'')+' · HOTA / mAP '+evMetricStatus(e)+(e.phase==='interrupted'?' · 다시 처음부터 재생해야 완주 결과가 나옵니다.':'');
-      RIDS.innerHTML=evSwitches(e);
+      rpIdsDraw(e);
     }
   }
   RB.hidden=RNUM.hidden&&EVBAR.hidden;

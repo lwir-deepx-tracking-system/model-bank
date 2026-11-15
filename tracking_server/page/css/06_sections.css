@@ -99,3 +99,6 @@ body:not(.adv) .adv-only{display:none!important}
 /* 11-13 (design review 3): the picture chip at the top right (top left covered box numbers); replay status line below the section titles */
 .vchip{left:auto;right:16px;max-width:calc(100% - 32px)}.vchip.replay{box-shadow:inset -3px 0 0 var(--acc)}
 #rpstatus{font-size:13px;font-weight:600;color:var(--ink2)}
+/* 11-16 (design review 14): the ID-change list under the replay picture is folded; replay buttons big enough for a finger on phones */
+.rpidsbtn{font:inherit;font-size:12.5px;font-weight:700;color:var(--ink);background:none;border:0;padding:2px 0;cursor:pointer}
+@media(max-width:900px){.rpr .btn.small,.rpidsbtn,.rpmorebtn{min-height:44px}.rpidsbtn{display:block;width:100%;text-align:left}}

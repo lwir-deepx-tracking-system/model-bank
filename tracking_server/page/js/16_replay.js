@@ -68,6 +68,11 @@ function evCoverage(e){const total=e.sequence_frames,done=e.pass_frames;if(total
 function evSwitches(e){const events=Array.isArray(e.id_switches)?e.id_switches:[];
   return events.length?'<b>ID 변경</b> · '+events.map(x=>'장 '+esc(x.frame)+': '+esc(x.from_id)+' → '+esc(x.to_id)+(x.gt_id!=null?' (정답 '+esc(x.gt_id)+')':'')).join('　'):'';
 }
+// 11-16 (design review 14): the ID-change list under the replay picture is folded and only the count shows; drawn again only when it changed (so the button keeps its press). The comparison panel still lists them all.
+let rpIdsOpen=false,rpIdsHtml='',rpIdsE=null;
+function rpIdsDraw(e){rpIdsE=e;const R=$('rpids'),sw=Array.isArray(e.id_switches)?e.id_switches.length:0,ih=sw?'<button type="button" class="rpidsbtn" aria-expanded="'+(rpIdsOpen?'true':'false')+'">번호 바뀐 장면 '+sw+'개 '+(rpIdsOpen?'▾':'▸')+'</button>'+(rpIdsOpen?'<div>'+evSwitches(e)+'</div>':''):'';
+  if(ih!==rpIdsHtml){rpIdsHtml=ih;R.innerHTML=ih;}}
+$('rpids').addEventListener('click',e=>{if(e.target.closest('.rpidsbtn')&&rpIdsE){rpIdsOpen=!rpIdsOpen;rpIdsDraw(rpIdsE);}});
 function evShow(e,emptyText){if(!e){EVSW.innerHTML='';EVMSG.textContent=emptyText||'비교 결과가 없습니다.';EVT.innerHTML='';return;}
   EVSW.innerHTML=e.scoring?evSwitches(e):'';
   if(Date.now()-evDrawT>3000)EVDR.checked=!!e.draw;
@@ -143,7 +148,7 @@ function barShow(r,viewEval){
   if(!e.name||(!on&&viewEval===undefined)||(!e.on&&viewEval===undefined)){RNUM.hidden=true;}
   else{RNUM.hidden=false;
     RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+(e.backend_label||rpBackendLabel(e.backend,r)):'');
-    if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';}
+    if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';rpIdsHtml='';}
     else{const n=e.new||{},o=e.old||{},c=e.counts||{};
       const big=(k,v,sub,cls)=>'<span class="rpbig'+(cls?' '+cls:'')+'"><small>'+esc(k)+'</small><b>'+esc(v)+'</b>'+(sub?'<i>'+esc(sub)+'</i>':'')+'</span>';   // 11-13 (design review)
       const x=(k,v,cls)=>nchip(k,v,cls).replace('class="rpc','class="rpx rpc');
@@ -154,7 +159,7 @@ function barShow(r,viewEval){
       if(same)ROLD.textContent='';else ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
       const total=e.sequence_frames,pass=e.pass_frames,scorable=e.scorable_frames;
       RFOOT.textContent=(evPhase(e)||'재생 채점')+' · 첫 재생 채점 '+(c.scored==null?'–':c.scored)+'장'+(pass!=null&&total!=null?' · 진행 '+pass+' / '+total+'장':'')+(scorable!=null?' · 정답 비교 가능 '+scorable+'장':'')+' · HOTA / mAP '+evMetricStatus(e)+(e.phase==='interrupted'?' · 다시 처음부터 재생해야 완주 결과가 나옵니다.':'');
-      RIDS.innerHTML=evSwitches(e);
+      rpIdsDraw(e);
     }
   }
   RB.hidden=RNUM.hidden&&EVBAR.hidden;
