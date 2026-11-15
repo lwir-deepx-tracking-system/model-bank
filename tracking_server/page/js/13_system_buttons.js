@@ -32,7 +32,7 @@ function syncSystemButtons(){
     state='지금 '+(feed.active?'번갈아 쓰는 중':'NPU 0만 쓰는 중');
     if(switching)state='전환 중 · '+state;
     else{
-      if(auto)state='자동 · '+state+(mon?.why?' · '+mon.why:'');
+      if(auto)state='자동 · '+state+(mon?(mon.why?' · '+mon.why:''):' · 자동 선택 멈춤 (서버 기록 참고)');   // 11-16: no monitor = the rule stopped (error) or the feed turned itself off
       else if(requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
       if(feed.reason)state+=' · '+feed.reason;
     }
@@ -45,6 +45,7 @@ function syncSystemButtons(){
     :'';
   if(mon?.service_ms?.p90!=null&&mon.period_ms!=null)counts+=(counts?' · ':'')+'검출 '+mon.service_ms.p50+' / p90 '+mon.service_ms.p90+' ms · 주기 '+mon.period_ms+' ms'
     +' · 늦음 '+mon.misses.late.toLocaleString('ko-KR')+' · 버림 '+mon.misses.dropped.toLocaleString('ko-KR')
+    +(mon.misses.gaps!=null?' · 긴 간격 '+mon.misses.gaps.toLocaleString('ko-KR'):'')
     +(auto?' · 자동 전환 '+(mon.switches.up+mon.switches.down)+'번':'')
     +(mon.npu?' · NPU '+Math.max(...mon.npu.temp_c)+'°C '+Math.min(...mon.npu.clock_mhz)+' MHz':'');
   if(feedCounts.textContent!==counts)feedCounts.textContent=counts;

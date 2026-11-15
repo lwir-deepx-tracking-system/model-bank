@@ -8,6 +8,7 @@ from ..common.shared_values import HERE, CORE, DET, sha
 from ..detect.model_scan import BANK, KPT_DETS
 from ..detect import auto_det   # 11-15 (user): automatic NEAR / FAR detector choice (off by default)
 from ..detect import resident_det   # 11-15 (user): both models of that pair resident on NPU cores 0 and 1, instant switch (off by default)
+from ..detect import frame_feed   # 11-16: manual_pending (a pending automatic switch of the 'auto' feed does not make a model change Busy)
 from ..track import native_backend
 from ..track.position_memory import POSP, POS_NAMES, pos_list, pos_select
 from ..track import e2e_live
@@ -355,8 +356,7 @@ def model_request(model_id, req_no=None):
         c_ = next((x_ for x_ in APP.MODEL['catalog'] if x_['id'] == model_id), None)
         if c_ is None: return 1
         if APP.MODEL['req'] is not None or APP.MODEL['busy']: return 2
-        feed = vars(APP).get('FEED')
-        if feed is not None and feed.pending is not None: return 2
+        if frame_feed.manual_pending(vars(APP).get('FEED')): return 2   # 11-16: an automatic switch of the 'auto' feed is dropped by the change (Feed.pause), not a reason for Busy
         if c_['det'] == APP.args.det: APP.sel_save(det=APP.args.det); return 0   # already running
         APP.MODEL['req'] = dict(det=c_['det'], id=c_['id'], req=req_no, t=time.time()); return -1
 

@@ -15,6 +15,7 @@ from ..track.position_memory import POSP
 from ..detect import spec_proposals   # 11-14: people proposals from the spatial spectrum (display only)
 from ..detect import skin_temp   # 11-14: skin temperature per person box from the camera's temperature map (display only, off by default)
 from ..detect import auto_det   # 11-15: automatic NEAR / FAR detector choice (off by default)
+from ..detect import frame_feed   # 11-16: sent() = the period monitor's 'result is out' time of each frame
 from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows only (off by default)
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
@@ -273,6 +274,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
                     and not any(getattr(APP.LIVE, flag, False) for flag in ('cam_lost', 'cam_hold', 'stopped', 'restart_stop', 'restart_pending')))
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
                                     frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_)
+    frame_feed.sent(t_in)   # 11-16 period monitor (feed_auto): this frame's result is out (gimbal); its deadline is arrival + one camera period
     marks_ = _lost_marks(t_in, display_rows, gb_id_, fps_)   # 11-16: every frame, so the kept marks follow the camera motion
     seek_ = APP.GB.state.get('seek') if has_gimbal_ and gb_id_ else None   # 11-16: the gimbal's search while the followed person is lost (bridge --seek 1)
     if skin_temp.TEMP['show']:   # 11-14: person boxes in real camera coordinates against the newest temperature map (no labels on a recording); after the gimbal frame (display only)

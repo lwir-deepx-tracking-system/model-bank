@@ -97,6 +97,7 @@ class _State:
         self.made = None       # the last build of the other pair
         self.watch = None      # the last instant switch, until the first result of the new model is collected
         self.swap_seq = None   # after an old-path change: the other pair is made only once the loop took a frame of this feed number or later
+        self.cores_wait = False   # 11-16 (frame_feed 'auto' setting): wanted, not resident, and only the single-core feed keeps the pair from being made
         self.err = ''
 
 
@@ -126,12 +127,12 @@ def _set(mode, code, why, reason):
         print('RESIDENT %s: %s. %s' % (mode, _ascii(why), OLD_PATH), flush=True)
 
 
-def _why_not(feed):
+def _why_not(feed, any_mode=False):
     """-> None when the other pair may be (or stay) resident now, 'busy' when a model / feed mode change is going on (look again at the next frame),
-    else a WHY code."""
+    else a WHY code. any_mode (11-16): as if the feed were alternating cores 0 and 1 (what it would say once the 'auto' setting went up to them)."""
     a_ = _app('args')
     if a_ is None or getattr(a_, 'mock', False): return 'mock'
-    if (feed is None or feed.direct or feed.closed or feed.err is not None or feed.mode != 'arrival' or len(feed.eng) != 2): return 'feed'
+    if (feed is None or feed.direct or feed.closed or feed.err is not None or (feed.mode != 'arrival' and not any_mode) or len(feed.eng) != 2): return 'feed'
     if len(_app('det_names') or ()) != 1 or _app('b') is not None: return 'tiled'
     md = _app('MODEL')
     if not isinstance(md, dict) or not md.get('catalog'): return 'catalog'
@@ -163,15 +164,27 @@ def frame_step(frame=None):
         if RES.said != 'err': RES.said = 'err'; print('RESIDENT error: %s' % _ascii(RES.err), flush=True)
 
 
+def wants_cores():
+    """11-16, frame_feed.auto_conflict / Feed._auto (frame loop, under the feed lock: plain fields only, no lock taken): True while the other pair is
+    resident, or while it is wanted and would be made once the feed alternates NPU cores 0 and 1. The 'auto' setting then goes up to them and stays.
+    False when it cannot be resident anyway (another model, missing, end-to-end, failed, ...): auto chooses the cores by itself."""
+    R = RES
+    return bool(R.want and (R.pairs is not None or getattr(R, 'cores_wait', False)))
+
+
 def _frame_step(frame):
     R = RES
     if R.drop is not None: _release(*R.drop)
     if not R.want:
+        R.cores_wait = False
         if R.pairs is not None: _release('turned off', '꺼서 놓음')
         if R.pairs is None and R.mode != 'off': _set('off', None, 'off', '꺼짐')   # after a release its reason stays
         return
     feed = _app('FEED')
     code = _why_not(feed)
+    if code != 'busy':   # 11-16: would the pair be made if the feed alternated? (wants_cores; 'busy' keeps the last answer)
+        alt_ = _why_not(feed, any_mode=True) if code == 'feed' else code
+        R.cores_wait = alt_ in (None, 'busy') and not (R.failed is not None and R.failed['keys'] == _keys())
     if code == 'busy': return
     if code is not None:
         if R.pairs is not None: _release(*WHY[code]); R.said = code   # the release line says why: no second line
