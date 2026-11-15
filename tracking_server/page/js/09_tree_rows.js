@@ -15,11 +15,12 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     const sig=s&&s.px!=null?(s.source==='followed'?'따라가는 사람 ':'화면 사람 가운뎃값 ')+Math.round(s.px/5)*5+' px'+(s.kpts!=null?' · 관절 '+s.kpts+'개':'')+(s.hidden?' · 가려짐':'')+(s.cut?' · 화면 끝에 잘림':''):s&&s.source==='followed_missing'?'따라가는 사람 안 보임':'';
     const now=!adOn?'':ad.mode==='dry_run'?'녹화 재생: 바꾸지 않고 기록만 · 바꿨을 순간 '+ad.dry_events+'번'+(dl?' · 마지막 '+(dl.frame!=null?(dl.frame+1)+'번째 장':dl.t+'초')+' '+(AK[dl.from]||dl.from)+'→'+(AK[dl.to]||dl.to):'')
       :ad.mode==='live'?'지금 '+(AK[ad.current]||'–')+(ad.pending?' → '+(AK[ad.pending]||ad.pending)+' 바꾸는 중':'')+(sig?' · '+sig:''):(ad.reason||'');
-    T.push({lab:'검출 모델 자동 선택',sub:'사람 크기로 근거리 / 먼 거리 모델 고르기'+(adOn&&ad.mode==='live'&&ad.last_switch?' · 마지막 자동 바꿈 '+ad.last_switch.at:''),n:[
+    const ADNOW=adOn?(ad.mode==='live'?'지금 쓰는 모델: '+(AK[ad.current]||'–')+(ad.pending?' → '+(AK[ad.pending]||ad.pending)+' 바꾸는 중':''):ad.mode==='dry_run'?'녹화 재생: 기록만':''):'';   // 11-15 (user): 켰을 때 무엇을 쓰는지 제목 줄에 보이게
+    T.push({lab:'검출 모델 자동 선택',sub:(ADNOW?ADNOW+' · ':'')+'사람 크기로 근거리 / 먼 거리 모델 고르기'+(adOn&&ad.mode==='live'&&ad.last_switch?' · 마지막 자동 바꿈 '+ad.last_switch.at:''),n:[
       {name:'끔',note:(!adOn&&ad&&ad.reason&&ad.reason!=='꺼짐'?ad.reason+' · ':'')+'아래 검출 모델 그대로 · 손으로 모델을 고르면 꺼짐',sel:!adOn,lock:!ad?OLDSRV:'',u:Q('auto_det=0')},
       {name:'켬',note:thr+(now?' · '+now:''),sel:adOn,lock:adOn?'':miss,u:Q('auto_det=1'),
        ask:adOn?'':'검출 모델 자동 선택은 아직 장치에서 시험하지 않은 기능입니다.\n사람이 작게 보이면 먼 거리 모델로, 크게 보이면 근거리 모델로 바꿉니다.\n바꾸는 동안 화면이 잠깐 멈춥니다. 켤까요?'}]});}
-  T.push({lab:'검출 모델',sub:'구조별 · YOLO26 안은 쓰는 곳별'+(adOn?' · 자동 선택 켜짐':''),f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
+  T.push({lab:'검출 모델',sub:'구조별 · YOLO26 안은 쓰는 곳별'+(adOn?' · 자동 선택 켜짐'+(ad.mode==='live'?' · 지금 '+({near:'근거리',far:'먼 거리',other:'다른 모델'}[ad.current]||'–')+' 모델':''):''),f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
     catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:REC.includes(c.det),note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1,ask:adOn?ADASK:''}))});
   T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
@@ -78,7 +79,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   if(hot&&((bot&&app!=='off')||kid))T.push({lab:'외형 모델',sub:(bot&&app!=='off'&&kid?'BoT-SORT 외형 비교와 KeepID가 함께 씀':bot&&app!=='off'?'BoT-SORT 외형 비교가 씀':'KeepID가 씀'),f:['RepVGG','ViT-lite'],n:r.reids.map(a=>rn(a,true,'',true)).concat([NOVIT])});
   const g=r.gimbal,lead=!!r.lead;window.OTFOL=g?!!g.auto:autoNow;   // following is started by tapping a person in the picture, so it has no tile
   T.push({lab:'제어',sub:'여러 개 켜기',multi:1,n:[
-    {name:'예측 제어',note:'따라갈 때만 작동 · 재시작해도 유지',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1)),ask:lead?'':'예측 제어는 아직 시험하지 않은 기능입니다.\n따라가는 동안 짐벌이 사람이 움직이는 쪽으로 조금 앞서 움직입니다.\n켤까요?'}]});
+    {name:'예측 제어',note:'따라갈 때만 작동 · 재시작해도 유지',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1))}]});
   T.push({lab:'화면 표시',sub:'여러 개 켜기',multi:1,n:[   // 11-13: it draws, it does not control
     {name:'사람 후보 (공간 주파수)',note:'추적이 안 쓴 검출의 약한 상자를 공간 주파수로 다시 봄 · 사람다우면 진한 보라 miss? · 연속으로 보일 때만 · 표시만'+(r.prop&&r.prop.ms!=null?' · '+Math.round(r.prop.ms)+' ms':''),
      sel:!!r.prop_show,lock:r.prop_show==null?OLDSRV:'',u:Q('prop_show='+(r.prop_show?0:1))},   // 11-14: research feature (src/detect/spec_proposals.py)
