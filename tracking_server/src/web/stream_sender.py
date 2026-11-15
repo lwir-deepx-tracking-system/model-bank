@@ -96,14 +96,22 @@ def _light_setting(text):
     return tuple(out)
 
 
-LIGHT = _light_setting(os.environ.get('LWIR_STREAM_LIGHT', '0.5,60'))
+LIGHT = _light_setting(os.environ.get('LWIR_STREAM_LIGHT', '0.75,60;0.5,60'))
 try:
-    INFLIGHT_MAX = max(0, int(os.environ.get('LWIR_STREAM_INFLIGHT', '0')))
+    INFLIGHT_MAX = max(0, int(os.environ.get('LWIR_STREAM_INFLIGHT', '32768')))
 except ValueError:
     INFLIGHT_MAX = 32768
 # 11-15 (user: low delay first, picture quality second). Times a picture's bytes need on the link (round trip excluded)
-DOWN_S = 0.025       # more than this -> the next lighter level
-UP_S = 0.015         # the heavier level would need at most this at the measured rate -> back up
+def _env_ms(name, default):
+    try:
+        return max(0.001, float(os.environ.get(name, default)) / 1000.0)
+    except ValueError:
+        return default / 1000.0
+
+
+# 12 / 8 ms (was 25 / 15): on a 10 Mbit/s link the 480x360 picture arrives 7 ms sooner than the full one (20 vs 28 ms, harness)
+DOWN_S = _env_ms('LWIR_STREAM_DOWN_MS', 12)   # more than this -> the next lighter level
+UP_S = _env_ms('LWIR_STREAM_UP_MS', 8)        # the heavier level would need at most this at the measured rate -> back up
 UP_WAIT_S = 5.0      # s on a lighter level before going up is considered (doubles, at most UP_WAIT_MAX, when it did not last)
 UP_WAIT_MAX = 60.0
 STEADY_S = 30.0      # s: a heavier level that lasts this long resets the wait to UP_WAIT_S

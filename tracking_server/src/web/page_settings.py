@@ -234,13 +234,6 @@ def rules_request(q_):
         from . import picture_first
         picture_first.set_on(q_['picture_first'][0] in ('1', 'true', 'on'), APP.LIVE)
         print('RULES set picture_first %d' % picture_first.PF['on'], flush=True)
-    if 'switch_ms' in q_:   # 11-15 test switch (NOT kept over a restart): Python's thread switch interval (default 5 ms). The picture and stream threads wait up to this long for the frame loop
-        import sys
-        try: ms_ = float(q_['switch_ms'][0])
-        except ValueError: return False, 'switch_ms 는 숫자여야 합니다'
-        if not 0.1 <= ms_ <= 50: return False, 'switch_ms 는 0.1~50'
-        sys.setswitchinterval(ms_ / 1000.0)
-        print('RULES set switch_ms %g' % ms_, flush=True)
     if any(k_ in q_ for k_ in ('fast_embed', 'fast_kpts', 'fast_kpts_check')):   # 11-15: same-result speedups of the frame loop (src/common/fast_path.py; NOT kept over a restart)
         from ..common import fast_path
         print('RULES set %s -> %s' % (' '.join(fast_path.set_from(q_)), {k_: v_ for k_, v_ in fast_path.state().items() if k_ != 'fast_stat'}), flush=True)

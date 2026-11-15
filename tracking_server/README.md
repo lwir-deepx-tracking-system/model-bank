@@ -730,7 +730,7 @@ PC 에서 점수가 같은지 볼 때는 서버의 채점 코드(`src/track/gt_s
 - `/stream`, `/snap.jpg` — 상자와 번호를 그린 영상, 그림 한 장. 보는 사람이 없으면 그림은 1초에 한 장만 새로 만듭니다.
   - `/stream` 은 보는 사람마다 앞 사진이 다 나간 뒤 가장 새 사진만 보냅니다. 사진마다 JPEG 주석 `LWIR n= t= s=` (카메라 프레임 도착·보낸 때, unix 초).
   - 페이지는 `/stream?p=<페이지 id>&n=<번호>` 로 엽니다. 같은 페이지의 새 영상이 열리면 옛 영상은 닫힙니다. 코드 `src/web/stream_sender.py`
-  - 사진 한 장이 회선에서 25 ms 넘게 걸리는 viewer 는 가벼운 사진을 받습니다 (`LWIR_STREAM_LIGHT`, 기본 `0.5,60` = 320x240, 여러 단계는 `0.75,60;0.5,60`, 끄기 `0`). 서버가 viewer 마다 초당 5장쯤의 도착 시각을 잽니다(그 viewer 의 수신 확인, TCP_INFO).
+  - 사진 한 장이 회선에서 12 ms 넘게 걸리는 viewer 는 한 단계 가벼운 사진을 받습니다 (`LWIR_STREAM_LIGHT`, 기본 `0.75,60;0.5,60` = 480x360, 320x240; 끄기 `0`; 기준 `LWIR_STREAM_DOWN_MS`·`LWIR_STREAM_UP_MS`). 왕복이 긴 viewer 는 회선이 한 왕복 동안 나르는 만큼은 확인을 기다리지 않고 보냅니다 (`LWIR_STREAM_INFLIGHT`, 기본 32768 바이트, 끄기 0). 서버가 viewer 마다 초당 5장쯤의 도착 시각을 잽니다(그 viewer 의 수신 확인, TCP_INFO).
   - `GET /time?p=<페이지 id>` — 서버 시각 `t` 와 그 페이지 영상의 숫자 `v` (fps, 사진 단계, 서버 처리 ms, 도착까지 ms, 합 `est_ms`). 사진 바이트를 못 읽는 브라우저(아이폰)는 이 값으로 '내 화면 지연 약 N ms (추정)' 을 보여 줍니다.
   - 연결은 HTTP/1.1 로 유지됩니다(요청마다 TCP 연결을 새로 맺지 않음). `/stream`, `/overlay` 만 `Connection: close`.
   - 페이지는 영상을 fetch 로 읽어 사진마다 카메라 시각을 보고, 영상 위 '내 화면 지연 … ms · … fps'(작은 사진이면 '· 작은 사진')를 보여 줍니다. 시계 차이는 `GET /time`. 다른 영상 길도 `pictureShown(t, light, source)`, `streamStats(source)` 를 씁니다 (`page/js/picture_stream.js`).

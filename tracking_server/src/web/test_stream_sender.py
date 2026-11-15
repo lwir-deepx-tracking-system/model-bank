@@ -354,6 +354,11 @@ class SenderTests(unittest.TestCase):
 
 
 class LighterPictureTests(unittest.TestCase):
+    def setUp(self):   # the rule is tested with fixed limits, whatever the defaults are
+        down, up = ss.DOWN_S, ss.UP_S
+        ss.DOWN_S, ss.UP_S = 0.025, 0.015
+        self.addCleanup(lambda: (setattr(ss, 'DOWN_S', down), setattr(ss, 'UP_S', up)))
+
     def quality(self, logs=None):
         q = ss.Quality((logs if logs is not None else []).append, levels=2, guess=(0.4, 0.2))
         q.size(0, 24000)
