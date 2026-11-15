@@ -107,7 +107,7 @@ def rules_state():
                     presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
                     warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), giant_dropped=_giant(), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
                     det_kpt=det_has_kpt(), e2e_live=e2e_live.state(), relink_pred=(bool(getattr(APP.relabeler, 'pred_gate', False)) if APP.relabeler is not None and hasattr(APP.relabeler, 'pred_gate') else None),   # 11-14: the current or the waiting detector gives keypoints -> the keypoint position memories may be chosen
-                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state(), **_temp_keys())   # v32. v40: app / lead / gimbal / warm_on. 11-14: temp_show / temp
+                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state(), **_temp_keys(), **_pf_keys())   # v32. v40: app / lead / gimbal / warm_on. 11-14: temp_show / temp
 
 
 def rules_state_2():
@@ -224,6 +224,10 @@ def rules_request(q_):
         if on_: spec_proposals.LOG['rows'] = []
         elif spec_proposals.LOG['on']: spec_proposals.log_write(str(HERE / 'spec_prop_log.json'))
         spec_proposals.LOG['on'] = on_
+    if 'picture_first' in q_:   # 11-15 (user: total delay about one camera frame): picture at frame arrival, boxes drawn by the page (NOT kept over a restart)
+        from . import picture_first
+        picture_first.set_on(q_['picture_first'][0] in ('1', 'true', 'on'), APP.LIVE)
+        print('RULES set picture_first %d' % picture_first.PF['on'], flush=True)
     if 'temp_show' in q_:   # 11-14: skin-temperature labels from the camera's temperature map (display only; NOT kept over a restart)
         from ..detect import skin_temp
         skin_temp.set_show(q_['temp_show'][0] in ('1', 'true', 'on'))
@@ -288,6 +292,14 @@ def _giant():   # 11-15: person boxes dropped as impossibly tall (src/detect/det
         return int(detect_frame.GIANT[0])
     except Exception:
         return None
+
+
+def _pf_keys():   # 11-15: picture first (src/web/picture_first.py)
+    try:
+        from . import picture_first
+        return dict(picture_first=picture_first.PF['on'], picture_first_state=picture_first.state(APP.LIVE))
+    except Exception as e_:   # noqa: BLE001
+        return dict(picture_first=False, picture_first_state=dict(last_error=repr(e_)[:120]))
 
 
 def _temp_keys():   # 11-14: the skin-temperature switch and its numbers for the page (src/detect/skin_temp.py)

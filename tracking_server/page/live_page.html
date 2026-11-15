@@ -138,7 +138,8 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 /* 11-13 (design review): picture chip instead of the burned-in text bar */
 .vchip{position:absolute;left:8px;top:8px;z-index:2;pointer-events:none;background:rgba(10,10,10,.62);color:#eee;font-size:12.5px;line-height:1.3;padding:3px 10px;border-radius:999px;max-width:calc(100% - 16px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vchip[hidden]{display:none}.vchip.replay{box-shadow:inset 3px 0 0 var(--acc)}
-.vchip.vage{top:36px;font-size:12px}   /* 11-15: this screen's delay and fps, under the picture chip (picture_stream.js) */
+.vchip.vage{top:36px;font-size:12px}
+.vdraw{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:1}   /* 11-15: boxes drawn by the page for '사진 먼저' (picture_first.js) */   /* 11-15: this screen's delay and fps, under the picture chip (picture_stream.js) */
 /* 11-13 (design review): replay score = three big numbers, the rest behind 'more' */
 .rpbig{display:inline-flex;flex-direction:column;gap:1px;min-width:118px;padding:6px 12px;border:1px solid var(--line2);border-radius:6px;background:var(--field)}
 .rpbig small{font-size:12px;color:var(--ink2)}.rpbig b{font-size:22px;line-height:1.15;color:var(--ink);font-variant-numeric:tabular-nums}.rpbig i{font-style:normal;font-size:12px;color:var(--mut)}.rpbig.fp b{color:var(--warn)}.rpbig.fp.zero b{color:var(--ink)}
@@ -385,7 +386,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
 <main>
   <section class="view">
     <div class="vbox">
-      <div class="frame"><img id="v" alt="실시간 영상" draggable="false">
+      <div class="frame"><img id="v" alt="실시간 영상" draggable="false"><canvas class="vdraw" id="vdraw" aria-hidden="true"></canvas>
         <div class="vchip num" id="vchip" aria-live="polite" hidden></div>
         <div class="vchip vage num" id="vage" title="카메라 프레임이 서버에 들어온 때부터 이 화면에 그려질 때까지 (서버 처리 + 전송). 작은 사진 = 회선이 느려 320x240 사진을 받는 중" hidden></div>
         <div class="vdead" id="vdead" role="alert" hidden><b id="vdeadt"></b><span id="vdeads"></span></div>
@@ -829,6 +830,35 @@ function delayTick(){const el=$('vage'),st=streamStats();if(!el)return;
   el.hidden=false;}
 timeSync();setTimeout(timeSync,700);setTimeout(timeSync,1500);setInterval(timeSync,10000);setInterval(delayTick,1000);
 openStream();   // the first stream (the img has no src in the HTML): after this fragment's constants exist
+// 11-15 (user: total delay about one camera frame): with '사진 먼저' the server sends the camera picture as soon as the frame
+// arrives (before detection and tracking) and the boxes separately (GET /overlay, server-sent events, src/web/picture_first.py).
+// They are drawn here on a canvas over the picture, with the same 4:3 fit as the click mapping. The boxes come about two
+// camera frames after the picture; boxes older than 1 s are not drawn. A click still picks from the boxes drawn last.
+const OV={es:null,data:null,at:0,cv:$('vdraw')};
+function ovColor(id){   // the server's track_color(): golden-angle hue, saturation 0.72, value 1
+  const h=(id*0.61803398875)%1*6,i=Math.floor(h),f=h-i,s=0.72,p=1-s,q=1-s*f,t=1-s*(1-f);
+  const [r,g,b]=[[1,t,p],[q,1,p],[p,1,t],[p,q,1],[t,p,1],[1,p,q]][i%6];
+  return 'rgb('+Math.round(r*255)+','+Math.round(g*255)+','+Math.round(b*255)+')';}
+function ovDraw(){const cv=OV.cv;if(!cv)return;
+  const dpr=window.devicePixelRatio||1,bw=cv.clientWidth,bh=cv.clientHeight,W=Math.round(bw*dpr),H=Math.round(bh*dpr);
+  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
+  const x=cv.getContext('2d');x.clearRect(0,0,W,H);
+  const d=OV.data;if(!d||!d.pf||Date.now()-OV.at>1000||document.body.classList.contains('replay-mode'))return;
+  let w=bw,h=bw*3/4;if(h>bh){h=bh;w=bh*4/3;}   // the picture inside its box (object-fit: contain)
+  const ox=(bw-w)/2,oy=(bh-h)/2,k=w/(d.w||640);
+  x.save();x.scale(dpr,dpr);x.font='bold 13px sans-serif';x.textBaseline='bottom';
+  for(const [x1,y1,x2,y2,id,fol] of d.b||[]){const L=ox+x1*k,T=oy+y1*k,R=ox+x2*k,B=oy+y2*k;
+    if(fol){x.strokeStyle='rgb(255,220,0)';x.lineWidth=4;x.strokeRect(L,T,R-L,B-T);
+      const lab='FOLLOW '+id,tw=x.measureText(lab).width,ty=Math.max(T,18);
+      x.fillStyle='rgb(255,220,0)';x.fillRect(L-2,ty-18,tw+10,18);x.fillStyle='#141414';x.fillText(lab,L+3,ty-3);}
+    else{const c=ovColor(id);x.strokeStyle=c;x.lineWidth=2;x.strokeRect(L,T,R-L,B-T);x.fillStyle=c;x.fillText(String(id),L,Math.max(T-3,14));}}
+  x.restore();}
+function ovOpen(){if(OV.es||typeof EventSource!=='function')return;
+  OV.es=new EventSource('/overlay');
+  OV.es.onmessage=e=>{try{OV.data=JSON.parse(e.data);OV.at=Date.now();}catch(_){return;}ovDraw();};}
+function ovClose(){if(OV.es){OV.es.close();OV.es=null;}OV.data=null;ovDraw();}
+function ovTick(){if(!document.hidden&&rlast&&rlast.picture_first)ovOpen();else ovClose();ovDraw();}   // rlast: the /rules state, read every second
+setInterval(ovTick,1000);addEventListener('resize',ovDraw);
 function post(u,ka){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',keepalive:!!ka}).then(r=>r.json()).then(show).catch(()=>{S.textContent='명령이 전달되지 않았습니다';netChip();});}
 v.addEventListener('click',e=>{
   if(Date.now()<joyClickBlock)return;   // v40: the click that ends a joystick drag picks nobody
@@ -1105,6 +1135,8 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
      sel:!!r.prop_show,lock:r.prop_show==null?OLDSRV:'',u:Q('prop_show='+(r.prop_show?0:1))},   // 11-14: research feature (src/detect/spec_proposals.py)
     {name:'피부 온도 (카메라 온도)',note:'카메라가 잰 온도로 사람 상자 옆에 °C · 초록 = 30-38 °C 덩어리(얼굴·손) 있음, 회색 = 상자의 가장 뜨거운 곳 · 표시만'+(r.temp&&r.temp.show?(r.temp.fresh?' · 온도 지도 '+r.temp.age.toFixed(1)+' s 전':' · 온도 지도 없음 (서버를 --cam-temp 로 켜야 함)'):''),
      sel:!!r.temp_show,lock:r.temp_show==null?OLDSRV:(!r.temp_show&&r.temp&&r.temp.enabled===false)?'이 서버는 카메라 온도 지도를 받지 않습니다. 11-15 장치 시험: 이 카메라는 온도 계산(CalcTemp)이 모든 화소 0 이라 켜도 온도가 나오지 않습니다':'',u:Q('temp_show='+(r.temp_show?0:1))},   // 11-14: research feature (src/detect/skin_temp.py), not kept over a restart. 11-15 (user: options must work live): locked when the server has no temperature map
+    {name:'사진 먼저 (지연 줄임)',note:'카메라 사진을 검출 전에 바로 보내고 상자는 이 화면에서 그림 · 상자는 사진보다 두 장쯤 늦음 · 녹화 재생·흔들림 보정·다른 표시를 켜면 예전처럼'+(r.picture_first_state&&r.picture_first&&!r.picture_first_state.active?' · 지금은 예전처럼':''),
+     sel:!!r.picture_first,lock:r.picture_first==null?OLDSRV:'',u:Q('picture_first='+(r.picture_first?0:1))},   // 11-15 (src/web/picture_first.py, page/js/picture_first.js)
     {name:'예측 상자 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.predictors?'':OLDSRV,u:Q('pred_show='+(r.pred_show?0:1))}]});
   if(bt){
     const switching=!!rpLast?.state?.busy;

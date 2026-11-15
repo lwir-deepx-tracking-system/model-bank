@@ -20,6 +20,7 @@ from ..camera import replay_link
 from . import system_buttons
 from . import preview_worker
 from . import stream_sender   # 11-15 (user: 화면 전송 지연): GET /stream, one viewer
+from . import picture_first   # 11-15 (user: total delay about one camera frame): picture at frame arrival, boxes drawn by the page
 from ..camera import replay_eval   # 11-12: ground-truth comparison while a labelled recording is replayed
 from ..camera import stall_diag   # 11-13: stall log (LWIR_STALL_DIAG=1 only)
 
@@ -32,6 +33,11 @@ def init_preview(live, *, transition_jpeg=None):
             transition_jpeg = preview_worker.transition_jpeg(APP.cv2)
         live.preview_worker = preview_worker.PreviewWorker(live, APP.cv2, transition_jpeg=transition_jpeg,
                                                            async_live=async_live, async_replay=async_replay)
+    try:
+        fixed_map = APP.args.live_map == 'fixed'
+    except (NameError, AttributeError):
+        fixed_map = False
+    live.picture_worker = picture_first.PictureWorker(live, APP.cv2, fixed_map=fixed_map)   # 11-15: acts only while picture first is on
 
 
 def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
@@ -88,12 +94,13 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
 def _click_live(x, y):
     live = APP.LIVE
     worker = getattr(live, 'preview_worker', None)
-    if worker is None or not worker.async_live:
+    pf_ = picture_first.active(live)   # 11-15: the people of the newest boxes sent to the page (the boxes the viewer sees)
+    if not pf_ and (worker is None or not worker.async_live):
         return live_tracks.click(x, y)
     with live.jcond:
-        frame_t = getattr(live, 'jpeg_frame_t', None)
-        people = getattr(live, 'jpeg_people', None)
-        ticket = getattr(live, 'jpeg_tracks_ticket', None)
+        frame_t = getattr(live, 'click_frame_t' if pf_ else 'jpeg_frame_t', None)
+        people = getattr(live, 'click_people' if pf_ else 'jpeg_people', None)
+        ticket = getattr(live, 'click_ticket' if pf_ else 'jpeg_tracks_ticket', None)
         if (frame_t is None or people is None or ticket is None
                 or not 0 <= time.perf_counter() - frame_t < 0.5
                 or live.stopped or getattr(live, 'cam_hold', False)
@@ -236,7 +243,20 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     preview_allowed_ = (token_ is not None if worker_ is not None else
                         replay_ is None or replay_source_ is not None)
     required = async_replay_ and worker_.replay_required(position, replay_.get('frames') or 0)
-    if preview_allowed_ and (required or APP.LIVE.viewers > 0
+    pf_ = picture_first.active(APP.LIVE) and overlay_rows is None   # 11-15: the picture went out at frame arrival; here only its boxes
+    if pf_ and (APP.LIVE.viewers > 0 or now_ - APP.LIVE.snap_t < 3.0):
+        boxes_ = []
+        for r_ in display_rows:
+            if int(r_[6]) != 0: continue
+            tid_ = int(r_[4])
+            if gb_id_ and tid_ != gb_id_: continue   # while following, only the followed person's box (as in the drawn picture)
+            boxes_.append((float(r_[0]), float(r_[1]) - 16.0, float(r_[2]), float(r_[3]) - 16.0, tid_, 1 if gb_id_ else 0))
+        click_people, click_ticket = (live_tracks.preview_people(t_in, {b_[4] for b_ in boxes_})
+                                      if has_gimbal_ and healthy_ else (None, None))
+        msg_ = picture_first.overlay_message(t_in, boxes_, gb_id_, time.perf_counter(), time.time())
+        with APP.LIVE.jcond:
+            picture_first.publish_overlay_locked(APP.LIVE, msg_, people=click_people, ticket=click_ticket, frame_t=t_in)
+    if not pf_ and preview_allowed_ and (required or APP.LIVE.viewers > 0
             or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0):
         # Replay overlays use their own rows and colors. Live boxes use the ID returned by publish.
         preview_rows_, selected_ = display_rows, gb_id_
@@ -476,6 +496,11 @@ def make_lv_Handler():
                     # to get through gets a lighter picture (320x240, LWIR_STREAM_LIGHT). src/web/stream_sender.py
                     stream_sender.serve(APP.LIVE, self.connection, self.wfile.write, urlsplit(self.path).query, self.client_address[0],
                                         light=stream_sender.light_maker(APP.cv2))
+                elif self.path.startswith('/overlay'):   # 11-15: boxes for 'picture first' as server-sent events (src/web/picture_first.py)
+                    self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.send_header('Cache-Control', 'no-cache'); self.end_headers()
+                    try: self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.settimeout(30)
+                    except OSError: pass
+                    picture_first.serve_overlay(APP.LIVE, self.wfile.write)
                 elif self.path.startswith('/time'):   # 11-15: the server's clock for the page's picture-delay readout (page/js/picture_stream.js)
                     b_ = json.dumps(dict(t=round(time.time(), 4))).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)

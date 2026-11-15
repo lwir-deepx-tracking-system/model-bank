@@ -480,6 +480,8 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
                 ev_.lock.release()
         if not enqueued:
             continue
+        pw_ = getattr(APP.LIVE, 'picture_worker', None)   # 11-15: picture first (src/web/picture_first.py): the page picture now, before detection
+        if pw_ is not None and not tagged: pw_.offer(ta_, raw_)
         rc_ = APP.LIVE.rec
         if rc_ is not None:
             with rc_['cond']:

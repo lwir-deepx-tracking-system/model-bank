@@ -134,15 +134,17 @@ def render_preview(cv2, frame, keep=None):
 
 
 def publish_jpeg_locked(live, jpeg, frame_t, *, paired=True, click_people=None, click_ticket=None,
-                        replay_position=None, drawn=None):
+                        replay_position=None, drawn=None, click=True):
     """Commit one JPEG under jcond. Placeholders have no frame latency sample.
-    drawn: the picture before encoding (render_preview keep=), for /stream's lighter picture; None = none for this JPEG."""
+    drawn: the picture before encoding (render_preview keep=), for /stream's lighter picture; None = none for this JPEG.
+    click=False: a picture without boxes (picture_first.py) leaves the click people and ticket of the boxes alone."""
     live.jpeg = jpeg
     live.jpeg_drawn = (jpeg, drawn) if drawn is not None else None
     live.jpeg_frame_t = frame_t
-    live.jpeg_people = click_people
-    live.jpeg_tracks_ticket = click_ticket
-    live.jpeg_replay_position = replay_position
+    if click:
+        live.jpeg_people = click_people
+        live.jpeg_tracks_ticket = click_ticket
+        live.jpeg_replay_position = replay_position
     live.seq += 1
     if frame_t is not None:
         live.pic_n += 1

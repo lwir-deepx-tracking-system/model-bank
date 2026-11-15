@@ -716,6 +716,7 @@ PC 에서 점수가 같은지 볼 때는 서버의 채점 코드(`src/track/gt_s
   - 페이지는 `/stream?p=<페이지 id>&n=<번호>` 로 엽니다. 같은 페이지의 새 영상이 열리면 옛 영상은 닫힙니다. 코드 `src/web/stream_sender.py`
   - 사진 한 장이 50 ms 넘게 걸리는 viewer 는 320x240 사진을 받습니다 (`LWIR_STREAM_LIGHT=0.5,60`, 끄기 `0`). 15초마다 큰 사진 한 장으로 다시 재 봅니다(30 ms 안에 가면 큰 사진).
   - 페이지는 영상을 fetch 로 읽어 사진마다 카메라 시각을 보고, 영상 위 '내 화면 지연 … ms · … fps'(작은 사진이면 '· 작은 사진')를 보여 줍니다. 시계 차이는 `GET /time`. 다른 영상 길도 `pictureShown(t, light, source)`, `streamStats(source)` 를 씁니다 (`page/js/picture_stream.js`).
+  - '사진 먼저'(`LWIR_PICTURE_FIRST=1` 또는 화면 표시 줄, 기본 꺼짐): 카메라 프레임이 들어오자마자 그 사진을 보내고(검출 전), 상자는 `GET /overlay`(server-sent events)로 따로 보내 페이지가 그립니다. 녹화 재생·흔들림 보정·다른 표시 중에는 예전처럼. `src/web/picture_first.py`, `page/js/picture_first.js`
 - `/healthz` — 살아 있는지, 지연 값, 멈춘 그림 수(`frozen_frames`), 만든 그림 수(`pictures`), 보는 사람 수(`viewers`)
 - `/model` — 검출 모델 목록과 지금 쓰는 모델
 - `/rules` — 지금 설정 (추적기, Filter 값, 새 사람 확인, 외형 모델, 위치 기억, 짐벌 프로그램에 넘긴 값 `gimbal_cfg`, 검출 모델 자동 선택 `auto_det`, 두 모델 상주 `resident_det`)
