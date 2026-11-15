@@ -11,6 +11,7 @@ from ..detect import resident_det   # 11-15 (user): both models of that pair res
 from ..track import native_backend
 from ..track.position_memory import POSP, POS_NAMES, pos_list, pos_select
 from ..track import e2e_live
+from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows (off by default)
 from ..track.stabilizer import STAB
 from ..track.bytetrack import ByteTrackTracker
 from ..track.botsort import BotSortTracker
@@ -112,7 +113,8 @@ def rules_state():
 
 
 def rules_state_2():
-    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg(), auto_det=auto_det.state(), resident_det=resident_det.state())   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). resident_det (11-15): 두 모델 상주·즉시 전환 (src/detect/resident_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
+    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg(), auto_det=auto_det.state(), resident_det=resident_det.state(),
+                box_refine=box_refine.state())   # 11-15: 상자 다듬기 (src/track/box_refine.py): mode, blend_s, ms per frame, tracks   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). resident_det (11-15): 두 모델 상주·즉시 전환 (src/detect/resident_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
 
 
 def prefer_cpp_bytetrack(q_, tracker_key, cam_tracker):
@@ -269,6 +271,14 @@ def rules_request(q_):
 
 
 def rules_request_2(q_):
+    if 'box_refine' in q_ or 'box_blend' in q_:   # 11-15: box smoothing (src/track/box_refine.py); checked first, changed only when the rest of the query was taken too
+        br_ = {k_: x_ for k_, x_ in q_.items() if k_ in ('box_refine', 'box_blend')}
+        ok_, tx_, apply_ = box_refine.parse_request(br_)
+        if not ok_: return ok_, tx_
+        rest_ = {k_: x_ for k_, x_ in q_.items() if k_ not in br_}
+        ok_, tx2_ = rules_request_2(rest_) if rest_ else (True, tx_)
+        if ok_: apply_()
+        return ok_, tx2_
     if 'resident_det' in q_:   # 11-15: two detector models resident (src/detect/resident_det.py); checked first, changed only when the rest of the query was taken too (like auto_det below)
         ok_, tx_, apply_ = resident_det.parse_request({'resident_det': q_['resident_det']})
         if not ok_: return ok_, tx_

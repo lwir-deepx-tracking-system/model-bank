@@ -1149,6 +1149,15 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const g=r.gimbal,lead=!!r.lead;window.OTFOL=g?!!g.auto:autoNow;   // following is started by tapping a person in the picture, so it has no tile
   T.push({lab:'제어',sub:'여러 개 켜기',multi:1,n:[
     {name:'예측 제어',note:'따라갈 때만 작동 · 재시작해도 유지',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1))}]});
+  const br=r.box_refine;   // 11-15 (user "2번부터 하자", "변할 때 자연스럽게"): 그리는 상자와 짐벌 조준만 다듬기 (src/track/box_refine.py), 기본 꺼짐
+  if(br){const bm=br.mode||'off',BRN='장치에서 아직 재지 않음 · 추적기·채점·자동 선택은 원래 상자',BLT=0.3,gok=(br.modes||[]).some(x=>x.key==='gru'&&x.available);
+    T.push({lab:'상자 다듬기',sub:'화면 상자와 짐벌 조준점만'+(bm!=='off'?' · '+br.mode_name+(br.ms!=null?' · '+Number(br.ms).toFixed(2)+' ms':''):'')+(br.why?' · '+br.why:''),n:[
+      {name:'끔',note:'추적기 상자 그대로',sel:bm==='off',u:Q('box_refine=off')},
+      {name:'크기만 부드럽게',note:'위치는 추적기 그대로 · 상자 크기만 천천히 바뀜(근거리↔먼 거리 바뀔 때도) · '+BRN,sel:bm==='size',u:Q('box_refine=size')},
+      {name:'One Euro 필터',note:'중심·크기 따로 거름 · 카메라 움직임만큼 옮긴 뒤 거름 · '+BRN,sel:bm==='euro',u:Q('box_refine=euro')},
+      {name:'학습 GRU',note:'몸 네모 하나로 맞춤(작은 사람 전신 상자 포함) · '+BRN,sel:bm==='gru',lock:gok?'':(r.det_kpt===false?'관절을 내는 검출 모델을 먼저 고르세요':'GRU 가중치 파일이 없습니다'),u:Q('box_refine=gru')}]});
+    T.push({lab:'모델 바뀔 때 섞기',sub:'검출 모델이 바뀌면 상자를 천천히 넘김',multi:1,n:[
+      {name:br.blend_s>0?'켬 '+br.blend_s+'초':'켬 ('+BLT+'초)',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});}
   T.push({lab:'화면 표시',sub:'여러 개 켜기',multi:1,n:[   // 11-13: it draws, it does not control
     {name:'사람 후보 (공간 주파수)',note:'추적이 안 쓴 검출의 약한 상자를 공간 주파수로 다시 봄 · 사람다우면 진한 보라 miss? · 연속으로 보일 때만 · 표시만'+(r.prop&&r.prop.ms!=null?' · '+Math.round(r.prop.ms)+' ms':''),
      sel:!!r.prop_show,lock:r.prop_show==null?OLDSRV:'',u:Q('prop_show='+(r.prop_show?0:1))},   // 11-14: research feature (src/detect/spec_proposals.py)
@@ -1182,7 +1191,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   });
   const e2eLive=!!(el&&(el.on==='ftt'||el.want==='ftt'));
   if(e2eLive||replayStored){   // 11-14 (user): the end-to-end model (live, or its stored result on a recording) replaces these, so they are locked while it runs; 11-15 (user): not 전처리 - stabilization moves the frame the end-to-end model sees
-    const OFF=['검출 모델','검출 모델 자동 선택','검출 뒤 Filter','Tracker','ByteTrack 옵션','위치 기억 · 신뢰도','KeepID','KeepID 찾는 범위','외형 비교','외형 모델'],why=(e2eLive?'엔드투엔드(FastTrackTr) 사용 중':'엔드투엔드 결과 재생 중')+' · 엔드투엔드를 끄면 다시 고를 수 있습니다';
+    const OFF=['검출 모델','검출 모델 자동 선택','검출 뒤 Filter','Tracker','ByteTrack 옵션','위치 기억 · 신뢰도','KeepID','KeepID 찾는 범위','외형 비교','외형 모델','상자 다듬기','모델 바뀔 때 섞기'],why=(e2eLive?'엔드투엔드(FastTrackTr) 사용 중':'엔드투엔드 결과 재생 중')+' · 엔드투엔드를 끄면 다시 고를 수 있습니다';
     const off=new Set();T.forEach((t,i)=>{if(OFF.includes(t.lab)||/ 엔진$/.test(t.lab))off.add(i);});
     T.forEach((t,i)=>{if(off.has(i)||(t.kidOf!=null&&off.has(t.kidOf))){t.sub=(e2eLive?'엔드투엔드 사용 중':'엔드투엔드 결과 재생 중')+' · 쓰이지 않음';(t.n||[]).forEach(n=>{n.lock=why;n.sel=false;});}
       if(t.lab==='화면 표시')(t.n||[]).forEach(n=>{if(n.name==='사람 후보 (공간 주파수)'||n.name==='예측 상자 표시'){n.lock=why;n.sel=false;}});});}

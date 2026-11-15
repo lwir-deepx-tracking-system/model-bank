@@ -15,6 +15,7 @@ from ..track.position_memory import POSP
 from ..detect import spec_proposals   # 11-14: people proposals from the spatial spectrum (display only)
 from ..detect import skin_temp   # 11-14: skin temperature per person box from the camera's temperature map (display only, off by default)
 from ..detect import auto_det   # 11-15: automatic NEAR / FAR detector choice (off by default)
+from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows only (off by default)
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
 from . import system_buttons
@@ -211,10 +212,13 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     # v26c: track output timing, independent of whether a JPEG is made.
     _record_perf(APP.LIVE, now_, t_in if paired_stamp_ else None, fps_, float(row_.get('frame_total_ms', 0.0)))
     sc_ = APP.args.live_scale
+    # 11-15 (user "2번부터", "변할 때 자연스럽게"): box_refine (default off = the very same list) smooths only the boxes drawn and sent to the gimbal.
+    # The tracker, the measurement record, scoring, the automatic detector choice and the skin temperature keep display_rows.
+    shown_rows_ = box_refine.apply(display_rows, tracker_detections, t_in)
     # Send the gimbal frame before preparing any preview annotations.
     has_gimbal_ = APP.GB is not None
     npers_, gb_id_, gb_people_ = 0, 0, []
-    for r_ in display_rows:
+    for r_ in shown_rows_:
         if int(r_[6]) != 0: continue   # v16: people only
         npers_ += 1
         if has_gimbal_ and len(gb_people_) < 60:
@@ -254,7 +258,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     pf_ = picture_first.active(APP.LIVE) and overlay_rows is None   # 11-15: the picture went out at frame arrival; here only its boxes
     if pf_ and (APP.LIVE.viewers > 0 or now_ - APP.LIVE.snap_t < 3.0):
         boxes_ = []
-        for r_ in display_rows:
+        for r_ in shown_rows_:   # the boxes drawn on the picture = the boxes sent to the gimbal (box_refine, 11-15)
             if int(r_[6]) != 0: continue
             tid_ = int(r_[4])
             if gb_id_ and tid_ != gb_id_: continue   # while following, only the followed person's box (as in the drawn picture)
@@ -268,7 +272,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     if not pf_ and preview_allowed_ and (required or APP.LIVE.viewers > 0
             or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0):
         # Replay overlays use their own rows and colors. Live boxes use the ID returned by publish.
-        preview_rows_, selected_ = display_rows, gb_id_
+        preview_rows_, selected_ = shown_rows_, gb_id_
         if overlay_rows is not None:
             rows_ = preview_rows_ = overlay_rows
             selected_ = 0

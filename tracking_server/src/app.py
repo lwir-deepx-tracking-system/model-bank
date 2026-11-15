@@ -23,6 +23,7 @@ from .common.device_wait import wait_m1_free
 from .track.kalman import gmc_warp, GKF
 from .track.position_memory import pos_select, POSP
 from .track import e2e_live   # 11-14: live end-to-end FastTrackTr
+from .track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows (startup restore of its saved choice)
 from .track.camera_motion import GMC
 from .track.stabilizer import STAB_M, stab_shift, stab_margins
 from .track.bytetrack import ByteTrackTracker, CameraByteTrack, crop_requests
@@ -316,7 +317,7 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det', 'box_refine', 'box_blend') if k_ in sv_})
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass
@@ -333,6 +334,7 @@ def main():
         if isinstance(sv_, dict) and 'stab' in sv_: APP.SEL['stab'] = bool(sv_['stab']); qs_.append({'stab': ['1' if APP.SEL['stab'] else '0']})   # stab
         if 'auto_det' in APP.SEL: qs_.append(auto_det.restore_query(bool(APP.SEL['auto_det']), APP.SEL.get('auto_det_p')))   # 11-15: automatic detector choice on / off and the changed numbers
         if 'resident_det' in APP.SEL: qs_.append({'resident_det': ['1' if APP.SEL['resident_det'] else '0']})   # 11-15: two detector models resident (the other pair is made by the frame loop)
+        qs_ += box_refine.restore_queries(APP.SEL)   # 11-15: box smoothing of the drawn / gimbal rows; one query per key (a refused mode keeps the blend time)
         for q_ in qs_:
             if not q_: continue
             APP.sel_restoring = True   # 11-15: lets a saved lead=1 through before the gimbal link exists (page_settings)

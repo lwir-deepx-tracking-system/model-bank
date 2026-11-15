@@ -84,6 +84,16 @@ class PictureFirstTests(PublishFixture):
         self.assertEqual((x1, y1, x2, y2, tid, rad), (280, 120, 320, 280, 42, 20))
         self.assertEqual((last, pts, lab, col), ([120, 200, 40, 160], [[130, 204]], '42 Kalman 5f', 'rgb(255,220,0)'))
 
+    def test_boxes_are_the_smoothed_rows_sent_to_the_gimbal(self):
+        """11-15 box_refine: with picture first the page draws the same (smoothed) boxes the gimbal gets, not the tracker rows."""
+        self.enable(True)
+        shifted = lambda rows, dets, t: [[float(r[0]) + 2, float(r[1]) + 4, float(r[2]) + 2, float(r[3]) - 4] + list(r[4:]) for r in rows]
+        with patch.object(page.box_refine, 'apply', side_effect=shifted):
+            self.publish()
+        msg = json.loads(self.live.overlay)
+        self.assertEqual(msg['b'], [[102, 104, 142, 256, 7, 0]])
+        self.assertEqual([tuple(round(v, 1) for v in p[1:5]) for p in self.controls[-1]], [(102.0, 104.0, 142.0, 256.0)])
+
     def test_click_uses_the_people_of_the_drawn_boxes(self):
         self.enable(True)
         with self.live.jcond:
