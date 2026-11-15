@@ -1,5 +1,7 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
+**2026-11-15 실시간 엔드투엔드 모델을 열화상 학습 판으로 교체:** `models/e2e/fasttracktr/` 를 `fasttracktr_r18_npu_dancetrack_tmot_20261115_thermal3_*`(화면 "FastTrackTr_(DanceTrack+TMOT열화상)_20261115")로 바꾸고 6회 판(e6idfix)은 지웠습니다. 6회 판에서 TMOT 학습용 열화상 + DanceTrack 30% 로 3 epoch 이어 학습. 같은 실시간 코드로 11 개 녹화를 저장 결과로 만들어 서버 재생으로 채점: 9 개에서 나음, TMOT 6편 평균 IDF1 15.3 → 27.1, 헛상자 크게 줄음, 실내 두 녹화에서는 덜 찾음. 검출+추적기보다는 아직 낮습니다. 채점용 스크립트 `research/fasttracktr_npu/ftt_stored_run_live.py`(실시간 코드 그대로 저장 결과 만들기).
+
 **2026-11-15 학습 스크립트 올림:** 열화상 자세 학습의 지금 판 스크립트를 `tracking_server/research/lwir_pose_plan/scripts/` 에 올렸습니다(무시 표시 3, LLVIP-Pose 변환, 가림 v4 와 사무실 조각 묶음 만들기, 상자만 있는 사람 지우지 않기, 실내 채점 v2, 시험들, Vast 실행 순서). 장치의 실험 E 를 만든 당시 판은 `models/detect/build_scripts/yolo26m_pose_otp2_bodybox_build/` 에 그대로 있습니다. FastTrackTr build_scripts 도 지금 판(번호 확인, 컴파일 옵션, 장치 단계별 시간 재기, TMOT 학습용 변환)으로 맞췄습니다. 자료는 올리지 않았습니다.
 
 **2026-11-15 열화상 자세 모델 학습 계획:** [계획](tracking_server/research/lwir_pose_plan/README.md) — 단계(기초 → 열화상 + 가림 합성 → 우리 카메라 → 장치), 단계별 학습 설정(AdamW, 시작 학습률, 에폭, 직선 감소를 쓰는 이유), 최종 평가는 공개 어려운 시험(OTP2·LLVIP-Pose·OCHuman·KAIST·TMOT·MOT17), 시간 예산(GPU 약 25~28시간 + 손 라벨). 지금 Vast 에서 R0/R1 → FastTrackTr 열화상 학습이 자동으로 이어 돈다.
