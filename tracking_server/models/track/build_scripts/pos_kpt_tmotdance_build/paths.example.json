@@ -1,1 +1,1 @@
-{"tmot_train": "<TMOT train MOT folder>", "tmot_val": "<TMOT val folder>", "dance": "<DanceTrack root>", "worktree": "<model-bank tracking_server folder>"}
+{"tmot_train": "<TMOT train MOT folder>", "tmot_val": "<TMOT val folder>", "dance": "<DanceTrack root>", "worktree": "<model-bank tracking_server folder>", "root": "<data root of these scripts: data/assoc, data/det, data/gmc (fix_*.py)>"}

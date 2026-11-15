@@ -54,6 +54,7 @@ class PosMamba:
 # Keypoints come from detect_frame.KP (detector files with keypoint heads, kind six_kpt); without them the keypoint part is 0.
 KP_NF, KP_HIST, KP_STEPS, KP_C, KP_S, KP_CLIP, KP_MINOBS = 68, 20, 15, 1.0, float(np.log(1.5)), 5.0, 4
 KP_ROW0, KP_ROW1 = 16.0, 496.0   # camera rows inside the 640x512 frame canvas
+_POS_EDGE_OFF = np.full(4, KP_CLIP)   # 11-16: the picture-edge inputs of a file trained without them (opt_no_edges)
 
 
 class PosKpt:
@@ -63,6 +64,9 @@ class PosKpt:
 
     def __init__(self, w):
         w = {k[5:] if k.startswith('cell.') else k: v for k, v in w.items()}
+        # 11-16: files with opt_no_edges = 1 were trained without the picture-edge inputs (always 5 = far from every edge): the edge distances of
+        # the public fixed cameras worked as a scene prior (people near the picture bottom drawn smaller and higher) that our camera does not share
+        self.edges = not ('opt_no_edges' in w and float(np.asarray(w['opt_no_edges']).ravel()[0]) > 0)
         if 'cell.weight_ih' in w:
             self.cell = PosGRU(dict(w_ih=w['cell.weight_ih'], w_hh=w['cell.weight_hh'], b_ih=w['cell.bias_ih'], b_hh=w['cell.bias_hh'], w_o=w['head.weight'], b_o=w['head.bias']))
         else: self.cell = PosMamba(w)
@@ -91,8 +95,9 @@ def _kp_lookup(box_xywh):
     r = b[j]; return np.array([(r[0] + r[2]) / 2, (r[1] + r[3]) / 2, r[2] - r[0], r[3] - r[1]], np.float64), d['kpts'][j]
 
 
-def _kp_feat_seen(v, z, zprev, inn, kp, posetrack=False):
+def _kp_feat_seen(v, z, zprev, inn, kp, posetrack=False, edges=True):
     f = _kp_boxfeat(v, z, zprev, inn); hz = max(z[3], 1.)
+    if not edges: f[12:16] = KP_CLIP
     if kp is None: kf = np.zeros(51)
     else:
         vis = (kp[:, 2] >= 0.5).astype(np.float64)
@@ -110,8 +115,10 @@ def pos_predict_kpt(M, kf, pool, mean, cov):
             if p is None or p['gen'] != gen or p['j'] != 0: p = t.pk = dict(gen=gen, hist=_pos_dq(maxlen=KP_HIST), n=0, z=None, post=None, j=0)
             z, kp = _kp_lookup(mean[i, :4])
             if z is None: z = mean[i, :4].astype(np.float64)
-            p['hist'].append(_kp_feat_seen(mean[i, 4:6], z, p['z'] if p['z'] is not None else z, getattr(t, 'pp_inn', _POS_Z4), kp, getattr(M, 'posetrack', False))); p['n'] += 1
+            p['hist'].append(_kp_feat_seen(mean[i, 4:6], z, p['z'] if p['z'] is not None else z, getattr(t, 'pp_inn', _POS_Z4), kp, getattr(M, 'posetrack', False),
+                                           getattr(M, 'edges', True))); p['n'] += 1
             p['z'] = z; p['post'] = mean[i].copy()
+            p['w1'] = None if W is None else np.array(W, np.float64)   # 11-16: this frame's camera warp = the one of lost step 1 if the track is not matched now
         elif p is not None and p['gen'] == gen and 0 <= p['j'] < KP_STEPS:
             if p['j'] == 0:
                 if p['n'] < KP_MINOBS: p['j'] = -1; continue
@@ -127,11 +134,15 @@ def pos_predict_kpt(M, kf, pool, mean, cov):
             for _ in range(n_):
                 s = p['j'] + 1
                 if s > KP_STEPS: break
-                if W is not None:
-                    R = W[:2, :2]; p['c'] = R @ p['c'] + W[:2, 2]; p['v'] = R @ p['v']
+                # 11-16: step 1 belongs to the frame before (its warp was stored at the last TRACKED call); before, step 1 took this frame's warp
+                # (applied twice) and the warp of the frame before was lost
+                Ws = p.get('w1', W) if (n_ == 2 and s == 1) else W
+                if Ws is not None:
+                    R = Ws[:2, :2]; p['c'] = R @ p['c'] + Ws[:2, 2]; p['v'] = R @ p['v']
                 p['c'] = p['c'] + p['v']; wh = p['wh'] + (p['vwh'] if s == 1 else 0.); p['wh'] = wh
                 b = np.r_[p['c'], wh]; hb = max(b[3], 1.); wb = max(b[2], 1.)
-                edge = np.array([b[0] - wb / 2, 640. - (b[0] + wb / 2), b[1] - hb / 2 - KP_ROW0, KP_ROW1 - (b[1] + hb / 2)]) / hb
+                edge = (np.array([b[0] - wb / 2, 640. - (b[0] + wb / 2), b[1] - hb / 2 - KP_ROW0, KP_ROW1 - (b[1] + hb / 2)]) / hb
+                        if getattr(M, 'edges', True) else _POS_EDGE_OFF)
                 chg = np.r_[(b[:2] - p['pb'][:2]) / hb, np.log(np.maximum(b[2:4], 1.) / np.maximum(p['pb'][2:4], 1.))]
                 x = np.clip(np.r_[p['v'] / hb, _POS_Z4, chg, np.log(hb / 100.), np.log(wb / hb), edge, np.zeros(KP_NF - 17), s / KP_STEPS], -KP_CLIP, KP_CLIP)
                 o, p['st'] = M.step(x, p['st'])

@@ -1,0 +1,35 @@
+{
+ "status": "관절 입력 GRU 위치 기억 (TMOT+DanceTrack) · 11-16 고침: 화면에 잘린 정답의 목표 뺌, 놓친 1단계 카메라 보정 순서, 화면 가장자리 입력 없음(공개 자료 카메라 배치를 배우지 않게)",
+ "source": "gru_mismatch_20261116 pf_train.py gru_kpt --no-edges (pos_train.py config a recipe, fixed builder pf_lib.py), epoch 29 of 30, val-A sel 0.2348",
+ "inputs": "프레임당 68개 (서버 position_memory 와 같은 식, 카메라 움직임 보정 포함). 화면 가장자리 넷은 늘 5. 관절 순서 = 우리 검출기(COCO)",
+ "output": "15프레임 동안 보정 없는 Kalman 예측 상자에 더하는 보정(중심 ±1 키, 크기 ±50%)",
+ "warp_order": "lost step s uses the camera warp of frame t+s (server 11-16)",
+ "edge_inputs": "none: the four edge inputs are always 5 (opt_no_edges = 1)",
+ "kalman_valA": {
+  "all": 0.3428589701652527,
+  "syn": 0.34356585144996643
+ },
+ "best": {
+  "epoch": 29,
+  "sel": 0.234818493326505
+ },
+ "parity": [
+  {
+   "seq": "dancetrack0099",
+   "det": "near",
+   "tracks": 11,
+   "lost_frames": 14,
+   "max_abs": 2.7615219222454357e-07,
+   "skipped_lookup_fallback": 0
+  },
+  {
+   "seq": "seq17",
+   "det": "far",
+   "tracks": 4,
+   "lost_frames": 14,
+   "max_abs": 7.604256254400976e-07,
+   "skipped_lookup_fallback": 3
+  }
+ ],
+ "sha256": "b2505c2b9eabfebc657ac89279850dcbba66be7275bdd0b3a2a27bdd4f31aad1"
+}
