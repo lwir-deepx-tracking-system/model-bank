@@ -21,7 +21,10 @@
            겹선형 보간; 몸 네모 모양과 100 px 위는 그대로, 작은 전신 상자는 약 절반 키). 그 밖의 검출 모델(YOLO / FLIR 등, 늘 전신 상자) -> 파일의
            person 고정 비율(위 + top_off x h 에서 키 k_h x h, 폭 k_w x h; 학습 분할에서 잰 0.535, 0.331).
         2) 모델이 바뀔 때(자동 선택, 두 모델 상주, 화면): 사람마다 앞 모델의 바꾸기 값에서 새 모델의 값으로, 추적기 행의 키가 앞 정의에서 새 정의로
-           옮겨 가는 만큼(칼만이 몇 프레임 걸림) 섞어 넘어간다(최대 1초, 두 정의가 같으면 바로 끝). 그래서 키와 조준점이 이어진다.
+           옮겨 가는 만큼(칼만이 몇 프레임 걸림) 섞어 넘어간다(최대 1초, 새 검출로 두 정의가 같다고 보이면 바로 끝). 그래서 키와 조준점이 이어진다.
+           그 사람이 검출과 짝지어지지 않은 프레임(행 = 칼만 예측, 아직 앞 정의)은 아무것도 알려 주지 않으므로 넘어가기를 끝내지도 나아가지도 않는다
+           (11-16 검토: 바뀌는 프레임에 짝이 없으면 바로 끝나 키가 0.535 배로 튀었음).
+        표 파일에 NaN / inf 가 있거나 읽지 못하면 쓰지 않고 그 까닭을 화면(body_note, 잠금 글)·거절 글·why 에 보인다.
         3) 크기만 One Euro(BODY / 파일의 euro: val-A 에서 미리 적은 규칙으로 고른 1.5 Hz, beta 0.3). 위치: 기본 'aim' = 바꾼(거르기 전) 상자의
            짐벌 조준점(위 + aim_y x 키, aim_y 는 size 와 같이 돌고 있는 짐벌 프로그램에서 읽음)과 가로 중심을 그대로 두고 거른 크기를 그 둘레에 놓음:
            짐벌 조준(떨림, 늦음)은 바꾼 상자의 것과 똑같다. 'top'(첫 판), 'centre' 도 고를 수 있다.
@@ -38,7 +41,8 @@
 또는 새 검출이 카메라 움직임으로 옮긴 앞 검출에서 키의 1.5배 넘게 떨어지면(다른 사람) 처음부터.
 번호가 바뀌어도(KeepID 다시 붙이기) 새 번호에 이어받을 상태가 없거나 앞 프레임에 안 보였으면, 앞 프레임에 보였다가 이번에 없어진 번호 가운데
 마지막 검출(카메라 움직임으로 옮김)과 IoU 0.5 이상인 것의 상태를 넘겨받는다. 추적기가 새로 만들어지면(녹화 다시 시작, 엔드투엔드 켜고 끔, 추적기 바꿈)
-모두 비운다. 같은 규칙을 공개 자료 채점도 이 클래스로 그대로 쓴다.
+모두 비운다. 같은 규칙을 공개 자료 채점도 이 클래스로 그대로 쓴다. NaN / inf 행(모든 모드)은 그 번호가 그 프레임에 없는 것처럼 두고(그 행은 그대로 그림,
+상태는 그대로), 결과나 크기 필터 상태가 NaN / inf 가 되면 그 번호를 처음부터 한다(11-16 검토).
 쓰지 않는 곳: 엔드투엔드 모델 사용 중(검출 상자가 없음: 꺼진 것처럼 그대로), 녹화를 다른 추적기 결과로 재생할 때 그리는 행(재생 쪽 행은 그대로).
 """
 import math
@@ -132,10 +136,11 @@ class BodyTable:
         g = lambda k: np.asarray(w[k], np.float64)
         self.tab, self.lh_cen, self.ar_cen = g('tab'), g('lh_cen'), g('ar_cen'); assert self.tab.shape == (len(self.lh_cen), len(self.ar_cen), 4)
         assert (np.diff(self.lh_cen) > 0).all() and (np.diff(self.ar_cen) > 0).all()
-        e = tuple(float(v) for v in np.asarray(w['euro']).ravel()) if 'euro' in w else None; assert e is None or len(e) == 3
+        assert np.isfinite(self.tab).all() and np.isfinite(self.lh_cen).all() and np.isfinite(self.ar_cen).all()   # one NaN / inf cell would poison a person's filter
+        e = tuple(float(v) for v in np.asarray(w['euro']).ravel()) if 'euro' in w else None; assert e is None or (len(e) == 3 and all(map(math.isfinite, e)))
         self.body = dict(mc_s=e[0], beta_s=e[1], dcut=e[2]) if e is not None else None   # body mode's size filter, when the file gives one
         self.person = tuple(float(v) for v in np.asarray(w['person']).ravel()) if 'person' in w else None
-        assert self.person is None or (len(self.person) == 3 and 0.2 < self.person[1] < 1.0 and 0.1 < self.person[2] < 1.0)
+        assert self.person is None or (len(self.person) == 3 and all(map(math.isfinite, self.person)) and 0.2 < self.person[1] < 1.0 and 0.1 < self.person[2] < 1.0)
         for fam in ('pose', 'person'):
             d = self.conv_delta(np.array([[320., 256., 20., 40.], [320., 256., 180., 300.]]), fam); assert d.shape == (2, 4) and np.isfinite(d).all()
 
@@ -233,6 +238,7 @@ class Refiner:
                                 dl=None, lr=None, tw=None)
         for it in items:   # 1) every person: whose state (hand-over, reset)
             tid, z = it[0], it[1]; zr = it[2] if len(it) > 2 and it[2] is not None else z; st = self.tr.get(tid)
+            if not (np.isfinite(z).all() and np.isfinite(zr).all()): continue   # a NaN / inf row = a missing frame for this id: its state waits, apply draws the row as it is
             if gone and (st is None or st['f'] != fr - 1):   # hand-over: KeepID gave the person another id this frame
                 best, bi = HANDOVER_IOU, -1
                 for j, g in enumerate(gone):
@@ -266,7 +272,7 @@ class Refiner:
                     elif st['tw'] is not None: st['tw'][1] += ls_   # the camera zoom since the previous row moves the old height too
                     if st['tw'] is not None:
                         d0, lh0, t0, a = st['tw']; matched = z is not zr; lz = math.log(max(z[3], 1.))
-                        if abs(lz - lh0) < SW_SAME or t - t0 >= SW_T: a = 1.0
+                        if t - t0 >= SW_T or (matched and abs(lz - lh0) < SW_SAME): a = 1.0   # an unmatched row (z = the row) says nothing of the new definition
                         elif matched: a = max(a, min(max((lr - lh0) / (lz - lh0), 0.0), 1.0))
                         if a >= 1.0: st['tw'] = None   # the row is in the new definition: its own conversion from here on
                         else: d = (1.0 - a) * d0 + a * (DZ[i] if matched else d); st['tw'][3] = a
@@ -294,6 +300,9 @@ class Refiner:
                 if a <= 0 or self.blend_s <= 0: st['bl'] = None
                 elif self.mode == 'size': b = size_box(zr, lw + a * off[2], lh + a * off[3], self.size['anchor'], self.aim_y)
                 else: b = blend_apply(b, off, a)
+            se = st['se']
+            if not (np.isfinite(b).all() and (se is None or (math.isfinite(se.x0) and math.isfinite(se.x1) and math.isfinite(se.d0) and math.isfinite(se.d1)))):
+                del self.tr[tid]; continue   # a non-finite result or filter state: the id starts again on its next row (apply draws this row as it is)
             if st['out'] is not None: st['out1'], st['f1'], st['t1'] = st['out'], st['f'], st['t']
             st.update(f=fr, t=t, z=np.asarray(z, np.float64), out=b, Hacc=None, hs=Hs, dk=self.eff_key, k=st['k'] + 1); out[tid] = b
         for tid in list(self.tr):
@@ -324,7 +333,9 @@ def scan_table():
     try: mt = os.path.getmtime(p)
     except OSError: return None
     if BR['tfile'] == c_[-1] and BR['tmt'] == mt: return BR['table']
-    if time.time() - mt < 5: return BR['table']
+    if time.time() - mt < 5:
+        if BR['table'] is None: BR['tnote'] = '변환표 파일이 방금 바뀌어 5초 뒤에 읽음'   # (a table already read stays in use meanwhile)
+        return BR['table']
     try:
         z = np.load(p, allow_pickle=False); m = BodyTable({k: z[k] for k in z.files})
         BR.update(table=m, tfile=c_[-1], tmt=mt, tnote='')
@@ -401,7 +412,7 @@ def apply(rows, dets=None, t=None):
                 obj = BR['obj'] = Refiner(mode, table, BR['blend_s'], SIZE); BR['reset_key'] = key
             obj.blend_s = BR['blend_s']; obj.aim_y = _aim_y()   # a new blend time keeps every person's state
             if mode == 'body' and table is None:
-                BR['why'] = '변환표 파일이 없어 그대로 둠'; return rows
+                BR['why'] = (BR['tnote'] or '변환표 파일 없음') + ': 그대로 둠'; return rows   # the real reason (missing, unreadable, just copied)
             items = []; idx = []
             for i, r in enumerate(rows):
                 if int(r[6]) != PERSON_CLS: continue
@@ -469,7 +480,7 @@ def parse_request(q_):
     if 'box_refine' in q_:
         v_ = str(q_['box_refine'][0]).strip().lower()
         if v_ not in MODES: return False, '상자 다듬기는 off, size, body 가운데 하나', None
-        if v_ == 'body' and scan_table() is None: return False, '상체 네모 변환표 파일이 없음 (models/track/%s*.npz)' % TABLE_PREFIX, None
+        if v_ == 'body' and scan_table() is None: return False, '상체 네모 %s (models/track/%s*.npz)' % (BR['tnote'] or '변환표 파일 없음', TABLE_PREFIX), None
         mode = v_
     if 'box_blend' in q_:
         try: blend = float(q_['box_blend'][0])

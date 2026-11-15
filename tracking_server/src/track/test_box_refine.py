@@ -529,6 +529,26 @@ class BodyTests(unittest.TestCase):
             for k, (z, zr) in enumerate(seq): h0.append(r0.step([(1, z.copy(), zr)], k / 25., None, POSE if k < 25 or k >= 50 else PLAIN, True)[1][3])
             self.assertLess(min(h0) / 200., 0.85)
 
+    def test_switch_with_the_row_unmatched_on_the_switch_frame(self):
+        """review 11-16: the person's row is not matched to a detection on the switch frame (z is the row object, a Kalman prediction still in the
+        old box definition), on the next frame too, or later in the transition. An unmatched row says nothing of the new definition, so the
+        transition goes on (it ended at once before: pose -> plain drew the 200 px body box 0.535 x as tall, plain -> pose kept the 370 px
+        whole-person box): the drawn height stays the body box and the aim point steps no more than when every row is matched, both ways."""
+        m = BR.BodyTable(table_file()); tw = 120. - PERSON_T[0] * 370.
+        for ay in (0.5, 0.08):
+            for k_old, k_new, old, new in ((POSE, PLAIN, (200., 124., 120.), (370., 150., tw)), (PLAIN, POSE, (370., 150., tw), (200., 124., 120.))):
+                step0 = None
+                for miss in (set(), {0}, {0, 1}, {0, 2, 3}):
+                    r = BR.Refiner('body', m, aim_y=ay, body=dict(mc_s=2.0, beta_s=1.0)); rh, rw, rt = old; hs = []; aims = []
+                    for k in range(60):
+                        j = k - 25; dh, dw, dt = old if j < 0 else new; matched = not (j >= 0 and j in miss)
+                        if j >= 0 and matched: rh += 0.55 * (dh - rh); rw += 0.55 * (dw - rw); rt += 0.55 * (dt - rt)   # unmatched: the row stays (prediction)
+                        zr = np.array([320., rt + rh / 2, rw, rh]); z = np.array([320., dt + dh / 2, dw, dh]) if matched else zr
+                        b = r.step([(1, z, zr)], k / 25., None, k_old if j < 0 else k_new, True)[1]; hs.append(b[3]); aims.append(aim_pt(b, ay)[1])
+                    hs = np.array(hs); step = np.abs(np.diff(aims)).max(); step0 = step if step0 is None else step0; why = (ay, k_new, sorted(miss), hs.min(), hs.max(), step)
+                    self.assertEqual(r.switches, 1, why); self.assertLess(np.abs(hs / 200. - 1).max(), 0.06, why)
+                    self.assertLess(step, 0.03 * 200., why); self.assertLessEqual(step, step0 + 1e-9, why)
+
     def test_switch_near_far_small_person(self):
         """near (body box 30 px) <-> far (whole-person box 58 px) for a small person, the row moving over a few frames: the drawn box stays the
         body box (the table alone maps the in-between rows to 0.6-0.8 of it), and a switch where both detectors agree starts no transition."""
@@ -600,6 +620,32 @@ class BodyTests(unittest.TestCase):
         r = BR.Refiner('body', None); zr = np.array([200., 250., 20., 50.]); np.testing.assert_allclose(r.step([(1, zr + 1, zr)], 0.0, None)[1], zr)   # no table: the tracker row
         self.assertEqual(BR.BODY['anchor'], 'aim')
 
+    def test_non_finite_values(self):
+        """review 11-16: a table with a NaN / inf cell (or euro / person value) is refused when read; a NaN / inf tracker row (size and body) is
+        a missing frame for that person (the row is drawn as it is, the state is not poisoned: the next rows are smoothed again); a non-finite
+        filter state starts the person again."""
+        w = table_file(body_euro=[1.5, 0.3, 1.0])
+        for k, bad in (('tab', np.where(np.arange(64).reshape(4, 4, 4) == 49, np.nan, w['tab'])), ('tab', np.where(np.arange(64).reshape(4, 4, 4) == 14, np.inf, w['tab'])),   # cells [3,0] / [0,3]: outside the two sample boxes the old check read
+                       ('euro', np.array([np.nan, 0.3, 1.0])), ('person', np.array([np.nan, 0.535, 0.331])), ('lh_cen', np.r_[w['lh_cen'][:3], np.inf])):
+            with self.assertRaises(AssertionError, msg=k): BR.BodyTable(dict(w, **{k: bad}))
+        m = BR.BodyTable(w)
+        for mode in ('size', 'body'):
+            for bad in (float('nan'), float('inf')):
+                r = BR.Refiner(mode, m if mode == 'body' else None, size=SIZE_T); rc = BR.Refiner(mode, m if mode == 'body' else None, size=SIZE_T)
+                for k in range(12):
+                    zr = np.array([300., 250., 60., 100. if k < 5 else 130.]); zb = zr.copy()
+                    if k == 5: zb[3] = bad
+                    o = r.step([(1, zb, zb)], 0.04 * k, None, POSE)
+                    oc = rc.step([(1, zr, zr)] if k != 5 else [], 0.04 * k, None, POSE)   # the same person with that frame missing
+                    self.assertNotIn(1, o) if k == 5 else np.testing.assert_allclose(o[1], oc[1], atol=1e-9, err_msg=str((mode, bad, k)))
+                self.assertEqual(r.tr[1]['k'], 10); self.assertTrue(np.isfinite([r.tr[1]['se'].x0, r.tr[1]['se'].x1]).all()); self.assertGreater(abs(o[1][3] - 130.), 0.5)   # still smoothed
+            r = BR.Refiner(mode, m if mode == 'body' else None, size=SIZE_T); z = np.array([300., 250., 60., 100.])
+            for k in range(3): r.step([(1, z, z)], 0.04 * k, None, POSE)
+            r.tr[1]['se'].x1 = float('nan')   # a poisoned filter state (any cause): that frame is not drawn from it, the next row starts again
+            self.assertNotIn(1, r.step([(1, z, z)], 0.12, None, POSE)); self.assertNotIn(1, r.tr)
+            np.testing.assert_allclose(r.step([(1, z, z)], 0.16, None, POSE)[1], z if mode == 'size' else BR.Refiner('body', m).step([(1, z, z)], 0.0, None, POSE)[1], atol=1e-9)
+            self.assertTrue(r.tr[1]['new'])
+
 
 class BodyGlueTests(unittest.TestCase):
     def setUp(self):
@@ -655,6 +701,37 @@ class BodyGlueTests(unittest.TestCase):
             m3 = BR.scan_table(); self.assertIsNot(m3, m2); self.assertEqual(BR.BR['tfile'], BR.TABLE_PREFIX + '20261116.npz'); self.assertEqual(BR.state()['body']['mc_s'], 2.0)
             BR.apply(rows_at([(1, 100., 200., 16., 40.)]), None, 0.04); self.assertIsNot(BR.BR['obj'], obj); self.assertIs(BR.BR['obj'].table, m3); self.assertEqual(BR.BR['obj'].body['mc_s'], 2.0)
             np.savez(os.path.join(d, BR.TABLE_PREFIX + '20261199_broken.npz'), x=np.zeros(3)); self.assertIsNone(BR.scan_table()); self.assertIn('읽지 못함', BR.BR['tnote'])
+
+    def test_an_unreadable_or_just_copied_file_is_said_so(self):
+        """review 11-16: when the newest file cannot be read (truncated, a NaN cell) or was written under 5 s ago, the refusal, the status line
+        (why) and the page (state body_note, the lock text of the body row) give that reason, not 'no file'."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, BR.TABLE_PREFIX + '20261116.npz'); BR.BR['dir'] = d
+            for name in ('truncated', 'nan cell'):
+                if name == 'truncated':
+                    np.savez(p, **table_file()); data = open(p, 'rb').read(); open(p, 'wb').write(data[:len(data) // 2])
+                else:
+                    w = table_file(); w['tab'][3, 3, 1] = np.nan; np.savez(p, **w)
+                BR.BR.update(mode='off', table=None, tfile=None, tmt=None, tnote='', why='')
+                ok, txt, _ = BR.parse_request({'box_refine': ['body']}); self.assertFalse(ok, name); self.assertIn('읽지 못함', txt, name); self.assertNotIn('없음', txt, name)
+                self.assertIn('읽지 못함', BR.state()['body_note'], name); self.assertFalse(next(x for x in BR.state()['modes'] if x['key'] == 'body')['available'])
+                BR.BR['mode'] = 'body'; rows = rows_at([(1, 100., 200., 40., 100.)]); self.assertIs(BR.apply(rows, None, 1.0), rows); self.assertIn('읽지 못함', BR.BR['why'], name)
+            np.savez(p, **table_file()); BR.BR.update(mode='off', table=None, tfile=None, tmt=None, tnote='')
+            with patch.object(BR.time, 'time', return_value=os.path.getmtime(p) + 1.0):   # written a second ago (may still be being copied)
+                ok, txt, _ = BR.parse_request({'box_refine': ['body']}); self.assertFalse(ok); self.assertIn('방금', txt); self.assertIn('방금', BR.state()['body_note'])
+            ok, txt, ap = BR.parse_request({'box_refine': ['body']}); self.assertTrue(ok, txt); self.assertEqual(BR.BR['tnote'], '')   # 5 s later: read
+        page = open(os.path.join(os.path.dirname(TRACK_DIR), '..', 'page', 'js', '09_tree_rows.js'), encoding='utf-8').read()
+        self.assertIn("lock:bd.available?'':(br.body_note||", page)   # the page's lock text is the server's reason
+
+    def test_detector_switch_without_a_detection(self):
+        """review 11-16: apply() without detections (dets None: every row is unmatched) on and after the detector switch frame: the drawn box
+        stays the body box of the frame before (pose -> plain drew it 0.535 x as tall before the fix)."""
+        BR.parse_request({'box_refine': ['body']})[2](); APP.args.det = POSE; hs = []
+        for k in range(8):
+            if k == 4: APP.args.det = PLAIN
+            o = BR.apply(rows_at([(7, 320., 256., 190., 300.)]), None, 0.04 * k); hs.append(o[0][3] - o[0][1])
+        np.testing.assert_allclose(hs, 300., rtol=1e-9); self.assertEqual(BR.BR['obj'].switches, 1); self.assertIsNotNone(BR.BR['obj'].tr[7]['tw'])
 
 
 if __name__ == '__main__':
