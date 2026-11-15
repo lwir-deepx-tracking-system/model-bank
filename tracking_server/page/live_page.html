@@ -1199,7 +1199,12 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   // 11-16 (user: 무의미한 옵션은 지움): hidden from the page, the server keeps them off. 흔들림 보정 does almost nothing while following and turns picture first off;
   // 사람 후보 (공간 주파수) gave no sure gain; 피부 온도: this camera (TE-EV1) gives no temperatures. The code stays (set /rules/set?stab=1 etc. by hand to try again).
   {const HIDE=['흔들림 보정','사람 후보 (공간 주파수)','피부 온도 (카메라 온도)'];T.forEach(t=>{if(t.n)t.n=t.n.filter(n=>!HIDE.includes(n.name));});
-    const i=T.findIndex(t=>t.lab==='전처리');if(i>=0&&!T[i].n.length){T.splice(i,1);T.forEach(t=>{if(t.kidOf!=null&&t.kidOf>i)t.kidOf--;});}}
+    // 11-16 (user): old choices hidden unless one of them is the choice in use (then it stays so it can be changed): 온도 Filter (this camera's values are not temperatures),
+    // KeepID 찾는 범위 '마지막 자리 주변' (old way), the appearance models before RepVGG_fine-tuning_(OTP2)_20261113. Kept on purpose: SORT, the Python engines, NPU 0·1 번갈아 쓰기.
+    const OLD={'검출 뒤 Filter':['온도 Filter'],'KeepID 찾는 범위':['마지막 자리 주변'],'외형 모델':['RepVGG_distillation_(TMOT,CAMEL)_20261103','RepVGG_distillation_(실내)_20261110','RepVGG_fine-tuning_(실내)_20261110','ViT-lite_distillation_(TMOT,CAMEL)_202610','ViT-lite_distillation_(실내)_20261111','ViT-lite_fine-tuning_(실내)_20261111']};
+    T.forEach(t=>{const o=OLD[t.lab];if(o&&t.n){t.n=t.n.filter(n=>n.sel||!o.includes(n.name));if(t.f)t.f=t.f.filter(f=>t.n.some(n=>n.g===f));}});
+    const drop=f=>{const i=T.findIndex(f);if(i>=0){T.splice(i,1);T.forEach(t=>{if(t.kidOf!=null&&t.kidOf>i)t.kidOf--;});}};
+    drop(t=>t.lab==='전처리'&&!t.n.length);drop(t=>t.lab==='KeepID 찾는 범위'&&t.n.length<2);}
   if(E2E){T.forEach(t=>{if(t.kidOf!=null)t.kidOf++;});T.unshift(E2E);}   // 11-14: first row; child rows keep pointing at their parent
   return T;}
 function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
