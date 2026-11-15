@@ -741,7 +741,12 @@ function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;n
 // newest waiting one is kept. Browsers without streamed fetch keep <img src="/stream">. WebKit (iPhone Safari) refuses a fetch of
 // multipart/x-mixed-replace ('Load failed'), so the fetch asks with f=1 for the same bytes as multipart/mixed; a fetch stream
 // that fails before its first picture (e.g. an older server) switches this page to <img src="/stream"> for good.
-let streamFetch=typeof fetch==='function'&&typeof AbortController==='function'&&typeof ReadableStream==='function'&&!!(window.Response&&'body' in Response.prototype);
+// Delay first (user): WebKit drew 14.8 pictures/s through <img> but 7/s through fetch + blob on this PC (Chromium 30 vs 25),
+// so WebKit and every iPhone/iPad browser keep <img src="/stream">; the readout then says it cannot measure. Page address
+// ?stream=fetch or ?stream=img forces a path (for testing).
+const PS_UA=navigator.userAgent||'',PS_CHOICE=new URLSearchParams(location.search).get('stream');
+const PS_WEBKIT=(/AppleWebKit/.test(PS_UA)&&!/Chrome|Chromium|Edg/.test(PS_UA))||/iPhone|iPad|iPod/.test(PS_UA)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+let streamFetch=(PS_CHOICE==='fetch'||(PS_CHOICE!=='img'&&!PS_WEBKIT))&&typeof fetch==='function'&&typeof AbortController==='function'&&typeof ReadableStream==='function'&&!!(window.Response&&'body' in Response.prototype);
 const PS={gen:0,ctl:null,on:false,url:null,old:null,busy:false,next:null,info:null,got:0};
 const PS_BOUNDARY=[13,10,45,45,102,114,97,109,101,13,10],PS_HEAD_END=[13,10,13,10];   // '\r\n--frame\r\n', '\r\n\r\n'
 function streamRunning(){return PS.on;}
@@ -798,24 +803,26 @@ v.addEventListener('load',()=>psDone(true));v.addEventListener('error',()=>psDon
 // pictures per second over the last 2 s. Globals for other picture paths (e.g. a video path) and an automatic choice:
 //   pictureShown(t, light, source): a picture is on screen; t = its camera frame time in the server's unix seconds (null if
 //     unknown), light = the server sent a lighter 320x240 picture, source = the path's name (default 'mjpeg').
-//   streamStats(source): {source, fps, age_ms (median), age_p95_ms, light, pictures, clock} of that path (default: the one
-//     that showed a picture last); age_ms is null until the clock offset is known. clock = server time - this clock, in s.
+//   streamStats(source): {source, fps, age_ms (median), age_p95_ms, light, pictures, clock, measured} of that path (default:
+//     the one that showed a picture last); age_ms is null until the clock offset is known; clock = server time - this clock
+//     in s; measured = false for the picture stream shown through <img> (no per-picture times there).
 // The clock offset comes from GET /time: the answer with the shortest round trip of the last 6, server time - its middle.
 const DL={off:null,sync:[],src:{},cur:'mjpeg'};
 function pictureShown(t,light,source){const s=source||'mjpeg',now=Date.now()/1000,d=DL.src[s]||(DL.src[s]={shown:[],ages:[],light:false});
   d.shown.push(now);d.light=!!light;DL.cur=s;
   if(t!=null&&DL.off!=null)d.ages.push([now,(now+DL.off-t)*1000]);}
 function streamStats(source){const s=source||DL.cur,d=DL.src[s],now=Date.now()/1000;
-  if(!d)return {source:s,fps:0,age_ms:null,age_p95_ms:null,light:false,pictures:0,clock:DL.off};
+  if(!d)return {source:s,fps:0,age_ms:null,age_p95_ms:null,light:false,pictures:0,clock:DL.off,measured:s!=='mjpeg'||streamFetch};
   while(d.shown.length&&d.shown[0]<now-2)d.shown.shift();
   while(d.ages.length&&d.ages[0][0]<now-2)d.ages.shift();
   const a=d.ages.map(x=>x[1]).sort((p,q)=>p-q);
   return {source:s,fps:d.shown.length/2,age_ms:a.length?a[a.length>>1]:null,age_p95_ms:a.length?a[Math.min(a.length-1,Math.floor(a.length*0.95))]:null,
-          light:d.light,pictures:d.shown.length,clock:DL.off};}
+          light:d.light,pictures:d.shown.length,clock:DL.off,measured:true};}
 function timeSync(){const t0=Date.now();
   fetch('/time?'+t0,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const t1=Date.now();if(!Number.isFinite(j.t))return;
     DL.sync.push([t1-t0,j.t-(t0+t1)/2000]);if(DL.sync.length>6)DL.sync.shift();DL.off=DL.sync.reduce((a,b)=>b[0]<a[0]?b:a)[1];}).catch(()=>{});}
 function delayTick(){const el=$('vage'),st=streamStats();if(!el)return;
+  if(!document.hidden&&!st.pictures&&!st.measured&&PS.on){el.textContent='내 화면 지연: 이 브라우저에서는 못 잼';el.hidden=false;return;}
   if(document.hidden||!st.pictures){el.hidden=true;return;}
   const med=st.age_ms;
   el.textContent='내 화면 '+(med!=null&&med<5000?'지연 '+Math.round(Math.max(0,med))+' ms · ':'')+(st.fps<10?st.fps.toFixed(1):Math.round(st.fps))+' fps'+(st.light?' · 작은 사진':'');
