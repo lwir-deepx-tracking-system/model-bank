@@ -20,7 +20,7 @@ function rpFillBackends(r){const backends=rpBackendsFor(r),backendKeys=backends.
 function rpTrackerState(r){const st=r?.state;return JSON.stringify([st?.on,st?.busy,st?.backend,!!r?.eval?.backend_error,r?.backends?.map(b=>b.id)]);}
 function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLast=r;
   const playback=r.state;
-  const replayMode=!!(playback?.on||playback?.busy);
+  const replayMode=!!((playback?.on||playback?.busy)&&!playback?.returning);   // 11-15: 'returning' = the recording was stopped: the camera view with its '카메라로 돌아가는 중' notice comes at once
   const enteredReplay=replayMode&&!document.body.classList.contains('replay-mode');
   document.body.classList.toggle('replay-mode',replayMode);
   if(enteredReplay)document.querySelector('.view').scrollTop=0;
@@ -185,7 +185,7 @@ if(window.ResizeObserver)new ResizeObserver(()=>{
   else document.documentElement.style.removeProperty('--replay-controls-height');
 }).observe(RSK);
 let rpTick=0;
-function rptick(force){if(!force){const on=rpLast&&rpLast.state&&rpLast.state.on;if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;}fetch('/replay'+(force==='refresh'?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()).then(rpShow).catch(()=>{});}
+function rptick(force){if(!force){const on=rpLast&&rpLast.state&&(rpLast.state.on||rpLast.state.returning);if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;}fetch('/replay'+(force==='refresh'?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()).then(rpShow).catch(()=>{});}
 function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=RRETURN.disabled=true;
   return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:r.status===403||r.status===404?'서버 재시작 후 쓸 수 있습니다':'서버 응답 '+r.status}))).then(r=>{RPMSG.textContent=r.text||(r.ok?'완료':'실패');return r;}).catch(()=>{RPMSG.textContent='서버 연결 끊김';return {ok:false,text:RPMSG.textContent};}).finally(()=>{rpBusy=false;setTimeout(()=>rptick(true),300);});}
 async function rpUseTracker(backend){
@@ -242,6 +242,7 @@ setInterval(()=>{$('vhint').hidden=autoNow||camIdle>3;const ex=((rlast&&rlast.gi
 // 11-13 (pass 4): camera-not-answering note (Korean, with what to do) and follow notes over the picture
 setInterval(()=>{const d=$('vdead'),live=!document.body.classList.contains('replay-mode'),fz=rlast?.cam_frozen;
   if(live&&fz){d.hidden=false;d.classList.remove('wait');$('vdeadt').textContent=fz.title;$('vdeads').textContent=fz.text;return;}   // 11-15: frozen camera (from /rules, also without the gimbal): replug notice
+  if(live&&rpLast?.state?.returning){d.hidden=false;d.classList.add('wait');$('vdeadt').textContent='카메라로 돌아가는 중';$('vdeads').textContent='녹화 재생을 끝내고 카메라를 다시 여는 중입니다 · 보통 5초 안에 영상이 나옵니다';return;}   // 11-15: from 'stop the recording' to the camera's first frame (GET /replay state.returning)
   const sc=rlast?.cam_scene;if(live&&sc&&camIdle<=3){d.hidden=false;d.classList.toggle('wait',!!sc.reset);$('vdeadt').textContent=sc.title;$('vdeads').textContent=sc.text;return;}   // 11-15: frames without a scene (cam_pipe v2.13 SCENE_LOST)
   if(!live||camIdle<=3){d.hidden=true;return;}const s=Math.round(camIdle);d.hidden=false;d.classList.toggle('wait',!(camFail>0));
   $('vdeadt').textContent=camFail>0?'카메라 USB 응답 없음':'카메라 영상을 기다리는 중';

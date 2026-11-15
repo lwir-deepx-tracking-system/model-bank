@@ -15,6 +15,9 @@
   초당 5 장 "되풀이" 표시를 달아 보낸다 (서버가 카메라가 죽었다고 다시 띄우지 않게. 채점하지 않는다). 정답 라벨이 있는 녹화는 되풀이 장을
   처리 줄에 넣지 않으므로 그림을 새로 만들지 않고, 이미 나간 그 장면의 그림을 그대로 둔다 (11-13: camera_link.replay_holds_picture 가 "영상 없음" 그림으로 덮지 않게 막는다). 짐벌 안전은 그대로다 (멈춘 중·건너뛰는 중에도 사람 없음).
 - 재생을 한 번도 쓰지 않으면 이 파일은 아무것도 바꾸지 않는다 (cam_argv() 는 전과 같은 명령을 돌려준다, LIVE.replay 는 None).
+- 카메라로 돌아가기 (11-15): 재생을 멈추면(또는 재생 프로그램이 스스로 끝나면) 카메라 프로그램을 한 번만 띄운다. 그 프로그램은 서버만큼 오래 사는 스레드가
+  띄운다 (spawn_keeper.py: 바꾸기 스레드가 띄우면 그 스레드가 끝날 때 cam_pipe 가 SIGTERM 을 받아 카메라를 다시 닫았고, 20초 뒤 두 번째로 열었다).
+  멈춘 때부터 카메라의 첫 프레임까지 state()['returning'] 이 True 이고 화면은 그동안 "카메라로 돌아가는 중"을 보여 준다.
 - 정답과 비교 (11-12, replay_eval.py): 재생 카메라는 늘 프레임 머리(LWIR_CAM_STAMP=1)와 PNG 번호(--tag)를 붙여 띄운다 (spawn).
   카메라 쪽 설정(LWIR_CAM_STAMP)과 상관없이 재생 프로그램에만 그렇게 하고, 진짜 카메라를 띄우는 길은 바꾸지 않는다.
 - 저장된 결과 (11-13, src/track/replay_backends.py): --replay-tracks-root 를 주면 <그 폴더>/<녹화 이름>/<key>.mot.txt 와 <key>.json 을 찾아
@@ -40,6 +43,7 @@ LIST_TTL = 60.0
 MAX_DEPTH = 4                     # root 아래 이 깊이까지 찾는다 (opi_sequences/seq_018 = 2)
 NUM_PNG = re.compile(r'^\d+\.png$', re.I)
 SEEK_GAP_S = 1.2                  # replay_cam.py 의 --gap 기본값과 같다 (참고용: 건너뛴 뒤 첫 프레임까지)
+RETURN_MAX_S = 60.0               # '카메라로 돌아가는 중' 표시의 한도. 그 뒤에도 영상이 없으면 화면의 보통 카메라 안내가 대신한다
 NOTE_8BIT = '8비트 녹화: 온도 Filter 가 맞지 않아 사람이 걸러질 수 있음. 보려면 온도 Filter 를 잠시 끄세요'
 _C = dict(t=-1e9, items=[], root=None)
 
@@ -294,6 +298,21 @@ def _gimbal_stop():
         APP.GB.mover = None; APP.GB.state['answer'] = ''; APP.gb_send('H')
 
 
+def returning(live=None):
+    """11-15: True from 'stop the recording' until the first frame of the camera program started for it (at most
+    RETURN_MAX_S). The page shows '카메라로 돌아가는 중' instead of a black picture. Never raises."""
+    L_ = APP.LIVE if live is None else live
+    t_ = getattr(L_, 'replay_return_t', None)
+    if t_ is None: return False
+    if time.monotonic() - t_ > RETURN_MAX_S:
+        L_.replay_return_t = None; return False
+    if getattr(L_, 'replay_busy', False) or getattr(L_, 'replay', None) is not None: return True   # the switch has not started the camera program yet
+    p0_ = getattr(L_, 'proc_t0', None)
+    if p0_ is not None and p0_ >= t_ and getattr(L_, 'last_frame_t', 0.0) > p0_:   # a frame of the program started after the stop
+        L_.replay_return_t = None; return False
+    return True
+
+
 def async_preview(replay, worker):
     return bool(worker is not None and worker.async_replay and replay.get('preview', 'async') == 'async')
 
@@ -302,6 +321,7 @@ def state():
     L_ = APP.LIVE; r_ = getattr(L_, 'replay', None) if L_ is not None else None
     st_ = dict(on=r_ is not None, busy=bool(getattr(L_, 'replay_busy', False)), name=None, fps=None, loop=None, bits=None, frames=None, total=None, shown=None, pos=None, paused=False,
                seeking=False, seek_to=None, note=None, msg=getattr(L_, 'replay_msg', None)); st_['pass'] = None
+    st_['returning'] = returning(L_) if L_ is not None else False   # 11-15: the recording was stopped and the camera's first frame has not come yet
     if r_ is not None:
         n_ = max(0, L_.frames_in - r_['fin0']) if r_.get('fin0') is not None else 0
         ev_ = replay_eval.EV
@@ -381,6 +401,7 @@ def start_request(q_):   # -> (http 코드, 글)
         if L_.stopped or APP.args.live_wait: return 409, '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
         if L_.cam_hold: return 409, '카메라 초기화나 다른 재생 바꾸기가 진행 중. 잠시 뒤 다시 누르세요'
         L_.cam_hold = True; L_.replay_busy = True   # 이 순간부터 짐벌에 사람을 보내지 않는다
+        L_.replay_return_t = None
         set_preview_producer(L_, None, before=time.perf_counter())
     _gimbal_stop()
     tgt_ = dict(name=it_['name'], dir=d_, fps=fps_, loop=lp_ == '1', bits=it_['bits'], frames=it_['frames'], fin0=None, paused=False,
@@ -489,10 +510,11 @@ def stop_request():
         if getattr(L_, 'replay', None) is None: return 409, '재생 중이 아님'
         if L_.cam_hold: return 409, '재생 바꾸기가 진행 중. 잠시 뒤 다시 누르세요'
         L_.cam_hold = True; L_.replay_busy = True
+        L_.replay_return_t = time.monotonic()   # 11-15: the page shows '카메라로 돌아가는 중' until the camera's first frame
         set_preview_producer(L_, None, before=time.perf_counter())
     _gimbal_stop()
     APP.lv_th.Thread(target=_switch, args=(None,), daemon=True).start()
-    return 200, '재생 멈춤: 카메라로 돌아가는 중 (영상은 10~60초 뒤)'
+    return 200, '재생 멈춤: 카메라로 돌아가는 중 (영상은 보통 5초 안)'
 
 def step_request():   # POST /replay/step: 멈춘 상태에서 다음 한 장만 보내고 다시 멈춤 (추적이 이어짐)
     r_, ctl_, e_ = _ctl_target()
@@ -549,11 +571,13 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
                 with L_.meas_lock:
                     if L_.meas is not None: L_.meas.setdefault('replay', []).append(tgt_['name'])
             _msg('재생 중: %s (%g fps, %s)' % (tgt_['name'], tgt_['fps'], '반복' if tgt_['loop'] else '한 번'))
-        else: _msg('재생 멈춤: 카메라 프로그램을 다시 시작함. 영상은 10~60초 뒤. 짐벌은 사람을 다시 누를 때까지 따라가지 않음')
+        else: _msg('재생 멈춤: 카메라 프로그램을 다시 시작함. 영상은 보통 5초 안. 짐벌은 사람을 다시 누를 때까지 따라가지 않음')
     except Exception as e_: _msg('재생 바꾸기 오류: %s' % type(e_).__name__)
     finally:
         if ev_ is not None and not installed:
             ev_.close('not started')
+        if tgt_ is None and not installed:
+            L_.replay_return_t = None   # the camera program was not started: no 'back to the camera' notice
         if (not installed and old_ is not None and not L_.stopped
                 and L_.proc is old_proc_ and getattr(L_, 'replay', None) is old_):
             set_preview_producer(L_, old_proc_, before=time.perf_counter())
@@ -570,12 +594,13 @@ def on_cam_lost(now_):   # lv_cam_wait (cam_lock 안, 주 스레드): 재생 프
             if now_ - L_.proc_t0 > 30: L_.proc.kill()
             return True
     L_.replay_src_t = time.perf_counter()
+    L_.replay_return_t = time.monotonic()   # 11-15: '카메라로 돌아가는 중' until the camera's first frame
     set_preview_producer(L_, None, before=L_.replay_src_t)
     L_.replay = None
     replay_eval.activate(None, None, 'ended' if rc_ == 0 else 'replay program ended with code %s' % rc_)
     with L_.cond: L_.q.clear()
     L_.cam_fail_n = 0; L_.cam_unrec_n = 0; L_.cam_next_spawn = None
     _gimbal_stop()
-    _msg(('재생 끝: %s. 카메라로 돌아감 (영상은 10~60초 뒤)' % r_['name']) if rc_ == 0 else ('재생 프로그램이 코드 %s 로 끝남 (%s). 카메라로 돌아감' % (rc_, r_['name'])))
+    _msg(('재생 끝: %s. 카메라로 돌아감 (영상은 보통 5초 안)' % r_['name']) if rc_ == 0 else ('재생 프로그램이 코드 %s 로 끝남 (%s). 카메라로 돌아감' % (rc_, r_['name'])))
     APP.lv_spawn()
     return True

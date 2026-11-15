@@ -11,6 +11,7 @@ from . import camera_extra   # 2026-11-11: 지워지지 않는 카메라 기록(
 from . import stall_diag   # 2026-11-13: 서버가 잠깐 멈춘 까닭을 찾는 기록 (LWIR_STALL_DIAG=1 일 때만. 기본 꺼짐)
 from . import cam_frozen   # 11-15: the camera's USB chip froze (cam_pipe exit 8): wait for a replug, no usbreset, 5 V step only behind the switchable hub
 from . import cam_scene   # 11-15: frames without a scene (cam_pipe v2.13 SCENE_LOST): page notice
+from . import spawn_keeper   # 11-15: cam_pipe is started by a thread that lives as long as the server
 
 
 class LiveImages:   # endless list of camera frames; it ends (IndexError) when the live time is over
@@ -64,7 +65,7 @@ def lv_spawn():   # v21: open (or reopen) the camera process and its reader
     if getattr(APP.LIVE, 'replay', None) is not None: return replay_link.spawn()   # 11-12: the replay program, always with frame headers and png numbers (the camera start below is unchanged)
     cam_frozen.on_spawn(APP.LIVE)   # 11-15: where the camera is on USB (for the reset button); while it is frozen also the USB entry this try starts with (a later change = replug)
     if camera_extra.wanted(): return camera_extra.spawn()   # LWIR_CAM_STAMP=1 (off by default): the same start with the setting passed on to cam_pipe
-    proc = APP.lv_sp.Popen(replay_link.cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0)
+    proc = spawn_keeper.popen(APP.lv_sp.Popen, replay_link.cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0)   # 11-15: started by a thread that outlives this call (cam_pipe gets SIGTERM when the thread that started it ends)
     camera_extra.install_producer(proc)
     APP.lv_th.Thread(target=APP.lv_reader, args=(proc,), daemon=True).start()
     camera_extra.log_start()   # camera_events.log: cam_pipe's lines and the server's camera lines, kept over restarts (LWIR_CAM_LOG=0 turns it off)

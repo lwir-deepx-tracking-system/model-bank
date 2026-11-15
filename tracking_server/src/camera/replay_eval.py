@@ -10,7 +10,7 @@
   - 재생 카메라가 건너뛴 프레임 수 = 같은 바퀴 안에서 프레임 번호가 1 보다 크게 뛴 만큼. 서버가 건너뛴 프레임 수 = 받은 프레임 - 화면에 낸 프레임.
 채점은 첫 회차의 처음부터 끝까지 순서대로 처리한 프레임을 기준으로 한다. 반복·되감기·정지는 점수를 다시 쌓지 않는다.
   검수됨으로 표시된 프레임에는 빈 장면도 포함한다. 삭제된 프레임은 제외한다. 검수 기록이 없다면 주석이 있는 프레임만 평가한다.
-  건너뛰거나 프레임이 누락되면 해당 실행은 최종 점수로 확정하지 않는다. HOTA와 사람 AP는 한 회차를 완료하면 별도 스레드에서 계산한다.
+  건너뛰거나 프레임이 누락되면 해당 실행은 최종 점수로 확정하지 않는다. HOTA와 사람 AP는 한 회차를 완료하면 별도 스레드가 자식 프로세스에 맡겨 계산한다 (11-15, src/track/replay_metrics_proc.py: 프레임 반복과 인터프리터 잠금을 나누지 않게).
 점수 계산과 규칙: src/track/gt_score.py. 재생이 끝나거나 바뀌면(서버가 끝날 때도) 결과를 <결과 폴더>/replay_eval_<이름>_<시각>.json 에 쓴다.
 재생을 쓰지 않으면 EV 가 None 이고, 서버의 다른 길에서 부르는 함수는 모두 바로 돌아간다.
 재생 추적기 (11-13, src/track/replay_backends.py): 'python' 은 서버 추적기의 행을 그대로 채점한다. 'cpp_bytetrack' 과 저장된 결과('pre:<key>')는
@@ -24,7 +24,7 @@ import threading
 import time
 
 from ..common.state import APP
-from ..track import gt_score, replay_backends, replay_metrics
+from ..track import gt_score, replay_backends, replay_metrics_proc
 from ..track.stabilizer import stab_off, stab_people_real
 
 LABEL = 'tracks_edited_mot.txt'
@@ -213,7 +213,7 @@ class Eval:
 
     def _compute(self, frames):
         try:
-            metrics = replay_metrics.compute(frames)
+            metrics = replay_metrics_proc.compute(frames)   # 11-15: in a child process, so the frame loop does not share the interpreter lock with it
             status = 'ready'
         except Exception as exc:
             print('REPLAY METRICS failed', type(exc).__name__, str(exc)[:120], flush=True)
@@ -248,13 +248,17 @@ class Eval:
         kept_tracks = [tracks[j] for j in kept]
         if detections is None:
             return targets, kept_tracks, None
+        rows = detections.tolist() if hasattr(detections, 'tolist') else detections   # 11-15: Python numbers at once (same values), not one numpy read per number
         det = [(0, float(r[0]), float(r[1]) - 16, float(r[2]), float(r[3]) - 16, float(r[4]))
-               for r in detections if int(r[5]) == 0]
+               for r in rows if int(r[5]) == 0]
         if sc is not None:
             det = stab_people_real(det, sc, float(APP.LIVE_W), float(APP.LIVE_H))
         valid_overlap = gt_score.iou_matrix([b for _, b in people], [d[1:5] for d in det])
+        # 11-15: one test for all candidates (the pose models give 100-300 a frame; one numpy call per candidate cost
+        # the frame loop several ms a frame). Same rule: kept when it overlaps a person, or lies in no ignore region.
+        on_person = (valid_overlap >= gt_score.IOU_MIN).any(axis=0)
         det_out = [(d[5], *d[1:5]) for j, d in enumerate(det)
-                   if (valid_overlap[:, j] >= gt_score.IOU_MIN).any()
+                   if on_person[j]
                    or not any(gt_score.ioa(d[1:5], b) >= gt_score.IOA_MIN for b in ignore)]
         return targets, kept_tracks, det_out
 
@@ -359,7 +363,7 @@ class Eval:
                     new.frame(gt, rows, 1)
                     old.frame(gt, rows, 1)
                     metric_inputs.append(metric_input)
-                metrics = replay_metrics.compute(metric_inputs) if metric_inputs else dict(hota=None, ap50=None, map=None)
+                metrics = replay_metrics_proc.compute(metric_inputs) if metric_inputs else dict(hota=None, ap50=None, map=None)
                 result = dict(new=dict(new.result(), **metrics), old=old.result(), metric_status='ready' if metric_inputs else 'unavailable')
             except Exception as exc:
                 print('REPLAY PREFIX failed', type(exc).__name__, str(exc)[:120], flush=True)

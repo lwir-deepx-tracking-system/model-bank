@@ -151,3 +151,68 @@ class ReplayReaderTests(unittest.TestCase):
         self.assertEqual(self.ev.n['repeats'], 1)
         self.ev.frame(stamp, [], None, 'post-seek')
         self.assertIsNone(self.ev.position()['seek_to'])
+
+
+class ReplayQueueDepthTests(ReplayReaderTests):
+    """11-15: a labelled recording keeps one frame waiting for the detector, not the whole input queue (3 on the board).
+    When the frame loop is slower than the chosen speed, each waiting frame is one more frame period of delay between
+    a frame and its picture (board, butiv_lab_green_401 at 30 fps: 205 ms with three waiting). Nothing is dropped.
+    The tests of ReplayReaderTests run here again, on the board's queue of three."""
+
+    def setUp(self):
+        super().setUp()
+        self.live.q = deque(maxlen=3)   # as src/app.py makes it
+        patcher = patch.dict(camera_extra.os.environ)
+        patcher.start(); self.addCleanup(patcher.stop)
+        camera_extra.os.environ.pop('LWIR_REPLAY_QUEUE', None)
+
+    def drain(self, thread, frames, expect_waiting):
+        """Take the frames one at a time, as the detector feed does. -> the pixels in the order they came."""
+        got = []
+        while len(got) < frames:
+            if thread.is_alive():
+                self.live.cond.reader_waiting.wait(1)   # the reader is holding a frame back, or has ended
+            with self.live.cond:
+                self.live.cond.reader_waiting.clear()
+                self.assertLessEqual(len(self.live.q), expect_waiting)
+                if thread.is_alive() and frames - len(got) > expect_waiting:
+                    self.assertEqual(len(self.live.q), expect_waiting)   # the reader holds the next frame back here
+                if self.live.q:
+                    got.append(self.live.q.popleft()[1].item())
+                self.live.cond.notify_all()
+        return got
+
+    def test_one_frame_waits_and_none_is_lost(self):
+        pngs = [17, 23, 17, 23, 17, 23]
+        thread = self.start_reader([(2, slot, 0, png) for slot, png in enumerate(pngs)])
+        self.assertEqual(self.drain(thread, len(pngs), 1), pngs)
+        self.check_reader(thread)
+        self.assertEqual((self.live.frames_in, self.live.q_drop, self.ev.n['received'], self.ev.n['cam_skipped']), (6, 0, 6, 0))
+
+    def test_old_depth_by_environment(self):
+        camera_extra.os.environ['LWIR_REPLAY_QUEUE'] = '3'
+        pngs = [17, 23, 17, 23, 17, 23]
+        thread = self.start_reader([(2, slot, 0, png) for slot, png in enumerate(pngs)])
+        self.assertEqual(self.drain(thread, len(pngs), 3), pngs)
+        self.check_reader(thread)
+        self.assertEqual((self.live.frames_in, self.live.q_drop), (6, 0))
+
+    def test_setting_is_never_below_one_or_above_the_queue(self):
+        for text, want in (('', 1), ('0', 1), ('-2', 1), ('x', 1), ('2', 2), ('9', 9)):
+            camera_extra.os.environ['LWIR_REPLAY_QUEUE'] = text
+            self.assertEqual(camera_extra.replay_queue(), want)
+        camera_extra.os.environ['LWIR_REPLAY_QUEUE'] = '9'            # more than the queue holds: the queue's size, as before
+        pngs = [17, 23, 17, 23, 17]
+        thread = self.start_reader([(2, slot, 0, png) for slot, png in enumerate(pngs)])
+        self.assertEqual(self.drain(thread, len(pngs), 3), pngs)
+        self.check_reader(thread)
+
+    def test_camera_frames_still_drop_the_oldest(self):
+        """Frames without a recording tag (the camera): never held back, the oldest waiting frame goes."""
+        self.live.replay = None
+        data = io.BytesIO(b''.join(replay_cam.header(seq, time.monotonic_ns(), 33333) + struct.pack('=H', seq) for seq in range(1, 6)))
+        producer = SimpleNamespace(stdout=data)
+        camera_extra.install_producer(producer)
+        camera_extra._reader(producer, [None])
+        self.assertEqual([pixels.item() for _, pixels in self.live.q], [3, 4, 5])
+        self.assertEqual((self.live.frames_in, self.live.q_drop), (5, 2))

@@ -43,6 +43,7 @@ from ..common.shared_values import HERE
 from . import replay_eval   # 11-12: frames of the replay program carry their png number (flags bit 2)
 from . import cam_frozen   # 11-15: a camera frame clears the frozen-camera state
 from . import cam_scene   # 11-15: cam_pipe v2.13 SCENE_LOST / SCENE_BACK lines -> the page notice (read in _tail)
+from . import spawn_keeper   # 11-15: cam_pipe is started by a thread that lives as long as the server
 
 # ---------------------------------------------------------------- A. 지워지지 않는 카메라 기록
 LOG_NAME = 'camera_events.log'
@@ -299,6 +300,21 @@ class Ring:   # cam_pipe 가 만든 고리를 읽기 전용으로 붙인다. 안
         except Exception: pass
 
 
+REPLAY_QUEUE = 1
+
+
+def replay_queue():
+    """11-15: how many frames of a labelled recording (played without skipping) may wait in the input queue before the
+    reader holds the next one back. It was the whole queue (3). When the frame loop is slower than the chosen speed, the
+    recording plays at the loop's speed either way, but every waiting frame is one more frame period between a frame's
+    arrival and its picture: on the board, a 30 fps recording the loop took at 27.7 fps showed 205 ms instead of 60.
+    One waiting frame is enough to keep the detector fed (the reader already holds the next one). Same frames, same order,
+    same results. LWIR_REPLAY_QUEUE=3 gives the old depth back."""
+    try: n_ = int(os.environ.get('LWIR_REPLAY_QUEUE', '') or REPLAY_QUEUE)
+    except ValueError: n_ = REPLAY_QUEUE
+    return max(1, n_)
+
+
 def install_producer(process):
     """Swap readers under the queue lock used to accept their frames."""
     from ..web.preview_worker import set_preview_producer
@@ -318,7 +334,7 @@ def spawn():   # lv_spawn 의 시간표 판: cam_pipe 에 같은 설정을 환�
     env_ = dict(os.environ); env_['LWIR_CAM_STAMP'] = '1' if stamp_ else '0'; env_['LWIR_CAM_SHM'] = '1' if shm_ else '0'
     _ring_once()
     from .replay_link import cam_argv   # 11-12: the same command as lv_spawn (the replay program while a recording is played)
-    p_ = APP.lv_sp.Popen(cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0, env=env_)
+    p_ = spawn_keeper.popen(APP.lv_sp.Popen, cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0, env=env_)   # 11-15: started by a thread that outlives this call (see spawn_keeper.py)
     p_.lwir_stamp = stamp_
     install_producer(p_)
     log_start()
@@ -390,6 +406,7 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
     live = APP.LIVE
     ev_ = getattr(p_, 'lwir_eval', None)
     lossless_ = replay_eval.lossless(p_)
+    replay_wait_ = min(replay_queue(), live.q.maxlen or 1)   # 11-15: frames of a labelled recording waiting for the detector before this reader holds the next one back
 
     def current_source(tagged):
         # Replay switching can retire this source before installing the next process.
@@ -456,7 +473,7 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
         enqueued = False
         while True:
             with live.cond:
-                while current_source(tagged) and scored_replay and not hold_frame and len(live.q) == live.q.maxlen:
+                while current_source(tagged) and scored_replay and not hold_frame and len(live.q) >= replay_wait_:
                     live.cond.wait(timeout=0.1)
                 if not current_source(tagged):
                     break
