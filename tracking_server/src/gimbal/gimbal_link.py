@@ -41,6 +41,7 @@ def lead_shift(real_, seen_, id_, t_, w_, h_):
 
 
 def gb_device():   # v26: the device given on the command line; when it is gone (USB dropped and came back under another ttyUSB name), the gimbal's fixed name under /dev/serial/by-id
+    if APP.lv_os.environ.get('LWIR_VG_GIMBAL_ONLY') == '1': return APP.args.gimbal   # virtual-gimbal test (2026-11-15): only the given device, never the real gimbal's fixed name
     if APP.lv_os.path.exists(APP.args.gimbal): return APP.args.gimbal
     c_ = sorted(APP.lv_glob.glob('/dev/serial/by-id/usb-Silicon_Labs_CP2102N_*'))
     return c_[0] if c_ else APP.args.gimbal
