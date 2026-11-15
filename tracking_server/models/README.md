@@ -87,7 +87,7 @@
   - 11-14 이전 서버는 출력이 9개인 파일을 목록에 올리지 않습니다. 보정 97장, ema, opt 1. 만든 스크립트 `build_scripts/yolo26m_pose_otp2_bodybox_build/build_bodybox_kpt.py`
   - 장치 NPU 확인(11-14, 같은 구조의 앞 판, 실내 녹화 8장): 출력 9개 정상, 가장 가까운 사람의 보이는 관절 위치가 PC(ONNX, float)와 평균 0.7~1.3 px 차이, 한 장 24.8 ms(동기 실행, CPU 부분 포함)
   - 상태: 근거리·가림 시험용. 실카메라 추적 성능 미측정
-- **YOLO26m-pose_fine-tuning_(OTP2+COCO+MOT17+LLVIP)_20261115_원거리 640x480** (원거리 별도 선택지)
+- **YOLO26m-pose_fine-tuning_(OTP2+COCO+MOT17+LLVIP)_20261115_범용 640x480** (범용, 공개 시험 전부에서 가장 좋음; 11-15 "원거리" 에서 이름 바꿈)
   - 파일 `yolo26m/yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_640x480.dxnn`. 입력·출력은 근거리 판과 같음(분할 출력 6개, 종류 0번 = 사람). 사람 상자는 몸 네모(머리 꼭대기~골반)
   - 학습: 근거리 판(장치 기본) → LLVIP-Pose(공개 컬러·열화상 짝 자료의 열화상에 컬러 쪽 자세를 옮긴 관절, 거리 장면 중·원거리 사람)를 더해 10 epoch(앞 원거리 판 R1) → **같은 자료로 3 epoch 더**(lr 1e-4, 가림 증강, 상자만 있는 사람도 남김, 6 epoch 대조 학습의 `epoch2.pt` = 0부터 센 세 번째 epoch 끝)
   - 앞 원거리 판(R1)보다: 우리 실내 녹화(개발용 2개) 찾은 비율 42% → **48%**, 사람 위 겹친 헛상자 0.12 → **0.07**/장, 학습 안 쓴 MOT17 몸 10~30% 보임 38.5% → 40.0%, 30~50% 48.7% → 54.2%, LLVIP-Pose 시험 93% → 94%, 키 150 px 아래 77% → 78%
@@ -97,8 +97,8 @@
   - 같은 날 학습한 사무실 가림 합성 판과는 찾는 비율이 모두 우연 범위 안이었고, 겹친 헛상자가 3분의 1이라 이 판을 골랐습니다(`research/lwir_pose_plan/README.md` 7-5절). 앞 원거리 판(R1) 두 파일은 지웠습니다(git 기록에는 남아 있음)
   - 검출 모델 자동 선택(`src/detect/auto_det.py`)이 작은 사람·사람을 잃었을 때 이 판의 [관절] 파일로 바꿉니다. 조준 `LWIR_GIMBAL_AIM_Y=0.37`. 보정 97장(우리 카메라), ema, opt 1. 학습 스크립트 `research/lwir_pose_plan/scripts/`
   - 상태: 장치 INT8 정확도와 실카메라 추적 성능 미측정
-- **YOLO26m-pose_fine-tuning_(OTP2+COCO+MOT17+LLVIP)_20261115_원거리_kpt 640x480 [관절]** (원거리 별도 선택지)
-  - 파일 `yolo26m/yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480.dxnn`. 바로 위 원거리 판과 같은 가중치에 관절 출력 `kpt_s8/16/32` 를 더한 9출력 파일(근거리 [관절] 판과 같은 구조)
+- **YOLO26m-pose_fine-tuning_(OTP2+COCO+MOT17+LLVIP)_20261115_범용_kpt 640x480 [관절]** (범용, 자동 선택의 먼 거리 모델)
+  - 파일 `yolo26m/yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480.dxnn`. 바로 위 범용 판과 같은 가중치에 관절 출력 `kpt_s8/16/32` 를 더한 9출력 파일(근거리 [관절] 판과 같은 구조)
   - 장치 NPU 확인(11-15, 실내 녹화 8장, 서버와 같은 풀이 경로): 출력 9개 정상, 한 장 30.8 ms(동기 실행, CPU 부분 포함). 찾은 사람 2~4명(같은 장면에서 근거리 판 2~5명, 앞 원거리 판 1~4명)
   - 상태: 장치 INT8 정확도(정답 라벨 채점)와 실카메라 추적 성능 미측정
 - **yolo26s_nmsfree_npu_640x640 [NMS-free]**
