@@ -334,8 +334,16 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
 
 def make_lv_Handler():
     class lv_Handler(APP.lv_http.BaseHTTPRequestHandler):
+        # 11-15 (user: 화면 전송 지연): kept-alive connections, so the page's small requests (heartbeat every 0.4 s, /time, /rules ...) do not
+        # pay a TCP handshake (one round trip) each; every answer below has a Content-Length, the two endless ones (/stream, /overlay)
+        # say 'Connection: close'. No Nagle delay: the headers and the body are two writes. An idle connection is closed after 65 s.
+        protocol_version = 'HTTP/1.1'
+        disable_nagle_algorithm = True
+        timeout = 65
         def log_message(self, *a): pass
         def do_POST(self):
+            if (self.headers.get('Content-Length') or '0').strip() != '0' and not self.path.startswith('/measure/'):
+                self.close_connection = True   # a body nobody reads must not be taken for the next request of a kept-alive connection
             # a page on another site cannot send this header without permission, so it cannot move the gimbal through the viewer's browser
             if self.path.startswith('/model/set') and self.headers.get('X-Gimbal') == '1':   # v23: model change from the page (works without the gimbal too)
                 from urllib.parse import urlsplit as us_, parse_qs as pq_
@@ -495,7 +503,7 @@ def make_lv_Handler():
                 if self.path.startswith('/stream'):
                     # 11-15: f=1 = the page reads the stream with fetch, which WebKit (iPhone Safari) refuses for x-mixed-replace
                     ctype_ = 'multipart/mixed' if 'f=1' in urlsplit(self.path).query.split('&') else 'multipart/x-mixed-replace'
-                    self.send_response(200); self.send_header('Content-Type', ctype_ + '; boundary=frame'); self.send_header('Cache-Control', 'no-cache'); self.end_headers()
+                    self.send_response(200); self.send_header('Content-Type', ctype_ + '; boundary=frame'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Connection', 'close'); self.end_headers()
                     try:   # v26b: a slow viewer must get the newest picture, not a queue of old ones: small send buffer (about 2 pictures), no Nagle delay; a viewer that takes nothing for 30 s is closed (the page opens the stream again)
                         self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.setsockopt(APP.lv_sock.SOL_SOCKET, APP.lv_sock.SO_SNDBUF, 32768); self.connection.settimeout(30)   # 11-15: 32 KB (was 64 KB); the queue wait below keeps at most one picture in flight
                     except OSError: pass
@@ -506,12 +514,12 @@ def make_lv_Handler():
                     stream_sender.serve(APP.LIVE, self.connection, self.wfile.write, urlsplit(self.path).query, self.client_address[0],
                                         light=stream_sender.light_maker(APP.cv2))
                 elif self.path.startswith('/overlay'):   # 11-15: boxes for 'picture first' as server-sent events (src/web/picture_first.py)
-                    self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.send_header('Cache-Control', 'no-cache'); self.end_headers()
+                    self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Connection', 'close'); self.end_headers()
                     try: self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.settimeout(30)
                     except OSError: pass
                     picture_first.serve_overlay(APP.LIVE, self.wfile.write)
-                elif self.path.startswith('/time'):   # 11-15: the server's clock for the page's picture-delay readout (page/js/picture_stream.js)
-                    b_ = json.dumps(dict(t=round(time.time(), 4))).encode()
+                elif self.path.startswith('/time'):   # 11-15: the server's clock for the page's picture-delay readout (page/js/picture_stream.js); with p=<page id> also what that page's stream measured (stream_sender.page_stats)
+                    b_ = json.dumps(dict(t=round(time.time(), 4), v=stream_sender.page_stats(APP.LIVE, (parse_qs(urlsplit(self.path).query).get('p') or [''])[0]))).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/gimbal/people') and APP.GB is not None:   # v19: read only
                     b_ = json.dumps(dict(state=APP.GB.state, **live_gimbal_position(), people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()

@@ -59,36 +59,44 @@ function psShow(j){PS.got++;const info=psInfo(j);if(PS.busy){PS.next=[j,info];re
 function psPaint(j,info){PS.busy=true;PS.info=info;PS.old=PS.url;PS.url=URL.createObjectURL(new Blob([j],{type:'image/jpeg'}));v.src=PS.url;}
 function psDone(ok){if(!streamFetch||!PS.busy)return;PS.busy=false;
   if(PS.old){URL.revokeObjectURL(PS.old);PS.old=null;}
-  if(ok){const i=PS.info||{};pictureShown(Number.isFinite(i.t)?i.t:null,i.l===1);}
+  if(ok){const i=PS.info||{};pictureShown(Number.isFinite(i.t)?i.t:null,i.l||0);}
   if(PS.next){const [j,info]=PS.next;PS.next=null;psPaint(j,info);}}
 v.addEventListener('load',()=>psDone(true));v.addEventListener('error',()=>psDone(false));
 // The delay readout under the picture chip: this screen's delay (camera frame in at the server -> picture on this screen) and
 // pictures per second over the last 2 s. Globals for other picture paths (e.g. a video path) and an automatic choice:
 //   pictureShown(t, light, source): a picture is on screen; t = its camera frame time in the server's unix seconds (null if
-//     unknown), light = the server sent a lighter 320x240 picture, source = the path's name (default 'mjpeg').
-//   streamStats(source): {source, fps, age_ms (median), age_p95_ms, light, pictures, clock, measured} of that path (default:
-//     the one that showed a picture last); age_ms is null until the clock offset is known; clock = server time - this clock
-//     in s; measured = false for the picture stream shown through <img> (no per-picture times there).
-// The clock offset comes from GET /time: the answer with the shortest round trip of the last 6, server time - its middle.
-const DL={off:null,sync:[],src:{},cur:'mjpeg'};
-function pictureShown(t,light,source){const s=source||'mjpeg',now=Date.now()/1000,d=DL.src[s]||(DL.src[s]={shown:[],ages:[],light:false});
-  d.shown.push(now);d.light=!!light;DL.cur=s;
+//     unknown), light = the picture's level (0 full, 1 = 480x360, 2 = 320x240), source = the path's name (default 'mjpeg').
+//   streamStats(source): {source, fps, age_ms (median), age_p95_ms, est_ms, light, pictures, clock, measured} of that path
+//     (default: the one that showed a picture last). measured = this page times its pictures itself (age_ms; null until the
+//     clock offset is known; clock = server time - this clock in s). The picture stream shown through <img> (iPhone) cannot:
+//     there fps, light and est_ms come from the server's numbers for this page's stream (GET /time?p=<page id>, every 2 s):
+//     est_ms = server time (camera frame in -> written) + the time until the picture arrived here, which the server times
+//     from this device's acknowledgements. Not in est_ms: decoding and drawing in the browser (about one screen refresh).
+// The clock offset comes from the same GET /time: the answer with the shortest round trip of the last 30 (one minute): an
+// answer that waited behind pictures on a slow link would shift the clock by half that wait.
+const DL={off:null,sync:[],src:{},cur:'mjpeg',srv:null,srvAt:0};
+function pictureShown(t,light,source){const s=source||'mjpeg',now=Date.now()/1000,d=DL.src[s]||(DL.src[s]={shown:[],ages:[],light:0});
+  d.shown.push(now);d.light=Number(light)||0;DL.cur=s;
   if(t!=null&&DL.off!=null)d.ages.push([now,(now+DL.off-t)*1000]);}
-function streamStats(source){const s=source||DL.cur,d=DL.src[s],now=Date.now()/1000;
-  if(!d)return {source:s,fps:0,age_ms:null,age_p95_ms:null,light:false,pictures:0,clock:DL.off,measured:s!=='mjpeg'||streamFetch};
+function serverStats(){return DL.srv&&Date.now()-DL.srvAt<6000?DL.srv:null;}   // this page's stream as the server measured it; null when older than 6 s
+function streamStats(source){const s=source||DL.cur,d=DL.src[s],now=Date.now()/1000,sv=s==='mjpeg'?serverStats():null,est=sv&&Number.isFinite(sv.est_ms)?sv.est_ms:null;
+  if(!d){const img=s==='mjpeg'&&!streamFetch;   // no picture timed here: the <img> stream, or nothing yet
+    return {source:s,fps:img&&sv?sv.fps:0,age_ms:null,age_p95_ms:null,est_ms:est,light:img&&sv?sv.level:0,pictures:img&&sv?Math.round(sv.fps*2):0,clock:DL.off,measured:!img};}
   while(d.shown.length&&d.shown[0]<now-2)d.shown.shift();
   while(d.ages.length&&d.ages[0][0]<now-2)d.ages.shift();
   const a=d.ages.map(x=>x[1]).sort((p,q)=>p-q);
   return {source:s,fps:d.shown.length/2,age_ms:a.length?a[a.length>>1]:null,age_p95_ms:a.length?a[Math.min(a.length-1,Math.floor(a.length*0.95))]:null,
-          light:d.light,pictures:d.shown.length,clock:DL.off,measured:true};}
-function timeSync(){const t0=Date.now();
-  fetch('/time?'+t0,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const t1=Date.now();if(!Number.isFinite(j.t))return;
-    DL.sync.push([t1-t0,j.t-(t0+t1)/2000]);if(DL.sync.length>6)DL.sync.shift();DL.off=DL.sync.reduce((a,b)=>b[0]<a[0]?b:a)[1];}).catch(()=>{});}
+          est_ms:est,light:d.light,pictures:d.shown.length,clock:DL.off,measured:true};}
+function timeSync(){if(document.hidden)return;const t0=Date.now();
+  fetch('/time?p='+pageId,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const t1=Date.now();if(!Number.isFinite(j.t))return;
+    DL.srv=j.v||null;DL.srvAt=t1;
+    DL.sync.push([t1-t0,j.t-(t0+t1)/2000]);if(DL.sync.length>30)DL.sync.shift();DL.off=DL.sync.reduce((a,b)=>b[0]<a[0]?b:a)[1];}).catch(()=>{});}
+function lightText(level){if(!level)return '';const sv=serverStats(),n=sv&&sv.levels||1;return level>=n?' · 작은 사진':' · 중간 사진';}   // the lightest level = 작은 사진 (320x240)
 function delayTick(){const el=$('vage'),st=streamStats();if(!el)return;
-  if(!document.hidden&&!st.pictures&&!st.measured&&PS.on){el.textContent='내 화면 지연: 이 브라우저에서는 못 잼';el.hidden=false;return;}
-  if(document.hidden||!st.pictures){el.hidden=true;return;}
-  const med=st.age_ms;
-  el.textContent='내 화면 '+(med!=null&&med<5000?'지연 '+Math.round(Math.max(0,med))+' ms · ':'')+(st.fps<10?st.fps.toFixed(1):Math.round(st.fps))+' fps'+(st.light?' · 작은 사진':'');
+  if(document.hidden||!st.pictures||(!st.measured&&!PS.on)){el.hidden=true;return;}
+  const fps=(st.fps<10?st.fps.toFixed(1):Math.round(st.fps))+' fps'+lightText(st.light);
+  if(st.measured){const med=st.age_ms;el.textContent='내 화면 '+(med!=null&&med<5000?'지연 '+Math.round(Math.max(0,med))+' ms · ':'')+fps;}
+  else el.textContent='내 화면 '+(st.est_ms!=null?'지연 약 '+Math.round(st.est_ms)+' ms (추정) · ':'')+fps;   // <img> stream: the server's numbers for this page
   el.hidden=false;}
-timeSync();setTimeout(timeSync,700);setTimeout(timeSync,1500);setInterval(timeSync,10000);setInterval(delayTick,1000);
+timeSync();setTimeout(timeSync,700);setTimeout(timeSync,1400);setInterval(timeSync,2000);setInterval(delayTick,1000);
 openStream();   // the first stream (the img has no src in the HTML): after this fragment's constants exist

@@ -388,7 +388,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
     <div class="vbox">
       <div class="frame"><img id="v" alt="실시간 영상" draggable="false"><canvas class="vdraw" id="vdraw" aria-hidden="true"></canvas>
         <div class="vchip num" id="vchip" aria-live="polite" hidden></div>
-        <div class="vchip vage num" id="vage" title="카메라 프레임이 서버에 들어온 때부터 이 화면에 그려질 때까지 (서버 처리 + 전송). 작은 사진 = 회선이 느려 320x240 사진을 받는 중" hidden></div>
+        <div class="vchip vage num" id="vage" title="카메라 프레임이 서버에 들어온 때부터 이 화면까지 (서버 처리 + 전송). '약 … (추정)' = 이 브라우저(아이폰 등)는 사진 시각을 못 읽어 서버가 잰 값: 서버 처리 + 사진이 이 기기에 도착할 때까지(이 기기의 수신 확인으로 잼). 브라우저가 그리는 시간(화면 한 번 갱신쯤)은 빠져 있음. 중간·작은 사진 = 회선이 느려 480x360·320x240 사진을 받는 중" hidden></div>
         <div class="vdead" id="vdead" role="alert" hidden><b id="vdeadt"></b><span id="vdeads"></span></div>
         <div class="vtoast" id="vtoast" role="status" hidden></div>
         <div class="vfol camera-only" id="vfol"><span class="vhint" id="vhint">사람을 누르면 따라갑니다</span><button class="btn vstop" id="vstop" type="button" title="따라가기·이동 멈춤 (Space)">■ 멈춤 <kbd>Space</kbd></button></div>
@@ -428,11 +428,11 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
           <div class="pft">지연 (ms) <span>영상이 들어와서 추적이 끝날 때까지 · 낮을수록 좋음</span></div>
           <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 그 장의 추적 결과가 나올 때까지. 기다린 시간 + 검출 + 추적. 1초 평균"><i style="background:var(--c1)"></i>평균 <b class="num" id="pfv2">–</b></span><span class="pfl" title="같은 1초 안에서 가장 오래 걸린 장"><i class="dash" style="color:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 장을 계산하는 데만 든 시간(검출 준비부터 추적·ID 유지까지). 기다린 시간은 빠짐. 1초 평균"><i style="background:var(--c4)"></i>계산 시간 <b class="num" id="pfv4">–</b></span></div>
           <canvas id="pfc1"></canvas>
-          <div class="pft">화면 전송 (ms) <span>추적이 끝나고 이 화면에 오기까지 · 낮을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="추적 결과가 나온 뒤 화면에 보낼 그림(박스를 그린 JPEG)이 준비될 때까지. 서버에서 잰 1초 평균"><i style="background:var(--c5)"></i>그림 만들기 <b class="num" id="pfv5">–</b></span><span class="pfl" title="이 기기가 서버에 그림 한 장을 요청해서 다 받을 때까지. 2초마다 이 기기에서 직접 잰 값이라 보는 기기와 통신 상태에 따라 다릅니다"><i style="background:var(--c6)"></i>네트워크 전송 <b class="num" id="pfv6">–</b></span></div>
+          <div class="pft">영상 지연 (ms) <span>카메라 영상이 서버에 들어와서 이 화면에 오기까지 · 낮을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 화면에 보낼 사진(JPEG)이 준비될 때까지. 서버에서 잰 1초 평균. '사진 먼저'가 켜져 있으면 검출을 기다리지 않아 몇 ms"><i style="background:var(--c5)"></i>서버 (사진 준비) <b class="num" id="pfv5">–</b></span><span class="pfl" id="pfl6" title="영상 한 장이 서버에 도착한 뒤 이 화면에 올 때까지 (서버 + 전송). 사진의 시각을 읽을 수 있는 브라우저는 이 기기에서 직접 잰 값(그려진 때까지). 아이폰처럼 못 읽는 브라우저는 '(추정)': 서버가 이 기기의 수신 확인으로 잰 도착 시각까지이고, 브라우저가 그리는 시간은 빠져 있음. 카메라 자체의 지연은 어느 쪽에도 없음"><i style="background:var(--c6)"></i><span id="pft6">영상 지연</span> <b class="num" id="pfv6">–</b></span></div>
           <canvas id="pfc2"></canvas>
           <div class="pfaxis"><span id="pfago">1분 전</span><span>지금</span></div>
-          <p class="pfnote">속도·지연과 "그림 만들기"는 오렌지파이 서버 안에서 잰 값입니다. "네트워크 전송"만 지금 보는 기기에서 잽니다. "계산 시간"은 지연 중 기다린 시간을 뺀 순수 계산입니다. 카메라가 찍어서 서버에 보내는 시간, 브라우저가 화면에 그리는 시간, 짐벌이 움직이는 시간은 어디에도 들어 있지 않습니다.</p>
+          <p class="pfnote">속도·지연과 "서버 (사진 준비)"는 오렌지파이 서버 안에서 잰 값입니다. "영상 지연"은 서버에 들어온 영상이 이 화면에 올 때까지이고, 지금 보는 기기에서 잽니다(아이폰은 서버가 잰 추정). "계산 시간"은 지연 중 기다린 시간을 뺀 순수 계산입니다. 카메라가 찍어서 서버에 보내는 시간, 브라우저가 화면에 그리는 시간, 짐벌이 움직이는 시간은 어디에도 들어 있지 않습니다.</p>
         </div></div>
     </div>
   </section>
@@ -799,38 +799,46 @@ function psShow(j){PS.got++;const info=psInfo(j);if(PS.busy){PS.next=[j,info];re
 function psPaint(j,info){PS.busy=true;PS.info=info;PS.old=PS.url;PS.url=URL.createObjectURL(new Blob([j],{type:'image/jpeg'}));v.src=PS.url;}
 function psDone(ok){if(!streamFetch||!PS.busy)return;PS.busy=false;
   if(PS.old){URL.revokeObjectURL(PS.old);PS.old=null;}
-  if(ok){const i=PS.info||{};pictureShown(Number.isFinite(i.t)?i.t:null,i.l===1);}
+  if(ok){const i=PS.info||{};pictureShown(Number.isFinite(i.t)?i.t:null,i.l||0);}
   if(PS.next){const [j,info]=PS.next;PS.next=null;psPaint(j,info);}}
 v.addEventListener('load',()=>psDone(true));v.addEventListener('error',()=>psDone(false));
 // The delay readout under the picture chip: this screen's delay (camera frame in at the server -> picture on this screen) and
 // pictures per second over the last 2 s. Globals for other picture paths (e.g. a video path) and an automatic choice:
 //   pictureShown(t, light, source): a picture is on screen; t = its camera frame time in the server's unix seconds (null if
-//     unknown), light = the server sent a lighter 320x240 picture, source = the path's name (default 'mjpeg').
-//   streamStats(source): {source, fps, age_ms (median), age_p95_ms, light, pictures, clock, measured} of that path (default:
-//     the one that showed a picture last); age_ms is null until the clock offset is known; clock = server time - this clock
-//     in s; measured = false for the picture stream shown through <img> (no per-picture times there).
-// The clock offset comes from GET /time: the answer with the shortest round trip of the last 6, server time - its middle.
-const DL={off:null,sync:[],src:{},cur:'mjpeg'};
-function pictureShown(t,light,source){const s=source||'mjpeg',now=Date.now()/1000,d=DL.src[s]||(DL.src[s]={shown:[],ages:[],light:false});
-  d.shown.push(now);d.light=!!light;DL.cur=s;
+//     unknown), light = the picture's level (0 full, 1 = 480x360, 2 = 320x240), source = the path's name (default 'mjpeg').
+//   streamStats(source): {source, fps, age_ms (median), age_p95_ms, est_ms, light, pictures, clock, measured} of that path
+//     (default: the one that showed a picture last). measured = this page times its pictures itself (age_ms; null until the
+//     clock offset is known; clock = server time - this clock in s). The picture stream shown through <img> (iPhone) cannot:
+//     there fps, light and est_ms come from the server's numbers for this page's stream (GET /time?p=<page id>, every 2 s):
+//     est_ms = server time (camera frame in -> written) + the time until the picture arrived here, which the server times
+//     from this device's acknowledgements. Not in est_ms: decoding and drawing in the browser (about one screen refresh).
+// The clock offset comes from the same GET /time: the answer with the shortest round trip of the last 30 (one minute): an
+// answer that waited behind pictures on a slow link would shift the clock by half that wait.
+const DL={off:null,sync:[],src:{},cur:'mjpeg',srv:null,srvAt:0};
+function pictureShown(t,light,source){const s=source||'mjpeg',now=Date.now()/1000,d=DL.src[s]||(DL.src[s]={shown:[],ages:[],light:0});
+  d.shown.push(now);d.light=Number(light)||0;DL.cur=s;
   if(t!=null&&DL.off!=null)d.ages.push([now,(now+DL.off-t)*1000]);}
-function streamStats(source){const s=source||DL.cur,d=DL.src[s],now=Date.now()/1000;
-  if(!d)return {source:s,fps:0,age_ms:null,age_p95_ms:null,light:false,pictures:0,clock:DL.off,measured:s!=='mjpeg'||streamFetch};
+function serverStats(){return DL.srv&&Date.now()-DL.srvAt<6000?DL.srv:null;}   // this page's stream as the server measured it; null when older than 6 s
+function streamStats(source){const s=source||DL.cur,d=DL.src[s],now=Date.now()/1000,sv=s==='mjpeg'?serverStats():null,est=sv&&Number.isFinite(sv.est_ms)?sv.est_ms:null;
+  if(!d){const img=s==='mjpeg'&&!streamFetch;   // no picture timed here: the <img> stream, or nothing yet
+    return {source:s,fps:img&&sv?sv.fps:0,age_ms:null,age_p95_ms:null,est_ms:est,light:img&&sv?sv.level:0,pictures:img&&sv?Math.round(sv.fps*2):0,clock:DL.off,measured:!img};}
   while(d.shown.length&&d.shown[0]<now-2)d.shown.shift();
   while(d.ages.length&&d.ages[0][0]<now-2)d.ages.shift();
   const a=d.ages.map(x=>x[1]).sort((p,q)=>p-q);
   return {source:s,fps:d.shown.length/2,age_ms:a.length?a[a.length>>1]:null,age_p95_ms:a.length?a[Math.min(a.length-1,Math.floor(a.length*0.95))]:null,
-          light:d.light,pictures:d.shown.length,clock:DL.off,measured:true};}
-function timeSync(){const t0=Date.now();
-  fetch('/time?'+t0,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const t1=Date.now();if(!Number.isFinite(j.t))return;
-    DL.sync.push([t1-t0,j.t-(t0+t1)/2000]);if(DL.sync.length>6)DL.sync.shift();DL.off=DL.sync.reduce((a,b)=>b[0]<a[0]?b:a)[1];}).catch(()=>{});}
+          est_ms:est,light:d.light,pictures:d.shown.length,clock:DL.off,measured:true};}
+function timeSync(){if(document.hidden)return;const t0=Date.now();
+  fetch('/time?p='+pageId,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const t1=Date.now();if(!Number.isFinite(j.t))return;
+    DL.srv=j.v||null;DL.srvAt=t1;
+    DL.sync.push([t1-t0,j.t-(t0+t1)/2000]);if(DL.sync.length>30)DL.sync.shift();DL.off=DL.sync.reduce((a,b)=>b[0]<a[0]?b:a)[1];}).catch(()=>{});}
+function lightText(level){if(!level)return '';const sv=serverStats(),n=sv&&sv.levels||1;return level>=n?' · 작은 사진':' · 중간 사진';}   // the lightest level = 작은 사진 (320x240)
 function delayTick(){const el=$('vage'),st=streamStats();if(!el)return;
-  if(!document.hidden&&!st.pictures&&!st.measured&&PS.on){el.textContent='내 화면 지연: 이 브라우저에서는 못 잼';el.hidden=false;return;}
-  if(document.hidden||!st.pictures){el.hidden=true;return;}
-  const med=st.age_ms;
-  el.textContent='내 화면 '+(med!=null&&med<5000?'지연 '+Math.round(Math.max(0,med))+' ms · ':'')+(st.fps<10?st.fps.toFixed(1):Math.round(st.fps))+' fps'+(st.light?' · 작은 사진':'');
+  if(document.hidden||!st.pictures||(!st.measured&&!PS.on)){el.hidden=true;return;}
+  const fps=(st.fps<10?st.fps.toFixed(1):Math.round(st.fps))+' fps'+lightText(st.light);
+  if(st.measured){const med=st.age_ms;el.textContent='내 화면 '+(med!=null&&med<5000?'지연 '+Math.round(Math.max(0,med))+' ms · ':'')+fps;}
+  else el.textContent='내 화면 '+(st.est_ms!=null?'지연 약 '+Math.round(st.est_ms)+' ms (추정) · ':'')+fps;   // <img> stream: the server's numbers for this page
   el.hidden=false;}
-timeSync();setTimeout(timeSync,700);setTimeout(timeSync,1500);setInterval(timeSync,10000);setInterval(delayTick,1000);
+timeSync();setTimeout(timeSync,700);setTimeout(timeSync,1400);setInterval(timeSync,2000);setInterval(delayTick,1000);
 openStream();   // the first stream (the img has no src in the HTML): after this fragment's constants exist
 // 11-15 (user: total delay about one camera frame): with '사진 먼저' the server sends the camera picture as soon as the frame
 // arrives (before detection and tracking) and the boxes separately (GET /overlay, server-sent events, src/web/picture_first.py).
@@ -1466,13 +1474,13 @@ const PF_LATENCY_LIMIT=100;
 const PFC=[
   {cv:$('pfc0'),series:[[2,'--c2',1.8],[1,'--c1',2.5]],min:30,labels:true},
   {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c4',2],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT},
-  {cv:$('pfc2'),series:[[8,'--c5',2.2],[9,'--c6',2.2]],min:50},   // 8 = picture making (server), 9 = transfer to this device (measured here)
+  {cv:$('pfc2'),series:[[8,'--c5',2.2],[9,'--c6',2.2]],min:50},   // 8 = frame in -> picture ready (server), 9 = frame in -> this screen (the stream's own delay)
 ];
-// 11-13: transfer time to this device = one /snap.jpg request until its last byte, every 2 s while the graphs are shown.
-const PFNET={ms:null,at:0,busy:false};
-function pfnet(){if(document.hidden||!PF.on||PFNET.busy)return;PFNET.busy=true;const t0=performance.now();
-  fetch('/snap.jpg?pf='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.arrayBuffer():Promise.reject()).then(()=>{PFNET.ms=performance.now()-t0;PFNET.at=Date.now();}).catch(()=>{PFNET.ms=null;}).finally(()=>{PFNET.busy=false;});}
-setInterval(pfnet,2000);pfnet();
+// 11-15 (user: the graph showed 100 ms): the line was one /snap.jpg download every 2 s (a full picture on a new connection, there and
+// back), which overstated the stream's delay and took the stream's bandwidth. Now it is the stream's own delay from picture_stream.js:
+// timed on this device where the page reads the pictures, else the server's estimate for this page ('(추정)').
+function pfdelay(){const st=typeof streamStats==='function'?streamStats('mjpeg'):null;if(!st||!st.pictures)return [null,false];
+  return st.measured?[st.age_ms,false]:[st.est_ms,true];}
 const pfOverflow=document.createElement('p');
 pfOverflow.className='pf-overflow';pfOverflow.hidden=true;
 $('pfago').parentNode.after(pfOverflow);
@@ -1560,8 +1568,9 @@ function pfdraw(){
 function pftick(){pfmark();if(document.hidden||!PF.on||PF.busy)return;PF.busy=true;const since=PF.rows.length?PF.rows[PF.rows.length-1][0]:0;
   fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
-    for(const r of p.rows){const pic=Number.isFinite(r[7])&&Number.isFinite(r[3])?Math.max(0,r[7]-r[3]):null;   // picture making = (arrival -> picture ready) - (arrival -> track result)
-      r[8]=pic;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&PFNET.ms!=null&&Date.now()-PFNET.at<5000?PFNET.ms:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
+    for(const r of p.rows){   // r[7] = arrival -> picture ready (server, mean of the second)
+      const [age,guess]=pfdelay();$('pft6').textContent=guess?'영상 지연 (추정)':'영상 지연';
+      r[8]=Number.isFinite(r[7])?r[7]:null;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&Number.isFinite(age)?age:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
 const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({on:PF.on,span:PF.span}));}catch(_){}};
 $('pfbtn').addEventListener('click',e=>{e.stopPropagation();PF.on=!PF.on;pfsave();pfdraw();pftick();});
 $('pfspan').addEventListener('click',e=>{e.stopPropagation();PF.span={60:300,300:900,900:60}[PF.span];pfsave();pfdraw();});

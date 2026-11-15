@@ -5,13 +5,13 @@ const PF_LATENCY_LIMIT=100;
 const PFC=[
   {cv:$('pfc0'),series:[[2,'--c2',1.8],[1,'--c1',2.5]],min:30,labels:true},
   {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c4',2],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT},
-  {cv:$('pfc2'),series:[[8,'--c5',2.2],[9,'--c6',2.2]],min:50},   // 8 = picture making (server), 9 = transfer to this device (measured here)
+  {cv:$('pfc2'),series:[[8,'--c5',2.2],[9,'--c6',2.2]],min:50},   // 8 = frame in -> picture ready (server), 9 = frame in -> this screen (the stream's own delay)
 ];
-// 11-13: transfer time to this device = one /snap.jpg request until its last byte, every 2 s while the graphs are shown.
-const PFNET={ms:null,at:0,busy:false};
-function pfnet(){if(document.hidden||!PF.on||PFNET.busy)return;PFNET.busy=true;const t0=performance.now();
-  fetch('/snap.jpg?pf='+Date.now(),{cache:'no-store'}).then(r=>r.ok?r.arrayBuffer():Promise.reject()).then(()=>{PFNET.ms=performance.now()-t0;PFNET.at=Date.now();}).catch(()=>{PFNET.ms=null;}).finally(()=>{PFNET.busy=false;});}
-setInterval(pfnet,2000);pfnet();
+// 11-15 (user: the graph showed 100 ms): the line was one /snap.jpg download every 2 s (a full picture on a new connection, there and
+// back), which overstated the stream's delay and took the stream's bandwidth. Now it is the stream's own delay from picture_stream.js:
+// timed on this device where the page reads the pictures, else the server's estimate for this page ('(추정)').
+function pfdelay(){const st=typeof streamStats==='function'?streamStats('mjpeg'):null;if(!st||!st.pictures)return [null,false];
+  return st.measured?[st.age_ms,false]:[st.est_ms,true];}
 const pfOverflow=document.createElement('p');
 pfOverflow.className='pf-overflow';pfOverflow.hidden=true;
 $('pfago').parentNode.after(pfOverflow);
@@ -99,8 +99,9 @@ function pfdraw(){
 function pftick(){pfmark();if(document.hidden||!PF.on||PF.busy)return;PF.busy=true;const since=PF.rows.length?PF.rows[PF.rows.length-1][0]:0;
   fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
-    for(const r of p.rows){const pic=Number.isFinite(r[7])&&Number.isFinite(r[3])?Math.max(0,r[7]-r[3]):null;   // picture making = (arrival -> picture ready) - (arrival -> track result)
-      r[8]=pic;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&PFNET.ms!=null&&Date.now()-PFNET.at<5000?PFNET.ms:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
+    for(const r of p.rows){   // r[7] = arrival -> picture ready (server, mean of the second)
+      const [age,guess]=pfdelay();$('pft6').textContent=guess?'영상 지연 (추정)':'영상 지연';
+      r[8]=Number.isFinite(r[7])?r[7]:null;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&Number.isFinite(age)?age:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
 const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({on:PF.on,span:PF.span}));}catch(_){}};
 $('pfbtn').addEventListener('click',e=>{e.stopPropagation();PF.on=!PF.on;pfsave();pfdraw();pftick();});
 $('pfspan').addEventListener('click',e=>{e.stopPropagation();PF.span={60:300,300:900,900:60}[PF.span];pfsave();pfdraw();});
