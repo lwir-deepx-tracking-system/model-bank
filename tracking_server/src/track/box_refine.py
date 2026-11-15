@@ -568,7 +568,7 @@ def apply(rows, dets=None, t=None):
 
 def state():
     m = scan_table() if BR['mode'] == 'body' or BR['table'] is None else BR['table']
-    obj = BR.get('obj')
+    obj = BR.get('obj'); ho_ = BR.get('hold')   # read once: a lost_same toggle may pop 'hold' from another thread
     return dict(mode=BR['mode'], mode_name=MODE_KO.get(BR['mode']), blend_s=BR['blend_s'],
                 modes=[dict(key=k, name=MODE_KO[k], available=(m is not None) if k == 'body' else True) for k in MODES],
                 size=dict(SIZE), body=dict(BODY, **((m.body if m is not None else None) or {})), body_file=BR['tfile'], body_note=BR['tnote'],
@@ -578,7 +578,7 @@ def state():
                 tracks=len(obj.tr) if obj is not None else 0, people=BR['n'], frames=BR['frames'], blends=BR['blends'], handovers=BR['handovers'], why=BR['why'],
                 err=BR['err'], errors=BR['errors'], errors_all=BR['errors_all'],
                 lost_same=bool(BR['lost_same']), lost_ms=round(BR['lost_ms'], 3), lost_ms_max=round(BR['lost_ms_max'], 3), lost_n=BR['lost_n'],   # 11-16 lost_same
-                lost_held=len(BR['hold'].h) if BR.get('hold') is not None else 0, lost_frames=BR['lost_frames'], lost_err=BR['lost_err'],
+                lost_held=len(ho_.h) if ho_ is not None else 0, lost_frames=BR['lost_frames'], lost_err=BR['lost_err'],
                 lost_errors=BR['lost_errors'], lost_why=BR['lost_why'])
 
 
