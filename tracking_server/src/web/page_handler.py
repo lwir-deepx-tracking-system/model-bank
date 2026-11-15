@@ -464,7 +464,9 @@ def make_lv_Handler():
         def do_GET(self):
             try:
                 if self.path.startswith('/stream'):
-                    self.send_response(200); self.send_header('Content-Type', 'multipart/x-mixed-replace; boundary=frame'); self.send_header('Cache-Control', 'no-cache'); self.end_headers()
+                    # 11-15: f=1 = the page reads the stream with fetch, which WebKit (iPhone Safari) refuses for x-mixed-replace
+                    ctype_ = 'multipart/mixed' if 'f=1' in urlsplit(self.path).query.split('&') else 'multipart/x-mixed-replace'
+                    self.send_response(200); self.send_header('Content-Type', ctype_ + '; boundary=frame'); self.send_header('Cache-Control', 'no-cache'); self.end_headers()
                     try:   # v26b: a slow viewer must get the newest picture, not a queue of old ones: small send buffer (about 2 pictures), no Nagle delay; a viewer that takes nothing for 30 s is closed (the page opens the stream again)
                         self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.setsockopt(APP.lv_sock.SOL_SOCKET, APP.lv_sock.SO_SNDBUF, 32768); self.connection.settimeout(30)   # 11-15: 32 KB (was 64 KB); the queue wait below keeps at most one picture in flight
                     except OSError: pass

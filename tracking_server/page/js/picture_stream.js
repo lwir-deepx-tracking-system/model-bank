@@ -1,19 +1,23 @@
 // 11-15 (user: 화면 전송 지연, "카메라 프레임 수준인가"): the picture stream is read with fetch, so the page knows when each picture
 // arrived and its camera time (JPEG comment 'LWIR n= t= s= [l=1]', src/web/stream_sender.py). Each picture is shown in the same
 // <img id="v"> through a blob URL, so clicks and overlays are unchanged; while the browser still decodes one picture only the
-// newest waiting one is kept. Browsers without streamed fetch keep <img src="/stream">.
-const streamFetch=typeof fetch==='function'&&typeof AbortController==='function'&&typeof ReadableStream==='function'&&!!(window.Response&&'body' in Response.prototype);
-const PS={gen:0,ctl:null,on:false,url:null,old:null,busy:false,next:null,info:null};
+// newest waiting one is kept. Browsers without streamed fetch keep <img src="/stream">. WebKit (iPhone Safari) refuses a fetch of
+// multipart/x-mixed-replace ('Load failed'), so the fetch asks with f=1 for the same bytes as multipart/mixed; a fetch stream
+// that fails before its first picture (e.g. an older server) switches this page to <img src="/stream"> for good.
+let streamFetch=typeof fetch==='function'&&typeof AbortController==='function'&&typeof ReadableStream==='function'&&!!(window.Response&&'body' in Response.prototype);
+const PS={gen:0,ctl:null,on:false,url:null,old:null,busy:false,next:null,info:null,got:0};
 const PS_BOUNDARY=[13,10,45,45,102,114,97,109,101,13,10],PS_HEAD_END=[13,10,13,10];   // '\r\n--frame\r\n', '\r\n\r\n'
 function streamRunning(){return PS.on;}
 function streamStart(url){
   streamStop();PS.on=true;
   if(!streamFetch){v.src=url;return;}
-  const gen=PS.gen,ctl=new AbortController();PS.ctl=ctl;
-  fetch(url,{cache:'no-store',signal:ctl.signal})
+  const gen=PS.gen,ctl=new AbortController();PS.ctl=ctl;PS.got=0;
+  fetch(url+'&f=1',{cache:'no-store',signal:ctl.signal})
     .then(r=>{if(!r.ok||!r.body)throw new Error('stream '+r.status);return psRead(r.body.getReader(),gen);})
     .catch(()=>{})
-    .finally(()=>{if(gen!==PS.gen||!PS.on)return;PS.on=false;   // the stream ended or failed (server restart, network): open it again in 2 s
+    .finally(()=>{if(gen!==PS.gen||!PS.on)return;
+      if(!PS.got){streamFetch=false;v.src=url;return;}   // no picture came through fetch: the <img> stream from now on
+      PS.on=false;   // the stream ended or failed (server restart, network): open it again in 2 s
       setTimeout(()=>{if(gen===PS.gen&&!document.hidden)openStream();},2000);});
 }
 function streamStop(){PS.gen++;PS.on=false;if(PS.ctl){PS.ctl.abort();PS.ctl=null;}PS.next=null;
@@ -46,7 +50,7 @@ function psInfo(j){   // the numbers of the 'LWIR ...' JPEG comment, {} if there
       return o;}
     i+=2+n;}
   return {};}
-function psShow(j){const info=psInfo(j);if(PS.busy){PS.next=[j,info];return;}psPaint(j,info);}
+function psShow(j){PS.got++;const info=psInfo(j);if(PS.busy){PS.next=[j,info];return;}psPaint(j,info);}
 function psPaint(j,info){PS.busy=true;PS.info=info;PS.old=PS.url;PS.url=URL.createObjectURL(new Blob([j],{type:'image/jpeg'}));v.src=PS.url;}
 function psDone(ok){if(!streamFetch||!PS.busy)return;PS.busy=false;
   if(PS.old){URL.revokeObjectURL(PS.old);PS.old=null;}
