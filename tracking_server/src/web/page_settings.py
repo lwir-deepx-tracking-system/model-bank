@@ -293,7 +293,9 @@ def _temp_keys():   # 11-14: the skin-temperature switch and its numbers for the
     try:
         from ..detect import skin_temp
         st_ = dict(skin_temp.state())
-        st_['enabled'] = int(getattr(vars(APP).get('args'), 'cam_temp', 0) or 0) > 0   # 11-15 (user: every option on the page must work live): the camera gives a temperature map only with --cam-temp N
+        try: env_ = int(os.environ.get('LWIR_CAM_TEMP', '') or 0)   # set by --cam-temp N (temp_ring.apply_cli) or by scripts/live.env
+        except ValueError: env_ = 0
+        st_['enabled'] = env_ > 0 or int(getattr(vars(APP).get('args'), 'cam_temp', 0) or 0) > 0   # 11-15 (user: every option on the page must work live): a temperature map only when cam_pipe gets LWIR_CAM_TEMP
         return dict(temp_show=st_['show'], temp=st_)
     except Exception as e_:
         return dict(temp_show=False, temp=dict(show=False, last_error=repr(e_)[:120]))
