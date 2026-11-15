@@ -30,9 +30,10 @@ class FakeLive:
         self.viewers = 0
         self.published = {}   # seq -> perf_counter when published
 
-    def publish(self, jpeg, frame_t=None):
+    def publish(self, jpeg, frame_t=None, drawn=None):
         with self.jcond:
             self.jpeg, self.jpeg_frame_t = jpeg, frame_t
+            self.jpeg_drawn = (jpeg, drawn) if drawn is not None else None
             self.seq += 1
             self.published[self.seq] = time.perf_counter()
             self.jcond.notify_all()
@@ -86,21 +87,21 @@ class SlowLink:
         return t + (before + n) / self.rate
 
 
-def run(live, link, query='', limit=4096, logs=None):
+def run(live, link, query='', limit=4096, logs=None, light=None):
     out = {}
     th = threading.Thread(target=lambda: out.setdefault('why', ss.serve(
-        live, None, link.write, query, 'test', limit=limit, state=link.state,
+        live, None, link.write, query, 'test', limit=limit, state=link.state, light=light,
         log=(lambda *a, **k: logs.append(a[0])) if logs is not None else (lambda *a, **k: None))), daemon=True)
     th.start()
     return th, out
 
 
-def publish_for(live, pics, seconds, fps=30.0):
+def publish_for(live, pics, seconds, fps=30.0, drawn=None):
     t_next = time.perf_counter()
     t_end = t_next + seconds
     k = 0
     while time.perf_counter() < t_end:
-        live.publish(pics[k % len(pics)], time.perf_counter())
+        live.publish(pics[k % len(pics)], time.perf_counter(), drawn)
         k += 1
         t_next += 1.0 / fps   # on a schedule: Windows sleeps overshoot by up to ~15 ms
         time.sleep(max(0.0, t_next - time.perf_counter()))
@@ -132,8 +133,9 @@ class SenderTests(unittest.TestCase):
         published = publish_for(live, self.pics, 1.5)
         self.finish(live, th)
         sent = link.writes[1:]   # [0] = the first part's boundary and headers
-        self.assertGreater(published, 30)
-        self.assertTrue(8 <= len(sent) <= 20, len(sent))   # fewer pictures, about the link's rate
+        self.assertGreater(published, 20)   # about 45 (fewer on a busy PC)
+        self.assertTrue(8 <= len(sent) <= 20, len(sent))   # about the link's rate (10/s)
+        self.assertLess(len(sent), 0.75 * published)   # fewer pictures than were made
         for t, before, n, seq_at_write in sent:
             self.assertLessEqual(before, 4096)   # the previous picture had left the socket
         ages = []
@@ -173,7 +175,7 @@ class SenderTests(unittest.TestCase):
         link = SlowLink(live, rate=50e6)
         th, _ = run(live, link)
         t_unix0, t_perf0 = time.time(), time.perf_counter()
-        publish_for(live, self.pics, 0.3)
+        publish_for(live, self.pics, 0.5)
         self.finish(live, th)
         got = parts(link.data)
         self.assertGreaterEqual(len(got), 5)
@@ -333,6 +335,112 @@ class SenderTests(unittest.TestCase):
         self.assertEqual(ss.page_of('p=ab-c_9&n=12'), ('ab-c_9', 12))
         self.assertEqual(ss.page_of('7'), (None, 0))   # the old page's '/stream?7'
         self.assertEqual(ss.page_of('p=../x&n=1'), (None, 0))
+
+
+class LighterPictureTests(unittest.TestCase):
+    def test_slow_full_pictures_switch_to_lighter_ones(self):
+        logs = []
+        q = ss.Quality(logs.append)
+        kinds, t = [], 0.0
+        for _ in range(8):
+            k = q.pick(t, waited=True)   # each picture had to wait for the one before: it took 150 ms
+            kinds.append(k)
+            q.sent(t, k)
+            t += 0.15
+        self.assertEqual(kinds, ['full'] * 4 + ['light'] * 4)
+        self.assertIn('lighter pictures (a full picture took 150 ms)', logs)
+
+    def test_full_pictures_that_get_through_in_time_stay_full(self):
+        q = ss.Quality(lambda text: None)
+        t = 0.0
+        for _ in range(30):
+            k = q.pick(t, waited=True)   # 40 ms each: under LIGHT_ABOVE
+            self.assertEqual(k, 'full')
+            q.sent(t, k)
+            t += 0.04
+
+    def test_test_picture_decides_the_way_back(self):
+        q = ss.Quality(lambda text: None)
+        t = 0.0
+        for _ in range(5):   # into lighter pictures
+            q.sent(t, q.pick(t, waited=True))
+            t += 0.15
+        self.assertTrue(q.light)
+        t = q.probe_at
+        self.assertEqual(q.pick(t, waited=False), 'probe')
+        q.sent(t, 'probe')
+        self.assertEqual(q.pick(t + 0.2, waited=True), 'light')   # the full test picture took 200 ms: stay
+        q.sent(t + 0.2, 'light')
+        self.assertEqual(q.probe_gap, 2 * ss.PROBE_S)
+        self.assertAlmostEqual(q.probe_at, t + 0.2 + 2 * ss.PROBE_S)
+        t = q.probe_at
+        self.assertEqual(q.pick(t, waited=False), 'probe')
+        q.sent(t, 'probe')
+        self.assertEqual(q.pick(t + 0.03, waited=False), 'full')   # it had gone before the next picture: full again
+        q.sent(t + 0.03, 'full')
+        self.assertFalse(q.light)
+        t += 0.03
+        for _ in range(4):   # but full pictures are slow again at once: lighter, and the next test waits twice as long
+            t += 0.15
+            q.sent(t, q.pick(t, waited=True))
+        self.assertTrue(q.light)
+        self.assertEqual(q.probe_gap, 4 * ss.PROBE_S)
+        self.assertAlmostEqual(q.probe_at, t + 4 * ss.PROBE_S)
+        t = q.probe_at
+        q.sent(t, q.pick(t, waited=False))
+        t += 0.03
+        q.sent(t, q.pick(t, waited=False))   # full again, and this time it lasts
+        self.assertFalse(q.light)
+        t += ss.STEADY_S + 1
+        for _ in range(4):
+            t += 0.15
+            q.sent(t, q.pick(t, waited=True))
+        self.assertTrue(q.light)
+        self.assertEqual(q.probe_gap, ss.PROBE_S)   # full pictures had lasted: back to the short wait
+
+    def test_slow_viewer_gets_lighter_pictures_end_to_end(self):
+        live = FakeLive()
+        full = picture(60)
+        drawn = np.zeros((480, 640, 3), np.uint8)
+        small = picture(61, size=(240, 320))
+        calls = []
+        light = lambda jpeg, d: calls.append(jpeg) or small   # noqa: E731
+        link = SlowLink(live, rate=len(full) / 0.2)   # a full picture takes 200 ms, a lighter one about 50 ms
+        logs = []
+        th, _ = run(live, link, logs=logs, light=light)
+        publish_for(live, [full], 3.0, drawn=drawn)
+        live.stop()
+        th.join(3)
+        got = [ss.read_comment(p) for p in parts(link.data)]
+        lighter = [g for g in got if g.get('l') == 1.0]
+        self.assertGreater(len(lighter), 20, len(lighter))   # most pictures after the first second are lighter
+        self.assertTrue(all(g.get('l') is None for g in got[:4]))   # the first ones are full
+        self.assertTrue(any('lighter pictures' in line for line in logs), logs)
+        self.assertTrue(all(c is full for c in calls))
+        self.assertLess(len(link.data), len(got) * len(full) * 0.6)   # far fewer bytes than full pictures
+
+    def test_no_drawn_picture_means_full_pictures(self):
+        live = FakeLive()
+        full = picture(60)
+        link = SlowLink(live, rate=len(full) / 0.2)
+        th, _ = run(live, link, light=lambda jpeg, d: b'never used')
+        publish_for(live, [full], 2.0)   # placeholders and inline pictures have no drawn picture
+        live.stop()
+        th.join(3)
+        self.assertTrue(all(ss.read_comment(p).get('l') is None for p in parts(link.data)))
+
+    def test_light_jpeg_is_made_once_per_picture(self):
+        drawn = np.zeros((480, 640, 3), np.uint8)
+        cv2.rectangle(drawn, (100, 100), (200, 300), (0, 220, 255), 4)
+        a, b = picture(10), picture(20)
+        la = ss.light_jpeg(cv2, a, drawn, (0.5, 60))
+        self.assertIs(ss.light_jpeg(cv2, a, drawn, (0.5, 60)), la)   # the same picture: made once, shared
+        self.assertEqual(cv2.imdecode(np.frombuffer(la, np.uint8), 1).shape, (240, 320, 3))
+        self.assertIsNot(ss.light_jpeg(cv2, b, drawn, (0.5, 60)), la)
+        self.assertIsNone(ss.light_jpeg(cv2, picture(30), None, (0.5, 60)))   # cannot be made: None, full one is sent
+        self.assertEqual(ss._light_setting('0'), None)
+        self.assertEqual(ss._light_setting('0.5,60'), (0.5, 60))
+        self.assertEqual(ss._light_setting('1.0,60'), None)
 
 
 if __name__ == '__main__':

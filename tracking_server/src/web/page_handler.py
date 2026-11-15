@@ -470,8 +470,10 @@ def make_lv_Handler():
                     except OSError: pass
                     # 11-15 (user: 화면 전송 지연): newest picture once the previous one has left the socket, next part's headers right
                     # after each picture (browsers draw a part only then), capture time in a JPEG comment, a newer stream of the same
-                    # page (/stream?p=<page id>&n=<count>) replaces the older one. src/web/stream_sender.py
-                    stream_sender.serve(APP.LIVE, self.connection, self.wfile.write, urlsplit(self.path).query, self.client_address[0])
+                    # page (/stream?p=<page id>&n=<count>) replaces the older one, a viewer whose picture takes more than 80 ms
+                    # to get through gets a lighter picture (320x240, LWIR_STREAM_LIGHT). src/web/stream_sender.py
+                    stream_sender.serve(APP.LIVE, self.connection, self.wfile.write, urlsplit(self.path).query, self.client_address[0],
+                                        light=stream_sender.light_maker(APP.cv2))
                 elif self.path.startswith('/gimbal/people') and APP.GB is not None:   # v19: read only
                     b_ = json.dumps(dict(state=APP.GB.state, **live_gimbal_position(), people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)

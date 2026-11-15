@@ -68,7 +68,9 @@ def _dash_rect(cv2, img, p1, p2, col, th, dash):
         cv2.line(img, (x2, y), (x2, min(y + dash, y2)), col, th)
 
 
-def render_preview(cv2, frame):
+def render_preview(cv2, frame, keep=None):
+    """The page picture as JPEG bytes (None if encoding failed). keep: a list that receives the drawn BGR picture,
+    from which /stream makes the lighter picture for slow viewers (11-15, stream_sender.light_jpeg)."""
     sc = frame.scale
     img = cv2.cvtColor(frame.gray, cv2.COLOR_GRAY2BGR)
     if sc != 1:
@@ -126,13 +128,17 @@ def render_preview(cv2, frame):
         cv2.rectangle(img, (0, 26), (ww, 50), (0, 0, 0), -1)
         cv2.putText(img, frame.gimbal_text, (8, 44), font, 0.55, frame.gimbal_color, 1)
     ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    if keep is not None:
+        keep.append(img)
     return buf.tobytes() if ok and buf is not None else None
 
 
 def publish_jpeg_locked(live, jpeg, frame_t, *, paired=True, click_people=None, click_ticket=None,
-                        replay_position=None):
-    """Commit one JPEG under jcond. Placeholders have no frame latency sample."""
+                        replay_position=None, drawn=None):
+    """Commit one JPEG under jcond. Placeholders have no frame latency sample.
+    drawn: the picture before encoding (render_preview keep=), for /stream's lighter picture; None = none for this JPEG."""
     live.jpeg = jpeg
+    live.jpeg_drawn = (jpeg, drawn) if drawn is not None else None
     live.jpeg_frame_t = frame_t
     live.jpeg_people = click_people
     live.jpeg_tracks_ticket = click_ticket
@@ -290,6 +296,7 @@ class PreviewWorker:
         with self._cond:
             self._closed = True
             self._live.jpeg = self._transition_jpeg
+            self._live.jpeg_drawn = None
             self._live.jpeg_frame_t = None
             self._live.jpeg_people = None
             self._live.jpeg_tracks_ticket = None
@@ -330,8 +337,9 @@ class PreviewWorker:
                 if frame.replay and self._seek is not None and not self._seek_matches(frame.replay_position):
                     self._dropped += 1
                     continue
+            drawn = []   # 11-15: the drawn picture, for /stream's lighter picture (made only when a slow viewer wants one)
             try:
-                jpeg = render_preview(self._cv2, frame)
+                jpeg = render_preview(self._cv2, frame, drawn)
             except Exception:
                 jpeg = None
             with self._cond:
@@ -349,9 +357,9 @@ class PreviewWorker:
                         self._seek_queued = False
                     publish_jpeg_locked(self._live, jpeg, frame.frame_t,
                                         click_people=frame.click_people, click_ticket=frame.click_ticket,
-                                        replay_position=frame.replay_position)
+                                        replay_position=frame.replay_position, drawn=drawn[0] if drawn else None)
             # Release the completed image while waiting on the next request.
-            del frame, jpeg
+            del frame, jpeg, drawn
 
 
 def invalidate_preview(live, *, before=None):

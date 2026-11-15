@@ -714,6 +714,7 @@ PC 에서 점수가 같은지 볼 때는 서버의 채점 코드(`src/track/gt_s
 - `/stream`, `/snap.jpg` — 상자와 번호를 그린 영상, 그림 한 장. 보는 사람이 없으면 그림은 1초에 한 장만 새로 만듭니다.
   - `/stream` 은 보는 사람마다 앞 사진이 다 나간 뒤 가장 새 사진만 보냅니다. 사진마다 JPEG 주석 `LWIR n= t= s=` (카메라 프레임 도착·보낸 때, unix 초).
   - 페이지는 `/stream?p=<페이지 id>&n=<번호>` 로 엽니다. 같은 페이지의 새 영상이 열리면 옛 영상은 닫힙니다. 코드 `src/web/stream_sender.py`
+  - 사진 한 장이 80 ms 넘게 걸리는 viewer 는 320x240 사진을 받습니다 (`LWIR_STREAM_LIGHT=0.5,60`, 끄기 `0`). 8초마다 큰 사진 한 장으로 다시 재 봅니다.
 - `/healthz` — 살아 있는지, 지연 값, 멈춘 그림 수(`frozen_frames`), 만든 그림 수(`pictures`), 보는 사람 수(`viewers`)
 - `/model` — 검출 모델 목록과 지금 쓰는 모델
 - `/rules` — 지금 설정 (추적기, Filter 값, 새 사람 확인, 외형 모델, 위치 기억, 짐벌 프로그램에 넘긴 값 `gimbal_cfg`, 검출 모델 자동 선택 `auto_det`, 두 모델 상주 `resident_det`)
