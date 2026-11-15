@@ -1,0 +1,22 @@
+{
+ "status": "상체 네모로 통일(box_refine=body) 2판 변환표 + 사람 전체 상자 고정 비율 + 크기 필터 · 장치 미확인",
+ "made": "pos_refine_20261115/body_v2 (PREREG_BODY_V2.json, written before any val-A / val-B / device number of this version): b2_table.py fit (train split only), b2_eval.py valA (filter), b2_export.py",
+ "keys": {
+  "tab": "[11, 8, 4] (dx / h, dy / h, log w ratio, log h ratio) at the cell centres, bilinear between them",
+  "lh_cen": "log detector-box height (px) of the 11 rows",
+  "ar_cen": "w / h of the 8 columns",
+  "person": "(top offset, height, width) / person box height: the whole-person -> body box constant for detectors that give whole-person boxes",
+  "euro": "size filter (min cutoff Hz, beta per log unit per s, derivative cutoff Hz)"
+ },
+ "table_rule": "train split, our two pose detectors, corrected head-to-hip targets, 402,155 pairs. Body cell (>= 20 pairs with both hips seen, median hip line in [0.9, 1.0] of the detector box) = identity; a fitted cell is kept only with >= 300 pairs (N: per-pair spread 0.078 log, design effect 16 -> standard error ~2 %), >= 5 sequences, a sequence-bootstrap 90 % interval of the height ratio narrower than x 1.15 and no contradiction with the hips; every other cell takes the nearest kept or body cell of its row.",
+ "cells": {
+  "body": 15,
+  "fit": 19,
+  "fill": 54
+ },
+ "changes_from_first_table": "every box of the body-box shape (aspect 0.55-0.80) and every box from 100 px up is identity (the first table: 0.94 height and +0.03 h to the right above 230 px, 0.60 / 0.61 at 65-100 px x aspect 0.65-0.8); whole-person cells under 100 px keep fitted 0.48-0.53 height",
+ "person_rule": "train pairs whose detection is a body box by its own hips against the dataset whole-person box (>= 60 px): median top -0.0198, height 0.5346, width 0.3313 x person HEIGHT (log MAD 0.052; x person width 0.22), n 293774; TMOT 0.538, DanceTrack 0.535 height. Project BOX_ONLY 0.531, stage 3a 0.50-0.55",
+ "family": "server: detector key with 'bodybox' (our pose detectors) -> table; any other detector -> person constant",
+ "euro_rule": "val-A grid min cutoff {0.2..8} Hz x beta {0..10}: minimise height-step p99 + per-track largest step (relative to the unfiltered converted row) subject to size lag in fast size changes >= tracker - 0.02, first-second under-size (< 0.9 of the converted height) <= 5 %, fast-growth median >= 0.90, |log h| <= unfiltered + 0.005. Chosen 1.5 Hz, beta 0.3 (J 0.566; the first version 0.4 Hz beta 0: J 0.272 but fails the lag and under-size limits)",
+ "sha256": "86e08c8864c062582a517651d49e7277e72d18ac1c97225ffc2b8e16312c792c"
+}

@@ -82,12 +82,12 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {name:'예측 제어',note:'따라갈 때만 작동 · 재시작해도 유지',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1))}]});
   const br=r.box_refine;   // 11-15 (user "2번부터 하자", "변할 때 자연스럽게"): 그리는 상자와 짐벌 조준만 다듬기 (src/track/box_refine.py), 기본 꺼짐. 11-16 (user "필요한 것만 남기자"): 끔 / 크기만 / 상체 네모 셋만
   if(br){const bm=br.mode||'off',BRN='추적기·채점·자동 선택은 원래 상자',BLT=0.3,bd=(br.modes||[]).find(x=>x.key==='body');
-    T.push({lab:'상자 다듬기',sub:'화면 상자와 짐벌 조준점만'+(bm!=='off'?' · '+br.mode_name+(br.ms!=null?' · '+Number(br.ms).toFixed(2)+' ms':''):'')+(br.why?' · '+br.why:''),n:[
+    T.push({lab:'상자 다듬기',sub:'화면 상자와 짐벌 조준점만'+(bm!=='off'?' · '+br.mode_name+(bm==='body'&&br.body_family_name?' ('+br.body_family_name+')':'')+(br.ms!=null?' · '+Number(br.ms).toFixed(2)+' ms':''):'')+(br.why?' · '+br.why:''),n:[
       {name:'끔',note:'추적기 상자 그대로',sel:bm==='off',u:Q('box_refine=off')},
       {name:'크기만 부드럽게',note:'위치·짐벌 조준점은 추적기 그대로 · 상자 크기만 천천히 바뀜(근거리↔먼 거리 바뀔 때도) · '+BRN,sel:bm==='size',u:Q('box_refine=size')}].concat(bd?[
-      {name:'상체 네모로 통일 (변환표 + 크기 부드럽게)',note:'가까이든 멀리든 머리 위~골반 한 모양 · 먼 사람 전신 상자는 상체로 바꿈 · 가까운 사람 상자는 거의 그대로(아주 가까우면 6 % 작게) · 크기는 약 1초에 걸쳐 따라감 · 관절 필요 없음 · 장치에서 아직 재지 않음 · '+BRN,sel:bm==='body',lock:bd.available?'':'변환표 파일이 없습니다',u:Q('box_refine=body')}]:[])});   // body: 서버가 모드를 알 때만 줄을 보임
+      {name:'상체 네모로 통일 (변환표 + 크기 부드럽게)',note:'가까이든 멀리든 머리 위~골반 한 모양 · 먼 사람 전신 상자는 상체로 바꿈, 가까운 사람 상자는 그대로 · 짐벌 조준점은 바꾼 상자의 조준점 그대로, 크기만 부드럽게 · 자세 검출 모델은 변환표, 다른 모델은 사람 전체 상자의 위쪽 0.53 · 모델이 바뀌어도 이어짐 · 관절 필요 없음 · 장치에서 아직 재지 않음 · '+BRN,sel:bm==='body',lock:bd.available?'':'변환표 파일이 없습니다',u:Q('box_refine=body')}]:[])});   // body: 서버가 모드를 알 때만 줄을 보임
     T.push({lab:'모델 바뀔 때 섞기',sub:'검출 모델이 바뀌면 상자를 천천히 넘김',multi:1,n:[
-      {name:br.blend_s>0?'켬 '+br.blend_s+'초':'켬 ('+BLT+'초)',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});}
+      {name:br.blend_s>0?'켬 '+br.blend_s+'초':'켬 ('+BLT+'초)',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · 끔·크기만 부드럽게에서 씀(상체 네모는 스스로 이어 줌) · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});}
   T.push({lab:'화면 표시',sub:'여러 개 켜기',multi:1,n:[   // 11-13: it draws, it does not control
     {name:'사람 후보 (공간 주파수)',note:'추적이 안 쓴 검출의 약한 상자를 공간 주파수로 다시 봄 · 사람다우면 진한 보라 miss? · 연속으로 보일 때만 · 표시만'+(r.prop&&r.prop.ms!=null?' · '+Math.round(r.prop.ms)+' ms':''),
      sel:!!r.prop_show,lock:r.prop_show==null?OLDSRV:'',u:Q('prop_show='+(r.prop_show?0:1))},   // 11-14: research feature (src/detect/spec_proposals.py)

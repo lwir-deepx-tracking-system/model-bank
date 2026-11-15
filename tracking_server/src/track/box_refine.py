@@ -14,10 +14,18 @@
         확대/축소(그 번호의 앞 프레임 뒤 카메라 움직임의 log sqrt|det H|)를 상태에 더해 카메라 배율은 거르지 않는다. 검출 모델이 바뀌어도(근거리 <-> 원거리,
         상자 정의가 다름) 상태를 그대로 두어 바뀐 크기가 시간에 걸쳐 퍼진다. 값(SIZE)은 공개 자료 val-A 에서 미리 적은 규칙으로 고른 것
         (pos_refine_20261115/v2/PREREG_V2.json, v2/v3/PREREG_V3.json).
-  body  상체 네모로 통일 (11-15 밤, 사용자: 그리는 / 짐벌에 보내는 사람 상자는 가까이든 멀리든 한 모양 = 머리 위 ~ 골반, 검출 모델은 안 바꿈).
-        추적기 행을 변환표(models/track/box_body_table_*.npz, 이름순 마지막; 상자 높이 x 가로세로 비 -> 몸 네모, 겹선형 보간; 이미 몸 네모인 상자는
-        그대로)로 바꾸고, 크기(log 가로, log 세로)만 One Euro 로 거른다(값은 파일의 euro, 없으면 BODY). 위치: 변환한 상자의 위 가장자리와 가로 중심.
-        dt = 실제 초, 카메라 배율은 거르지 않음, 검출 모델이 바뀌어도 상태 유지, 번호 넘겨받기·다시 시작 규칙은 size 와 같다.
+  body  상체 네모로 통일 (11-15 밤 첫 판, 11-16 2판; 사용자: 그리는 / 짐벌에 보내는 사람 상자는 가까이든 멀리든 한 모양 = 머리 위 ~ 골반,
+        검출 모델은 안 바꿈, 확확 변하면 안 되고 짐벌 조준이 더 늦거나 떨리면 안 됨). 규칙은 pos_refine_20261115/body_v2/PREREG_BODY_V2.json.
+        1) 바꾸기: 추적기 행을 표 파일(models/track/box_body_table_*.npz, 이름순 마지막)로 몸 네모로 바꾼다. 검출 모델 계열은 돌고 있는 검출 모델
+           이름으로 정한다: 이름에 'bodybox' 가 있으면 우리 자세 검출(100 px 위는 몸 네모, 아래는 전신 상자) -> 변환표(상자 높이 x 가로세로 비,
+           겹선형 보간; 몸 네모 모양과 100 px 위는 그대로, 작은 전신 상자는 약 절반 키). 그 밖의 검출 모델(YOLO / FLIR 등, 늘 전신 상자) -> 파일의
+           person 고정 비율(위 + top_off x h 에서 키 k_h x h, 폭 k_w x h; 학습 분할에서 잰 0.535, 0.331).
+        2) 모델이 바뀔 때(자동 선택, 두 모델 상주, 화면): 사람마다 앞 모델의 바꾸기 값에서 새 모델의 값으로, 추적기 행의 키가 앞 정의에서 새 정의로
+           옮겨 가는 만큼(칼만이 몇 프레임 걸림) 섞어 넘어간다(최대 1초, 두 정의가 같으면 바로 끝). 그래서 키와 조준점이 이어진다.
+        3) 크기만 One Euro(BODY / 파일의 euro: val-A 에서 미리 적은 규칙으로 고른 1.5 Hz, beta 0.3). 위치: 기본 'aim' = 바꾼(거르기 전) 상자의
+           짐벌 조준점(위 + aim_y x 키, aim_y 는 size 와 같이 돌고 있는 짐벌 프로그램에서 읽음)과 가로 중심을 그대로 두고 거른 크기를 그 둘레에 놓음:
+           짐벌 조준(떨림, 늦음)은 바꾼 상자의 것과 똑같다. 'top'(첫 판), 'centre' 도 고를 수 있다.
+        dt = 실제 초, 카메라 배율은 거르지 않음, 번호 넘겨받기·다시 시작 규칙은 size 와 같다. 섞기(box_blend)는 쓰지 않는다(2)가 대신함).
 섞기 (/rules/set?box_blend=초, 0 = 끔, 기본 끔): 검출 모델이 바뀌면(자동 선택, 두 모델 상주) 사람마다, 그 사람의 앞 출력이 앞 모델에서 나왔고
   3 프레임 안이며 0.15 초(낮은 프레임 속도에서는 그 사람의 앞 프레임 간격 x 2) 안이면, 앞 출력(카메라 움직임만큼 옮기고, 카메라 몫을 뺀 그 사람의
   마지막 한 프레임 움직임을 초당으로 바꿔 지난 시간만큼 앞으로 옮김)과 새 출력의 차이(중심 / 키, log 크기)를 시작할 때의 섞기 시간 동안 1 에서 0 으로
@@ -48,10 +56,21 @@ MODES = ('off', 'size', 'body')
 MODE_KO = dict(off='끔', size='크기만 부드럽게', body='상체 네모로 통일 (변환표 + 크기 부드럽게)')
 REMOVED_MODES = ('euro', 'gru', 'gru2')   # 11-16: tried on 11-15, removed (a saved choice of these becomes 'off' at startup)
 TABLE_PREFIX = 'box_body_table_'          # body mode's own table file: models/track/box_body_table_*.npz, name order last wins (a later file needs no code change)
-# body mode: size-only One Euro after the lookup conversion of the tracker row: min_cutoff Hz, beta, derivative cutoff Hz (the size part of the tuned
-# 'lookup + One Euro' of pos_refine_20261115/gru_v2/results/valA_selection.json). The table file may carry its own values ('euro').
-# anchor 'top' (the converted box's top edge and centre x stay, the filtered size hangs from the head top) or 'centre' (the converted box's centre stays).
-BODY = dict(mc_s=0.4, beta_s=0.0, dcut=1.0, anchor='top')
+# body mode (v2, 11-16, pos_refine_20261115/body_v2/PREREG_BODY_V2.json): size-only One Euro after the conversion of the tracker row: min_cutoff Hz,
+# beta (per log unit per s), derivative cutoff Hz, chosen on val-A by the pre-registered rule; the table file carries the chosen values ('euro', they win).
+# anchor 'aim' (default): the CONVERTED box's gimbal aim point top + aim_y x h and centre x stay, the filtered size is placed around it, so the
+# gimbal aims exactly where the converted (unfiltered) row aims; 'top' (the 11-16 first version: the converted top edge stays) and 'centre' selectable.
+# sw: the detector-switch transition (below) on / off (off = the first version, only for scoring).
+BODY = dict(mc_s=1.5, beta_s=0.3, dcut=1.0, anchor='aim', sw=True)   # = the committed file's euro (val-A choice, body_v2/results/valA_grid.json)
+# detector families (body): our pose detectors give a body box (head top to hips) from about 100 px up and a whole-person box below, which the table
+# maps by box height x aspect; every other detector (plain YOLO / YOLOX / FLIR models) gives a whole-person box at every size, which the file's
+# 'person' constant maps (top + top_off x h, height k_h x h, width k_w x h). The family is read from the detector key in effect: 'bodybox' in it = pose.
+POSE_MARK = 'bodybox'
+FAMILY_KO = dict(pose='자세 검출(몸 네모) 변환표', person='사람 전체 상자의 위쪽 0.535 · 가려지거나 앉은 가까운 사람은 작게 나옴(자세 검출 모델 권장)')
+# detector switch (body): per person, the conversion moves from the old detector's delta to the new detector's in step with the tracker row's own
+# height moving from the old box definition to the new one (the Kalman filter needs a few frames), so the drawn box and the aim point stay continuous
+SW_T = 1.0             # s: the transition ends at the latest after this long
+SW_SAME = 0.15         # |log h| between the new detection and the row before the switch under this: the definitions agree, no transition
 # size mode (v2, pos_refine_20261115/v2/PREREG_V2.json): One Euro on log w / log h, min_cutoff Hz, beta (per log unit per s), derivative cutoff Hz;
 # anchor 'top' (top edge + centre x of the tracker row), 'centre' or 'aim'; src 'det' (the matched detection's size) or 'trk' (the tracker row's size).
 # v3 (v2/v3/PREREG_V3.json, v2/v3/results/aim_valA.json): anchor 'aim' keeps the gimbal aim point top + aim_y x h of the tracker row exactly; the grid and
@@ -99,19 +118,34 @@ class SizeEuro:
         return self.x0, self.x1
 
 
+def det_family(key):
+    """the box family of a detector key ('bank:<file stem>' or an internal name): 'pose' (our body-box pose detectors) or 'person' (whole-person
+    boxes at every size). No key (offline use without one) = 'pose'."""
+    return 'pose' if key is None or POSE_MARK in str(key).lower() else 'person'
+
+
 class BodyTable:
     """the body mode's conversion of one models/track/box_body_table_*.npz: tab [n_h, n_ar, 4] (dx / h, dy / h, log w ratio, log h ratio) at the bin
-    centres lh_cen (log box height px) x ar_cen (w / h), read with bilinear interpolation (clamped to the centre range); euro = (mc_s, beta_s, dcut)."""
+    centres lh_cen (log box height px) x ar_cen (w / h), read with bilinear interpolation (clamped to the centre range); person = (top offset, height,
+    width) / person box height for the whole-person family (absent: the table for every detector, the first file); euro = (mc_s, beta_s, dcut)."""
     def __init__(self, w):
         g = lambda k: np.asarray(w[k], np.float64)
         self.tab, self.lh_cen, self.ar_cen = g('tab'), g('lh_cen'), g('ar_cen'); assert self.tab.shape == (len(self.lh_cen), len(self.ar_cen), 4)
         assert (np.diff(self.lh_cen) > 0).all() and (np.diff(self.ar_cen) > 0).all()
         e = tuple(float(v) for v in np.asarray(w['euro']).ravel()) if 'euro' in w else None; assert e is None or len(e) == 3
         self.body = dict(mc_s=e[0], beta_s=e[1], dcut=e[2]) if e is not None else None   # body mode's size filter, when the file gives one
-        d = self.conv_delta(np.array([[320., 256., 20., 40.], [320., 256., 180., 300.]])); assert d.shape == (2, 4) and np.isfinite(d).all()
+        self.person = tuple(float(v) for v in np.asarray(w['person']).ravel()) if 'person' in w else None
+        assert self.person is None or (len(self.person) == 3 and 0.2 < self.person[1] < 1.0 and 0.1 < self.person[2] < 1.0)
+        for fam in ('pose', 'person'):
+            d = self.conv_delta(np.array([[320., 256., 20., 40.], [320., 256., 180., 300.]]), fam); assert d.shape == (2, 4) and np.isfinite(d).all()
 
-    def conv_delta(self, z):
-        """the table read with bilinear interpolation between the bin centres -> [N,4] (dx / h, dy / h, log w ratio, log h ratio)."""
+    def conv_delta(self, z, family='pose'):
+        """-> [N,4] (dx / h, dy / h, log w ratio, log h ratio) of the body box against the boxes z [N,4] cxcywh: the table read with bilinear interpolation
+        between the bin centres (family 'pose', or any family when the file has no person constant), or the person constant (family 'person': centre x
+        kept, top + top_off x h, height k_h x h, width k_w x h)."""
+        if family == 'person' and self.person is not None:
+            to, kh, kw = self.person; h = np.maximum(z[:, 3], 1.); n = len(z)
+            return np.c_[np.zeros(n), np.full(n, -0.5 + to + kh / 2), np.log(kw * h / np.maximum(z[:, 2], 1.)), np.full(n, math.log(kh))]
         tab, lh_cen, ar_cen = self.tab, self.lh_cen, self.ar_cen; lh = np.log(np.maximum(z[:, 3], 1.)); ar = z[:, 2] / np.maximum(z[:, 3], 1.)
         i = np.clip(np.searchsorted(lh_cen, lh, 'right') - 1, 0, len(lh_cen) - 2); t = np.clip((lh - lh_cen[i]) / (lh_cen[i + 1] - lh_cen[i]), 0., 1.)[:, None]
         j = np.clip(np.searchsorted(ar_cen, ar, 'right') - 1, 0, len(ar_cen) - 2); u = np.clip((ar - ar_cen[j]) / (ar_cen[j + 1] - ar_cen[j]), 0., 1.)[:, None]
@@ -157,14 +191,17 @@ def size_box(zr, lw, lh, anchor, aim_y=AIM_Y):
 class Refiner:
     """the per-id state machine (no APP): step(list of (id, z = matched detection cxcywh[, the row's own box cxcywh]), t s, H = this frame's
     camera warp or None, det_key, new_det_ready) -> {id: box cxcywh}. Mode 'off' (blend only) and 'size' take the position from the row's own box,
-    'body' converts the row's own box with the table. The state of id k after a step is self.tr[k] ('k' = rows since that state started,
-    'new' = started on this frame, 'hs' = camera warp since the id's previous frame or None)."""
+    'body' converts the row's own box (table or person constant by the detector family; a matched detection is z itself, an unmatched row passes
+    z = the row object). The state of id k after a step is self.tr[k] ('k' = rows since that state started, 'new' = started on this frame,
+    'hs' = camera warp since the id's previous frame or None, body: 'dl' the conversion delta used, 'lr' the row's log height, 'tw' a running
+    detector-switch transition [delta0, log h0, t0, progress]). family_of(det_key) -> 'pose' | 'person' (det_family; scoring may replace it)."""
     def __init__(self, mode, table=None, blend_s=0.0, size=None, aim_y=AIM_Y, body=None):
         self.mode = mode; self.table = table; self.size = dict(SIZE, **(size or {})); self.blend_s = float(blend_s)
         self.aim_y = float(aim_y)   # the gimbal's aim point (size anchor 'aim'); apply() sets the running bridge's value every frame
         self.tr = {}; self.frame = 0; self.eff_key = None; self.blends = 0; self.handovers = 0
         self.body = dict(BODY, **((table.body if table is not None and getattr(table, 'body', None) else None) or {}))   # the file's values win over BODY
         if body: self.body.update(body)                                                                                 # ... and an explicit choice over both (scoring)
+        self.family_of = det_family; self.switches = 0
 
     @staticmethod
     def _recent_s(st):
@@ -192,7 +229,8 @@ class Refiner:
         cur = set(it[0] for it in items)
         gone = [k for k, s in self.tr.items() if s['f'] == fr - 1 and k not in cur] if self.tr else []
         work = []
-        fresh = lambda z_: dict(f=fr, t=t, z=z_, se=None, Hacc=None, out=None, out1=None, f1=None, t1=None, bl=None, dk=None, k=-1, new=True, hs=None)
+        fresh = lambda z_: dict(f=fr, t=t, z=z_, se=None, Hacc=None, out=None, out1=None, f1=None, t1=None, bl=None, dk=None, k=-1, new=True, hs=None,
+                                dl=None, lr=None, tw=None)
         for it in items:   # 1) every person: whose state (hand-over, reset)
             tid, z = it[0], it[1]; zr = it[2] if len(it) > 2 and it[2] is not None else z; st = self.tr.get(tid)
             if gone and (st is None or st['f'] != fr - 1):   # hand-over: KeepID gave the person another id this frame
@@ -211,16 +249,34 @@ class Refiner:
             else:
                 st['new'] = False
             work.append((tid, z, zr, st, Hs))
-        conv = None
-        if self.mode == 'body' and self.table is not None and work:   # body: the lookup conversion of every tracker row in one call
-            ZR = np.array([w_[2] for w_ in work], np.float64).reshape(-1, 4); ZR[:, 2:] = np.maximum(ZR[:, 2:], 1.); d_ = self.table.conv_delta(ZR)
-            conv = np.c_[ZR[:, 0] + d_[:, 0] * ZR[:, 3], ZR[:, 1] + d_[:, 1] * ZR[:, 3] - ZR[:, 3] * np.exp(d_[:, 3]) / 2, np.log(ZR[:, 2]) + d_[:, 2], np.log(ZR[:, 3]) + d_[:, 3]].tolist()   # cx, top, log w, log h
+        D = None
+        if self.mode == 'body' and self.table is not None and work:   # body: the conversion of every tracker row (and matched detection) in one call
+            fam = self.family_of(self.eff_key)
+            ZR = np.array([w_[2] for w_ in work], np.float64).reshape(-1, 4); ZR[:, 2:] = np.maximum(ZR[:, 2:], 1.); D = self.table.conv_delta(ZR, fam)
+            DZ = D
+            if any(w_[3]['tw'] is not None or (w_[3]['dk'] is not None and w_[3]['dk'] != self.eff_key) for w_ in work):   # a switch transition: the matched detections too
+                Z_ = np.array([w_[1] for w_ in work], np.float64).reshape(-1, 4); Z_[:, 2:] = np.maximum(Z_[:, 2:], 1.); DZ = self.table.conv_delta(Z_, fam)
         for i, (tid, z, zr, st, Hs) in enumerate(work):   # 2) every person: the box
-            if conv is not None:   # centre x, top edge of the converted box; (log w, log h) of it through the size filter
-                p = self.body; cx_, top_, lw, lh = conv[i]; hc_ = math.exp(lh)
+            if D is not None:
+                p = self.body; d = D[i]; ls_ = log_scale(Hs); lr = math.log(max(zr[3], 1.))
+                if p.get('sw', True):   # detector switch: follow the row's own move from the old box definition to the new one
+                    if (st['dk'] is not None and self.eff_key is not None and st['dk'] != self.eff_key and st['out'] is not None and st['dl'] is not None
+                            and fr - st['f'] <= BLEND_RECENT and t - st['t'] <= self._recent_s(st)):
+                        st['tw'] = [np.array(st['dl']), st['lr'] + ls_, t, 0.0]; self.switches += 1
+                    elif st['tw'] is not None: st['tw'][1] += ls_   # the camera zoom since the previous row moves the old height too
+                    if st['tw'] is not None:
+                        d0, lh0, t0, a = st['tw']; matched = z is not zr; lz = math.log(max(z[3], 1.))
+                        if abs(lz - lh0) < SW_SAME or t - t0 >= SW_T: a = 1.0
+                        elif matched: a = max(a, min(max((lr - lh0) / (lz - lh0), 0.0), 1.0))
+                        if a >= 1.0: st['tw'] = None   # the row is in the new definition: its own conversion from here on
+                        else: d = (1.0 - a) * d0 + a * (DZ[i] if matched else d); st['tw'][3] = a
+                st['dl'] = np.array(d); st['lr'] = lr
+                hc_ = zr[3] * math.exp(d[3]); cx_ = zr[0] + d[0] * zr[3]; cy_ = zr[1] + d[1] * zr[3]; top_ = cy_ - hc_ / 2
                 if st['se'] is None: st['se'] = SizeEuro(p['mc_s'], p['beta_s'], p['dcut'])
-                lw, lh = st['se'].step(lw, lh, t - st['t'] if st['out'] is not None else 0.04, log_scale(Hs)); h_ = math.exp(lh)
-                b = np.array([cx_, top_ + (h_ if p.get('anchor', 'top') == 'top' else hc_) / 2, math.exp(lw), h_])
+                lw, lh = st['se'].step(math.log(max(zr[2], 1.)) + d[2], math.log(hc_), t - st['t'] if st['out'] is not None else 0.04, ls_); h_ = math.exp(lh)
+                an = p.get('anchor', 'aim')   # 'aim': the converted box's aim point top + aim_y x h stays; 'top': its top edge; 'centre': its centre
+                tf = top_ + self.aim_y * (hc_ - h_) if an == 'aim' else top_ if an == 'top' else cy_ - h_ / 2
+                b = np.array([cx_, tf + h_ / 2, math.exp(lw), h_])
             elif self.mode == 'size':
                 p = self.size; src = z if p['src'] == 'det' else zr
                 if st['se'] is None: st['se'] = SizeEuro(p['mc_s'], p['beta_s'], p['dcut'])
@@ -228,12 +284,12 @@ class Refiner:
                 b = size_box(zr, lw, lh, p['anchor'], self.aim_y)
             else:   # off (blend only), or body without a table: the box the tracker draws today
                 b = np.asarray(zr, np.float64).copy()
-            if (self.blend_s > 0 and st['dk'] is not None and self.eff_key is not None and st['dk'] != self.eff_key and st['out'] is not None
+            if (self.blend_s > 0 and self.mode != 'body' and st['dk'] is not None and self.eff_key is not None and st['dk'] != self.eff_key and st['out'] is not None
                     and fr - st['f'] <= BLEND_RECENT and t - st['t'] <= self._recent_s(st)):   # this person's previous output came from the other detector: blend from it
                 prev = self._carry(st, Hs, t); off = blend_off(prev, b)
                 if self.mode == 'size': off[:2] = 0.0   # size mode: the position stays the tracker row's; only the size is blended
                 st['bl'] = (off, t, self.blend_s); self.blends += 1
-            if st['bl'] is not None:
+            if st['bl'] is not None and self.mode != 'body':   # body has its own switch transition (above); box_blend serves off / size
                 off, t0, dur = st['bl']; a = 1.0 - (t - t0) / dur   # the duration the blend started with: a new blend time does not move the box back
                 if a <= 0 or self.blend_s <= 0: st['bl'] = None
                 elif self.mode == 'size': b = size_box(zr, lw + a * off[2], lh + a * off[3], self.size['anchor'], self.aim_y)
@@ -387,6 +443,8 @@ def state():
     return dict(mode=BR['mode'], mode_name=MODE_KO.get(BR['mode']), blend_s=BR['blend_s'],
                 modes=[dict(key=k, name=MODE_KO[k], available=(m is not None) if k == 'body' else True) for k in MODES],
                 size=dict(SIZE), body=dict(BODY, **((m.body if m is not None else None) or {})), body_file=BR['tfile'], body_note=BR['tnote'],
+                body_family=det_family(getattr(_app('args'), 'det', None)), body_family_name=FAMILY_KO.get(det_family(getattr(_app('args'), 'det', None))) if m is not None and m.person is not None else FAMILY_KO['pose'],
+                body_switches=getattr(obj, 'switches', 0) if obj is not None else 0,
                 ms=round(BR['ms'], 3), ms_max=round(BR['ms_max'], 3), ms_track=round(BR['ms_track'], 3),
                 tracks=len(obj.tr) if obj is not None else 0, people=BR['n'], frames=BR['frames'], blends=BR['blends'], handovers=BR['handovers'], why=BR['why'],
                 err=BR['err'], errors=BR['errors'], errors_all=BR['errors_all'])
