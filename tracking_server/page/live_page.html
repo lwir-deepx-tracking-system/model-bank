@@ -955,12 +955,11 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const tn=ps.filter(p=>!BT_KEYS.includes(p.key)).map(p=>({key:p.key,name:tname(p.key)+' · '+(curEngine(p)&&eng==='python'?'Python':(p.backend||'백엔드 미보고')),note:p.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':TN[p.key]?TN[p.key][1]:'',sel:!replayStored&&!cpp&&!camTransition&&p.key===trk,u:Q('tracker='+encodeURIComponent(p.key)+'&engine=auto')}));
   if(bt)tn.unshift({key:'bytetrack',name:'ByteTrack · '+(camNative?.available?'C++':'Python'),note:camNative?.available?'C++ 라이브러리가 있어 C++로 시작합니다. Python은 아래 ByteTrack 옵션에서 고릅니다':'',sel:!replayStored&&btSelected,u:Q('tracker='+encodeURIComponent(bt.key)+'&engine=auto')});
   const trackerSummary=replayStored?'녹화: 저장된 결과 표시 중 · 이 줄의 추적기와 무관':camTransition?'카메라 추적기 전환 중 · 다음 프레임 대기':camCppControl?'C++ · 화면과 짐벌에서 같은 ID 사용':camCpp?'화면 박스·ID: C++ · 짐벌: '+engine:'실제 실행 엔진: '+engine;
-  // 11-14 (user): end-to-end models (MOTIP, FastTrackTr: detection + tracking in one model) get their own first row (built
-  // here, put on top at the end); stored results, recording only, and only for recordings that have them
-  const recItem=recording?(rpList||[]).find(x=>x.name===recording.name):null,recTracks=((recItem&&recItem.tracks)||[]).map(x=>x.id);
-  const e2e=((rpLast&&rpLast.backends)||[]).filter(b=>b.stored).map(b=>({key:b.id,name:String(b.label||b.id).replace(/\s*\(저장된 결과\)$/,''),
-    note:'미리 계산한 결과 · 녹화 재생 전용',sel:replayStored&&recording.backend===b.id,replayBackend:b.id,
-    lock:!recording?'녹화 재생 중에만 고를 수 있습니다 (실시간 카메라에는 아직 못 씀)':!recTracks.includes(b.id)?'이 녹화에는 미리 계산한 결과가 없습니다':''}));
+  // 11-14 (user): end-to-end models (detection + tracking in one model) get their own first row (built here, put on top at the end).
+  // 11-15 (user: "실시간 카메라에 못 쓰는 MOTIP 은 빼고, FastTrackTr 도 다 실시간에 가능해야"): only models that run live are offered.
+  // Stored results (pre:<key>, precomputed on a PC, recordings only: MOTIP, older FastTrackTr) are no longer listed on the page;
+  // the server still plays one when /replay/start is asked for it directly (research scoring), and the rows below still show that state.
+  const e2e=[];
   const el=r.e2e_live;   // 11-14 (user): live FastTrackTr (camera and recordings, server tracker = this model)
   if(el&&el.available)e2e.push({key:'e2e_live_ftt',name:(el.label||'FastTrackTr')+' · 실시간',note:'장치 NPU 에서 매 프레임 실행'+(el.ms?' · '+el.ms+' ms':'')+(el.link_used?' · 번호 잇기: '+(el.link_used==='id'?'모델 번호 출력 + 겹침':'겹침만'):'')+(el.err?' · '+el.err:''),sel:el.on==='ftt'||el.want==='ftt',u:Q('e2e_live=ftt')});
   const E2E=e2e.length?{lab:'엔드투엔드',sub:replayStored?'사용 중 · 아래 검출 모델과 Tracker 줄은 쓰이지 않음':'검출부터 추적까지 한 모델 · 끔이면 아래 검출 + Tracker 사용',
@@ -1428,10 +1427,10 @@ function rpEnded(st){return !!(st&&st.on&&!st.loop&&!st.seeking&&st.total>0&&st.
 function rpItem(n){return rpList.find(x=>x.name===n)||null;}
 // 11-13: the name of what is playing comes first (state.backend_label exists only while a stored result plays; one key may carry another label in another recording)
 function rpBackendLabel(id,r){const b=(r&&Array.isArray(r.backends)?r.backends:[]).find(x=>x.id===id),st=r&&r.state;return (st&&st.backend===id&&st.backend_label)||b&&b.label||({python:'현재 추적기',cpp_bytetrack:'C++ ByteTrack'}[id]||id||'현재 추적기');}
-function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state,base=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';RPNOTE.textContent=[base,it&&it.tracks_note].filter(Boolean).join(' · ');}
-// 11-13: the tracker selector offers the trackers every recording has, plus the stored results (pre:<key>) of the SELECTED recording only
-function rpBackendsFor(r){const all=r&&Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}],it=rpItem(RPSEL.value);
-  return all.filter(x=>!x.stored).concat(it&&Array.isArray(it.tracks)?it.tracks:[]);}
+function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state,base=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';RPNOTE.textContent=base;}   // 11-15: no stored-result note (not offered)
+// 11-13: the tracker selector offers the trackers every recording has. 11-15 (user): stored results (pre:<key>, precomputed, not live) are no longer offered
+function rpBackendsFor(r){const all=r&&Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}];
+  return all.filter(x=>!x.stored);}
 function rpFillBackends(r){const backends=rpBackendsFor(r),backendKeys=backends.map(x=>x.id+'|'+x.label).join('\n');
   if(backendKeys===rpBackendKeys)return;
   const keep=RPBACK.value;rpBackendKeys=backendKeys;RPBACK.innerHTML=backends.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.label)+'</option>').join('');
@@ -1611,7 +1610,7 @@ function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=RRETURN.disabled=tr
 async function rpUseTracker(backend){
   const st=rpLast?.state;
   if(rpBusy||!st?.on||st.busy||!rpLast.backends?.some(b=>b.id===backend))return;
-  const stored=String(backend).startsWith('pre:');   // 11-14: a stored result (MOTIP) is picked without a question, like '재생 시작'
+  const stored=String(backend).startsWith('pre:');   // 11-14: a stored result is picked without a question (11-15: the page no longer offers them; kept for a state set through the API)
   if(!stored&&!confirm('이 녹화를 ByteTrack '+(backend==='cpp_bytetrack'?'C++':'Python')+'으로 처음부터 다시 재생할까요?'))return;
   if(backend==='python'&&!BT_KEYS.includes(pend(rlast,'tracker'))){
     const preset=rlast.presets.find(p=>(p.key||p[0])==='confirm3'||(p.key||p[0])==='bytetrack');

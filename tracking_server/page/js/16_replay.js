@@ -8,10 +8,10 @@ function rpEnded(st){return !!(st&&st.on&&!st.loop&&!st.seeking&&st.total>0&&st.
 function rpItem(n){return rpList.find(x=>x.name===n)||null;}
 // 11-13: the name of what is playing comes first (state.backend_label exists only while a stored result plays; one key may carry another label in another recording)
 function rpBackendLabel(id,r){const b=(r&&Array.isArray(r.backends)?r.backends:[]).find(x=>x.id===id),st=r&&r.state;return (st&&st.backend===id&&st.backend_label)||b&&b.label||({python:'현재 추적기',cpp_bytetrack:'C++ ByteTrack'}[id]||id||'현재 추적기');}
-function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state,base=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';RPNOTE.textContent=[base,it&&it.tracks_note].filter(Boolean).join(' · ');}
-// 11-13: the tracker selector offers the trackers every recording has, plus the stored results (pre:<key>) of the SELECTED recording only
-function rpBackendsFor(r){const all=r&&Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}],it=rpItem(RPSEL.value);
-  return all.filter(x=>!x.stored).concat(it&&Array.isArray(it.tracks)?it.tracks:[]);}
+function rpNote(){const it=rpItem(RPSEL.value),st=rpLast&&rpLast.state,base=st&&st.on&&st.note?st.note:it&&it.note?it.note:'';RPNOTE.textContent=base;}   // 11-15: no stored-result note (not offered)
+// 11-13: the tracker selector offers the trackers every recording has. 11-15 (user): stored results (pre:<key>, precomputed, not live) are no longer offered
+function rpBackendsFor(r){const all=r&&Array.isArray(r.backends)&&r.backends.length?r.backends:[{id:'python',label:'현재 추적기'}];
+  return all.filter(x=>!x.stored);}
 function rpFillBackends(r){const backends=rpBackendsFor(r),backendKeys=backends.map(x=>x.id+'|'+x.label).join('\n');
   if(backendKeys===rpBackendKeys)return;
   const keep=RPBACK.value;rpBackendKeys=backendKeys;RPBACK.innerHTML=backends.map(x=>'<option value="'+esc(x.id)+'">'+esc(x.label)+'</option>').join('');
@@ -191,7 +191,7 @@ function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=RRETURN.disabled=tr
 async function rpUseTracker(backend){
   const st=rpLast?.state;
   if(rpBusy||!st?.on||st.busy||!rpLast.backends?.some(b=>b.id===backend))return;
-  const stored=String(backend).startsWith('pre:');   // 11-14: a stored result (MOTIP) is picked without a question, like '재생 시작'
+  const stored=String(backend).startsWith('pre:');   // 11-14: a stored result is picked without a question (11-15: the page no longer offers them; kept for a state set through the API)
   if(!stored&&!confirm('이 녹화를 ByteTrack '+(backend==='cpp_bytetrack'?'C++':'Python')+'으로 처음부터 다시 재생할까요?'))return;
   if(backend==='python'&&!BT_KEYS.includes(pend(rlast,'tracker'))){
     const preset=rlast.presets.find(p=>(p.key||p[0])==='confirm3'||(p.key||p[0])==='bytetrack');
