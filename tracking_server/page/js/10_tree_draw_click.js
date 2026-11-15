@@ -26,8 +26,8 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const am=one(R('외형 모델')),ap=one(R('외형 비교')),kp=one(R('KeepID'));
   // 11-13 (design review 3): one line per stage, label + value (it was one long arrow chain)
   const e2eOn=one(R('엔드투엔드')),e2eUse=!!(e2eOn&&e2eOn!=='끔');   // 11-14: an end-to-end model replaces detection + tracker
-  const a=(e2eUse?[['엔드투엔드',e2eOn]]:[]).concat([['전처리',pre.length?pre.join(' + '):'없음'],['검출',e2eUse?'– (엔드투엔드 사용 중)':(one(R('검출 모델'))||'–')+(one(R('검출 모델 자동 선택'))==='켬'?' · 자동 선택':'')],
-    ['Filter',flt.length?flt.join(' + '):'없음'],['Tracker',e2eUse?'– (엔드투엔드 사용 중)':one(R('Tracker'))||tname(trk)]]);
+  const a=(e2eUse?[['엔드투엔드',e2eOn]]:[]).concat((pre.length?[['전처리',pre.join(' + ')]]:[]).concat([['검출',e2eUse?'– (엔드투엔드 사용 중)':(one(R('검출 모델'))||'–')+(one(R('검출 모델 자동 선택'))==='켬'?' · 자동 선택':'')],
+    ['Filter',flt.length?flt.join(' + '):'없음'],['Tracker',e2eUse?'– (엔드투엔드 사용 중)':one(R('Tracker'))||tname(trk)]]));
   if(trk==='botsort')a.push(['외형 비교',ap==='끔'?'끔':(am||ap||'–')]);
   a.push(['위치 기억',one(R('위치 기억 · 신뢰도'))||'Kalman filter'],['KeepID',kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'],['제어',ctl.length?ctl.join(' + '):'수동']);
   const sh=a.map(([k,v])=>'<b>'+esc(k)+'</b><span>'+wn(v)+'</span>').join('');if(OS.innerHTML!==sh)OS.innerHTML=sh;}

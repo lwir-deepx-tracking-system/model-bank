@@ -127,5 +127,9 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     const off=new Set();T.forEach((t,i)=>{if(OFF.includes(t.lab)||/ 엔진$/.test(t.lab))off.add(i);});
     T.forEach((t,i)=>{if(off.has(i)||(t.kidOf!=null&&off.has(t.kidOf))){t.sub=(e2eLive?'엔드투엔드 사용 중':'엔드투엔드 결과 재생 중')+' · 쓰이지 않음';(t.n||[]).forEach(n=>{n.lock=why;n.sel=false;});}
       if(t.lab==='화면 표시')(t.n||[]).forEach(n=>{if(n.name==='사람 후보 (공간 주파수)'||n.name==='예측 상자 표시'){n.lock=why;n.sel=false;}});});}
+  // 11-16 (user: 무의미한 옵션은 지움): hidden from the page, the server keeps them off. 흔들림 보정 does almost nothing while following and turns picture first off;
+  // 사람 후보 (공간 주파수) gave no sure gain; 피부 온도: this camera (TE-EV1) gives no temperatures. The code stays (set /rules/set?stab=1 etc. by hand to try again).
+  {const HIDE=['흔들림 보정','사람 후보 (공간 주파수)','피부 온도 (카메라 온도)'];T.forEach(t=>{if(t.n)t.n=t.n.filter(n=>!HIDE.includes(n.name));});
+    const i=T.findIndex(t=>t.lab==='전처리');if(i>=0&&!T[i].n.length){T.splice(i,1);T.forEach(t=>{if(t.kidOf!=null&&t.kidOf>i)t.kidOf--;});}}
   if(E2E){T.forEach(t=>{if(t.kidOf!=null)t.kidOf++;});T.unshift(E2E);}   // 11-14: first row; child rows keep pointing at their parent
   return T;}
