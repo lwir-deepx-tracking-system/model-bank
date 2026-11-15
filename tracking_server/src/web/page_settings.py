@@ -156,7 +156,10 @@ def rules_request(q_):
         except (ValueError, IndexError): return False, '숫자가 아님'
     if 'lead' in q_ and q_['lead'][0] in ('1', 'true', 'on'):
         try: gb_ok_ = APP.GB is not None
-        except NameError: gb_ok_ = False
+        except (NameError, AttributeError): gb_ok_ = False
+        if not gb_ok_:
+            try: gb_ok_ = bool(APP.sel_restoring and APP.args.gimbal)
+            except (NameError, AttributeError): gb_ok_ = False   # 11-15: the saved choice is restored at start before the gimbal link exists; with --gimbal given the link comes right after (before this, every restart dropped 예측 제어)
         if not gb_ok_: return False, '짐벌이 연결되지 않음'
     if 'warm_on' in q_ and 'warm_min' not in q_ and 'warm_max' not in q_:   # v40: 온도 Filter on / off; the numbers are remembered while it is off
         if q_['warm_on'][0] in ('1', 'true', 'on'):

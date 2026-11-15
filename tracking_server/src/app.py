@@ -335,8 +335,10 @@ def main():
         if 'resident_det' in APP.SEL: qs_.append({'resident_det': ['1' if APP.SEL['resident_det'] else '0']})   # 11-15: two detector models resident (the other pair is made by the frame loop)
         for q_ in qs_:
             if not q_: continue
+            APP.sel_restoring = True   # 11-15: lets a saved lead=1 through before the gimbal link exists (page_settings)
             try: ok_, tx_ = APP.rules_request(q_)
             except Exception as e_: ok_, tx_ = False, repr(e_)[:120]
+            finally: APP.sel_restoring = False
             if not ok_:
                 if 'auto_det' in q_: APP.SEL.pop('auto_det_p', None)
                 for k_ in q_: APP.SEL.pop(k_, None)
