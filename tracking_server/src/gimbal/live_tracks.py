@@ -351,16 +351,15 @@ def _seek_locked(gb, g, d, selected, frame_t, kal, on_guard, v2):
     except ValueError: sy = .5
     ay = _bridge_aim_y(gb)
     can = (not on_guard) or (v2 and bool(g.tmpl))
-    if getattr(g, 'partners', None):   # another box was on ours when it went missing: someone is right there
-        sk.near = max(sk.near, 1)
     box, st = sk.step(frame_t, g.age(frame_t), g.trust, (g.vx, g.vy), kal, g.pred, _motion, (float(APP.LIVE_W), float(APP.LIVE_H)),
-                      (APP.LIVE_W / 2., sy * APP.LIVE_H), .5 if ay is None else ay, hidden=bool(d['mask']), can_reaccept=can)
+                      (APP.LIVE_W / 2., sy * APP.LIVE_H), .5 if ay is None else ay, hidden=bool(d['mask']), can_reaccept=can, people=gb.people)
     if v2:   # the same number may come back anywhere in the displayed circle, by appearance (not in a crowd)
         g.wide = (st['c'][0], st['c'][1], st['r']) if st['phase'] not in ('crowd', 'blind') else None
     if st['phase'] != getattr(gb, 'seek_phase', None):
         gb.seek_phase = st['phase']
         if st['phase'] in ('sweep', 'return', 'crowd', 'blind'):
-            print('SEEK %d: %s (circle %.0f px, sweep +-%.0f px, %d near, %d others)' % (selected, st['phase'], st['r'], st['a'], st['near'], st['others']), flush=True)
+            print('SEEK %d: %s (circle %.0f px, sweep +-%.0f px; when last trusted %d near, %d others; now %d near, %d others)'
+                  % (selected, st['phase'], st['r'], st['a'], st['near'], st['others'], st['now_near'], st['now_others']), flush=True)
     gb.state['seek'] = [st['ph'], st['c'][0], st['c'][1], st['r'], st['a'], st['pan'], st['to']]
     return box
 

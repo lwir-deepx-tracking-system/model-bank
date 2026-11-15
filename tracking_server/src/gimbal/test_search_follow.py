@@ -154,6 +154,39 @@ class PatternTests(unittest.TestCase):
                                   near=[person(8, 500.), person(9, 560.), person(10, 620.)])   # three others in the picture
         self.assertEqual((seek.sweeps, cam.pan), (0, 0.))
 
+    def test_a_second_box_on_the_person_at_the_loss_does_not_block_the_sweep(self):
+        """11-16 device smoke runs: at an exit the detector often puts a second box on the same person (also in a scene with
+        one person). Such an overlapping box is not 'another person near'."""
+        seek = S.Seek(7)
+        seek.seen((330., 240., 90., 240.), [person(7, 330.), person(8, 345., h=200.)], partners={8})
+        self.assertEqual((seek.near, seek.others, seek.crowd()), (0, 0, False))
+        seek, cam, out = run_loss(3.0, x0=330., vx=60., seek=seek)
+        self.assertEqual(seek.sweeps, 1)
+
+    def test_someone_in_the_picture_near_the_predicted_place_pauses_the_sweep_and_the_turn_back_is_still_made(self):
+        cam, seek = Camera(), S.Seek(7)
+        trust = (330., 240., 90., 240.)
+        seek.seen(trust, [person(7, 330.)])
+        box, phases, pans = None, [], []
+        for k in range(int(5.0 / DT)):
+            t = cam.step(box)
+            age = t - 100.
+            visitor = [person(9, 700. - cam.pan)] if 1.5 <= age < 2.2 else []     # walks into the picture for 0.7 s
+            box, st = seek.step(t, age, trust, (60., 0.), None, None, cam.motion, (W, H), AIM, .5, people=visitor)
+            phases.append((age, st['phase'], box is not None)); pans.append(cam.pan)
+        self.assertTrue(all(ph == 'sweep' and b for a, ph, b in phases if 0.9 < a < 1.5))
+        self.assertTrue(all(ph == 'crowd' and not b for a, ph, b in phases if 1.5 + 4 * DT < a < 2.2))   # after 3 frames: paused
+        self.assertTrue(any(ph == 'sweep' for a, ph, b in phases if 2.3 < a < 2.9))                        # gone: it goes on
+        self.assertEqual(phases[-1][1], 'wait')
+        self.assertLessEqual(abs(pans[-1] - 0.), S.LEG_TOL + 5)                                            # back at the predicted place
+        cam, seek = Camera(), S.Seek(7)
+        seek.seen(trust, [person(7, 330.)])
+        box = None
+        for k in range(int(4.0 / DT)):   # someone stands there the whole time: never a sweep
+            t = cam.step(box)
+            box, st = seek.step(t, t - 100., trust, (60., 0.), None, None, cam.motion, (W, H), AIM, .5, people=[person(9, 520. - cam.pan)])
+        self.assertEqual((cam.pan, seek.sweeps), (0., 0))
+
     def test_a_hidden_number_or_one_that_could_not_be_taken_back_means_no_sweep(self):
         for kw in (dict(hidden=True), dict(can_reaccept=False)):
             seek, cam, out = run_loss(4.0, x0=330., vx=60., **kw)
