@@ -42,7 +42,7 @@ import time
 from ..common.state import APP
 
 NEAR_KEY = 'yolo26m_pose_otp2cocomot_20261114_bodybox_occl_kpt_640x480'
-FAR_KEY = 'yolo26m_pose_otp2cocomotllvip_20261115_bodybox_far_kpt_640x480'
+FAR_KEY = 'yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480'   # 11-15: replaced R1 (yolo26m_pose_otp2cocomotllvip_20261115_bodybox_far_kpt_640x480), better indoors and far
 # reasons for every default: research_model_selection_20261115/RECOMMENDATION.md + the plan README section 8 (model bank lwir_pose_plan)
 PARAMS = dict(far_px=100.0, near_px=140.0, hold_s=1.0, dwell_s=5.0, empty_hold_s=3.0, min_score=0.25,
               lost_s=0.5, lost_occl_s=3.0, median_s=1.0, edge_px=3.0, kpt_min=12.0, kpt_seen=3.0, kpt_vis=0.5,
