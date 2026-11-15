@@ -932,7 +932,7 @@ def main():
         secs = time.monotonic() - t_start
         if APP.tracker is not None:
             for k_, a_ in (('motion', 'rebinds_motion'), ('appearance', 'rebinds_app'), ('cand_frames', 'cand_frames'), ('cand_crops', 'cand_crops'), ('sync_frames', 'sync_frames'), ('sync_crops', 'sync_crops')):
-                reb_tot[k_] += getattr(APP.tracker, a_)
+                reb_tot[k_] += getattr(APP.tracker, a_, 0)   # 11-15: the native OC-SORT tracker has no cand_frames; without the default every exit (also a page restart) ended with status 1
         res = dict(status='DONE', mode=tag, det=APP.args.det, det_models=APP.det_names, pipeline=APP.args.pipeline, tracker=APP.args.tracker, vit_model=(APP.args.vit if use_vit else None), vit_every=APP.args.vit_every, k=APP.args.k, sim=APP.args.sim,
                    app_first=APP.args.app_first, vit_sync=APP.args.vit_sync, sync_k=APP.args.sync_k, hybrid_fallback=APP.args.hybrid_fallback, frames=len(APP.rows), mock=APP.args.mock,
                    period_ms=summ('period_ms'), latency_ms=summ('latency_ms'), det_wait_ms=summ('pre_model_ms'), nms_ms=summ('nms_ms'), read_ms=summ('read_ms'),
