@@ -1,0 +1,83 @@
+// 11-15 (user: 화면 전송 지연, "카메라 프레임 수준인가"): the picture stream is read with fetch, so the page knows when each picture
+// arrived and its camera time (JPEG comment 'LWIR n= t= s= [l=1]', src/web/stream_sender.py). Each picture is shown in the same
+// <img id="v"> through a blob URL, so clicks and overlays are unchanged; while the browser still decodes one picture only the
+// newest waiting one is kept. Browsers without streamed fetch keep <img src="/stream">.
+const streamFetch=typeof fetch==='function'&&typeof AbortController==='function'&&typeof ReadableStream==='function'&&!!(window.Response&&'body' in Response.prototype);
+const PS={gen:0,ctl:null,on:false,url:null,old:null,busy:false,next:null,info:null};
+const PS_BOUNDARY=[13,10,45,45,102,114,97,109,101,13,10],PS_HEAD_END=[13,10,13,10];   // '\r\n--frame\r\n', '\r\n\r\n'
+function streamRunning(){return PS.on;}
+function streamStart(url){
+  streamStop();PS.on=true;
+  if(!streamFetch){v.src=url;return;}
+  const gen=PS.gen,ctl=new AbortController();PS.ctl=ctl;
+  fetch(url,{cache:'no-store',signal:ctl.signal})
+    .then(r=>{if(!r.ok||!r.body)throw new Error('stream '+r.status);return psRead(r.body.getReader(),gen);})
+    .catch(()=>{})
+    .finally(()=>{if(gen!==PS.gen||!PS.on)return;PS.on=false;   // the stream ended or failed (server restart, network): open it again in 2 s
+      setTimeout(()=>{if(gen===PS.gen&&!document.hidden)openStream();},2000);});
+}
+function streamStop(){PS.gen++;PS.on=false;if(PS.ctl){PS.ctl.abort();PS.ctl=null;}PS.next=null;
+  if(!streamFetch&&v.hasAttribute('src'))v.removeAttribute('src');}   // fetch: the last picture stays on screen
+function psFind(b,p,from){const last=b.length-p.length;
+  for(let i=b.indexOf(p[0],from);i>=0&&i<=last;i=b.indexOf(p[0],i+1)){let k=1;while(k<p.length&&b[i+k]===p[k])k++;if(k===p.length)return i;}
+  return -1;}
+async function psRead(rd,gen){
+  let buf=new Uint8Array(0),start=-1,pos=0;   // start: the first byte of the current picture (after its part headers)
+  for(;;){
+    const {done,value}=await rd.read();
+    if(done||gen!==PS.gen)return;
+    const nb=new Uint8Array(buf.length+value.length);nb.set(buf);nb.set(value,buf.length);buf=nb;
+    for(;;){
+      if(start<0){const h=psFind(buf,PS_HEAD_END,0);if(h<0)break;start=h+4;pos=start;continue;}   // the first part's headers
+      const b=psFind(buf,PS_BOUNDARY,pos);
+      if(b<0){pos=Math.max(start,buf.length-PS_BOUNDARY.length);break;}
+      const h=psFind(buf,PS_HEAD_END,b+2);
+      if(h<0){pos=b;break;}   // the next part's headers are not complete yet
+      psShow(buf.slice(start,b));
+      start=h+4;pos=start;
+    }
+    if(start>0){buf=buf.slice(start);pos-=start;start=0;}
+  }
+}
+function psInfo(j){   // the numbers of the 'LWIR ...' JPEG comment, {} if there is none
+  for(let i=2;i+4<=j.length&&j[i]===255&&j[i+1]!==0xDA;){const n=(j[i+2]<<8)|j[i+3];
+    if(j[i+1]===0xFE&&j[i+4]===76&&j[i+5]===87&&j[i+6]===73&&j[i+7]===82){const o={};
+      for(const kv of String.fromCharCode.apply(null,j.subarray(i+9,i+2+n)).split(' ')){const e=kv.indexOf('=');if(e>0)o[kv.slice(0,e)]=Number(kv.slice(e+1));}
+      return o;}
+    i+=2+n;}
+  return {};}
+function psShow(j){const info=psInfo(j);if(PS.busy){PS.next=[j,info];return;}psPaint(j,info);}
+function psPaint(j,info){PS.busy=true;PS.info=info;PS.old=PS.url;PS.url=URL.createObjectURL(new Blob([j],{type:'image/jpeg'}));v.src=PS.url;}
+function psDone(ok){if(!streamFetch||!PS.busy)return;PS.busy=false;
+  if(PS.old){URL.revokeObjectURL(PS.old);PS.old=null;}
+  if(ok){const i=PS.info||{};pictureShown(Number.isFinite(i.t)?i.t:null,i.l===1);}
+  if(PS.next){const [j,info]=PS.next;PS.next=null;psPaint(j,info);}}
+v.addEventListener('load',()=>psDone(true));v.addEventListener('error',()=>psDone(false));
+// The delay readout under the picture chip: this screen's delay (camera frame in at the server -> picture on this screen) and
+// pictures per second over the last 2 s. Globals for other picture paths (e.g. a video path) and an automatic choice:
+//   pictureShown(t, light, source): a picture is on screen; t = its camera frame time in the server's unix seconds (null if
+//     unknown), light = the server sent a lighter 320x240 picture, source = the path's name (default 'mjpeg').
+//   streamStats(source): {source, fps, age_ms (median), age_p95_ms, light, pictures, clock} of that path (default: the one
+//     that showed a picture last); age_ms is null until the clock offset is known. clock = server time - this clock, in s.
+// The clock offset comes from GET /time: the answer with the shortest round trip of the last 6, server time - its middle.
+const DL={off:null,sync:[],src:{},cur:'mjpeg'};
+function pictureShown(t,light,source){const s=source||'mjpeg',now=Date.now()/1000,d=DL.src[s]||(DL.src[s]={shown:[],ages:[],light:false});
+  d.shown.push(now);d.light=!!light;DL.cur=s;
+  if(t!=null&&DL.off!=null)d.ages.push([now,(now+DL.off-t)*1000]);}
+function streamStats(source){const s=source||DL.cur,d=DL.src[s],now=Date.now()/1000;
+  if(!d)return {source:s,fps:0,age_ms:null,age_p95_ms:null,light:false,pictures:0,clock:DL.off};
+  while(d.shown.length&&d.shown[0]<now-2)d.shown.shift();
+  while(d.ages.length&&d.ages[0][0]<now-2)d.ages.shift();
+  const a=d.ages.map(x=>x[1]).sort((p,q)=>p-q);
+  return {source:s,fps:d.shown.length/2,age_ms:a.length?a[a.length>>1]:null,age_p95_ms:a.length?a[Math.min(a.length-1,Math.floor(a.length*0.95))]:null,
+          light:d.light,pictures:d.shown.length,clock:DL.off};}
+function timeSync(){const t0=Date.now();
+  fetch('/time?'+t0,{cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject()).then(j=>{const t1=Date.now();if(!Number.isFinite(j.t))return;
+    DL.sync.push([t1-t0,j.t-(t0+t1)/2000]);if(DL.sync.length>6)DL.sync.shift();DL.off=DL.sync.reduce((a,b)=>b[0]<a[0]?b:a)[1];}).catch(()=>{});}
+function delayTick(){const el=$('vage'),st=streamStats();if(!el)return;
+  if(document.hidden||!st.pictures){el.hidden=true;return;}
+  const med=st.age_ms;
+  el.textContent='내 화면 '+(med!=null&&med<5000?'지연 '+Math.round(Math.max(0,med))+' ms · ':'')+(st.fps<10?st.fps.toFixed(1):Math.round(st.fps))+' fps'+(st.light?' · 작은 사진':'');
+  el.hidden=false;}
+timeSync();setTimeout(timeSync,700);setTimeout(timeSync,1500);setInterval(timeSync,10000);setInterval(delayTick,1000);
+openStream();   // the first stream (the img has no src in the HTML): after this fragment's constants exist

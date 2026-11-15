@@ -3,10 +3,10 @@ let lastOk=Date.now(),grace=Date.now(),camIdle=0,camFail=0,wasDown=false,sN=0;
 // 11-15 (화면 전송 지연): the picture stream carries this page's id and a count. The server ends this page's older stream when a
 // newer one opens: a browser keeps the old stream running until the new one has drawn its first picture, so each reopen
 // ran two streams over a slow link. A hidden page (background tab, phone screen off) takes no pictures; wake() reopens.
+// The stream itself is read in picture_stream.js (streamStart / streamStop), which also opens the first one.
 const pageId=Math.random().toString(36).slice(2,10)||'page';
-function openStream(){if(document.hidden){stopStream();return;}v.src='/stream?p='+pageId+'&n='+(++sN);}
-function stopStream(){if(v.hasAttribute('src'))v.removeAttribute('src');}   // no 'error' event (no src attribute), the old stream is cancelled
-openStream();
+function openStream(){if(document.hidden){stopStream();return;}streamStart('/stream?p='+pageId+'&n='+(++sN));}
+function stopStream(){streamStop();}
 function netChip(){
   const idle=Date.now()-Math.max(lastOk,grace);
   expireGimbalPose();
@@ -17,8 +17,8 @@ function netChip(){
   if(fz){chip('cdot','ctext','bad','카메라 멈춤 · USB 선 다시 꽂기');$('ctext').parentElement.title=fz.title+'. '+fz.text;return;}
   if(camFail>0){chip('cdot','ctext','bad','카메라 응답 없음 · USB 확인');$('ctext').parentElement.title='카메라 영상 '+Math.round(camIdle)+'초째 없음 · 자동 복구 '+camFail+'회 실패 · 카메라 USB 케이블을 뽑았다가 다시 꽂으세요';return;}
   chip('cdot','ctext',camIdle>3?'warn':'good',camIdle>3?'카메라 영상 기다리는 중':'서버 연결됨');$('ctext').parentElement.title=camIdle>3?'카메라 영상 '+Math.round(camIdle)+'초째 안 들어옴 (스스로 복구 중)':'';}
-let reopenT=0;   // 11-15: one pending reopen at a time; none for a stream the page stopped itself
-v.addEventListener('error',()=>{if(reopenT||!v.hasAttribute('src'))return;reopenT=setTimeout(()=>{reopenT=0;openStream();},2000);});
+let reopenT=0;   // 11-15: one pending reopen at a time; none for a stream the page stopped itself. With fetch (picture_stream.js) an img error is one bad picture
+v.addEventListener('error',()=>{if(streamFetch||reopenT||!v.hasAttribute('src'))return;reopenT=setTimeout(()=>{reopenT=0;openStream();},2000);});
 // v25: the bridge answers in English; shown in Korean
 const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
 let lostSince=null,autoNow=false,hzPrev=null;

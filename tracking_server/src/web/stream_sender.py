@@ -67,9 +67,10 @@ def _light_setting(text):
 
 
 LIGHT = _light_setting(os.environ.get('LWIR_STREAM_LIGHT', '0.5,60'))
-LIGHT_ABOVE = 0.08   # s: a full picture that takes longer than this to get through -> lighter pictures
-FULL_BELOW = 0.05    # s: a full test picture that gets through within this -> full pictures again
-PROBE_S = 8.0        # s between full test pictures while on lighter ones (doubles after each miss, at most PROBE_MAX)
+# 11-15 (user: low delay first, picture quality second): a viewer must be able to take full pictures at about 30 fps to keep them
+LIGHT_ABOVE = 0.05   # s: a full picture that takes longer than this to get through -> lighter pictures
+FULL_BELOW = 0.03    # s: a full test picture that gets through within this -> full pictures again
+PROBE_S = 15.0       # s between full test pictures while on lighter ones (doubles after each miss, at most PROBE_MAX)
 PROBE_MAX = 60.0
 STEADY_S = 30.0      # s: full pictures that last this long reset the wait between test pictures to PROBE_S
 _LIGHT_CACHE = {'of': None, 'jpeg': None}

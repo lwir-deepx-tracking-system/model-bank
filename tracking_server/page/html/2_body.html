@@ -13,6 +13,7 @@
     <div class="vbox">
       <div class="frame"><img id="v" alt="실시간 영상" draggable="false">
         <div class="vchip num" id="vchip" aria-live="polite" hidden></div>
+        <div class="vchip vage num" id="vage" title="카메라 프레임이 서버에 들어온 때부터 이 화면에 그려질 때까지 (서버 처리 + 전송). 작은 사진 = 회선이 느려 320x240 사진을 받는 중" hidden></div>
         <div class="vdead" id="vdead" role="alert" hidden><b id="vdeadt"></b><span id="vdeads"></span></div>
         <div class="vtoast" id="vtoast" role="status" hidden></div>
         <div class="vfol camera-only" id="vfol"><span class="vhint" id="vhint">사람을 누르면 따라갑니다</span><button class="btn vstop" id="vstop" type="button" title="따라가기·이동 멈춤 (Space)">■ 멈춤 <kbd>Space</kbd></button></div>
