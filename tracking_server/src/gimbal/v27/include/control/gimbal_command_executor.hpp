@@ -89,6 +89,10 @@ class GimbalCommandExecutor {
     double follow_error_x_ = 0;            // last observed horizontal error (+ right)
     double follow_vx_ = 0;                 // last predictive-control velocity of the target (VEL), picture px/s
     Clock::time_point follow_v_at_{};
+    // v27 coast (SmoothingConfig::coast). Worker-owned.
+    Track coast_track_{};
+    bool coasting_ = false, coasted_ = false;   // following the PRED box now / during this loss
+    const Track* coast_target(Clock::time_point now);
 
     void run();
     void search_step(Clock::time_point now);

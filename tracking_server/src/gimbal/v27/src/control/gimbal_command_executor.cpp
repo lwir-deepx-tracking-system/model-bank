@@ -86,6 +86,8 @@ GimbalCommandExecutor::GimbalCommandExecutor(ControlConfig config,
             s.search_follow_speed < config_.automatic.speed_min || s.search_follow_speed > config_.automatic.speed_max)
             throw std::invalid_argument("search settings out of range");
     }
+    if (smoothing_.coast && (smoothing_.coast_ms <= 0 || smoothing_.coast_ms > 3000))   // v27 coast when lost
+        throw std::invalid_argument("--coast-ms must be within 1..3000");
     worker_ = std::thread([this] { run(); });
     const bool started = invoke([this] { stop("startup"); return !state_.error; });
     if (!started) {
@@ -152,7 +154,7 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
         std::lock_guard<std::mutex> lock(mutex_);
         const auto received = Clock::now();
         if ((smoothing_.observation_grace_ms > 0 || smoothing_.catchup_speed > 0 ||
-             smoothing_.predictive_brake || smoothing_.search) &&   // v27 search moves only on validated live frames
+             smoothing_.predictive_brake || smoothing_.search || smoothing_.coast) &&   // v27 search / coast move only on validated live frames
             input->model_generation == runtime_.generation.load() &&
             input->tracker_epoch == runtime_.tracker_epoch.load()) {
             if (published_model_ != input->model_generation || published_tracker_ != input->tracker_epoch) {
@@ -203,7 +205,7 @@ void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
 void GimbalCommandExecutor::publish_unsafe_observation()
 {
     if (smoothing_.observation_grace_ms == 0 && smoothing_.catchup_speed == 0 &&
-        !smoothing_.predictive_brake && !smoothing_.search) return;
+        !smoothing_.predictive_brake && !smoothing_.search && !smoothing_.coast) return;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (smoothing_.observation_grace_ms > 0) pending_ = {};
@@ -271,7 +273,7 @@ bool GimbalCommandExecutor::ingest(Observation observation)
         if (deadline > now) grace_deadline_ = deadline;
     }
     mark_lost(now);
-    if (state_.moving && !searching() && (holding || grace_deadline_ == Clock::time_point{}))
+    if (state_.moving && !searching() && !coasting_ && (holding || grace_deadline_ == Clock::time_point{}))
         stop("target lost/stale");
     return false;
 }
@@ -336,6 +338,7 @@ void GimbalCommandExecutor::failure(const std::exception& e)
     published_brake_target_.store(0);
     state_.automatic = false; state_.selected_id = 0; state_.lost = false;
     search_ = {}; state_.search = 0;   // v27
+    coasting_ = coasted_ = false;      // v27 coast
     ++state_.command_generation;
     try { device_->stop(); } catch (const std::exception& stop_error) {
         Logger::error(std::string("[Control] STOP failed: ") + stop_error.what());
@@ -370,6 +373,7 @@ void GimbalCommandExecutor::invalidate(const char* reason)
     grace_deadline_ = {}; last_observed_capture_ = {}; observation_cadence_ = {};
     brake_ = {};
     search_ = {}; state_.search = 0; follow_x_ = follow_speed_ = 0; follow_error_x_ = follow_vx_ = 0; follow_v_at_ = {};   // v27
+    coasting_ = coasted_ = false;   // v27 coast
     if (state_.moving) stop(reason);
 }
 void GimbalCommandExecutor::send(int x, int y, int speed, bool automatic)
@@ -485,6 +489,10 @@ void GimbalCommandExecutor::search_step(Clock::time_point now)
             s.follow_speed = std::clamp(follow_speed_, config_.automatic.speed_min, c.search_follow_speed);
         }
         s.side = s.dir_x ? s.dir_x : follow_error_x_ < 0 ? -1 : 1;
+        if (coasted_) {   // v27 coast: the coast already went where the person should be; sweep around the place it ended
+            s.dir_x = 0;
+            s.side = x_ ? x_ : follow_error_x_ < 0 ? -1 : 1;
+        }
         Logger::debug("[Control] search: target lost, follow-through direction " + std::to_string(s.dir_x) +
                       (velocity ? " from the predictive velocity " + std::to_string(follow_vx_) + " px/s" : " from the last output"));
     }
@@ -562,6 +570,25 @@ void GimbalCommandExecutor::search_step(Clock::time_point now)
     }
 }
 
+// v27 coast when lost (SmoothingConfig::coast): the server's predicted box of the selected ID as a Track for the normal
+// controller, or nullptr. Only on a fresh, healthy frame that carries PRED for the selected ID, under control authority, and
+// for at most coast_ms after the loss (lost_since_). The caller has called mark_lost().
+const Track* GimbalCommandExecutor::coast_target(Clock::time_point now)
+{
+    if (!latest_ || !fresh() || !latest_healthy_ || !ready() || state_.selected_id == 0 ||
+        now - lost_since_ >= std::chrono::milliseconds(smoothing_.coast_ms)) return nullptr;
+    const auto& p = latest_->prediction;
+    if (!p.matches(static_cast<int>(state_.selected_id))) return nullptr;
+    Track t;
+    t.track_id = p.track_id; t.class_id = 0; t.confidence = 1.0f;
+    t.x = float(p.x); t.y = float(p.y); t.width = float(p.width); t.height = float(p.height);
+    if (!controller_.valid(t, latest_->frame->image.cols, latest_->frame->image.rows, latest_->aim_y)) return nullptr;
+    if (!coasting_) Logger::debug("[Control] coast: following the predicted place of " + std::to_string(state_.selected_id));
+    coast_track_ = t;
+    coasting_ = coasted_ = true;
+    return &coast_track_;
+}
+
 void GimbalCommandExecutor::tick()
 {
     if (runtime_.generation.load() != model_generation_ ||
@@ -582,30 +609,38 @@ void GimbalCommandExecutor::tick()
     }
     if (!t) {
         mark_lost(now);
-        if (smoothing_.search) { search_step(now); return; }   // v27
-        if (state_.moving && grace_deadline_ == Clock::time_point{}) stop("target lost/stale");
-        return;
+        if (smoothing_.coast && search_.phase == Search::None) t = coast_target(now);   // v27 coast
+        if (!t) {
+            coasting_ = false;
+            if (smoothing_.search) { search_step(now); return; }   // v27
+            if (state_.moving && grace_deadline_ == Clock::time_point{}) stop("target lost/stale");
+            return;
+        }
     }
-    if (state_.lost && smoothing_.observation_grace_ms > 0)
-        lead_after_frame_ = latest_->frame->metadata.frame_id;
-    if (search_.phase != Search::None) {   // v27: the same ID is back; the search output is the starting point of following
-        Logger::debug(std::string("[Control] search ended: target back"));
-        search_ = {}; state_.search = 0;
+    const bool coast = t == &coast_track_;   // v27 coast: still lost (the reacquire timeout runs), no lead/brake/catch-up
+    if (!coast) {
+        coasting_ = coasted_ = false;
+        if (state_.lost && smoothing_.observation_grace_ms > 0)
+            lead_after_frame_ = latest_->frame->metadata.frame_id;
+        if (search_.phase != Search::None) {   // v27: the same ID is back; the search output is the starting point of following
+            Logger::debug(std::string("[Control] search ended: target back"));
+            search_ = {}; state_.search = 0;
+        }
+        state_.lost = false; lost_since_ = {};
+        follow_x_ = x_; follow_speed_ = sent_speed_;   // v27: the output while the target is seen
+        if (latest_->velocity.matches(t->track_id)) { follow_vx_ = latest_->velocity.vx; follow_v_at_ = now; }
     }
-    state_.lost = false; lost_since_ = {};
-    follow_x_ = x_; follow_speed_ = sent_speed_;   // v27: the output while the target is seen
-    if (latest_->velocity.matches(t->track_id)) { follow_vx_ = latest_->velocity.vx; follow_v_at_ = now; }
-    const auto lead = latest_->frame->metadata.frame_id > lead_after_frame_ &&
+    const auto lead = !coast && latest_->frame->metadata.frame_id > lead_after_frame_ &&
         latest_->lead.control_epoch == state_.command_generation ? latest_->lead : TrackLead{};
-    const bool catchup_observed = smoothing_.catchup_speed > 0 && latest_healthy_ &&
+    const bool catchup_observed = !coast && smoothing_.catchup_speed > 0 && latest_healthy_ &&
         (smoothing_.observation_grace_ms > 0 ||
          std::count_if(latest_->tracks.begin(), latest_->tracks.end(), [t](const Track& row) {
              return row.track_id == t->track_id;
          }) == 1);
     const auto demand = controller_.calculate(*t, latest_->frame->image.cols, latest_->frame->image.rows,
         latest_->frame->metadata, latest_->model_generation, lead, latest_->aim_y, catchup_observed);
-    follow_error_x_ = demand.error_x;   // v27
-    if (smoothing_.predictive_brake && apply_predictive_brake(*t, demand, lead)) return;
+    if (!coast) follow_error_x_ = demand.error_x;   // v27
+    if (smoothing_.predictive_brake && !coast && apply_predictive_brake(*t, demand, lead)) return;
     if (demand.stop()) {
         if (!state_.moving) return;
         controller_.reset_catchup();

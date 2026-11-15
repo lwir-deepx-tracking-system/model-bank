@@ -61,6 +61,21 @@ struct TrackVelocity
     }
 };
 
+// v27 coast (11-15): where the server predicts the followed track while it is missing (or hidden by the server's wrong-person
+// guard), picture px of this frame (box like Track). Optional; used only by --coast 1 for a short time after a loss.
+struct TrackPrediction
+{
+    int track_id = 0;
+    double x = 0, y = 0, width = 0, height = 0;
+
+    bool matches(int id) const
+    {
+        return id > 0 && track_id == id && std::isfinite(x) && std::isfinite(y) && std::isfinite(width) &&
+            std::isfinite(height) && width > 0 && height > 0 && std::abs(x) <= 1e5 && std::abs(y) <= 1e5 &&
+            width <= 1e5 && height <= 1e5;
+    }
+};
+
 // 한 프레임의 추적 목록과 GUI 표시에 필요한 원본 프레임을 함께 전달한다.
 struct TrackingResult
 {
@@ -72,6 +87,7 @@ struct TrackingResult
     bool bypass = false;
     TrackLead lead;
     TrackVelocity velocity; // v27 search: VEL suffix
+    TrackPrediction prediction; // v27 coast: PRED suffix
     double aim_y = 0.5; // Control reference, measured from the top of the observed box.
 };
 

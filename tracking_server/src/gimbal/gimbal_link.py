@@ -101,6 +101,8 @@ def _reset_bridge_lead(gb):
     gb.observation_ns = 0
     gb.observation_ok = False
     gb.search_control_supported = False
+    gb.coast_control_supported = False
+    gb.fguard = None
     reset_lead()
 
 
@@ -180,12 +182,13 @@ def gb_reader(p_):
         if not f_: continue
         if p_ is not APP.GB.proc: continue   # v26: lines of a bridge that was replaced
         if f_[0] == 'READY': APP.GB.state['ready'] = True; print('GIMBAL ready', APP.GB.dev, flush=True)
-        elif f_[0] in ('TRACK_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS', 'SEARCH_CONTROL') and f_[1:] == ['1']:
+        elif f_[0] in ('TRACK_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS', 'SEARCH_CONTROL', 'COAST_CONTROL') and f_[1:] == ['1']:
             with APP.GB.wcond:
                 if p_ is APP.GB.proc and APP.GB.wopen:
                     if f_[0] == 'TRACK_CONTROL': APP.GB.track_control_supported = True
                     elif f_[0] == 'LEAD_CONTROL': APP.GB.lead_control_supported = True
                     elif f_[0] == 'SEARCH_CONTROL': APP.GB.search_control_supported = True   # 11-15: bridge started with --search 1
+                    elif f_[0] == 'COAST_CONTROL': APP.GB.coast_control_supported = True   # 11-15: bridge started with --coast 1 (PRED suffix)
                     else: APP.GB.observation_status_supported = True
         elif (f_[0] == 'CONTROL_EPOCH' and len(f_) == 2 and len(f_[1]) <= 20
               and f_[1].isascii() and f_[1].isdigit()):

@@ -11,7 +11,7 @@ import numpy as np
 
 from ..common.state import APP
 from ..track.stabilizer import stab_people_real
-from . import predictive_lead
+from . import follow_guard, predictive_lead
 from .gimbal_link import reset_lead, without_lead
 
 
@@ -107,7 +107,7 @@ def _iou(a, b):
 
 def _handoff_locked(gb, selected, frame_t):
     """Called with gb.wcond held, after gb.people is set for this frame. Returns the id following moved to, else 0."""
-    if os.environ.get('LWIR_FOLLOW_HANDOFF') != '1' or search_enabled(gb):   # 11-15: a searching gimbal moves the picture; _recatch_locked replaces this rule
+    if os.environ.get('LWIR_FOLLOW_HANDOFF') != '1' or search_enabled(gb) or guard_enabled():   # 11-15: a searching gimbal moves the picture; _recatch_locked / _guard_locked replace this rule
         return 0
     if (not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0) or getattr(gb, 'mover', None)
             or getattr(gb, 'selection_reset', False) or not gb.people):
@@ -264,6 +264,127 @@ def _recatch_locked(gb, selected, frame_t):
     return qid
 
 
+def coast_enabled(gb):
+    """11-15: the running bridge said COAST_CONTROL 1 (started with --coast 1: it follows the predicted place for a short time
+    when the followed id is missing). Only such a bridge is sent the PRED suffix (an older bridge refuses unknown suffixes)."""
+    return bool(getattr(gb, 'coast_control_supported', False))
+
+
+def guard_enabled():
+    """11-15: LWIR_FOLLOW_GUARD=1 (v1, position and motion) or 2 (v2, + appearance; off by default): the wrong-person guard of
+    follow_guard.py decides what the gimbal follows."""
+    return os.environ.get('LWIR_FOLLOW_GUARD') in ('1', '2')
+
+
+def _appearance(oid):
+    """11-15 guard v2: the newest RepVGG feature the KeepID / relink judge computed for a box of output id oid, as
+    (feature, age in frames), or None. Read only; the judge keeps per tracker id observations ('m1' = feature)."""
+    rl = getattr(APP, 'relabeler', None)
+    if rl is None:
+        return None
+    try:
+        now = int(getattr(rl, 't', 0))
+        idm = getattr(rl, 'id_map', {}) or {}
+        hist = getattr(rl, 'hist', None)
+        if isinstance(hist, dict) and hist and isinstance(next(iter(hist.values()), None), list):   # relink_online_judge
+            best = None
+            for b, o in idm.items():
+                if o != oid: continue
+                for ob in reversed(hist.get(b, [])[-12:]):
+                    if ob.get('m1') is not None:
+                        if best is None or ob['t'] > best[1]: best = (ob['m1'], ob['t'])
+                        break
+            return None if best is None else (best[0], now - best[1])
+        g = getattr(rl, 'gallery', {}).get(oid)   # relabel_online
+        if g:
+            return (g[-1], now - getattr(rl, 'last_emb', {}).get(oid, -10 ** 6))
+    except Exception:   # noqa: BLE001
+        return None
+    return None
+
+
+def predict_log_enabled():
+    """11-15: LWIR_FOLLOW_PREDICT_LOG=1 (tests, off by default): run the prediction for /gimbal/people state 'guard' even when
+    neither the coast nor the guard is on. It never changes what is sent to the bridge."""
+    return os.environ.get('LWIR_FOLLOW_PREDICT_LOG') == '1'
+
+
+def _kalman_box(selected):
+    """11-15: the tracker's own prediction (Kalman + GMC, OC-SORT/ByteTrack lost pool) of the selected OUTPUT id, as (cx, cy, w, h)
+    in gb.people coordinates, or None. Output ids come from the tracker ids through KeepID (relabeler.id_map)."""
+    try:
+        rl = getattr(APP, 'relabeler', None)
+        idm = getattr(rl, 'id_map', None) if rl is not None else None
+        bids = {b for b, o in idm.items() if o == selected} if idm else {selected}
+        for t in getattr(APP.tracker, 'lost', ()) or ():
+            if int(t.track_id) in bids and t.mean is not None:
+                m = np.asarray(t.mean, dtype=float)[:4]
+                if np.isfinite(m).all() and m[2] > 0 and m[3] > 0:
+                    return (float(m[0]), float(m[1]) - follow_guard.CANVAS_Y, float(m[2]), float(m[3]))
+    except Exception:   # noqa: BLE001  (a tracker without a lost pool)
+        return None
+    return None
+
+
+def coast_mode():
+    """11-15: LWIR_COAST_MODE = vel (default: follow the velocity prediction) | fused (keep the velocity prediction and the
+    tracker's position memory in the picture with the smallest motion, follow_guard.keep_in_view)"""
+    return 'fused' if os.environ.get('LWIR_COAST_MODE') == 'fused' else 'vel'
+
+
+GUARD_PHASES = {'track': 0, 'risk': 1, 'lost': 2, 'masked': 3}
+
+
+def _guard_locked(gb, selected, frame_t):
+    """Called with gb.wcond held, after gb.people is set for this frame. -> (id to hide from the bridge this frame or 0,
+    predicted (cx, cy, w, h) in gb.people coordinates for the PRED suffix or None). follow_guard.py; off unless the bridge
+    has --coast 1, LWIR_FOLLOW_GUARD=1 or LWIR_FOLLOW_PREDICT_LOG=1 (log only)."""
+    on_guard, on_coast = guard_enabled(), coast_enabled(gb)
+    if (not (on_guard or on_coast or predict_log_enabled()) or not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0)
+            or getattr(gb, 'mover', None) or getattr(gb, 'selection_reset', False) or not getattr(gb, 'people_t', 0.0)):
+        if not selected or not gb.state.get('auto'):
+            gb.fguard = None
+            gb.state.pop('guard', None)
+        return 0, None
+    v2 = os.environ.get('LWIR_FOLLOW_GUARD') == '2'
+    g = getattr(gb, 'fguard', None)
+    if g is None or g.sel != selected or g.guard != on_guard or isinstance(g, follow_guard.FollowGuardV2) != v2:
+        g = gb.fguard = follow_guard.FollowGuardV2(selected) if v2 else follow_guard.FollowGuard(selected, on_guard)
+    if v2:
+        g.app, g.kal = _appearance, _kalman_box(selected)
+    d = g.step(frame_t, gb.people, _motion)
+    p = d['pred'] or g.pred
+    kal = _kalman_box(selected) if d['mask'] or not any(int(q[0]) == selected for q in gb.people) else None
+    if d['pred'] is not None and on_coast and coast_mode() == 'fused':
+        sy = _bridge_option(gb, '--aim-screen-y')
+        try: sy = float(sy) if sy is not None else .5
+        except ValueError: sy = .5
+        ay = _bridge_aim_y(gb)
+        ay = .5 if ay is None else ay
+        k = kal if kal is not None and math.hypot(kal[0] - d['pred'][0], kal[1] - d['pred'][1]) <= follow_guard.COAST_MAX_H * d['pred'][3] else None
+        d['pred'] = follow_guard.keep_in_view([d['pred'], k], g.age(frame_t), (APP.LIVE_W / 2., sy * APP.LIVE_H), ay,
+                                              (float(APP.LIVE_W), float(APP.LIVE_H)))
+    # read by /gimbal/people (tests): phase, mask, velocity prediction (cx, cy, h), PRED sent, tracker position memory (cx, cy, h),
+    # the PRED box centre sent
+    gb.state['guard'] = [GUARD_PHASES.get(d['phase'], -1), int(d['mask']),
+                         None if p is None else [round(p[0], 1), round(p[1], 1), round(p[3], 1)], int(d['pred'] is not None and on_coast),
+                         None if kal is None else [round(kal[0], 1), round(kal[1], 1), round(kal[3], 1)],
+                         None if d['pred'] is None else [round(d['pred'][0], 1), round(d['pred'][1], 1)]]
+    if d['reselect'] and len(gb.wq) < 62:
+        reset_lead()
+        gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
+        if gb.wframe is not None:   # the bridge sees the new id in a frame before it is selected (as for a click)
+            gb.wq.append(without_lead(gb.wframe)); gb.wframe = None
+        gb.wq.append(('A %d\n' % d['reselect']).encode())
+        gb.guard_n = getattr(gb, 'guard_n', 0) + 1
+        print('FOLLOW guard %d -> %d (%s)' % (selected, d['reselect'], d['why']), flush=True)
+        return 0, None
+    if d['mask'] and not getattr(gb, 'guard_masking', False):
+        print('FOLLOW guard: %d hidden from the gimbal (%s)' % (selected, d['why']), flush=True)
+    gb.guard_masking = bool(d['mask'])
+    return (selected if d['mask'] else 0), (d['pred'] if on_coast else None)
+
+
 def _search_velocity_locked(gb, selected, real, rows, frame_t, correction):
     """11-15: ' VEL <id> <vx> <vy>' for a bridge that said SEARCH_CONTROL 1: the followed person's velocity against the
     background (picture px/s) from the predictive-control estimator (predictive_lead.estimate, the same one LEAD uses; when
@@ -331,7 +452,9 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         selected = 0 if gb.selection_reset else int(gb.state.get('id', 0))
         _handoff_locked(gb, selected, frame_t)   # 11-13: LWIR_FOLLOW_HANDOFF=1 only
         _recatch_locked(gb, selected, frame_t)   # 11-15: bridge --search 1 and LWIR_SEARCH_NEW_ID=1 only
-        real = stab_people_real(gb.people, correction, float(APP.LIVE_W), float(APP.LIVE_H))
+        hidden, pred = _guard_locked(gb, selected, frame_t)   # 11-15: bridge --coast 1 or LWIR_FOLLOW_GUARD=1 only
+        real = stab_people_real([p for p in gb.people if not hidden or int(p[0]) != hidden], correction,
+                                float(APP.LIVE_W), float(APP.LIVE_H))
         rows = [' %d %.1f %.1f %.1f %.1f %.3f' %
                 (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real]
         text = ''.join(rows)
@@ -366,6 +489,13 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                     text += f' LEAD {selected} {dx!r} {dy!r} {epoch}'
         else:
             reset_lead()
+        if pred is not None:   # 11-15: where the followed person should be, for the bridge's coast (before LEAD, like VEL)
+            cx, cy, w, h = pred
+            q = stab_people_real([(selected, cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2., 1.0)], correction,
+                                 float(APP.LIVE_W), float(APP.LIVE_H))[0]
+            if all(map(math.isfinite, q[1:5])):
+                pr = ' PRED %d %.1f %.1f %.1f %.1f' % (selected, q[1], q[2], q[3] - q[1], q[4] - q[2])
+                text = text.replace(' LEAD ', pr + ' LEAD ', 1) if ' LEAD ' in text else text + pr
         vel = _search_velocity_locked(gb, selected, real, rows, frame_t, correction)
         if vel:   # before LEAD: without_lead() cuts from LEAD to the end of the line
             text = text.replace(' LEAD ', vel + ' LEAD ', 1) if ' LEAD ' in text else text + vel

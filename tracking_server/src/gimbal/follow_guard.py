@@ -1,0 +1,468 @@
+"""Followed-person prediction and wrong-person guard for click-to-follow (11-15, user: "re-catch the same person after a loss").
+
+Two opt-in parts, both off by default (live_tracks.publish uses them):
+
+PREDICTION (for the bridge's --coast 1, sent as ' PRED <id> <x> <y> <w> <h>' only to a bridge that printed COAST_CONTROL 1).
+While the followed id is seen without another box on it, its box and velocity are kept: velocity against the background
+(camera motion removed with the GMC warp of every frame pair, the same warps the tracker uses), smoothed with TAU. When the id
+is missing (or masked by the guard), the last box is carried through the camera motion of each frame and moved on with that
+velocity for at most WALK_S. The gimbal's own turning is therefore not taken for person motion. The prediction is offered for
+at most COAST_S after the last trusted box and while it is within COAST_MAX_H body heights of it; the bridge bounds the time
+again (--coast-ms). No GMC for a frame pair = no prediction until the person is seen again.
+
+GUARD (LWIR_FOLLOW_GUARD=1). In the virtual tests (BU-TIV Lab, PTB meetion1) following ended on another person mostly because
+OC-SORT moved the followed id onto the crossing person with no gap (36 of 67), or the old id came back on another person after
+a short gap (29 of 67); the image-place handoff did it twice (recatch/why_switch.py). The guard never changes the tracker; it
+decides only what the gimbal follows:
+  - RISK: another box overlaps the followed box (IoU > RISK_IOU). The trusted box/velocity are frozen; the prediction carries on.
+  - When the boxes separate again (or the id comes back after a gap), the followed box must lie within the gate of the
+    prediction (G0 + G1 x age heights, at most GMAX; height ratio within HR_MAX). If another separated box is clearly nearer
+    the prediction (BETTER x the distance, the followed box at least MIN_SWAP_H heights off), for N frames in a row, following
+    moves to that box's id (the ids were swapped). If the followed box is outside the gate, it is MASKED: the bridge does not
+    see it (it handles a loss: stop, or --coast), until a box consistent with the prediction appears: the same id again, or
+    for N frames in a row one other box alone near the prediction that was not on screen when ours was last trusted.
+All distances are in body heights of the predicted box, so they do not depend on the zoom or the distance to the person."""
+import math
+
+import numpy as np
+
+CANVAS_Y = 16.0     # GMC warps work on the padded canvas: people rows are 16 px higher
+TAU = 0.25          # s, velocity smoothing
+VMAX_H = 1.5        # body heights per second at most
+WALK_S = 1.0        # s, the velocity moves the prediction for at most this long after the last trusted box
+MAX_DT = 0.25       # s, a longer frame gap restarts the velocity
+COAST_S = 1.0       # s, prediction offered for the bridge's coast at most this long after the last trusted box
+COAST_MAX_H = 1.5   # body heights, ... and while the prediction is at most this far from the last trusted box
+RISK_IOU = 0.05     # another box touches ours: risk
+MERGE_IOU = 0.3     # ... covers it so much that the box may be both people: frozen
+PART_D, VCONS_H = 0.15, 0.3   # partly covered: trusted only within PART_D heights of the prediction and if its motion
+                              # differs from the person's by at most VCONS_H heights/s ...
+CONS_MIN_S, CONS_MAX_S = 0.1, 0.6   # ... measured over this time since the last trusted box
+RISK_WALK_S = 3.0   # s, while covered the velocity moves the prediction for at most this long
+G0, G1, GMAX = 0.35, 0.5, 0.8   # gate: heights, heights per second of age, heights at most
+HR_MAX = 1.5
+WR_MAX = 1.5        # width ratio (a box of two people is wider)
+BETTER, MIN_SWAP_H = 0.6, 0.25
+N = 3
+LOST_MAX_S = 10.0   # the bridge drops the selection after its reacquire timeout (10 s)
+
+
+def iou(a, b):
+    w = min(a[2], b[2]) - max(a[0], b[0]); h = min(a[3], b[3]) - max(a[1], b[1])
+    if w <= 0 or h <= 0: return 0.
+    i = w * h; u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i
+    return i / u if u > 0 else 0.
+
+
+def cwh(p):
+    """(id, x1, y1, x2, y2, ...) -> (cx, cy, w, h)"""
+    return ((p[1] + p[3]) / 2., (p[2] + p[4]) / 2., p[3] - p[1], p[4] - p[2])
+
+
+def box(c):
+    cx, cy, w, h = c
+    return (cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2.)
+
+
+def warp_point(w, x, y):
+    px, py = w @ (x, y + CANVAS_Y, 1.0)
+    return float(px), float(py - CANVAS_Y)
+
+
+def warp_scale(w):
+    return math.sqrt(abs(float(np.linalg.det(np.asarray(w, dtype=float)[:, :2])))) or 1.
+
+
+class FollowGuard:
+    """One followed id. step() once per published frame, with gb.people (stabilized picture coordinates) and motion(t0, t1) ->
+    the 2x3 canvas warp from frame time t0 to t1 or None. guard=False: prediction only (never masks, never re-selects)."""
+
+    def __init__(self, sel, guard):
+        self.sel, self.guard = int(sel), bool(guard)
+        self.trust = None          # (cx, cy, w, h) of the last trusted box, in the coordinates of trust_t
+        self.trust_t = None
+        self.vx = self.vy = 0.
+        self.pred = None           # (cx, cy, w, h) at pred_t
+        self.pred_t = None
+        self.phase = 'track'       # track | risk | lost | masked
+        self.ids_at_trust = set()
+        self.cand, self.cand_n = 0, 0
+        self.why = ''
+        self.masked_n = self.swaps = self.reaccepts = 0
+        self.partners = set()      # ids whose box overlapped ours since it was last seen alone
+        self.v_known = False       # the velocity was measured on boxes without overlap
+        self.mask_from_risk = False
+
+    def age(self, t):
+        return t - self.trust_t if self.trust_t is not None else float('inf')
+
+    def gate(self, t):
+        return min(GMAX, G0 + G1 * max(0., self.age(t)))
+
+    def _accept(self, t, c, people, motion, velocity):
+        if velocity and self.trust is not None and 0 < t - self.trust_t <= MAX_DT:
+            m = motion(self.trust_t, t)
+            if m is not None:
+                px, py = warp_point(m, self.trust[0], self.trust[1])
+                dt = t - self.trust_t
+                a = -math.expm1(-dt / TAU)
+                self.vx = (1 - a) * self.vx + a * (c[0] - px) / dt
+                self.vy = (1 - a) * self.vy + a * (c[1] - py) / dt
+                s = math.hypot(self.vx, self.vy); vm = VMAX_H * c[3]
+                if s > vm: self.vx, self.vy = self.vx * vm / s, self.vy * vm / s
+                self.v_known = True
+        elif velocity:
+            self.vx = self.vy = 0.
+        self.trust, self.trust_t = c, t
+        self.pred, self.pred_t = c, t
+        self.ids_at_trust = {int(p[0]) for p in people}
+
+    def _propagate(self, t, motion):
+        if self.pred is None or self.pred_t is None or t <= self.pred_t:
+            return
+        m = motion(self.pred_t, t)
+        if m is None:
+            self.pred = None; self.why = 'no camera motion'
+            return
+        cx, cy, w, h = self.pred
+        s = warp_scale(m)
+        cx, cy = warp_point(m, cx, cy)
+        cap = RISK_WALK_S if self.phase == 'risk' else WALK_S
+        walk = max(0., min(t - self.trust_t, cap) - min(self.pred_t - self.trust_t, cap))
+        self.pred = (cx + self.vx * walk, cy + self.vy * walk, w * s, h * s)
+        self.pred_t = t
+
+    def dist(self, c):
+        return math.hypot(c[0] - self.pred[0], c[1] - self.pred[1]) / max(1., self.pred[3])
+
+    def fits(self, c, t):
+        hr = max(c[3], self.pred[3]) / max(1e-6, min(c[3], self.pred[3]))
+        wr = max(c[2], self.pred[2]) / max(1e-6, min(c[2], self.pred[2]))
+        return self.dist(c) <= self.gate(t) and hr <= HR_MAX and wr <= WR_MAX
+
+    def _count(self, qid):
+        if qid != self.cand: self.cand, self.cand_n = qid, 0
+        self.cand_n += 1
+        return self.cand_n >= N
+
+    def step(self, t, people, motion):
+        """-> dict(mask=bool (hide the followed id from the bridge this frame), reselect=id or 0, pred=(cx, cy, w, h) for the
+        bridge's coast or None, phase, why)"""
+        self._propagate(t, motion)
+        mine = [p for p in people if int(p[0]) == self.sel]
+        mine = mine[0] if len(mine) == 1 else None
+        return self.step_after_propagate(t, people, motion, mine, dict(mask=False, reselect=0, pred=None))
+
+    def step_after_propagate(self, t, people, motion, mine, out):
+        others = [p for p in people if int(p[0]) != self.sel]
+        if mine is not None:
+            c = cwh(mine)
+            near = max((iou(mine[1:5], q[1:5]) for q in others), default=0.) > RISK_IOU
+            if self.pred is None or self.trust is None:   # first box, or the prediction was broken: start again from this box
+                if not near or not self.guard or self.trust is None:
+                    self._accept(t, c, people, motion, velocity=not near)
+                    self.phase = 'risk' if near else 'track'
+                    self.cand_n = 0
+                else:
+                    self.phase = 'masked'; out['mask'] = True; self.why = 'no prediction during an overlap'
+            elif not self.guard:
+                self._accept(t, c, people, motion, velocity=not near)   # prediction only: every box of the id is trusted
+                self.phase = 'risk' if near else 'track'
+            else:
+                self._guard_seen(t, mine, c, people, others, motion, out)
+                if out['reselect']:
+                    return self._out(out, t)
+        else:
+            if self.phase not in ('lost', 'masked'): self.phase = 'lost'
+            if self.guard and self.pred is not None and self.age(t) <= LOST_MAX_S:
+                g = self.gate(t)
+                fit = [q for q in others if self.fits(cwh(q), t) and self._allowed(int(q[0]))]
+                crowd = [q for q in others if self.dist(cwh(q)) <= 1.5 * g]
+                if len(fit) == 1 and len(crowd) == 1:
+                    if self._count(int(fit[0][0])):
+                        out['reselect'] = int(fit[0][0])
+                        self.reaccepts += 1; self.why = 're-catch: new id %d at the prediction' % out['reselect']
+                        self.retarget(out['reselect'], cwh(fit[0]), t, people)
+                        return self._out(out, t)
+                else:
+                    self.cand_n = 0
+        if (out['mask'] or mine is None) and self.pred is not None and self.trust is not None:
+            moved = math.hypot(self.pred[0] - self.trust[0], self.pred[1] - self.trust[1]) / max(1., self.trust[3])
+            if self.age(t) <= COAST_S and moved <= COAST_MAX_H:
+                out['pred'] = self.pred
+        return self._out(out, t)
+
+    def _out(self, out, t):
+        out['phase'], out['why'] = self.phase, self.why
+        return out
+
+    def _allowed(self, qid):
+        """may following move to qid? A new id (not on screen when ours was last trusted), or, right after an overlap in which
+        our id ended up on someone else, a box that overlapped ours (the tracker swapped the ids)."""
+        return qid not in self.ids_at_trust or (self.mask_from_risk and qid in self.partners)
+
+    def _mask(self, why, from_risk):
+        if self.phase != 'masked':
+            self.masked_n += 1; self.why = why
+            self.mask_from_risk = from_risk
+        self.phase = 'masked'; self.cand_n = 0
+
+    def _guard_seen(self, t, mine, c, people, others, motion, out):
+        """guard decision for a frame in which the followed id has one box"""
+        ovs = [(iou(mine[1:5], q[1:5]), int(q[0])) for q in others]
+        ov = max((o for o, _ in ovs), default=0.)
+        self.partners |= {i for o, i in ovs if o > RISK_IOU}
+        ok, d = self.fits(c, t), self.dist(c)
+        if ov > MERGE_IOU:   # the box may be both people: frozen, hidden only when it is clearly elsewhere
+            if not ok:
+                self._mask('jump during an overlap: %.2f heights from the prediction' % d, True); out['mask'] = True
+            elif self.phase != 'masked':
+                self.phase = 'risk'
+            else:
+                out['mask'] = True
+            return
+        better = None
+        if self.phase in ('risk', 'masked', 'lost') or not ok:
+            for q in others:
+                if max((iou(q[1:5], r[1:5]) for r in people if r is not q and r is not mine), default=0.) > MERGE_IOU: continue
+                qc = cwh(q); dq = self.dist(qc)
+                if (self.fits(qc, t) and (not ok or (d >= MIN_SWAP_H and dq < BETTER * d)) and
+                        (self._allowed(int(q[0])) or self.phase == 'risk') and (better is None or dq < better[1])):
+                    better = (int(q[0]), dq, qc)
+        if better is not None:
+            if self._count(better[0]):
+                out['reselect'] = better[0]
+                self.swaps += 1; self.why = 'swap: %d is nearer the prediction (%.2f vs %.2f heights)' % (better[0], better[1], d)
+                self.retarget(better[0], better[2], t, people)
+                return
+            out['mask'] = True
+            if not ok: self._mask('jump: %.2f heights from the prediction' % d, self.phase == 'risk')
+            return
+        if not ok:
+            self._mask('jump: %.2f heights from the prediction' % d, self.phase == 'risk'); out['mask'] = True
+            return
+        if ov > RISK_IOU:   # partly covered: trusted only if it moved, since it was last trusted, the way the person was moving
+            v = self._motion_since_trust(t, c, motion)
+            # strict once the person's velocity was measured while alone; before that (walking with others since the click)
+            # any box near the prediction teaches the velocity
+            tight, cons = (PART_D, VCONS_H) if self.v_known else (G0, VMAX_H)
+            stale = v is None and t - self.trust_t > CONS_MAX_S   # held for long: the prediction alone decides
+            if d > tight or (not stale and (v is None or math.hypot(v[0] - self.vx, v[1] - self.vy) > cons * c[3])):
+                if self.phase == 'masked': out['mask'] = True
+                else: self.phase = 'risk'
+                return
+            if v is not None:
+                a = -math.expm1(-(t - self.trust_t) / TAU)
+                self.vx, self.vy = (1 - a) * self.vx + a * v[0], (1 - a) * self.vy + a * v[1]
+            if self.phase in ('masked', 'lost'): self.reaccepts += 1
+            self._accept(t, c, people, motion, velocity=False)
+            self.phase = 'risk'; self.cand_n = 0
+            return
+        if self.phase in ('masked', 'lost'): self.reaccepts += 1
+        self._accept(t, c, people, motion, velocity=self.phase == 'track' and ov <= RISK_IOU)
+        self.phase = 'track' if ov <= RISK_IOU else 'risk'
+        self.cand_n = 0
+        if ov <= RISK_IOU:
+            self.partners, self.mask_from_risk = set(), False
+
+    def _motion_since_trust(self, t, c, motion):
+        """the box's velocity against the background since the last trusted box (picture px/s), or None (too soon, too old,
+        no camera motion)"""
+        dt = t - self.trust_t
+        if not CONS_MIN_S <= dt <= CONS_MAX_S:
+            return None
+        m = motion(self.trust_t, t)
+        if m is None:
+            return None
+        px, py = warp_point(m, self.trust[0], self.trust[1])
+        return ((c[0] - px) / dt, (c[1] - py) / dt)
+
+    def retarget(self, new_id, c, t, people):
+        """Following moved to new_id (guard re-select, or a click/handoff for a new id): keep the velocity, trust its box."""
+        self.sel = int(new_id)
+        self.trust, self.trust_t, self.pred, self.pred_t = c, t, c, t
+        self.ids_at_trust = {int(p[0]) for p in people}
+        self.phase, self.cand, self.cand_n = 'track', 0, 0
+        self.partners, self.mask_from_risk = set(), False
+
+
+# 11-15 (user): KEEP-IN-VIEW coast (LWIR_COAST_MODE=fused). During a loss the first goal is to keep the person in the picture
+# so the detector sees them again; exact centring does not matter. Two estimates that cover each other's mistakes: the
+# constant-velocity prediction above and the tracker's own position memory (the Kalman prediction of the lost track, GMC
+# warped). The region they span, widened by a growing uncertainty, is kept inside the picture with a margin, with the
+# smallest camera motion: no motion while it is inside; if it is wider than the picture, the middle of it.
+KIV_U0, KIV_U1, KIV_UMAX = 0.15, 0.5, 1.0   # uncertainty: heights + heights per second of age, at most
+KIV_MARGIN = 0.10                            # of the picture width / height on each side
+
+
+def keep_in_view(estimates, age, aim, aim_frac, size=(640., 480.)):
+    """estimates: [(cx, cy, w, h), ...] in picture px; aim = (x, y) picture point the controller centres; aim_frac = the
+    control point on a box, from its top (bridge --aim-y). -> a box (cx, cy, w, h) whose control point is where the aim must
+    go (the aim itself when no motion is needed), or None."""
+    est = [e for e in estimates if e is not None and all(map(math.isfinite, e)) and e[3] > 0]
+    if not est:
+        return None
+    h = est[0][3]
+    r = min(KIV_UMAX, KIV_U0 + KIV_U1 * max(0., age)) * h
+    W, H = size
+    shift = []
+    for lo, hi, lim, a in ((min(e[0] - e[2] / 2 for e in est) - r, max(e[0] + e[2] / 2 for e in est) + r, W, aim[0]),
+                           (min(e[1] - e[3] / 2 + aim_frac * e[3] for e in est) - r, max(e[1] - e[3] / 2 + aim_frac * e[3] for e in est) + r, H, aim[1])):
+        m = KIV_MARGIN * lim
+        if hi - lo > lim - 2 * m: s = (lo + hi) / 2 - lim / 2   # wider than the picture: its middle at the centre
+        elif hi > lim - m: s = hi - (lim - m)
+        elif lo < m: s = lo - m
+        else: s = 0.
+        shift.append(a + s)
+    w = est[0][2]
+    return (shift[0], shift[1] - aim_frac * h + h / 2, w, h)
+
+
+# 11-15 GUARD v2 (LWIR_FOLLOW_GUARD=2): distractor-aware hand-back (KeepTrack / LTMU / DAM4SAM / Siam R-CNN style, see the
+# re-catch report). v1 judged by position and motion only, and in the close-range BU-TIV scenes that does not separate the
+# person from the one crossing (offline on the recorded runs it hid the clicked person about as often as the other one).
+# v2 adds the person's appearance (the KeepID / relink RepVGG features the server already computes for some boxes every frame):
+#   - the TARGET memory = the last APP_KEEP features of the followed box, taken only while it is seen alone (no other box on
+#     it); frozen during a loss and whenever another box overlaps it;
+#   - DISTRACTORS = the people near it (within APP_NEAR box widths): their last feature taken while they did not overlap ours;
+#   - after an overlap or a loss the followed id is followed again only if its feature is nearer the target memory than every
+#     distractor by APP_MARGIN (and at least APP_MIN); if it is nearer a distractor it is hidden (an id swap);
+#   - a candidate for the hand-back (another id) must (a) not be a still-tracked distractor id unless its feature beats the
+#     distractors by twice the margin, (b) look like the target as above, (c) be inside the motion gate of the velocity
+#     prediction or of the tracker's Kalman memory (fused), (d) for N frames in a row.
+# Without a fresh feature for the box in question it falls back to the v1 rules for that frame.
+APP_KEEP, APP_NEAR, APP_MIN, APP_MARGIN, APP_FRESH = 5, 2.0, 0.55, 0.05, 6   # APP_FRESH: feature at most this many frames old
+
+
+def unit(v):
+    v = np.asarray(v, dtype=float).ravel()
+    n = float(np.linalg.norm(v))
+    return v / n if n > 0 and np.isfinite(n) else None
+
+
+class FollowGuardV2(FollowGuard):
+    """FollowGuard with appearance. Before each step() the caller sets .app = function(output id) -> (feature, age in frames)
+    or None, and .kal = the tracker's Kalman box (cx, cy, w, h) of the followed id or None."""
+
+    def __init__(self, sel, guard=True):
+        super().__init__(sel, guard)
+        self.app = lambda oid: None
+        self.kal = None
+        self.tmpl = []
+        self.distract = {}
+        self.app_masks = self.app_swaps = 0
+
+    def _feat(self, oid):
+        a = self.app(int(oid))
+        if not a or a[0] is None or a[1] is None or a[1] > APP_FRESH:
+            return None
+        return unit(a[0])
+
+    def _sims(self, f, exclude=()):
+        t = unit(np.mean(self.tmpl, 0)) if self.tmpl else None
+        st_ = float(f @ t) if t is not None else None
+        sd = max((float(f @ g) for i, g in self.distract.items() if i not in exclude), default=-1.)
+        return st_, sd
+
+    def _looks(self, f, qid=None):
+        """'target' / 'distractor' / None (cannot tell)"""
+        st_, sd = self._sims(f, exclude=(qid,) if qid is not None else ())
+        if st_ is None:
+            return None
+        m = APP_MARGIN * (2 if qid is not None and qid in self.distract else 1)
+        if st_ >= APP_MIN and st_ >= sd + m:
+            return 'target'
+        if sd > st_ + APP_MARGIN:
+            return 'distractor'
+        return None
+
+    def _in_gate(self, c, t):
+        if self.pred is not None and self.fits(c, t):
+            return True
+        k = self.kal
+        return k is not None and math.hypot(c[0] - k[0], c[1] - k[1]) / max(1., k[3]) <= self.gate(t)
+
+    def _remember(self, mine, people):
+        """target memory (alone) and distractor memory (near, not overlapping ours)"""
+        if mine is not None:
+            alone = max((iou(mine[1:5], q[1:5]) for q in people if int(q[0]) != self.sel), default=0.) <= RISK_IOU
+            f = self._feat(self.sel)
+            if alone and f is not None and self.phase == 'track':
+                self.tmpl = (self.tmpl + [f])[-APP_KEEP:]
+            ref = cwh(mine)
+        elif self.pred is not None:
+            ref = self.pred
+        else:
+            return
+        for q in people:
+            qid = int(q[0])
+            if qid == self.sel: continue
+            qc = cwh(q)
+            if math.hypot(qc[0] - ref[0], qc[1] - ref[1]) > APP_NEAR * max(ref[2], qc[2]): continue
+            if mine is not None and iou(mine[1:5], q[1:5]) > RISK_IOU: continue
+            f = self._feat(qid)
+            if f is not None:
+                self.distract[qid] = f
+
+    def _candidate(self, t, people, out):
+        for q in people:
+            qid = int(q[0])
+            if qid == self.sel: continue
+            f = self._feat(qid)
+            if f is None or not self._in_gate(cwh(q), t) or self._looks(f, qid) != 'target':
+                continue
+            if self._count(qid):
+                out['reselect'] = qid
+                self.app_swaps += 1; self.why = 'hand-back by appearance: %d looks like the person and is in the gate' % qid
+                self.retarget(qid, cwh(q), t, people)
+                self.distract.pop(qid, None)
+            else:
+                out['mask'] = out['mask'] or self.phase == 'masked'
+            return True
+        return False
+
+    def step(self, t, people, motion):
+        self._propagate(t, motion)
+        mine = [p for p in people if int(p[0]) == self.sel]
+        mine = mine[0] if len(mine) == 1 else None
+        out = dict(mask=False, reselect=0, pred=None)
+        self._remember(mine, people)
+        f = self._feat(self.sel) if mine is not None else None
+        if mine is not None and self.pred is not None and self.trust is not None and f is not None and self.tmpl:
+            c = cwh(mine)
+            ov = max((iou(mine[1:5], q[1:5]) for q in people if int(q[0]) != self.sel), default=0.)
+            if ov > RISK_IOU:
+                self.partners |= {int(q[0]) for q in people if int(q[0]) != self.sel and iou(mine[1:5], q[1:5]) > RISK_IOU}
+            if self.phase in ('risk', 'masked', 'lost') or ov > RISK_IOU:
+                look = self._looks(f)
+                if look == 'distractor' or not self._in_gate(c, t):
+                    if self.phase != 'masked':
+                        self.app_masks += 1
+                        self._mask('looks like a person near it' if look == 'distractor' else 'outside the gate', self.phase == 'risk')
+                    out['mask'] = True
+                    self._candidate(t, people, out)
+                    return self._finish(out, t, mine)
+                if look == 'target' and ov <= RISK_IOU:
+                    if self.phase in ('masked', 'lost'): self.reaccepts += 1
+                    self._accept(t, c, people, motion, velocity=False)
+                    self.phase = 'track'; self.cand_n = 0
+                    self.partners, self.mask_from_risk = set(), False
+                    return self._finish(out, t, mine)
+                if self.phase == 'masked':
+                    out['mask'] = True
+                    self._candidate(t, people, out)
+                    return self._finish(out, t, mine)
+                self.phase = 'risk'   # overlapped or not yet clear: follow it, trust nothing
+                return self._finish(out, t, mine)
+        if mine is None and self.guard and self.pred is not None and self.tmpl:
+            if self.phase not in ('lost', 'masked'): self.phase = 'lost'
+            if self._candidate(t, people, out) and out['reselect']:
+                return self._out(out, t)
+        return super().step_after_propagate(t, people, motion, mine, out)
+
+    def _finish(self, out, t, mine):
+        if (out['mask'] or mine is None) and self.pred is not None and self.trust is not None:
+            moved = math.hypot(self.pred[0] - self.trust[0], self.pred[1] - self.trust[1]) / max(1., self.trust[3])
+            if self.age(t) <= COAST_S and moved <= COAST_MAX_H:
+                out['pred'] = self.pred
+        return self._out(out, t)

@@ -14,10 +14,13 @@
 //   --brake-px-per-spd <px>     cap the speed at (|error| - deadband) / this, to slow down before arriving (default 0 = off)
 //   --search <0|1>              search when the followed ID is lost (default 0 = STOP and wait, as v25). With 1:
 //     --search-grace-ms (300) wait, STOPPED, before searching; --search-follow-ms (1000) / --search-follow-px (320) / --search-follow-speed (10)
-//     keep turning in the last following direction; --search-speed (7) SPD of the sweep; --search-sweep-px (320) first half-width,
+//     keep turning where the person should be (the server VEL of the last 300 ms before the loss, else the last following output); --search-speed (7) SPD of the sweep; --search-sweep-px (320) first half-width,
 //     --search-widen (1.5) growth per turn, --search-max-px (640) widest; --search-tilt-px (0) small tilt; --search-timeout-ms (8000)
 //     from the loss, then STOP and hold. px = picture px of the 640x480 camera, estimated open loop from SPD (V27_CHANGES.md).
 //   stdout: SEARCH_CONTROL 1 at start when on; SEARCH <0 none|1 grace|2 follow-through|3 sweep|4 done> on change.
+//   --coast <0|1>               follow the server's predicted place when the followed ID is missing (default 0 = off). With 1:
+//     --coast-ms (800) at most this long from the loss, only on fresh healthy frames whose PRED suffix names the followed ID;
+//     then as without it (STOP, or --search). stdout: COAST_CONTROL 1 at start (the server sends PRED only then).
 //
 // Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
 // All control decisions, safety stops and serial output stay in the team's GimbalCommandExecutor; the PC wire format stays in the team's
@@ -265,6 +268,12 @@ Options parse(int argc, char** argv)
         else if (name == "--search-max-px") s.search_max_px = std::stod(value);
         else if (name == "--search-tilt-px") s.search_tilt_px = std::stod(value);
         else if (name == "--search-timeout-ms") s.search_timeout_ms = std::stoi(value);
+        // v27 coast when lost (default off)
+        else if (name == "--coast") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--coast is 0 or 1");
+            s.coast = value == "1";
+        }
+        else if (name == "--coast-ms") s.coast_ms = std::stoi(value);
         else if (name == "--gui-host") { g.enabled = true; g.video.host = value; g.metadata.host = value; }
         else if (name == "--gui-bind") g.command.bind_address = value;
         else if (name == "--gui-video-port") g.video.port = static_cast<std::uint16_t>(std::stoi(value));
@@ -301,6 +310,7 @@ Options parse(int argc, char** argv)
         s.search_follow_speed < c.automatic.speed_min || s.search_follow_speed > c.automatic.speed_max))
         throw std::invalid_argument("--search-*: grace/follow >= 0, timeout > grace, sweep > 0, widen 1..4, max >= sweep, tilt >= 0, "
                                     "speeds within --speed-min..--speed-max");
+    if (s.coast && (s.coast_ms <= 0 || s.coast_ms > 3000)) throw std::invalid_argument("--coast-ms must be within 1..3000");
     if (c.gimbal.speed < 1 || c.gimbal.speed > c.gimbal.speed_limit || c.automatic.speed_max < c.automatic.speed_min || c.automatic.speed_max > c.gimbal.speed_limit)
         throw std::invalid_argument("speed outside the device range");
     if ((c.gimbal.x_sign != 1 && c.gimbal.x_sign != -1) || (c.gimbal.y_sign != 1 && c.gimbal.y_sign != -1))
@@ -430,7 +440,8 @@ public:
         std::string suffix;
         TrackLead lead;
         TrackVelocity velocity;   // v27 search
-        bool seen_observation = false, seen_lead = false, seen_velocity = false;
+        TrackPrediction prediction;   // v27 coast
+        bool seen_observation = false, seen_lead = false, seen_velocity = false, seen_prediction = false;
         const int separator = in.peek();
         bool malformed = separator != std::char_traits<char>::eof() &&
             !std::isspace(static_cast<unsigned char>(separator));
@@ -451,6 +462,10 @@ public:
             } else if (suffix == "VEL" && !seen_velocity) {   // v27 search: predictive-control velocity of one track
                 seen_velocity = true;
                 if (!read_token(velocity.track_id) || !read_token(velocity.vx) || !read_token(velocity.vy)) { malformed = true; break; }
+            } else if (suffix == "PRED" && !seen_prediction) {   // v27 coast: the server's predicted box of the followed track
+                seen_prediction = true;
+                if (!read_token(prediction.track_id) || !read_token(prediction.x) || !read_token(prediction.y) ||
+                    !read_token(prediction.width) || !read_token(prediction.height)) { malformed = true; break; }
             } else {
                 malformed = true;
                 break;
@@ -460,6 +475,7 @@ public:
         else {
             if (lead.matches(lead.track_id)) result->lead = lead;
             if (velocity.matches(velocity.track_id)) result->velocity = velocity;
+            if (prediction.matches(prediction.track_id)) result->prediction = prediction;
         }
         result->frame = context;
         result->enqueued_at = std::chrono::steady_clock::now();
@@ -602,12 +618,13 @@ int main(int argc, char** argv) try {
     }
     Bridge bridge(executor, gui.get(), session_changes,
                   options.smoothing.observation_grace_ms > 0 || options.smoothing.catchup_speed > 0 ||
-                  options.smoothing.predictive_brake || options.smoothing.search);
+                  options.smoothing.predictive_brake || options.smoothing.search || options.smoothing.coast);
     say("READY");
     say("TRACK_CONTROL 1");
     say("LEAD_CONTROL 1");
     say("OBSERVATION_STATUS 1");
-    if (options.smoothing.search) say("SEARCH_CONTROL 1");   // v27: the tracker may re-select a re-found person (SEARCH lines follow)
+    if (options.smoothing.search) say("SEARCH_CONTROL 1");
+    if (options.smoothing.coast) say("COAST_CONTROL 1");   // v27: the server may send PRED <id> <x> <y> <w> <h>   // v27: the tracker may re-select a re-found person (SEARCH lines follow)
     int reported_search = 0;
     std::string pending, reported;
     std::uint64_t reported_epoch = std::numeric_limits<std::uint64_t>::max();

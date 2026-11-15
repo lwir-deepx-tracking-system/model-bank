@@ -64,6 +64,15 @@ struct SmoothingConfig {
     double search_max_px = 640.0;
     double search_tilt_px = 0.0;
     int search_timeout_ms = 8000;
+    // Coast when lost (11-15, user: "keep turning in the predicted direction for a short time while the followed id is
+    // missing"). false = unchanged. true: while the followed ID is missing from a fresh healthy frame that carries the
+    // server's prediction for it (PRED suffix: the last trusted box carried through the camera motion and moved on with the
+    // person's velocity against the background, follow_guard.py), follow that predicted box with the normal controller for at
+    // most coast_ms from the loss. Then as without coast: STOP and wait, or the search (its follow-through is skipped: the
+    // coast already went where the person should be). Any frame without PRED, stale, unhealthy, heartbeat loss, mode change
+    // or STOP ends it like following.
+    bool coast = false;
+    int coast_ms = 800;
 };
 
 // Measured picture speed (px/s of the 640x480 camera) at a pan SPD (PID_TUNING_RECORD_20261110.md sec. 5; above 20 not
