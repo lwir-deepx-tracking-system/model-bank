@@ -67,6 +67,7 @@ class GimbalCommandExecutor {
     Clock::time_point ping_{}, lost_since_{}, last_output_{}, next_auto_{};
     int x_ = 0, y_ = 0, sent_speed_ = 0;
     double limited_speed_ = 0;
+    bool arrived_ = false;   // v27 arrival control: ingest() took in a new frame during this worker wake
     bool hold_x_ = false, hold_y_ = false;   // v27: axis halted by a per-axis reversal, waiting to rejoin
     Clock::time_point hold_x_since_{}, hold_y_since_{};
     struct PredictiveBrake {
@@ -99,7 +100,7 @@ class GimbalCommandExecutor {
     bool searching() const { return search_.phase == Search::Follow || search_.phase == Search::Sweep; }
     bool ingest(Observation);
     void mark_lost(Clock::time_point now);
-    void tick();
+    void tick(bool arrival = false);   // v27: arrival = called for a newly taken-in frame (SmoothingConfig::arrival_control)
     bool apply_predictive_brake(const Track&, const GimbalDemand&, const TrackLead&);
     bool alive() const;
     bool ready() const;

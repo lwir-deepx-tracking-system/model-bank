@@ -73,6 +73,14 @@ struct SmoothingConfig {
     // or STOP ends it like following.
     bool coast = false;
     int coast_ms = 800;
+    // Control step at arrival (11-15, latency audit finding 2). false = the team rule: a new tracking result waits for the
+    // worker's own period (period_ms, 25 ms; 0..25 ms, 12.5 ms on average). true: the control step runs as soon as a new
+    // result is taken in, and the period timer restarts from there; the timer still runs the step every period_ms for
+    // time-outs, ramps, coast, search and the heartbeat. The control law is the same: every rate (speed_rate, stop_rate)
+    // is multiplied by the real time since the previous output (at most one period, as before), and every time limit
+    // (reversal hold, coast, search, reacquire, input timeout) is measured on the clock, so ramps and time-outs take
+    // the same real time. gimbal_bridge_v27 turns it on unless --arrival-control 0 is given.
+    bool arrival_control = false;
 };
 
 // Measured picture speed (px/s of the 640x480 camera) at a pan SPD (PID_TUNING_RECORD_20261110.md sec. 5; above 20 not

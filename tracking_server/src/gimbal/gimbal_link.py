@@ -235,6 +235,11 @@ def gb_reader(p_):
             r_ = APP.model_request(int(f_[2]), int(f_[1])); print('MODEL request from the PC GUI: id', f_[2], '->', 'queued' if r_ < 0 else r_, flush=True)
             if r_ in (-1, 0): auto_det.manual_choice('PC GUI')   # 11-15: a model chosen by hand turns the automatic choice off
             if r_ >= 0: APP.gb_send('N %d %d' % (int(f_[1]), r_))
+        elif f_[0] == 'GUI_PICTURE' and f_[1:] in (['0'], ['1']):   # 11-15: the bridge wants the picture (G lines) only while a PC GUI is connected; else people only (F lines)
+            with APP.GB.wcond:
+                if p_ is not APP.GB.proc: continue
+                APP.GB.gui_picture = f_[1] == '1'; APP.GB.state['gui']['picture'] = int(f_[1])
+            print('GUI picture', 'wanted: sending the camera picture to the bridge' if f_[1] == '1' else 'not wanted (no PC GUI connected): sending people only', flush=True)
         elif f_[0] == 'T' and len(f_) >= 7:   # v20: GUI link status, once a second
             g_ = APP.GB.state['gui']; client_ = int(f_[1])
             if client_ != g_['client']:
@@ -272,10 +277,11 @@ def gb_spawn():   # v26: start (or start again) the bridge. A new bridge sends S
         p_ = APP.lv_sp.Popen([APP.args.gimbal_bridge or str(HERE / 'src' / 'gimbal' / 'gimbal_bridge_v25'), '--device', dev_, '--manual-speed', str(APP.args.gimbal_speed), '--speed-max', str(APP.args.gimbal_speed), '--kp', str(APP.args.gimbal_kp), '--aim-y', str(APP.args.gimbal_aim_y),
                           '--x-sign', str(APP.args.gimbal_x_sign), '--y-sign', str(APP.args.gimbal_y_sign), '--model-count', str(len(APP.MODEL['catalog'])), *APP.shlex.split(APP.args.gimbal_opts), *APP.gui_opts_], stdin=APP.lv_sp.PIPE, stdout=APP.lv_sp.PIPE, stderr=APP.GB.log)
         APP.GB.dev = dev_; APP.GB.dev_sig = sig_; APP.GB.spawn_t = time.monotonic(); APP.GB.restarts += 1
-        APP.GB.state.update(running=True, ready=False, auto=0, lost=0, moving=0, error=0, id=0); APP.GB.state['gui'].update(client=0)
+        APP.GB.state.update(running=True, ready=False, auto=0, lost=0, moving=0, error=0, id=0); APP.GB.state['gui'].update(client=0, picture=int(bool(APP.GB.gui)))
         with APP.GB.wcond:
             APP.GB.track_control_supported = False
             APP.GB.people_source = object()  # a replacement bridge needs a fresh STOP acknowledgement
+            APP.GB.gui_picture = None   # 11-15: None = this bridge has not said GUI_PICTURE (an older bridge never does): the picture is always sent, as before
             _reset_bridge_lead(APP.GB)
             APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.proc = p_; APP.GB.wopen = True; APP.GB.wcond.notify_all()
         APP.lv_th.Thread(target=APP.gb_writer, args=(p_,), daemon=True).start(); APP.lv_th.Thread(target=APP.gb_reader, args=(p_,), daemon=True).start()

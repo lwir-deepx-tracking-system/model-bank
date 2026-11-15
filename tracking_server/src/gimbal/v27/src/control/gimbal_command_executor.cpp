@@ -138,10 +138,14 @@ void GimbalCommandExecutor::run()
             if (!ready()) invalidate("control authority");
             else if (now >= grace_deadline_) stop("observation grace deadline");
         }
+        arrived_ = false;
         const bool resumed = input.result && ingest(std::move(input));
         if (request.valid()) request(); // mode/STOP requests precede any AUTO output
-        if (resumed || Clock::now() >= next) {
-            tick();
+        // v27 arrival control: a newly taken-in frame is acted on now instead of at the next period (0..period_ms later).
+        // The period timer restarts here, so time-outs, ramps, coast and search keep running every period_ms.
+        const bool arrival = smoothing_.arrival_control && arrived_;
+        if (resumed || arrival || Clock::now() >= next) {
+            tick(arrival);
             next = Clock::now() + std::chrono::milliseconds(
                 std::min(config_.automatic.period_ms, config_.poll_interval_ms));
         }
@@ -232,6 +236,7 @@ bool GimbalCommandExecutor::ingest(Observation observation)
     last_frame_id_ = id;
     latest_ = std::move(input);
     latest_healthy_ = observation.healthy_live;
+    arrived_ = true;   // v27 arrival control
     if (smoothing_.catchup_speed > 0 && (!latest_healthy_ || !adjacent)) controller_.reset_catchup();
     if (smoothing_.predictive_brake && (!latest_healthy_ ||
         (state_.automatic && !target(state_.selected_id)))) brake_ = {};
@@ -589,7 +594,7 @@ const Track* GimbalCommandExecutor::coast_target(Clock::time_point now)
     return &coast_track_;
 }
 
-void GimbalCommandExecutor::tick()
+void GimbalCommandExecutor::tick(bool arrival)
 {
     if (runtime_.generation.load() != model_generation_ ||
         runtime_.tracker_epoch.load() != tracker_epoch_ ||
@@ -646,7 +651,9 @@ void GimbalCommandExecutor::tick()
         controller_.reset_catchup();
         if (smoothing_.stop_rate <= 0) { stop("deadband"); return; }   // team original: immediate STOP
     }
-    if (now < next_auto_) return;
+    // v27 arrival control: the step for a new frame is not held back by the output period. The ramp below uses the real
+    // time since the previous output (dt), so SPD per second is the same however the steps are spaced.
+    if (!arrival && now < next_auto_) return;
     next_auto_ = now + std::chrono::milliseconds(config_.automatic.period_ms);
     const double dt = last_output_ == Clock::time_point{} ? config_.automatic.period_ms / 1000.0 :
         std::min(std::chrono::duration<double>(now - last_output_).count(), config_.automatic.period_ms / 1000.0);

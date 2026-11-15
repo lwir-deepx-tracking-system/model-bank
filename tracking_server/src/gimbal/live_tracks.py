@@ -545,7 +545,10 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         vel = _search_velocity_locked(gb, selected, real, rows, frame_t, correction)
         if vel:   # before LEAD: without_lead() cuts from LEAD to the end of the line
             text = text.replace(' LEAD ', vel + ' LEAD ', 1) if ' LEAD ' in text else text + vel
-        if gb.gui and raw16 is not None and raw16.shape == (APP.LIVE_H, APP.LIVE_W):
+        # 11-15 (latency audit finding 3): the 614 KB picture goes to the bridge only while a PC GUI is connected
+        # (bridge line GUI_PICTURE 1). Otherwise the short people line: no pipe copy, no video encoding in the bridge.
+        if (gb.gui and getattr(gb, 'gui_picture', None) is not False
+                and raw16 is not None and raw16.shape == (APP.LIVE_H, APP.LIVE_W)):
             APP.gb_send_frame('G %d %d %d %d %d' %
                               (gb.frame, captured_ns, APP.LIVE_W, APP.LIVE_H, len(real)) + text,
                               np.ascontiguousarray(raw16, dtype=np.uint16).tobytes())

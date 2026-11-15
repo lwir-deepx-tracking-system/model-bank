@@ -21,6 +21,11 @@
 //   --coast <0|1>               follow the server's predicted place when the followed ID is missing (default 0 = off). With 1:
 //     --coast-ms (800) at most this long from the loss, only on fresh healthy frames whose PRED suffix names the followed ID;
 //     then as without it (STOP, or --search). stdout: COAST_CONTROL 1 at start (the server sends PRED only then).
+//   --arrival-control <0|1>     1 (default): the control step runs when a tracking result arrives; the 25 ms period timer stays for
+//     time-outs, ramps, coast, search and the heartbeat. 0: a result waits for the next 25 ms period (0..25 ms, as v25).
+//     Same control law, rates and time limits in real time (SmoothingConfig::arrival_control, V27_CHANGES.md).
+//   --gui-video-always <0|1>    0 (default): the picture goes to the PC GUI link (video encoder + metadata) only while a PC GUI is
+//     connected on the command port; 1, or --gui-command-port 0: always, as before. See GUI_PICTURE below.
 //
 // Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
 // All control decisions, safety stops and serial output stay in the team's GimbalCommandExecutor; the PC wire format stays in the team's
@@ -29,7 +34,8 @@
 // stdin, one line per message:
 //   F <frame id> <capture time, CLOCK_MONOTONIC ns> <n> then n times: <id> <x> <y> <w> <h> <confidence>     people in camera image pixels (640x480), x y = top left
 //   G <frame id> <capture time ns> <width> <height> <n> then n times: <id> <x> <y> <w> <h> <confidence>     same, followed (after the newline) by width*height*2 bytes:
-//                  the 16-bit camera frame, row major, native byte order. It goes to the gimbal executor AND to the PC GUI (video + metadata)
+//                  the 16-bit camera frame, row major, native byte order. The people go to the gimbal executor as soon as the header line is read
+//                  (the executor uses only the size of the picture); the picture with the people goes to the PC GUI (video + metadata)
 //   F/G headers may carry optional LEAD <track id> <dx px> <dy px> <control epoch>
 //   and OBS <0|1> suffixes in either order. OBS 1 indicates a validated live observation.
 //   Malformed suffixes cannot enable observation grace.
@@ -46,6 +52,8 @@
 //   R <A|M> <OK|INVALID|NOT_READY>            answer to A or M
 //   S <auto> <lost> <moving> <error> <id>     the executor's state, on every change
 //   T <gui client 0|1> <frames given> <frames sent> <frames encoded> <rtp bytes> <send failures>   once a second when --gui-host is set
+//   GUI_PICTURE <0|1>  with --gui-host, at start and on every change: 1 = send G lines (a PC GUI wants the picture), 0 = F lines are
+//                  enough (no PC GUI connected). A picture that still arrives while 0 is read and dropped (no encoding, no UDP).
 // stdin closed, SIGTERM or SIGINT: the executor sends STOP, then the program ends.
 //
 // PC GUI (the team's pc-application, branch feat/gui-video): --gui-host <PC address> turns it on. Video H.264/RTP to UDP --gui-video-port (5000),
@@ -116,6 +124,7 @@ std::string state_line(const ControlSnapshot& s)
 
 struct GuiOptions {
     bool enabled = false;
+    bool video_always = false;   // --gui-video-always 1: encode and send without a connected PC GUI (the behaviour before 11-15)
     GuiVideoConfig video;
     GuiMetadataConfig metadata;
     GuiCommandConfig command;
@@ -183,6 +192,7 @@ Options parse(int argc, char** argv)
     ControlConfig& c = o.control;
     GuiOptions& g = o.gui;
     SmoothingConfig& s = o.smoothing;   // v27
+    s.arrival_control = true;               // v27 (11-15): act on a tracking result when it arrives; --arrival-control 0 = wait for the period
     c.enabled = true;
     c.gimbal.speed = 30;                    // the values in the team's board settings before tuning on the real gimbal
     c.automatic.speed_max = 30;
@@ -274,6 +284,15 @@ Options parse(int argc, char** argv)
             s.coast = value == "1";
         }
         else if (name == "--coast-ms") s.coast_ms = std::stoi(value);
+        // v27 arrival control (default on in this program; SmoothingConfig keeps the team default off)
+        else if (name == "--arrival-control") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--arrival-control is 0 or 1");
+            s.arrival_control = value == "1";
+        }
+        else if (name == "--gui-video-always") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--gui-video-always is 0 or 1");
+            g.video_always = value == "1";
+        }
         else if (name == "--gui-host") { g.enabled = true; g.video.host = value; g.metadata.host = value; }
         else if (name == "--gui-bind") g.command.bind_address = value;
         else if (name == "--gui-video-port") g.video.port = static_cast<std::uint16_t>(std::stoi(value));
@@ -402,6 +421,8 @@ class Bridge {
     GuiLink* gui_;
     const std::atomic<std::uint64_t>& session_changes_;
     cv::Mat image_;              // frames without a picture: the executor reads only the type and the size of the frame
+    cv::Mat shape_;              // the same for a G line whose picture has another size (allocated once per size)
+    const std::atomic<bool>* gui_picture_;   // false: no PC GUI wants the picture now (nullptr = always wanted)
     bool session_ = false;
     std::uint64_t seen_changes_ = 0;
     // a G line waits for its picture
@@ -411,9 +432,9 @@ class Bridge {
     const bool validate_observations_;
 public:
     Bridge(GimbalCommandExecutor& executor, GuiLink* gui, const std::atomic<std::uint64_t>& session_changes,
-           bool validate_observations)
+           bool validate_observations, const std::atomic<bool>* gui_picture = nullptr)
         : executor_(executor), gui_(gui), session_changes_(session_changes),
-          image_(cv::Mat::zeros(480, 640, CV_16UC1)), validate_observations_(validate_observations) {}
+          image_(cv::Mat::zeros(480, 640, CV_16UC1)), gui_picture_(gui_picture), validate_observations_(validate_observations) {}
 
     std::size_t picture_bytes() const { return waiting_ ? static_cast<std::size_t>(wait_w_) * wait_h_ * 2 : 0; }
 
@@ -530,20 +551,33 @@ public:
         waiting_healthy_ = false;
         if (valid) waiting_ = tracks(in, id, captured_ns, count, waiting_healthy_);
         else executor_.publish_unsafe_observation();
-        if (!waiting_) waiting_ = std::make_shared<TrackingResult>(); // Consume the picture without publishing it.
+        if (waiting_) {
+            // 11-15 (latency audit finding 3): the people go to the executor now, not after the width*height*2 picture bytes
+            // have come through the pipe (1.5-3 ms for 640x480). The executor reads only the type and the size of the image.
+            if (w != image_.cols || h != image_.rows) {
+                if (w != shape_.cols || h != shape_.rows) shape_ = cv::Mat::zeros(h, w, CV_16UC1);
+                auto context = std::make_shared<FrameContext>(*waiting_->frame);
+                context->image = shape_;
+                waiting_->frame = context;
+            }
+            executor_.publish(waiting_, waiting_healthy_);
+        }
+        else waiting_ = std::make_shared<TrackingResult>(); // Consume the picture without publishing it.
     }
 
     void picture(const char* bytes)
     {
-        auto result = std::move(waiting_);
+        auto observed = std::move(waiting_);
         waiting_.reset();
-        if (!result || !result->frame) return;
-        auto context = std::make_shared<FrameContext>(*result->frame);
+        if (!observed || !observed->frame) return;
+        // The picture is only for the PC GUI. Without a connected PC GUI it is dropped here: no copy, no encoder, no UDP.
+        if (!gui_ || (gui_picture_ && !gui_picture_->load())) return;
+        auto result = std::make_shared<TrackingResult>(*observed);   // the executor holds the header-time result: never change that one
+        auto context = std::make_shared<FrameContext>(*observed->frame);
         context->image = cv::Mat(wait_h_, wait_w_, CV_16UC1);
         std::memcpy(context->image.data, bytes, static_cast<std::size_t>(wait_w_) * wait_h_ * 2);
         result->frame = context;
-        executor_.publish(result, waiting_healthy_);
-        if (gui_) gui_->publish(result);    // encodes only the observed rows
+        gui_->publish(result);    // encodes only the observed rows
     }
 
     void heartbeat()
@@ -616,14 +650,21 @@ int main(int argc, char** argv) try {
             });
         }
     }
+    // 11-15: the PC GUI gets the picture only while it is connected on the command port (the link has no other way to know
+    // that a PC is there). Without a command listener, or with --gui-video-always 1, always (as before).
+    const bool gui_gated = gui && receiver && !options.gui.video_always;
+    std::atomic<bool> gui_picture{gui && !gui_gated};
     Bridge bridge(executor, gui.get(), session_changes,
                   options.smoothing.observation_grace_ms > 0 || options.smoothing.catchup_speed > 0 ||
-                  options.smoothing.predictive_brake || options.smoothing.search || options.smoothing.coast);
+                  options.smoothing.predictive_brake || options.smoothing.search || options.smoothing.coast,
+                  gui ? &gui_picture : nullptr);
     say("READY");
     say("TRACK_CONTROL 1");
     say("LEAD_CONTROL 1");
     say("OBSERVATION_STATUS 1");
     if (options.smoothing.search) say("SEARCH_CONTROL 1");
+    if (gui) say(std::string("GUI_PICTURE ") + (gui_picture.load() ? "1" : "0"));   // 11-15: the server sends G lines (with the picture) only while 1
+    bool reported_picture = gui_picture.load();
     if (options.smoothing.coast) say("COAST_CONTROL 1");   // v27: the server may send PRED <id> <x> <y> <w> <h>   // v27: the tracker may re-select a re-found person (SEARCH lines follow)
     int reported_search = 0;
     std::string pending, reported;
@@ -633,6 +674,11 @@ int main(int argc, char** argv) try {
     auto next_position = std::chrono::steady_clock::now();
     bool input_open = true;
     while (!stop_signal && input_open) {
+        if (gui_gated) {   // before the input of this round: a picture that is already on its way is used or dropped by the same rule
+            const bool wanted = gui_client.load();
+            gui_picture.store(wanted);
+            if (wanted != reported_picture) { say(std::string("GUI_PICTURE ") + (wanted ? "1" : "0")); reported_picture = wanted; }
+        }
         pollfd input{0, POLLIN, 0};
         const int ready = ::poll(&input, 1, 50);
         if (ready < 0 && errno != EINTR) break;

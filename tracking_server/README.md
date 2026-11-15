@@ -762,7 +762,7 @@ PC 에서 점수가 같은지 볼 때는 서버의 채점 코드(`src/track/gt_s
 **그 밖**
 
 - 측정은 `<측정 폴더>/<날짜>/MEASURE_<시각>_<번호>/` 에 남습니다 (기본 `/mnt/lwir_data/results/live_measure`, 옵션 `--measure-dir`).
-- 팀 PC GUI 와는 짐벌 프로그램이 통신합니다: 영상 H.264/RTP → UDP 5000, 추적 상자 → UDP 5001, PC 의 명령 ← TCP 5002.
+- 팀 PC GUI 와는 짐벌 프로그램이 통신합니다: 영상 H.264/RTP → UDP 5000, 추적 상자 → UDP 5001, PC 의 명령 ← TCP 5002. v27 브리지는 PC GUI 가 TCP 5002 에 연결된 동안만 영상과 상자를 보냅니다 (11-15, `/gimbal/people` 의 `gui.picture`; 항상 보내려면 `--gui-video-always 1`).
 
 </details>
 
