@@ -6,6 +6,7 @@ from ..common import settings
 from ..common.state import APP
 from ..common.shared_values import HERE, CORE, DET, sha
 from ..detect.model_scan import BANK, KPT_DETS
+from ..detect import auto_det   # 11-15 (user): automatic NEAR / FAR detector choice (off by default)
 from ..track import native_backend
 from ..track.position_memory import POSP, POS_NAMES, pos_list, pos_select
 from ..track import e2e_live
@@ -108,7 +109,7 @@ def rules_state():
 
 
 def rules_state_2():
-    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg())   # gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
+    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg(), auto_det=auto_det.state())   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
 
 
 def prefer_cpp_bytetrack(q_, tracker_key, cam_tracker):
@@ -248,6 +249,14 @@ def rules_request(q_):
 
 
 def rules_request_2(q_):
+    ad_ = {k_: x_ for k_, x_ in q_.items() if k_ == 'auto_det' or k_.startswith('auto_det_')}
+    if ad_:   # 11-15: checked first, changed only when the rest of the query was taken too (like stab below)
+        ok_, tx_, apply_ = auto_det.parse_request(ad_)
+        if not ok_: return ok_, tx_
+        rest_ = {k_: x_ for k_, x_ in q_.items() if k_ not in ad_}
+        ok_, tx_ = rules_request_2(rest_) if rest_ else (True, '적용됨')
+        if ok_: apply_()
+        return ok_, tx_
     if 'stab' not in q_: return APP.rules_request0_(q_)
     v_ = str(q_['stab'][0]).strip().lower()
     if v_ not in ('1', '0', 'true', 'false', 'on', 'off'): return False, '흔들림 보정 값은 1 또는 0'

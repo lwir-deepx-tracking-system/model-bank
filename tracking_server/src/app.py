@@ -45,6 +45,7 @@ from .gimbal import gimbal_link
 from .common import result_summary
 from .common import stage_timing   # 2026-11-11: 단계별 시간 재기 (LWIR_STAGE_TIMING=1 일 때만, 기본 꺼짐)
 from .detect import frame_feed     # 2026-11-11: 도착하는 대로 검출기에 넣기 (LWIR_NPU_FEED=arrival 일 때만, 기본 꺼짐)
+from .detect import auto_det       # 2026-11-15: 검출 모델 자동 선택 (근거리 / 먼 거리, 화면이나 /rules/set?auto_det=1 로 켤 때만, 기본 꺼짐)
 
 
 # ---------------------------------------------------------------------------------------------------------------- main
@@ -279,6 +280,7 @@ def main():
     MODEL_CAT = [('w480', 'NEWMRW480', 'YOLO26m_(FLIR) 640x480'), ('s480', 'S480', 'YOLO26s 640x480'), ('m640', 'M640', 'YOLO26m_(FLIR) 640x640'),
                  ('s6', 'S6', 'YOLO26s 640x640')]   # v34 (11-10): the old own-camera fine-tune entry was taken off the list on the user request (models/FT1.dxnn kept); the new indoor file is listed from dxnn/   # v32 (11-10): the v9 trial entry was taken off the list on the user request (file kept in dxnn/)
     APP.MODEL = dict(lock=md_th.Lock(), req=None, busy=False, last=None, history=[], catalog=[])
+    auto_det.reset()   # 11-15: automatic detector choice starts off; a saved choice comes back with the other rules below
     if APP.args.det in [c_[0] for c_ in MODEL_CAT]:   # only for the single-engine detectors; the two-tile builds are not in the catalog
         APP.MODEL['catalog'] = [dict(id=0, det=c_[0], key=c_[1], name=c_[2]) for c_ in MODEL_CAT if APP.args.mock or (c_[1] in APP.man and (HERE / 'models' / 'links' / (c_[1] + '.dxnn')).exists())]
         for i_, c_ in enumerate(APP.MODEL['catalog']): c_['id'] = i_ + 1
@@ -311,7 +313,7 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p') if k_ in sv_})
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass
@@ -326,11 +328,13 @@ def main():
         if 'lead' in APP.SEL: qs_.append({'lead': ['1' if APP.SEL['lead'] else '0']})   # 11-13 (user): prediction on/off comes back after a restart
         if 'confirm_ms' in APP.SEL: qs_.append({'confirm_ms': [str(APP.SEL['confirm_ms'])]})   # 11-11: a value set on the page wins over --confirm-ms, like the other Filter numbers
         if isinstance(sv_, dict) and 'stab' in sv_: APP.SEL['stab'] = bool(sv_['stab']); qs_.append({'stab': ['1' if APP.SEL['stab'] else '0']})   # stab
+        if 'auto_det' in APP.SEL: qs_.append(auto_det.restore_query(bool(APP.SEL['auto_det']), APP.SEL.get('auto_det_p')))   # 11-15: automatic detector choice on / off and the changed numbers
         for q_ in qs_:
             if not q_: continue
             try: ok_, tx_ = APP.rules_request(q_)
             except Exception as e_: ok_, tx_ = False, repr(e_)[:120]
             if not ok_:
+                if 'auto_det' in q_: APP.SEL.pop('auto_det_p', None)
                 for k_ in q_: APP.SEL.pop(k_, None)
             print('LAST selection %s -> %s (%s)' % (sorted(q_), 'taken' if ok_ else 'dropped', tx_), flush=True)
         dv_ = APP.SEL.pop('det', None)

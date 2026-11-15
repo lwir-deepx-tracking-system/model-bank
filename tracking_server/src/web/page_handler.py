@@ -14,6 +14,7 @@ from ..gimbal import live_tracks
 from ..track.position_memory import POSP
 from ..detect import spec_proposals   # 11-14: people proposals from the spatial spectrum (display only)
 from ..detect import skin_temp   # 11-14: skin temperature per person box from the camera's temperature map (display only, off by default)
+from ..detect import auto_det   # 11-15: automatic NEAR / FAR detector choice (off by default)
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
 from . import system_buttons
@@ -228,6 +229,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
     gtd_, overlay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections,
                                              tracker_detections, **receipt_args)
     position = preview_receipt[0] if preview_receipt else None
+    auto_det.on_frame(t_in, display_rows, repeat=rep_, frame=row_.get('image_id'), stab=sC_)   # 11-15 (user): automatic NEAR / FAR detector choice; off by default, only queues a request for the frame loop, never raises
     # 11-12: the page picture only when somebody can see it: every frame while /stream has a viewer, otherwise once a second (/snap.jpg at most 1 s old)
     # and every frame for 3 s after a /snap.jpg request. Nothing else reads this picture (tracking, gimbal, measurement and the PC GUI use the frame itself).
     preview_allowed_ = (token_ is not None if worker_ is not None else
@@ -310,6 +312,7 @@ def make_lv_Handler():
                 try: mid_ = int(pq_(us_(self.path).query)['id'][0])
                 except (KeyError, ValueError, IndexError): self.send_error(400); return
                 r_ = APP.model_request(mid_)
+                if r_ in (-1, 0): auto_det.manual_choice('page')   # 11-15: a model chosen by hand turns the automatic choice off
                 if r_ >= 0:
                     with APP.MODEL['lock']: APP.MODEL['last'] = dict(id=mid_, result=r_, text=APP.MODEL_TEXT.get(r_, '?'), at=time.strftime('%H:%M:%S'))
                 b_ = json.dumps(APP.model_state()).encode()
@@ -484,7 +487,7 @@ def make_lv_Handler():
                     b_ = json.dumps(dict(state=APP.GB.state, **live_gimbal_position(), people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/rules'):   # v24g
-                    b_ = json.dumps(APP.rules_state(), ensure_ascii=False).encode()
+                    b_ = json.dumps(auto_det.dry_log() if self.path.startswith('/rules/auto_det_log') else APP.rules_state(), ensure_ascii=False).encode()   # 11-15: every kept "would-have switch" of a replay (read only)
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/perf'):   # v26c: read only. Per-second history for the graph: t (unix s), track fps, cam fps, delay mean ms, delay max ms, compute mean ms
                     from urllib.parse import urlsplit as us3_, parse_qs as pq3_

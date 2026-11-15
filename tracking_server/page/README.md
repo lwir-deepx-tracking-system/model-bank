@@ -106,8 +106,8 @@ page/
   - 이름: `TDC`, `BT`, `TD`
 - **`js/08_tree_names_folders.js`** — 설정 칸에 보이는 이름과 한 줄 설명, 모델을 폴더(구조 → 크기)로 묶는 규칙, Tracker 설명 그리기
   - 이름: `TN`, `PN`, `DN`, `AN`, `DNOTE`, `dfold`, `dsub`, `AFOLD`, `PFOLD`, `tname`, `pend`, `rdoc()`
-- **`js/09_tree_rows.js`** — 설정 줄 만들기: 전처리 · 검출 모델 · Tracker · 외형 비교 · 위치 기억 · 신뢰도 · KeepID · 제어 줄에 어떤 칸이 있고, 누르면 무엇을 보내고, 언제 잠기는지
-  - 이름: `tiers()`
+- **`js/09_tree_rows.js`** — 설정 줄 만들기: 전처리 · 검출 모델 · 검출 모델 자동 선택(11-15, `/rules` 의 `auto_det`) · Tracker · 외형 비교 · 위치 기억 · 신뢰도 · KeepID · 제어 줄에 어떤 칸이 있고, 누르면 무엇을 보내고, 언제 잠기는지
+  - 이름: `tiers()`. 아래 줄(외형 비교, ByteTrack 옵션, 엔진)은 Tracker 줄을 자리 번호 `TRI` 로 가리킵니다 (11-15: 위에 줄이 늘어 고정 번호 3을 없앰)
 - **`js/10_tree_draw_click.js`** — 설정 줄 그리기(폴더 펼치기 포함), "지금 조합" 줄, 칸을 눌렀을 때 서버로 보내기
   - 이름: `otdraw()`
 - **`js/11_model_change.js`** — 검출 모델 바꾸기 상태: 맨 위 모델 점, "지금 적용된 값" 첫 줄, 1초마다 다시 읽기

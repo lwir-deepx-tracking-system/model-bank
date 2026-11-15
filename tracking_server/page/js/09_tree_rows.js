@@ -7,8 +7,20 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const cat=(m&&m.catalog)||[];
   const dk=c=>String(c.det)+' '+String(c.name),ADVON=document.body.classList.contains('adv'),HIDEF=['기본 (공개 데이터)','다른 구조 (비교용)'],curm=m?(m.busy?m.pending:m.current):null;
   const catv=cat,dfs=DSTR.filter(f=>catv.some(c=>dfold(dk(c))===f));   // 11-13 (user): every detector folder always shows (hiding the comparison models was a problem)   // 11-13: folders by use, only the ones that have models
-  T.push({lab:'검출 모델',sub:'구조별 · YOLO26 안은 쓰는 곳별',f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
-    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:REC.includes(c.det),note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1}))});
+  const ad=r.auto_det,adOn=!!(ad&&ad.on),ADASK='검출 모델 자동 선택이 켜져 있습니다.\n손으로 모델을 고르면 자동 선택이 꺼집니다. 고를까요?';   // 11-15 (user): 검출 모델 자동 선택 (src/detect/auto_det.py)
+  T.push({lab:'검출 모델',sub:'구조별 · YOLO26 안은 쓰는 곳별'+(adOn?' · 자동 선택 켜짐':''),f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
+    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:REC.includes(c.det),note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1,ask:adOn?ADASK:''}))});
+  // 11-15 (user: 상황에 맞는 최적 모델 알아서 선택): 근거리 / 먼 거리 모델을 사람 크기로 고름. 녹화 재생 중에는 바꾸지 않고 바꿨을 순간만 기록 (시험 운전)
+  {const AK={near:'근거리',far:'먼 거리',other:'다른 모델'},P=(ad&&ad.params)||{},s=ad&&ad.signal,dl=ad&&ad.dry_recent&&ad.dry_recent.length?ad.dry_recent[ad.dry_recent.length-1]:null;
+    const thr=ad?'사람 상자 '+P.far_px+' px 아래 '+P.hold_s+'초 → 먼 거리 (가려지거나 잘린 상자는 빼고) · '+P.near_px+' px 위, 또는 가려진 사람 '+P.hold_s+'초 → 근거리 · 사람을 잃으면 '+P.lost_s+'초 뒤 먼 거리 · 바꾼 뒤 '+P.dwell_s+'초 유지 · 1분에 '+P.max_per_min+'번까지':'';
+    const miss=!ad?OLDSRV:!m?'모델 목록을 아직 받지 못했습니다':!cat.length||ad.can_switch===false?'이 실행에서는 모델을 바꿀 수 없습니다':!ad.far.present?'먼 거리 모델이 장치에 없습니다 (모델 폴더에 넣으면 열립니다)':!ad.near.present?'근거리 모델이 장치에 없습니다':'';
+    const sig=s&&s.px!=null?(s.source==='followed'?'따라가는 사람 ':'화면 사람 가운뎃값 ')+Math.round(s.px/5)*5+' px'+(s.kpts!=null?' · 관절 '+s.kpts+'개':'')+(s.hidden?' · 가려짐':'')+(s.cut?' · 화면 끝에 잘림':''):s&&s.source==='followed_missing'?'따라가는 사람 안 보임':'';
+    const now=!adOn?'':ad.mode==='dry_run'?'녹화 재생: 바꾸지 않고 기록만 · 바꿨을 순간 '+ad.dry_events+'번'+(dl?' · 마지막 '+(dl.frame!=null?(dl.frame+1)+'번째 장':dl.t+'초')+' '+(AK[dl.from]||dl.from)+'→'+(AK[dl.to]||dl.to):'')
+      :ad.mode==='live'?'지금 '+(AK[ad.current]||'–')+(ad.pending?' → '+(AK[ad.pending]||ad.pending)+' 바꾸는 중':'')+(sig?' · '+sig:''):(ad.reason||'');
+    T.push({lab:'검출 모델 자동 선택',sub:'사람 크기로 근거리 / 먼 거리 모델 고르기'+(adOn&&ad.mode==='live'&&ad.last_switch?' · 마지막 자동 바꿈 '+ad.last_switch.at:''),n:[
+      {name:'끔',note:(!adOn&&ad&&ad.reason&&ad.reason!=='꺼짐'?ad.reason+' · ':'')+'위 검출 모델 그대로 · 손으로 모델을 고르면 꺼짐',sel:!adOn,lock:!ad?OLDSRV:'',u:Q('auto_det=0')},
+      {name:'켬',note:thr+(now?' · '+now:''),sel:adOn,lock:adOn?'':miss,u:Q('auto_det=1'),
+       ask:adOn?'':'검출 모델 자동 선택은 아직 장치에서 시험하지 않은 기능입니다.\n사람이 작게 보이면 먼 거리 모델로, 크게 보이면 근거리 모델로 바꿉니다.\n바꾸는 동안 화면이 잠깐 멈춥니다. 켤까요?'}]});}
   T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
@@ -38,7 +50,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   if(el&&el.available)e2e.push({key:'e2e_live_ftt',name:(el.label||'FastTrackTr')+' · 실시간',note:'장치 NPU 에서 매 프레임 실행'+(el.ms?' · '+el.ms+' ms':'')+(el.link_used?' · 번호 잇기: '+(el.link_used==='id'?'모델 번호 출력 + 겹침':'겹침만'):'')+(el.err?' · '+el.err:''),sel:el.on==='ftt'||el.want==='ftt',u:Q('e2e_live=ftt')});
   const E2E=e2e.length?{lab:'엔드투엔드',sub:replayStored?'사용 중 · 아래 검출 모델과 Tracker 줄은 쓰이지 않음':'검출부터 추적까지 한 모델 · 끔이면 아래 검출 + Tracker 사용',
     n:[{name:'끔',note:'아래 검출 모델 + Tracker',sel:!replayStored&&!(el&&(el.on==='ftt'||el.want==='ftt')),e2eOff:!!(recording&&replayStored),u:(el&&el.on==='ftt')?Q('e2e_live=off'):undefined}].concat(e2e)}:null;
-  T.push({lab:'Tracker',sub:trackerSummary,n:tn});
+  const TRI=T.length;T.push({lab:'Tracker',sub:trackerSummary,n:tn});   // 11-15: the child rows below point at this row by its place (the auto-choice row above moved it)
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
   const hot=!!(r.reid_hot&&r.reids&&r.reids.length),rk=hot?(r.reid_pending||r.reid):'',fol=!!(r.gimbal&&r.gimbal.auto);
@@ -47,8 +59,8 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const rn=(a,on,q,jn)=>({g:a.folder||'',name:a.name||a.key,note:(a.note||'')+(jn&&!a.judge_fit?(a.note?' · ':'')+JN:''),sel:on&&a.key===rk,lock:a.available===false?(a.why||'지금은 고를 수 없습니다'):(fol&&a.key!==rk)?FOLK:'',u:Q(q+'&reid='+encodeURIComponent(a.key)),hint:a.key!==rk?SWAPH:''});
   // 11-13 (user): one appearance model serves both uses, so the list is drawn once (row '외형 모델' below); here only on / off
   const rname=(r.reids&&(r.reids.find(a=>a.key===rk)||{}).name)||'';
-  if(hot)T.push({lab:'외형 비교',sub:'사람 생김새로도 짝짓기 · 모델은 아래 외형 모델',kidOf:3,kidKey:'botsort',show:bot,n:[{name:'끔',note:'위치만으로 짝짓기',sel:bot&&app==='off',u:Q('app=off')},{name:'켬',note:rname,sel:bot&&app!=='off',u:Q('app=repvgg')}]});
-  else T.push({lab:'외형 비교',sub:'',kidOf:3,kidKey:'botsort',show:bot,f:['RepVGG','ViT-lite'],n:apps.map(a=>({g:AFOLD[a.key]||'',name:AN[a.key]||a.name||a.key,note:a.note||'',sel:bot&&a.key===app,lock:!bot?'BoT-SORT를 골라야 열립니다':!r.apps?OLDSRV:a.available===false?(a.note||'지금은 고를 수 없습니다'):'',u:Q('app='+encodeURIComponent(a.key))}))});
+  if(hot)T.push({lab:'외형 비교',sub:'사람 생김새로도 짝짓기 · 모델은 아래 외형 모델',kidOf:TRI,kidKey:'botsort',show:bot,n:[{name:'끔',note:'위치만으로 짝짓기',sel:bot&&app==='off',u:Q('app=off')},{name:'켬',note:rname,sel:bot&&app!=='off',u:Q('app=repvgg')}]});
+  else T.push({lab:'외형 비교',sub:'',kidOf:TRI,kidKey:'botsort',show:bot,f:['RepVGG','ViT-lite'],n:apps.map(a=>({g:AFOLD[a.key]||'',name:AN[a.key]||a.name||a.key,note:a.note||'',sel:bot&&a.key===app,lock:!bot?'BoT-SORT를 골라야 열립니다':!r.apps?OLDSRV:a.available===false?(a.note||'지금은 고를 수 없습니다'):'',u:Q('app='+encodeURIComponent(a.key))}))});
   const pl=r.predictors||[{key:'kalman',available:true}];
   const plv=pl.filter(p=>ADVON||p.key==='kalman'||p.key===prd||/_kpt$/.test(p.key));   // 11-13: GRU / Mamba (1 epoch, unverified) only with 'advanced' open. 11-14: keypoint versions always shown (user)
   T.push({lab:'위치 기억 · 신뢰도',sub:'놓친 사람 위치'+(ADVON||plv.length>1?'':' · 학습 모델은 고급을 열면 보임'),f:plv.length>1?['Kalman filter','GRU','Mamba']:null,fe:{GRU:'장치에 GRU 가중치 파일이 없습니다',Mamba:'장치에 Mamba 가중치 파일이 없습니다'},n:plv.map(p=>({g:plv.length>1?(PFOLD[p.key]||''):'',name:PN[p.key]?PN[p.key][0]:p.name,note:PN[p.key]?PN[p.key][1]:(p.note||''),sel:p.key===prd,lock:p.available===false?(p.note||'가중치 파일이 없습니다'):(/_kpt$/.test(p.key)&&r.det_kpt===false)?'[관절] 검출 모델을 골라야 열립니다':'',u:Q('predictor='+encodeURIComponent(p.key))}))});   // 11-14 (user): keypoint versions only with a keypoint detector
@@ -80,7 +92,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     const hasCpp=recording?rpLast.backends?.some(b=>b.id==='cpp_bytetrack'):camNative?.available;
     const pythonPreset=BT_KEYS.includes(trk)?trk:bt.key;
     const optionLock=recording?'녹화 재생을 마친 뒤 바꾸세요':camTransition?'추적기 전환이 끝난 뒤 바꾸세요':cpp?'Python 엔진을 선택한 뒤 바꾸세요':'';
-    T.push({lab:'ByteTrack 옵션',kidOf:3,kidKey:'bytetrack',show:btSelected,multi:1,n:[
+    T.push({lab:'ByteTrack 옵션',kidOf:TRI,kidKey:'bytetrack',show:btSelected,multi:1,n:[
       {name:'Python',sel:!cpp&&!camTransition&&!replayStored,lock:switching?'영상 전환 중입니다':'',
        replayBackend:recording?'python':null,u:Q('tracker='+encodeURIComponent(pythonPreset))},
       {name:'C++',sel:cpp&&!replayErr,lock:switching?'영상 전환 중입니다':!hasCpp?(camNative?.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 라이브러리를 사용할 수 없습니다'):'',
@@ -93,13 +105,13 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   // 11-13: engine row of the chosen SORT / OC-SORT / BoT-SORT. The tile itself starts C++ when it is built; Python is picked here.
   ps.filter(p=>!BT_KEYS.includes(p.key)&&'engine' in r).forEach(p=>{
     const hasNative=p.backend==='C++',python=eng==='python'||!hasNative;
-    T.push({lab:tname(p.key)+' 엔진',kidOf:3,kidKey:p.key,show:curEngine(p),n:[
+    T.push({lab:tname(p.key)+' 엔진',kidOf:TRI,kidKey:p.key,show:curEngine(p),n:[
       {name:'C++',note:hasNative?'기본':'',sel:!python,lock:hasNative?'':(p.restart_required?'새 C++ 빌드를 쓰려면 서버를 다시 시작하세요':'C++ 빌드가 없습니다'),u:Q('tracker='+encodeURIComponent(p.key)+'&engine=auto')},
       {name:'Python',sel:python,u:Q('tracker='+encodeURIComponent(p.key)+'&engine=python')}]});
   });
   const e2eLive=!!(el&&(el.on==='ftt'||el.want==='ftt'));
   if(e2eLive||replayStored){   // 11-14 (user): the end-to-end model (live, or its stored result on a recording) replaces these, so they are locked while it runs; 11-15 (user): not 전처리 - stabilization moves the frame the end-to-end model sees
-    const OFF=['검출 모델','검출 뒤 Filter','Tracker','ByteTrack 옵션','위치 기억 · 신뢰도','KeepID','KeepID 찾는 범위','외형 비교','외형 모델'],why=(e2eLive?'엔드투엔드(FastTrackTr) 사용 중':'엔드투엔드 결과 재생 중')+' · 엔드투엔드를 끄면 다시 고를 수 있습니다';
+    const OFF=['검출 모델','검출 모델 자동 선택','검출 뒤 Filter','Tracker','ByteTrack 옵션','위치 기억 · 신뢰도','KeepID','KeepID 찾는 범위','외형 비교','외형 모델'],why=(e2eLive?'엔드투엔드(FastTrackTr) 사용 중':'엔드투엔드 결과 재생 중')+' · 엔드투엔드를 끄면 다시 고를 수 있습니다';
     const off=new Set();T.forEach((t,i)=>{if(OFF.includes(t.lab)||/ 엔진$/.test(t.lab))off.add(i);});
     T.forEach((t,i)=>{if(off.has(i)||(t.kidOf!=null&&off.has(t.kidOf))){t.sub=(e2eLive?'엔드투엔드 사용 중':'엔드투엔드 결과 재생 중')+' · 쓰이지 않음';(t.n||[]).forEach(n=>{n.lock=why;n.sel=false;});}
       if(t.lab==='화면 표시')(t.n||[]).forEach(n=>{if(n.name==='사람 후보 (공간 주파수)'||n.name==='예측 상자 표시'){n.lock=why;n.sel=false;}});});}

@@ -4,6 +4,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
+from ..detect import auto_det   # 11-15: a model chosen on the PC GUI turns the automatic detector choice off
 
 
 def lead_shift(real_, seen_, id_, t_, w_, h_):
@@ -224,6 +225,7 @@ def gb_reader(p_):
                 APP.GB.position_sample = (p_, time.monotonic(), percent)
         elif f_[0] == 'M' and len(f_) >= 3:   # v23: the PC GUI asks for a model change: M <req> <id>
             r_ = APP.model_request(int(f_[2]), int(f_[1])); print('MODEL request from the PC GUI: id', f_[2], '->', 'queued' if r_ < 0 else r_, flush=True)
+            if r_ in (-1, 0): auto_det.manual_choice('PC GUI')   # 11-15: a model chosen by hand turns the automatic choice off
             if r_ >= 0: APP.gb_send('N %d %d' % (int(f_[1]), r_))
         elif f_[0] == 'T' and len(f_) >= 7:   # v20: GUI link status, once a second
             g_ = APP.GB.state['gui']; client_ = int(f_[1])
