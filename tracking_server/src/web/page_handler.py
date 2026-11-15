@@ -43,9 +43,13 @@ def init_preview(live, *, transition_jpeg=None):
     live.picture_worker = picture_first.PictureWorker(live, APP.cv2, fixed_map=fixed_map)   # 11-15: acts only while picture first is on
 
 
-def _lost_marks(t_in, rows_, gb_id_, fps_):
+def _lost_marks(t_in, rows_, gb_id_, fps_, own_pool=True):
     """11-16: the lost people to draw this frame (lost_marks.update: the tracker's lost pool, then our own memory of it for as
-    long as the number can come back). Once per published frame, before the picture / overlay of that frame."""
+    long as the number can come back). Once per published frame, before the picture / overlay of that frame, after box_refine.apply
+    of the same frame. own_pool: the drawn rows are the server tracker's (False = the camera C++ ByteTrack made them, other numbers).
+    11-16 lost_same (box_refine switch): the lost pool is read from APP.tracker after this frame's update (lost_marks.pool_now; the
+    Python trackers and the C++ BoT-SORT / OC-SORT / SORT give the same pool) and drawn in the box_refine definition (box_refine.lost_boxes).
+    Not readable (camera C++ ByteTrack, end-to-end model, a tracker without a pool): today's POSP['boxes'] path, the reason on the page."""
     if not POSP['show']:
         return lost_marks.update(t_in, (), 0)
     try:
@@ -60,10 +64,20 @@ def _lost_marks(t_in, rows_, gb_id_, fps_):
             ms_ = live_tracks._bridge_option(APP.GB, '--reacquire-ms')
             try: follow_s_ = max(1.0, float(ms_) / 1000.0) if ms_ is not None else 1.0   # the bridge's own default is 1 s
             except ValueError: pass
+        same_ = {}
+        if box_refine.BR['lost_same']:   # 11-16 lost_same (default off: the call below is the very same as before)
+            why_ = ''; now_ = None
+            if not own_pool: why_ = '카메라 C++ ByteTrack 사용 중(번호가 다름): 예전 점선 상자'
+            elif box_refine._e2e_on(): why_ = '엔드투엔드 사용 중: 예전 점선 상자'
+            else:
+                now_ = lost_marks.pool_now(app_('tracker'))
+                if now_ is None: why_ = '이 추적기의 놓친 목록을 읽지 못함: 예전 점선 상자'
+            box_refine.BR['lost_why'] = why_
+            if now_ is not None: same_ = dict(lost_now=now_, convert=box_refine.lost_boxes)
         return lost_marks.update(t_in, {int(r_[4]) for r_ in rows_}, int(gb_id_ or 0), tracker=app_('tracker'),
                                  id_map=idm_ if isinstance(idm_, dict) else None, keepid=idm_ is not None,
                                  fresh=time.perf_counter() - POSP['boxes_t'] < 0.5, motion=_canvas_motion,
-                                 follow_s=follow_s_, fps=min(60.0, max(5.0, fps_)) if fps_ else 30.0)
+                                 follow_s=follow_s_, fps=min(60.0, max(5.0, fps_)) if fps_ else 30.0, **same_)
     except Exception:   # noqa: BLE001  (display only)
         return []
 
@@ -275,7 +289,7 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
                                     frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_)
     frame_feed.sent(t_in)   # 11-16 period monitor (feed_auto): this frame's result is out (gimbal); its deadline is arrival + one camera period
-    marks_ = _lost_marks(t_in, display_rows, gb_id_, fps_)   # 11-16: every frame, so the kept marks follow the camera motion
+    marks_ = _lost_marks(t_in, display_rows, gb_id_, fps_, own_pool=camera_rows is None)   # 11-16: every frame, so the kept marks follow the camera motion
     seek_ = APP.GB.state.get('seek') if has_gimbal_ and gb_id_ else None   # 11-16: the gimbal's search while the followed person is lost (bridge --seek 1)
     if skin_temp.TEMP['show']:   # 11-14: person boxes in real camera coordinates against the newest temperature map (no labels on a recording); after the gimbal frame (display only)
         skin_temp.on_frame(t_in, [(int(b_[4]), float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0) for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0],

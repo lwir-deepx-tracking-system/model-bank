@@ -317,7 +317,7 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det', 'box_refine', 'box_blend') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass

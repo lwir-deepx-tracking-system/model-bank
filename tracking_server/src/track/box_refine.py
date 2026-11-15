@@ -44,6 +44,21 @@
 모두 비운다. 같은 규칙을 공개 자료 채점도 이 클래스로 그대로 쓴다. NaN / inf 행(모든 모드)은 그 번호가 그 프레임에 없는 것처럼 두고(그 행은 그대로 그림,
 상태는 그대로), 결과나 크기 필터 상태가 NaN / inf 가 되면 그 번호를 처음부터 한다(11-16 검토).
 쓰지 않는 곳: 엔드투엔드 모델 사용 중(검출 상자가 없음: 꺼진 것처럼 그대로), 녹화를 다른 추적기 결과로 재생할 때 그리는 행(재생 쪽 행은 그대로).
+
+놓친 상자 = 보일 때 상자 (11-16, /rules/set?lost_same=1|0, last_selection.json 에 남음, 기본 0 = 지금 그대로; 판정
+pos_refine_20261115/unified/judge/JUDGE_RESULT_20261116.md 의 A = U0): 화면의 점선 상자(놓친 사람, 예측 상자 표시)를 보일 때 그린 상자와 같은
+정의로 그린다. 표시만: 추적기, 위치 기억, 짝짓기, KeepID, 짐벌은 그대로(추적기는 읽기만 한다).
+  - 놓친 첫 장부터 그린다. 지금은 점선 상자가 다음 프레임 예측(POSP['boxes'])에서 만들어져 놓친 첫 장이 비었다. 켜면 이 프레임의 추적기 갱신
+    뒤 놓친 목록(tracker.lost: 상자 = t.mean[:4], 놓친 장 수 = tracker.frame_id - t.end_frame)을 읽는다(web/lost_marks.pool_now).
+    파이썬 ByteTrack / BoT-SORT / OC-SORT / SORT 와 C++ BoT-SORT / OC-SORT / SORT 는 같은 목록을 내므로(test_native_trackers) 장치 설정
+    (botsort, C++)에서도 그대로 된다. 카메라 C++ ByteTrack(camera_bytetrack, 번호가 다름)과 엔드투엔드는 읽을 수 없어 지금 방식으로 돌아간다.
+  - 크기: 번호마다 그 번호가 마지막으로 보인 프레임의 거른 크기(size / body 필터 상태 [log w, log h])를 따로 적어 두고(LostHold: 이 모듈의
+    KeepID 넘겨받기가 놓친 번호의 필터 상태를 다른 번호에 넘겨도 남게), 안 보이는 프레임마다 카메라 배율만 더한다. 90 프레임 뒤, 모드가 바뀌거나
+    다시 시작하면 버린다.
+  - size: 가로 중심과 짐벌 조준점(위 + aim_y x 키)은 추적기 놓친 상자 그대로, 크기만 적어 둔 크기(보일 때의 size_box 와 같은 규칙).
+    body: 보일 때와 같은 변환표(그 프레임의 놓친 사람 모두를 한 번에)와 같은 기준점(aim / top / centre), 크기는 적어 둔 크기.
+    off: 추적기 상자 그대로(지금과 같음; 켜면 놓친 첫 장의 빈 장만 없어진다).
+  - 오류가 나면 그 프레임은 추적기 상자를 그리고 센다(lost_errors). 보일 때 상자(apply 결과)는 켜도 끄도 비트까지 같다.
 """
 import math
 import os
@@ -89,9 +104,11 @@ LOST_MAX = 30          # frames a missing id keeps its state (ByteTrack buffer):
 JUMP_H = 1.5           # a detection farther than this many box heights from the id's previous one (moved by the camera) = another person
 HANDOVER_IOU = 0.5     # a new id takes the state of an id that vanished this frame when its detection overlaps that id's last one this much
 ERR_MAX = 50           # errors in a row before the module switches itself off
+LOST_HOLD = 90         # lost_same: frames an id's held size is kept after its last seen frame (= the KeepID window, web/lost_marks.KEEPID_FRAMES)
 
 BR = dict(mode='off', blend_s=0.0, lock=threading.Lock(), frame=0, ms=0.0, ms_max=0.0, ms_track=0.0, n=0, frames=0, err='', errors=0, errors_all=0,
-          reset_key=None, blends=0, handovers=0, why='', dir=None, table=None, tfile=None, tnote='', tmt=None)
+          reset_key=None, blends=0, handovers=0, why='', dir=None, table=None, tfile=None, tnote='', tmt=None,
+          lost_same=False, lost_ms=0.0, lost_ms_max=0.0, lost_n=0, lost_frames=0, lost_err='', lost_errors=0, lost_why='')   # 11-16 lost_same (default off)
 
 
 # ------------------------------------------------------------------------------------------------ pieces (no APP)
@@ -313,6 +330,57 @@ class Refiner:
         return out
 
 
+class LostHold:
+    """lost_same (11-16, judge A = U0, no APP): per output id its own copy [log w, log h, frames unseen] of the Refiner's filtered size after the
+    id's last seen step, + the camera log scale of every frame since (unified_srv.UnifiedStore.hold). Own copy: the Refiner's KeepID hand-over
+    (HANDOVER_IOU) may move a lost id's filter state to another id. Reads the Refiner, never writes it (the drawn / gimbal rows stay the same).
+    step(seen ids, H) once per frame right after ref.step; boxes(items) -> (lost boxes, converted, bad) for the lost tracks of the same frame."""
+    __slots__ = ('ref', 'h', 'hold_max')
+
+    def __init__(self, ref, hold_max=LOST_HOLD):
+        self.ref = ref; self.h = {}; self.hold_max = int(hold_max)
+
+    def step(self, seen, H):
+        ls = log_scale(H)
+        for tid in list(self.h):
+            if tid in seen: continue
+            e = self.h[tid]; e[2] += 1
+            if e[2] > self.hold_max: del self.h[tid]; continue
+            e[0] += ls; e[1] += ls
+        for tid in seen:
+            st = self.ref.tr.get(tid); se = st.get('se') if st is not None else None
+            if se is not None and se.x0 is not None and math.isfinite(se.x0) and math.isfinite(se.x1): self.h[tid] = [se.x0, se.x1, 0]
+
+    def boxes(self, items):
+        """items [(output id, tracker lost box cxcywh, lost step)] -> ([box cxcywh per item], converted, bad). A box is the tracker's own box when the
+        id has no held size, in mode 'off' (blend only), in body without a table, or when the result is not finite (bad). size: centre x and the
+        gimbal aim point top + aim_y x h of the tracker box stay, the size is the held one (size_box, the seen rule). body: the table of the
+        detector in effect for all of them in ONE call, the running body anchor (aim / top / centre), the held size."""
+        ref = self.ref; out = []; use = []
+        for i, it in enumerate(items):
+            z = np.array(it[1], np.float64).reshape(4); out.append(z)
+            if it[0] in self.h and np.isfinite(z).all(): use.append(i)
+        if not use or ref.mode not in ('size', 'body') or (ref.mode == 'body' and ref.table is None): return out, 0, 0
+        n = bad = 0
+        if ref.mode == 'size':
+            an = ref.size['anchor']
+            for i in use:
+                e = self.h[items[i][0]]; z = out[i]; z[2:] = np.maximum(z[2:], 1.); b = size_box(z, e[0], e[1], an, ref.aim_y)
+                if np.isfinite(b).all(): out[i] = b; n += 1
+                else: bad += 1
+            return out, n, bad
+        Z = np.array([out[i] for i in use], np.float64).reshape(-1, 4); Z[:, 2:] = np.maximum(Z[:, 2:], 1.)
+        D = ref.table.conv_delta(Z, ref.family_of(ref.eff_key)); an = ref.body.get('anchor', 'aim')
+        for k, i in enumerate(use):
+            e = self.h[items[i][0]]; zr = Z[k]; d = D[k]
+            hc = zr[3] * math.exp(d[3]); cx = zr[0] + d[0] * zr[3]; cy = zr[1] + d[1] * zr[3]; top = cy - hc / 2; h_ = math.exp(e[1])
+            tf = top + ref.aim_y * (hc - h_) if an == 'aim' else top if an == 'top' else cy - h_ / 2
+            b = np.array([cx, tf + h_ / 2, math.exp(e[0]), h_])
+            if np.isfinite(b).all(): out[i] = b; n += 1
+            else: bad += 1
+        return out, n, bad
+
+
 # ------------------------------------------------------------------------------------------------ server glue
 def _app(name, default=None):
     return vars(APP).get(name, default)
@@ -396,6 +464,38 @@ def _warp():
         return None
 
 
+def _hold_step(obj, res, H):
+    """lost_same: LostHold of this Refiner (a new Refiner = a new one: mode change, reset), stepped with this frame's seen ids. Under BR['lock'].
+    Its own error count: an error here never changes the drawn / gimbal rows."""
+    try:
+        ho = BR.get('hold')
+        if ho is None or ho.ref is not obj: ho = BR['hold'] = LostHold(obj)
+        ho.step(res, H)
+    except Exception as e_:
+        BR.pop('hold', None); BR['lost_err'] = repr(e_)[:160]; BR['lost_errors'] += 1
+
+
+def lost_boxes(items):
+    """lost_same (11-16): page_handler._lost_marks -> web/lost_marks.update, frame thread, after apply() of the same frame (which already carried
+    the held sizes by this frame's camera scale): items [(output id, tracker lost box cxcywh, lost step)] -> [box cxcywh per item] in the running
+    mode's box definition with the held size (LostHold.boxes). Switch off, mode off, no state yet: the tracker boxes. Never raises: an error
+    gives the tracker boxes and is counted (lost_errors)."""
+    t0 = time.perf_counter()
+    try:
+        with BR['lock']:
+            obj = BR.get('obj'); ho = BR.get('hold')
+            if not BR['lost_same'] or obj is None or ho is None or ho.ref is not obj or obj.mode != BR['mode']:
+                return [np.array(it[1], np.float64).reshape(4) for it in items]
+            out, n, bad = ho.boxes(items)
+            if bad: BR['lost_errors'] += bad; BR['lost_err'] = '%d개 결과가 수가 아님: 추적기 상자로 그림' % bad
+            BR['lost_n'] = n; BR['lost_frames'] += 1
+            ms = (time.perf_counter() - t0) * 1000.0; BR['lost_ms'] += 0.05 * (ms - BR['lost_ms']); BR['lost_ms_max'] = max(BR['lost_ms_max'] * 0.999, ms)
+            return out
+    except Exception as e_:
+        with BR['lock']: BR['lost_err'] = repr(e_)[:160]; BR['lost_errors'] += 1
+        return [np.array(it[1], np.float64).reshape(4) for it in items]
+
+
 def apply(rows, dets=None, t=None):
     """Frame thread (live_publish), once per published frame: rows = the rows drawn and sent to the gimbal (x1, y1, x2, y2, id, conf, class[, det index])
     -> the same rows with refined person boxes (a new list), or the very same list when off / not usable. Never raises."""
@@ -426,7 +526,10 @@ def apply(rows, dets=None, t=None):
                         if inter / max((bx[2] - bx[0]) * (bx[3] - bx[1]) + (d2 - d0) * (d3 - d1) - inter, 1e-6) >= 0.3:
                             z = np.array([(d0 + d2) / 2, (d1 + d3) / 2, max(d2 - d0, 1.), max(d3 - d1, 1.)])
                 items.append((int(r[4]), z, zr)); idx.append(i)
-            res = obj.step(items, float(t) if t is not None else time.perf_counter(), _warp(), _app('args').det if _app('args') is not None else None, _new_ready())
+            H = _warp()
+            res = obj.step(items, float(t) if t is not None else time.perf_counter(), H, _app('args').det if _app('args') is not None else None, _new_ready())
+            if BR['lost_same']: _hold_step(obj, res, H)   # 11-16 lost_same: the held sizes for the lost boxes of this frame (read only, never the rows)
+            elif 'hold' in BR: BR.pop('hold', None)
             out = list(rows)
             for i, it in zip(idx, items):
                 b = res.get(it[0])
@@ -458,7 +561,10 @@ def state():
                 body_switches=getattr(obj, 'switches', 0) if obj is not None else 0,
                 ms=round(BR['ms'], 3), ms_max=round(BR['ms_max'], 3), ms_track=round(BR['ms_track'], 3),
                 tracks=len(obj.tr) if obj is not None else 0, people=BR['n'], frames=BR['frames'], blends=BR['blends'], handovers=BR['handovers'], why=BR['why'],
-                err=BR['err'], errors=BR['errors'], errors_all=BR['errors_all'])
+                err=BR['err'], errors=BR['errors'], errors_all=BR['errors_all'],
+                lost_same=bool(BR['lost_same']), lost_ms=round(BR['lost_ms'], 3), lost_ms_max=round(BR['lost_ms_max'], 3), lost_n=BR['lost_n'],   # 11-16 lost_same
+                lost_held=len(BR['hold'].h) if BR.get('hold') is not None else 0, lost_frames=BR['lost_frames'], lost_err=BR['lost_err'],
+                lost_errors=BR['lost_errors'], lost_why=BR['lost_why'])
 
 
 def restore_queries(sel):
@@ -471,12 +577,17 @@ def restore_queries(sel):
             print('BOX_REFINE saved mode %r %s: off' % (sel['box_refine'], 'was removed on 11-16' if v_ in REMOVED_MODES else 'is unknown'), flush=True); v_ = 'off'
         qs.append({'box_refine': [v_]})
     if 'box_blend' in sel: qs.append({'box_blend': [str(sel['box_blend'])]})
+    if 'lost_same' in sel: qs.append({'lost_same': ['1' if sel['lost_same'] in (True, 1, '1', 'true', 'on') else '0']})   # 11-16
     return qs
 
 
 def parse_request(q_):
-    """q_: box_refine / box_blend keys (parse_qs lists). Everything is checked first. -> (ok, text, apply)."""
-    mode = None; blend = None
+    """q_: box_refine / box_blend / lost_same keys (parse_qs lists). Everything is checked first. -> (ok, text, apply)."""
+    mode = None; blend = None; lost = None
+    if 'lost_same' in q_:   # 11-16: lost box = seen box (display only), 1 / 0
+        v_ = str(q_['lost_same'][0]).strip().lower()
+        if v_ not in ('1', '0', 'true', 'false', 'on', 'off'): return False, '놓친 상자 = 보일 때 상자 값은 1 또는 0', None
+        lost = v_ in ('1', 'true', 'on')
     if 'box_refine' in q_:
         v_ = str(q_['box_refine'][0]).strip().lower()
         if v_ not in MODES: return False, '상자 다듬기는 off, size, body 가운데 하나', None
@@ -491,9 +602,12 @@ def parse_request(q_):
         with BR['lock']:   # a new mode makes apply() start a new state machine; a new blend time keeps every person's state
             if mode is not None: BR['mode'] = mode
             if blend is not None: BR['blend_s'] = blend
+            if lost is not None:   # the held sizes start empty (each id gets one at its next seen frame)
+                BR['lost_same'] = lost; BR.pop('hold', None); BR.update(lost_err='', lost_errors=0, lost_ms=0.0, lost_ms_max=0.0, lost_n=0, lost_why='')
             BR['err'] = ''; BR['errors'] = 0; BR['why'] = ''; BR['ms'] = 0.0; BR['ms_max'] = 0.0   # no status of the earlier choice stays on the page
             if BR['mode'] == 'body': scan_table()
         print('RULES set box_refine %s blend %g s' % (BR['mode'], BR['blend_s']), flush=True)
+        if lost is not None: print('RULES set lost_same %d' % BR['lost_same'], flush=True)
         sel_ = _app('sel_save')
-        if sel_ is not None: sel_(box_refine=BR['mode'], box_blend=BR['blend_s'])
+        if sel_ is not None: sel_(box_refine=BR['mode'], box_blend=BR['blend_s'], **(dict(lost_same=int(BR['lost_same'])) if lost is not None else {}))
     return True, '적용됨', apply_

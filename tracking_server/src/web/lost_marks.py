@@ -18,11 +18,18 @@ Now this module remembers each lost person's marks after the tracker dropped the
   - they disappear at once when the number is seen again (also when KeepID moved it to a new tracker id).
 Numbers are OUTPUT ids (after KeepID), as drawn on the boxes; the tracker's lost pool has tracker ids.
 
-Display only: nothing here reaches the tracker, KeepID or the gimbal. update() is called once per published frame."""
+Display only: nothing here reaches the tracker, KeepID or the gimbal. update() is called once per published frame.
+
+11-16 lost_same (box_refine switch, default off = all of the above unchanged): the lost people are read from the tracker
+right after this frame's update (pool_now) instead of POSP['boxes'], which the tracker makes in the NEXT frame's predict
+(so the first lost frame had no mark), and the drawn box is the box_refine definition of the seen box (convert =
+box_refine.lost_boxes: same size filter state, same anchor). The rest (camera carry, fading, KeepID / follow windows,
+removal on re-find) is the same."""
 import math
 
 import numpy as np
 
+from ..common.shared_values import LOST, PERSON_CLS
 from ..track.position_memory import POSP
 
 FADE_MIN = 0.4          # alpha at the end of the life
@@ -54,13 +61,40 @@ def _carry(item, w):
     item['pts'] = [_warp(w, x, y) for x, y in item['pts']]
 
 
+def pool_now(tracker):
+    """lost_same (11-16): the lost person tracks of `tracker` right after this frame's update -> [(tracker id, box cxcywh, info)] in the
+    POSP['boxes'] form (info: src, last = where it was last seen (position_memory pos_trail), n = j = lost step = tracker.frame_id -
+    t.end_frame, 1 on the first lost frame), or None when the pool cannot be read (no tracker, no lost / frame_id). Read only: every box
+    is a copy. The Python trackers and the C++ BoT-SORT / OC-SORT / SORT extensions give the same pool (state, cls, mean, end_frame,
+    track_id: test_native_trackers); the camera C++ ByteTrack (other numbers) and the end-to-end model are not readable here (the caller
+    falls back to POSP['boxes'])."""
+    if tracker is None: return None
+    try:
+        fid = int(tracker.frame_id); pool = list(tracker.lost)
+    except Exception:   # noqa: BLE001  (a tracker without a readable pool)
+        return None
+    out = []
+    for t in pool:
+        if int(t.state) != LOST or int(t.cls) != PERSON_CLS: continue
+        m = t.mean
+        if m is None: continue
+        j = fid - int(t.end_frame)
+        if j < 1: continue
+        tr = getattr(t, 'pos_trail', None)
+        out.append((int(t.track_id), np.array(m[:4], np.float64), dict(src=POSP['key'], last=tr['last'] if tr else None, n=j, j=j)))
+    return out
+
+
 def update(frame_t, shown_ids, follow_id=0, *, tracker=None, id_map=None, keepid=False, fresh=True, motion=None,
-           follow_s=FOLLOW_S, fps=30.0):
+           follow_s=FOLLOW_S, fps=30.0, lost_now=None, convert=None):
     """Once per published frame. shown_ids: output ids that have a box in this frame; follow_id: the output id the gimbal
     follows or waits for (0 = none); tracker: the tracker object (a new one forgets everything); id_map: KeepID's
     tracker id -> output id (None = the same numbers); keepid: KeepID is on; fresh: POSP['boxes'] is of this frame;
-    motion(t0, t1) -> 2x3 canvas warp or None. Returns the entries to draw: [(output id, (cx, cy, w, h), info)], info =
-    dict(src, n, last, pts, r, alpha, mem (True = after the tracker's own memory), age (s))."""
+    motion(t0, t1) -> 2x3 canvas warp or None. lost_now / convert (lost_same only; None = as before): pool_now() of this
+    frame used instead of POSP['boxes'] (fresh is then not looked at), convert([(output id, box cxcywh, lost step)]) ->
+    [box cxcywh] the drawn boxes (box_refine.lost_boxes; when it fails the tracker boxes are drawn). Returns the entries to
+    draw: [(output id, (cx, cy, w, h), info)], info = dict(src, n, last, pts, r, alpha, mem (True = after the tracker's own
+    memory), age (s))."""
     if not POSP['show']:
         if LM['items']: reset()
         return []
@@ -82,8 +116,16 @@ def update(frame_t, shown_ids, follow_id=0, *, tracker=None, id_map=None, keepid
             for item in items.values(): _carry(item, w)
     out_of = (lambda tid: id_map.get(tid)) if id_map is not None else (lambda tid: tid)
     seen_now = set()
-    for e in (POSP['boxes'] if fresh else ()):
-        tid, box = int(e[0]), tuple(float(v) for v in e[1][:4])
+    src_ = (POSP['boxes'] if fresh else ()) if lost_now is None else lost_now
+    conv_ = None
+    if convert is not None and src_:   # lost_same: one call for every lost person of the frame (body mode: one table lookup)
+        try:
+            conv_ = convert([(out_of(int(e[0])), e[1], int(e[2].get('j', e[2].get('n', 0))) if len(e) > 2 and e[2] else 0) for e in src_])
+            if conv_ is not None and len(conv_) != len(src_): conv_ = None
+        except Exception:   # noqa: BLE001  (display only: the tracker boxes)
+            conv_ = None
+    for k_, e in enumerate(src_):
+        tid, box = int(e[0]), tuple(float(v) for v in (e[1] if conv_ is None else conv_[k_])[:4])
         info = e[2] if len(e) > 2 and e[2] else {}
         if not all(map(math.isfinite, box)): continue
         seen_now.add(tid)

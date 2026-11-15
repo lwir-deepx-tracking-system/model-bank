@@ -242,6 +242,51 @@ class NativeTrackerComparison(unittest.TestCase):
         finally:
             POSP.clear(); POSP.update(old)
 
+    def test_lost_same_reads_the_same_pool_and_draws_the_same_boxes(self):
+        """11-16 lost_same (box_refine switch): the page reads the lost pool right after update (web/lost_marks.pool_now: ids, lost steps,
+        boxes, last-seen box) and draws it with each id's held size (box_refine.LostHold). The C++ trackers give the same pool and so the same
+        lost boxes, also with the keypoint position memory running inside the C++ update (the device: botsort C++, gru_kpt, pred_show on),
+        and reading the pool changes nothing (the rows and lists of the frames after stay the same as Python's)."""
+        import os
+        from ..web import lost_marks
+        from .box_refine import LostHold, Refiner
+        from .position_memory import PosKpt, _pos_date_key
+        d = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'models', 'track')
+        files = sorted((f for f in os.listdir(d) if f.startswith('pos_gru_kpt_') and f.endswith('.npz')), key=_pos_date_key) if os.path.isdir(d) else []
+        models = [('kalman', None)] + ([('gru_kpt', PosKpt(dict(np.load(os.path.join(d, files[-1])))))] if files else [])
+        old = dict(POSP)
+        try:
+            for kind, kw in (('botsort', dict(n_init=2)), ('ocsort', dict(n_init=3)), ('sort', dict(n_init=3))):
+                for key, model in models:
+                    POSP.update(key=key, model=model, gen=POSP['gen'] + 1, show=True, err=0, used=0, boxes=[])
+                    py, native = self.pair(kind, class_gate=False, radius=2.0, **kw)
+                    py.kf = GKF(); native.kf = GKF(); ref = {}; hold = {}; n_lost = 0
+                    for name in ('py', 'cpp'):
+                        ref[name] = Refiner('size'); hold[name] = LostHold(ref[name])
+                    for i, (arr, warp, feats) in enumerate(scenario(800, frames=240, camera=True, features=kind == 'botsort')):
+                        where = '%s %s frame %d' % (kind, key, i + 1)
+                        server_camera_step(py, warp); server_camera_step(native, warp)
+                        rows = {'py': py.update(arr, feats, None), 'cpp': native.update(arr, feats, None)}
+                        pool = {'py': lost_marks.pool_now(py), 'cpp': lost_marks.pool_now(native)}
+                        self.assertEqual([(e[0], e[2]['j']) for e in pool['py']], [(e[0], e[2]['j']) for e in pool['cpp']], where)
+                        for ea, eb in zip(pool['py'], pool['cpp']):
+                            np.testing.assert_allclose(eb[1], ea[1], rtol=0, atol=TOL, err_msg=where)
+                            self.assertEqual(ea[2]['last'] is None, eb[2]['last'] is None, where)
+                            if ea[2]['last'] is not None: np.testing.assert_allclose(eb[2]['last'], ea[2]['last'], rtol=0, atol=TOL, err_msg=where)
+                        lost = {}
+                        for name in ('py', 'cpp'):
+                            items = [(int(r[4]), np.array([(r[0] + r[2]) / 2, (r[1] + r[3]) / 2, max(r[2] - r[0], 1.), max(r[3] - r[1], 1.)])) for r in rows[name] if int(r[6]) == 0]
+                            res = ref[name].step([(tid, z, z) for tid, z in items], i / 25., warp); hold[name].step(res, warp)
+                            lost[name] = hold[name].boxes([(e[0], e[1], e[2]['j']) for e in pool[name]])
+                        self.assertEqual(lost['py'][1:], lost['cpp'][1:], where)
+                        for ba, bb in zip(lost['py'][0], lost['cpp'][0]): np.testing.assert_allclose(bb, ba, rtol=0, atol=1e-5, err_msg=where)
+                        n_lost += lost['py'][1]
+                        self.same_tracks(where + ' lost', py.lost, native.lost)
+                    self.assertGreater(n_lost, 50, (kind, key)); self.assertEqual(POSP['err'], 0, (kind, key))
+                    if model is not None: self.assertGreater(POSP['used'], 0)
+        finally:
+            POSP.clear(); POSP.update(old)
+
     def test_server_fields_and_late_feature(self):
         py, native = self.pair('botsort', n_init=2, class_gate=False, radius=2.0)
         for name in native_backend._REQUIRED_TRACKER_ATTRIBUTES:

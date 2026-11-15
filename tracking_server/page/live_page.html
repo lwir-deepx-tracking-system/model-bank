@@ -1166,7 +1166,9 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'크기만 부드럽게',note:'위치·짐벌 조준점은 추적기 그대로 · 상자 크기만 천천히 바뀜(근거리↔먼 거리 바뀔 때도) · '+BRN,sel:bm==='size',u:Q('box_refine=size')}].concat(bd?[
       {name:'상체 네모로 통일 (변환표 + 크기 부드럽게)',note:'가까이든 멀리든 머리 위~골반 한 모양 · 먼 사람 전신 상자는 상체로 바꿈, 가까운 사람 상자는 그대로 · 짐벌 조준점은 바꾼 상자의 조준점 그대로, 크기만 부드럽게 · 자세 검출 모델은 변환표, 다른 모델은 사람 전체 상자의 위쪽 0.53 · 모델이 바뀌어도 이어짐 · 관절 필요 없음 · 장치에서 아직 재지 않음 · '+BRN,sel:bm==='body',lock:bd.available?'':(br.body_note||'변환표 파일이 없습니다'),u:Q('box_refine=body')}]:[])});   // body: 서버가 모드를 알 때만 줄을 보임 · 잠금 글은 서버가 아는 실제 까닭(없음 / 읽지 못함 / 방금 바뀜)
     T.push({lab:'모델 바뀔 때 섞기',sub:'검출 모델이 바뀌면 상자를 천천히 넘김',multi:1,n:[
-      {name:br.blend_s>0?'켬 '+br.blend_s+'초':'켬 ('+BLT+'초)',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · 끔·크기만 부드럽게에서 씀(상체 네모는 스스로 이어 줌) · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});}
+      {name:br.blend_s>0?'켬 '+br.blend_s+'초':'켬 ('+BLT+'초)',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · 끔·크기만 부드럽게에서 씀(상체 네모는 스스로 이어 줌) · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});
+    if(br.lost_same!=null)T.push({lab:'놓친 상자',sub:'놓친 사람의 점선 상자'+(br.lost_same&&br.lost_why?' · '+br.lost_why:'')+(br.lost_same&&br.lost_errors?' · 오류 '+br.lost_errors+'번':''),multi:1,n:[   // 11-16 (judge A): lost box = seen box, display only, default off
+      {name:'보일 때 상자와 같게',note:'놓친 첫 장부터 점선 상자를 그림 · 모양·크기는 보일 때 상자와 같음(상자 다듬기 모드, 마지막 크기 유지) · 크기만 부드럽게에서는 짐벌 조준점이 지금 점선 상자와 같음 · 추적기·짐벌은 그대로 · 예측 상자 표시가 켜져 있을 때 · 장치에서 아직 재지 않음',sel:!!br.lost_same,u:Q('lost_same='+(br.lost_same?0:1))}]});}
   T.push({lab:'화면 표시',sub:'여러 개 켜기',multi:1,n:[   // 11-13: it draws, it does not control
     {name:'사람 후보 (공간 주파수)',note:'추적이 안 쓴 검출의 약한 상자를 공간 주파수로 다시 봄 · 사람다우면 진한 보라 miss? · 연속으로 보일 때만 · 표시만'+(r.prop&&r.prop.ms!=null?' · '+Math.round(r.prop.ms)+' ms':''),
      sel:!!r.prop_show,lock:r.prop_show==null?OLDSRV:'',u:Q('prop_show='+(r.prop_show?0:1))},   // 11-14: research feature (src/detect/spec_proposals.py)
@@ -1200,7 +1202,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   });
   const e2eLive=!!(el&&(el.on==='ftt'||el.want==='ftt'));
   if(e2eLive||replayStored){   // 11-14 (user): the end-to-end model (live, or its stored result on a recording) replaces these, so they are locked while it runs; 11-15 (user): not 전처리 - stabilization moves the frame the end-to-end model sees
-    const OFF=['검출 모델','검출 모델 자동 선택','검출 뒤 Filter','Tracker','ByteTrack 옵션','위치 기억 · 신뢰도','KeepID','KeepID 찾는 범위','외형 비교','외형 모델','상자 다듬기','모델 바뀔 때 섞기'],why=(e2eLive?'엔드투엔드(FastTrackTr) 사용 중':'엔드투엔드 결과 재생 중')+' · 엔드투엔드를 끄면 다시 고를 수 있습니다';
+    const OFF=['검출 모델','검출 모델 자동 선택','검출 뒤 Filter','Tracker','ByteTrack 옵션','위치 기억 · 신뢰도','KeepID','KeepID 찾는 범위','외형 비교','외형 모델','상자 다듬기','모델 바뀔 때 섞기','놓친 상자'],why=(e2eLive?'엔드투엔드(FastTrackTr) 사용 중':'엔드투엔드 결과 재생 중')+' · 엔드투엔드를 끄면 다시 고를 수 있습니다';
     const off=new Set();T.forEach((t,i)=>{if(OFF.includes(t.lab)||/ 엔진$/.test(t.lab))off.add(i);});
     T.forEach((t,i)=>{if(off.has(i)||(t.kidOf!=null&&off.has(t.kidOf))){t.sub=(e2eLive?'엔드투엔드 사용 중':'엔드투엔드 결과 재생 중')+' · 쓰이지 않음';(t.n||[]).forEach(n=>{n.lock=why;n.sel=false;});}
       if(t.lab==='화면 표시')(t.n||[]).forEach(n=>{if(n.name==='사람 후보 (공간 주파수)'||n.name==='예측 상자 표시'){n.lock=why;n.sel=false;}});});}

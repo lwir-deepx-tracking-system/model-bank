@@ -108,5 +108,127 @@ class LostMarksTests(unittest.TestCase):
         self.assertEqual(lm.update(100.0, set(), 0, tracker=self.tracker, keepid=True, fresh=False, fps=FPS), [])
 
 
+# ------------------------------------------------------------------------------------------------ 11-16 lost_same (box_refine switch, judge A = U0)
+def person_frames(n_seen=8, n_lost=6, car=False):
+    """detections per frame: one person (40 x 160) walking right, seen n_seen frames, then gone; optionally a car that goes at the same time"""
+    for k in range(n_seen + n_lost):
+        rows = [[280. + 2 * k, 136., 320. + 2 * k, 296., 0.9, 0.]] if k < n_seen else []
+        if car and k < n_seen: rows.append([500., 300., 580., 340., 0.9, 2.])
+        yield k, np.array(rows, np.float32).reshape(-1, 6)
+
+
+def snapshot(tr):
+    """everything of a tracker that association reads"""
+    return (tr.frame_id, tr.next_id, [(t.track_id, t.state, t.cls, t.end_frame, np.array(t.mean).tobytes(), np.array(t.cov).tobytes()) for t in tr.tracked + tr.lost])
+
+
+class LostSameMarksTests(unittest.TestCase):
+    def setUp(self):
+        lm.reset(); lm.LM['tracker'] = None
+        self.posp = patch.dict(lm.POSP, show=True, boxes=[], boxes_t=0.0, key='kalman', model=None)
+        self.posp.start(); self.addCleanup(self.posp.stop)
+
+    def test_switch_off_is_the_same_call_as_before(self):
+        out = {}
+        for kw in ({}, dict(lost_now=None, convert=None)):
+            lm.reset(); lm.LM['tracker'] = None; got = []
+            for k in range(1, 100):
+                lm.POSP['boxes'] = [entry(5, k, cx=300.0 + k)] if k <= 30 else []
+                got.append(lm.update(100.0 + k / FPS, set(), 5, tracker=self, keepid=True, motion=lambda a, b: np.array([[1., 0, -2.], [0, 1., 0]]), fps=FPS, **kw))
+            out[len(kw)] = got
+        self.assertEqual(out[0], out[2])
+
+    def test_pool_now_reads_the_trackers_without_touching_them(self):
+        from ..track.botsort import BotSortTracker
+        from ..track.bytetrack import ByteTrackTracker
+        from ..track.kalman import GKF
+        for show in (False, True):
+            for mk in (lambda: ByteTrackTracker('bytetrack'), lambda: BotSortTracker('bytetrack'), lambda: ByteTrackTracker('rebind')):
+                lm.POSP['show'] = show; tr = mk(); tr.kf = GKF(); steps = []
+                for k, arr in person_frames(car=True):
+                    tr.kf.warp = np.array([[1., 0, 1.], [0, 1., 0]]); tr.update(arr); before = snapshot(tr)
+                    got = lm.pool_now(tr); lm.pool_now(tr)
+                    self.assertEqual(snapshot(tr), before)                                         # read only
+                    for e in got: e[1][:] = -1.0                                                  # the boxes are copies
+                    self.assertEqual(snapshot(tr), before)
+                    got = lm.pool_now(tr); steps.append([(e[0], e[2]['j']) for e in got])
+                    for e in got:
+                        t = next(x for x in tr.lost if x.track_id == e[0]); np.testing.assert_array_equal(e[1], t.mean[:4])
+                        self.assertEqual(e[2]['n'], e[2]['j']); self.assertEqual(e[2]['src'], 'kalman'); self.assertEqual(e[2]['last'] is not None, show)
+                self.assertEqual(steps[7], []); self.assertEqual(steps[8:], [[(1, j)] for j in range(1, 7)])   # the person from lost step 1; never the car
+        self.assertIsNone(lm.pool_now(None)); self.assertIsNone(lm.pool_now(object()))
+
+    def run_tracker(self, use_pool, convert=None, id_map=None):
+        from ..track.bytetrack import ByteTrackTracker
+        lm.reset(); lm.LM['tracker'] = None; tr = ByteTrackTracker('bytetrack'); out = []
+        for k, arr in person_frames():
+            rows = tr.update(arr)
+            kw = dict(lost_now=lm.pool_now(tr), convert=convert) if use_pool else {}
+            out.append(lm.update(100.0 + k / FPS, {int(r[4]) if id_map is None else id_map[int(r[4])] for r in rows}, 0, tracker=tr, id_map=id_map,
+                                 keepid=id_map is not None, fresh=True, fps=FPS, **kw))
+        return out
+
+    def test_the_mark_is_drawn_from_the_first_lost_frame(self):
+        """today the mark comes from POSP['boxes'] (made in the next frame's predict): nothing on the first lost frame. With the pool read after
+        the update it is there on lost step 1, and from step 2 on it is the very same tracker box as today's."""
+        old = self.run_tracker(False); new = self.run_tracker(True)
+        self.assertEqual([k for k, e in enumerate(old) if e][:1], [9]); self.assertEqual([k for k, e in enumerate(new) if e][:1], [8])   # lost from frame 8
+        for k in range(9, 14):
+            self.assertEqual(old[k][0][1], new[k][0][1], k)
+        self.assertEqual(new[8][0][2]['n'], 1)
+
+    def test_convert_gets_output_ids_once_per_frame_and_its_boxes_are_drawn(self):
+        calls = []
+        def convert(items):
+            calls.append([(oid, j) for oid, _, j in items]); return [np.asarray(b, float) + [3., -5., 0., 0.] for _, b, _ in items]
+        new = self.run_tracker(True, convert=convert, id_map={1: 12})
+        plain = self.run_tracker(True)
+        self.assertEqual(calls, [[(12, j)] for j in range(1, 7)])
+        for k in range(8, 14):
+            oid, box, info = new[k][0]; self.assertEqual(oid, 12)
+            np.testing.assert_allclose(box, np.asarray(plain[k][0][1]) + [3., -5., 0., 0.])
+            self.assertEqual(info['pts'][-1], (box[0], box[1]))
+
+    def test_a_failing_or_short_convert_draws_the_tracker_boxes(self):
+        plain = self.run_tracker(True)
+        def boom(items): raise RuntimeError('x')
+        for conv in (boom, lambda items: [], lambda items: None):
+            got = self.run_tracker(True, convert=conv)
+            self.assertEqual([e[0][1] if e else None for e in got], [e[0][1] if e else None for e in plain])
+
+    def test_page_handler_reads_the_pool_only_when_it_is_the_servers(self):
+        """page_handler._lost_marks with lost_same on: the pool of APP.tracker (mark on lost step 1); the camera C++ ByteTrack's rows or the
+        end-to-end model: today's path, with the reason for the page; switch off: today's path."""
+        from ..common.state import APP
+        from ..track import box_refine
+        from ..track.bytetrack import ByteTrackTracker
+        from . import page_handler as page
+        had = {k: vars(APP)[k] for k in ('GB', 'tracker', 'relabeler', 'RULES') if k in vars(APP)}
+        self.addCleanup(lambda: ([vars(APP).pop(k, None) for k in ('GB', 'tracker', 'relabeler', 'RULES')], vars(APP).update(had)))
+        saved = dict(box_refine.BR); self.addCleanup(lambda: (box_refine.BR.clear(), box_refine.BR.update(saved)))
+        for lost, own, e2e, want in ((True, True, False, True), (True, False, False, False), (True, True, True, False), (False, True, False, False)):
+            box_refine.BR.update(lost_same=lost, lost_why=''); lm.reset(); lm.LM['tracker'] = None
+            tr = ByteTrackTracker('bytetrack'); APP.tracker = tr; APP.GB = None; APP.relabeler = None; APP.RULES = {}; lm.POSP['boxes'] = []
+            with patch.object(box_refine, '_e2e_on', return_value=e2e), patch.object(page, '_canvas_motion', return_value=None):
+                for k, arr in person_frames(n_lost=1):
+                    rows = tr.update(arr); marks = page._lost_marks(100.0 + k / FPS, rows, 0, FPS, own_pool=own)
+            self.assertEqual(bool(marks), want, (lost, own, e2e))
+            self.assertEqual(bool(box_refine.BR['lost_why']), lost and not want, (lost, own, e2e))
+
+    def test_the_page_request_takes_the_switch(self):
+        from ..common.state import APP
+        from ..track import box_refine
+        from . import page_settings
+        saved = dict(box_refine.BR); self.addCleanup(lambda: (box_refine.BR.clear(), box_refine.BR.update(saved)))
+        had = vars(APP).get('sel_save'); got = []; APP.sel_save = lambda **kw: got.append(kw)
+        self.addCleanup(lambda: vars(APP).pop('sel_save', None) if had is None else setattr(APP, 'sel_save', had))
+        with patch('builtins.print'):
+            self.assertEqual(page_settings.rules_request_2({'lost_same': ['1']}), (True, '적용됨'))
+            self.assertTrue(box_refine.BR['lost_same']); self.assertEqual(got[-1]['lost_same'], 1)
+            self.assertFalse(page_settings.rules_request_2({'lost_same': ['maybe']})[0]); self.assertTrue(box_refine.BR['lost_same'])
+            page_settings.rules_request_2({'lost_same': ['0']}); self.assertFalse(box_refine.BR['lost_same'])
+
+
+
 if __name__ == '__main__':
     unittest.main()

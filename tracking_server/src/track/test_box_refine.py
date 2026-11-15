@@ -734,5 +734,148 @@ class BodyGlueTests(unittest.TestCase):
         np.testing.assert_allclose(hs, 300., rtol=1e-9); self.assertEqual(BR.BR['obj'].switches, 1); self.assertIsNotNone(BR.BR['obj'].tr[7]['tw'])
 
 
+# ------------------------------------------------------------------------------------------------ lost_same (11-16, judge A = U0): the lost box in the seen box's definition
+def zoom_H(s): return np.array([[s, 0., 320. * (1 - s)], [0., s, 256. * (1 - s)]])
+
+
+class LostSameTests(unittest.TestCase):
+    """lost_same: apply() keeps each id's own copy of its filtered size (LostHold), lost_boxes() draws a lost track's box from it. Display only."""
+    def setUp(self):
+        self.saved = dict(BR.BR); APP.args = SimpleNamespace(det=POSE); APP.CTL = dict(lead_motion=None); APP.tracker = object(); BR.BR['dir'] = TRACK_DIR
+        self.now = patch.object(BR.time, 'time', return_value=4e9); self.now.start()
+
+    def tearDown(self):
+        self.now.stop()
+        BR.BR.clear(); BR.BR.update(self.saved)
+        for k in ('args', 'CTL', 'tracker', 'SEL', 'sel_save', 'GB'): vars(APP).pop(k, None)
+
+    def choose(self, mode, lost):
+        ok, txt, ap = BR.parse_request({'box_refine': [mode], 'box_blend': ['0'], 'lost_same': ['1' if lost else '0']}); self.assertTrue(ok, txt)
+        with patch('builtins.print'): ap()
+
+    def frame(self, k, H=None):
+        """one published frame: person 3 seen on frames 0-9 and 20-, growing, walking; person 5 always seen; a car; small far person 8 seen 0-11"""
+        APP.CTL['lead_motion'] = (None, None, H) if H is not None else None
+        b = [(5, 400. - k, 260., 70., 200.)]
+        if k < 10 or k >= 20: b.append((3, 200. + 3 * k, 250., 60. + k, 150. + 3 * k))
+        if k < 12: b.append((8, 520., 120., 14., 40.))
+        rows = rows_at(b); rows.append([10., 10., 50., 40., 9, 0.9, 2, len(b)])
+        dets = np.array([[r[0] + 1., r[1] - 2., r[2] + 1., r[3] + 3., 0.9, 0.] for r in rows], np.float32)
+        return BR.apply(rows, dets, k / 25.)
+
+    def test_seen_rows_are_the_same_with_the_switch_on_and_off(self):
+        """the drawn / gimbal rows (apply) are byte-identical with lost_same on and off, in every mode, with a camera zoom and a lost person."""
+        for mode in ('off', 'size', 'body'):
+            got = {}
+            for lost in (False, True):
+                self.choose(mode, lost); BR.BR.pop('obj', None); APP.tracker = object(); outs = []
+                for k in range(30):
+                    outs.append(self.frame(k, zoom_H(1.01) if k % 3 else None))
+                    if lost and 10 <= k < 20: BR.lost_boxes([(3, np.array([231. + 3 * k, 280., 70., 180.]), k - 9)])
+                got[lost] = outs
+                self.assertEqual('hold' in BR.BR, lost and mode != 'off', mode)
+            self.assertEqual(got[False], got[True], mode)
+
+    def test_size_lost_box_keeps_the_tracker_aim_point_and_the_held_size(self):
+        """size mode: the lost box's centre x and gimbal aim point (top + aim_y x h) are the tracker lost box's (so the aim is today's); its size
+        is the filtered size of the last seen frame, carried by the camera zoom of every frame since; from lost step 1."""
+        for ay in (0.5, 0.37):
+            APP.args.gimbal_aim_y = ay; self.choose('size', True); APP.tracker = object()
+            for k in range(10): self.frame(k)
+            se = BR.BR['obj'].tr[3]['se']; lw0, lh0 = se.x0, se.x1
+            self.assertGreater(abs(math.exp(lh0) - 177.), 0.5)   # the filter lags the growing row: the held size is the filtered one
+            for k in range(10, 20):
+                self.frame(k, zoom_H(1.01)); j = k - 9; z = np.array([231. + 3 * k, 280. + k, 70., 180. + k])
+                b = BR.lost_boxes([(3, z, j)])[0]; self.assertEqual(BR.BR['lost_n'], 1)
+                np.testing.assert_allclose(aim_pt(b, ay), aim_pt(z, ay), atol=1e-9, err_msg=str((ay, j)))
+                np.testing.assert_allclose(b[2:], [math.exp(lw0) * 1.01 ** j, math.exp(lh0) * 1.01 ** j], rtol=1e-12)
+
+    def test_a_still_person_is_drawn_the_same_when_lost(self):
+        """the lost box is the seen box's definition: a person standing still whose tracker box stays is drawn exactly as on its last seen frame."""
+        for mode in ('size', 'body'):
+            for det in (POSE, PLAIN):
+                APP.args.det = det; self.choose(mode, True); APP.tracker = object(); z = np.array([300., 250., 30. if mode == 'body' else 60., 70.])
+                for k in range(8): out = BR.apply(rows_at([(4, *z)]), None, k / 25.)
+                seen = np.array([(out[0][0] + out[0][2]) / 2, (out[0][1] + out[0][3]) / 2, out[0][2] - out[0][0], out[0][3] - out[0][1]])
+                BR.apply([], None, 8 / 25.); lost = BR.lost_boxes([(4, z, 1)])[0]
+                np.testing.assert_allclose(lost, seen, atol=1e-9, err_msg=str((mode, det)))
+                if mode == 'body': self.assertLess(seen[3] / z[3], 0.95 if det == PLAIN else 1.01)   # converted (plain detector: the constant)
+
+    def test_body_lost_boxes_in_one_lookup_equal_each_box_alone(self):
+        """body mode: all lost people of a frame go through ONE table call; each box equals the box made alone (0 px) and the formula of the seen
+        rule (converted box, running anchor around its aim point, held size)."""
+        self.choose('body', True); APP.tracker = object(); tab = None
+        people = [(i, 100. + 60 * i, 250., w, h) for i, (w, h) in enumerate(((14., 36.), (20., 52.), (45., 70.), (120., 200.), (160., 330.), (30., 80.)), 1)]
+        for k in range(6): BR.apply(rows_at(people), None, k / 25.)
+        BR.apply([], None, 6 / 25.); tab = BR.BR['obj'].table; ho = BR.BR['hold']
+        items = [(i, np.array([cx + 2, cy + 1, w * 1.03, h * 0.98]), 1) for i, cx, cy, w, h in people]
+        calls = []; real = tab.conv_delta
+        with patch.object(tab, 'conv_delta', side_effect=lambda z, f: calls.append(len(z)) or real(z, f)):
+            together = BR.lost_boxes(items)
+        self.assertEqual(calls, [len(items)])
+        for it, b in zip(items, together):
+            np.testing.assert_array_equal(b, BR.lost_boxes([it])[0])
+            z = it[1]; d = real(z[None], 'pose')[0]; lw, lh = ho.h[it[0]][:2]; hc = z[3] * math.exp(d[3]); top = z[1] + d[1] * z[3] - hc / 2; h_ = math.exp(lh)
+            np.testing.assert_allclose(b, [z[0] + d[0] * z[3], top + 0.5 * (hc - h_) + h_ / 2, math.exp(lw), h_], atol=1e-9)
+        self.assertLess(together[0][3] / items[0][1][3], 0.7)   # the small whole-person box is drawn as a body box (today: the whole-person box)
+
+    def test_keepid_handover_keeps_the_held_size(self):
+        """the Refiner's KeepID hand-over gives the lost id's filter state to the new id at its place; the lost box of the old id keeps the old
+        id's own held size (and the new id goes on from the handed-over state, as before)."""
+        self.choose('size', True); APP.tracker = object(); z = np.array([300., 250., 60., 120.])
+        for k in range(8): BR.apply(rows_at([(5, z[0], z[1], z[2], z[3] + 4 * k)]), None, k / 25.)
+        se5 = BR.BR['obj'].tr[5]['se']; held = (se5.x0, se5.x1)
+        BR.apply(rows_at([(9, z[0], z[1], z[2], 200.)]), None, 8 / 25.)   # id 5 vanished, id 9 appears at its place (IoU 0.6)
+        obj = BR.BR['obj']; self.assertEqual(obj.handovers, 1); self.assertNotIn(5, obj.tr); self.assertIs(obj.tr[9]['se'], se5)
+        self.assertNotAlmostEqual(se5.x1, held[1], places=3)   # the handed-over state moved on with id 9's row
+        b = BR.lost_boxes([(5, z, 1)])[0]
+        np.testing.assert_allclose(b[2:], np.exp(held), rtol=1e-12)
+
+    def test_the_tracker_box_without_a_held_size_or_with_the_switch_off(self):
+        z = np.array([300., 250., 60., 120.]); self.choose('size', False)
+        for k in range(3): BR.apply(rows_at([(5, *z)]), None, k / 25.)
+        self.assertNotIn('hold', BR.BR); np.testing.assert_array_equal(BR.lost_boxes([(5, z * 1.1, 1)])[0], z * 1.1)   # switch off
+        self.choose('size', True)
+        for k in range(3): BR.apply(rows_at([(5, *z)]), None, (3 + k) / 25.)
+        got = BR.lost_boxes([(6, z * 1.1, 1), (None, z, 1)])   # an id never seen / KeepID gave no number: the tracker boxes
+        np.testing.assert_array_equal(got[0], z * 1.1); np.testing.assert_array_equal(got[1], z)
+        for k in range(BR.LOST_HOLD): BR.apply([], None, (6 + k) / 25.)
+        self.assertIn(5, BR.BR['hold'].h); BR.apply([], None, 10.0); self.assertNotIn(5, BR.BR['hold'].h)   # 90 frames after the loss: dropped
+        self.choose('off', True); rows = rows_at([(5, *z)]); self.assertIs(BR.apply(rows, None, 11.0), rows)
+        np.testing.assert_array_equal(BR.lost_boxes([(5, z * 1.1, 1)])[0], z * 1.1)   # mode off: the tracker box (only the blank first lost frame goes)
+        self.choose('size', True); BR.apply(rows_at([(5, *z)]), None, 12.0); hold = BR.BR['hold']
+        self.choose('body', True); BR.apply([], None, 12.04); self.assertIsNot(BR.BR['hold'], hold); self.assertEqual(BR.BR['hold'].h, {})   # a new mode: from scratch
+
+    def test_errors_draw_the_tracker_box_are_counted_and_never_touch_the_seen_rows(self):
+        self.choose('size', True); z = np.array([300., 250., 60., 120.])
+        for k in range(3): BR.apply(rows_at([(5, *z)]), None, k / 25.)
+        with patch.object(BR.LostHold, 'boxes', side_effect=_Boom('x')):
+            np.testing.assert_array_equal(BR.lost_boxes([(5, z * 1.1, 1)])[0], z * 1.1)
+        self.assertEqual(BR.BR['lost_errors'], 1); self.assertIn('_Boom', BR.state()['lost_err'])
+        BR.BR['hold'].h[5][1] = float('nan')   # a poisoned held size: that box is the tracker's, counted
+        np.testing.assert_array_equal(BR.lost_boxes([(5, z * 1.1, 1)])[0], z * 1.1); self.assertEqual(BR.BR['lost_errors'], 2)
+        ref = []
+        for lost in (False, True):
+            self.choose('size', lost); BR.BR.pop('obj', None); APP.tracker = object(); outs = []
+            with patch.object(BR.LostHold, 'step', side_effect=_Boom('y')):
+                for k in range(5): outs.append(BR.apply(rows_at([(5, z[0], z[1], z[2], z[3] + 5 * k)]), None, k / 25.))
+            ref.append(outs)
+        self.assertEqual(ref[0], ref[1]); self.assertEqual(BR.BR['errors'], 0); self.assertEqual(BR.BR['lost_errors'], 5); self.assertNotIn('hold', BR.BR)
+
+    def test_switch_default_saved_restored_and_on_the_page(self):
+        self.assertIs(self.saved['lost_same'], False)   # default off in the code (today's dashed box)
+        saved = []; APP.sel_save = lambda **kw: saved.append(kw)
+        ok, txt, ap = BR.parse_request({'lost_same': ['1']}); self.assertTrue(ok, txt)
+        with patch('builtins.print'): ap()
+        self.assertTrue(BR.BR['lost_same']); self.assertEqual(saved[-1], dict(box_refine=BR.BR['mode'], box_blend=BR.BR['blend_s'], lost_same=1)); self.assertTrue(BR.state()['lost_same'])
+        BR.parse_request({'box_refine': ['size']})[2](); self.assertEqual(saved[-1], dict(box_refine='size', box_blend=0.0))   # other choices save as before
+        for bad in ('2', 'yes', ''): self.assertFalse(BR.parse_request({'lost_same': [bad]})[0], bad)
+        self.assertEqual(BR.restore_queries({'lost_same': 1}), [{'lost_same': ['1']}]); self.assertEqual(BR.restore_queries({'lost_same': 0}), [{'lost_same': ['0']}])
+        self.assertEqual(BR.restore_queries({'box_refine': 'size', 'box_blend': 0.0}), [{'box_refine': ['size']}, {'box_blend': ['0.0']}])   # without it: as before
+        here = os.path.dirname(os.path.abspath(__file__))
+        with open(os.path.join(here, '..', 'app.py'), encoding='utf-8') as f: self.assertIn("'box_refine', 'box_blend', 'lost_same')", f.read())   # kept in last_selection.json
+        with open(os.path.join(here, '..', '..', 'page', 'js', '09_tree_rows.js'), encoding='utf-8') as f: self.assertIn("Q('lost_same='+(br.lost_same?0:1))", f.read())
+
+
 if __name__ == '__main__':
     unittest.main()

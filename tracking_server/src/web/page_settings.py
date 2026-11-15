@@ -265,8 +265,8 @@ def rules_request(q_):
 
 
 def rules_request_2(q_):
-    if 'box_refine' in q_ or 'box_blend' in q_:   # 11-15: box smoothing (src/track/box_refine.py); checked first, changed only when the rest of the query was taken too
-        br_ = {k_: x_ for k_, x_ in q_.items() if k_ in ('box_refine', 'box_blend')}
+    if 'box_refine' in q_ or 'box_blend' in q_ or 'lost_same' in q_:   # 11-15: box smoothing (src/track/box_refine.py); checked first, changed only when the rest of the query was taken too. 11-16: lost_same (lost box = seen box)
+        br_ = {k_: x_ for k_, x_ in q_.items() if k_ in ('box_refine', 'box_blend', 'lost_same')}
         ok_, tx_, apply_ = box_refine.parse_request(br_)
         if not ok_: return ok_, tx_
         rest_ = {k_: x_ for k_, x_ in q_.items() if k_ not in br_}
