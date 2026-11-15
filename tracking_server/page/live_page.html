@@ -998,7 +998,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {name:'사람 후보 (공간 주파수)',note:'추적이 안 쓴 검출의 약한 상자를 공간 주파수로 다시 봄 · 사람다우면 진한 보라 miss? · 연속으로 보일 때만 · 표시만'+(r.prop&&r.prop.ms!=null?' · '+Math.round(r.prop.ms)+' ms':''),
      sel:!!r.prop_show,lock:r.prop_show==null?OLDSRV:'',u:Q('prop_show='+(r.prop_show?0:1))},   // 11-14: research feature (src/detect/spec_proposals.py)
     {name:'피부 온도 (카메라 온도)',note:'카메라가 잰 온도로 사람 상자 옆에 °C · 초록 = 30-38 °C 덩어리(얼굴·손) 있음, 회색 = 상자의 가장 뜨거운 곳 · 표시만'+(r.temp&&r.temp.show?(r.temp.fresh?' · 온도 지도 '+r.temp.age.toFixed(1)+' s 전':' · 온도 지도 없음 (서버를 --cam-temp 로 켜야 함)'):''),
-     sel:!!r.temp_show,lock:r.temp_show==null?OLDSRV:'',u:Q('temp_show='+(r.temp_show?0:1))},   // 11-14: research feature (src/detect/skin_temp.py), not kept over a restart
+     sel:!!r.temp_show,lock:r.temp_show==null?OLDSRV:(!r.temp_show&&r.temp&&r.temp.enabled===false)?'이 서버는 카메라 온도 지도를 받지 않습니다 (서버를 --cam-temp 로 켜야 씁니다)':'',u:Q('temp_show='+(r.temp_show?0:1))},   // 11-14: research feature (src/detect/skin_temp.py), not kept over a restart. 11-15 (user: options must work live): locked when the server has no temperature map
     {name:'예측 상자 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.predictors?'':OLDSRV,u:Q('pred_show='+(r.pred_show?0:1))}]});
   if(bt){
     const switching=!!rpLast?.state?.busy;
