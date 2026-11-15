@@ -18,17 +18,23 @@ NPU 코어 1 의 둘째 엔진을 다시 만든다(Feed.pause / resume). 그 사
     새 모델 이름(APP.args.det)으로 풀기 때문이다. 자동 선택의 두 자세 모델은 같은 모양이다. 다르면 올리지 않는다(아래 옛 길).
   - 서버 기록: 바꿀 때마다 한 줄 'MODEL instant <old> -> <new> (resident, cores 0/1)'.
   - /rules 의 resident_det: 켬(on), 상주 중(active), 상주 중인 모델과 코어(resident, cores), 쉬는 까닭(reason 화면용, why 기록용), 즉시 바꾼 횟수(switches),
-    마지막 바꾸기(last_switch: ms = 요청부터 새 모델이 검출한 첫 프레임을 프레임 반복이 받을 때까지, ms_switch = 두 프레임 사이에서 바꾼 때부터, old_frames = 그 사이 옛 모델 프레임 수).
+    마지막 바꾸기(last_switch: ms = 요청부터 새 모델이 검출한 첫 프레임의 결과를 프레임 반복이 받을 때까지(Feed.wait 뒤, 그 추론 시간 포함),
+    ms_switch = 두 프레임 사이에서 바꾼 때부터, old_frames = 그 사이 옛 모델 프레임 수).
 
 켜기: 시작 환경 LWIR_RESIDENT_DET=1 또는 /rules/set?resident_det=1. /rules/set 으로 고른 것은 last_selection.json 에 남아 다음 시작에도 쓰이고,
   환경 변수보다 우선한다(npu_feed.json 과 같은 규칙). 다른 짝은 프레임 반복이 두 프레임 사이에서 만든다(frame_step): 시작 직후, 켰을 때, 검출 모델이 두 모델 가운데
   하나가 되었을 때(예: 자동 선택을 켜서 근거리로 바뀐 뒤). 만드는 동안 프레임이 잠깐 멈추므로 짐벌이 따라가거나 움직이는 동안은 만들지 않고 기다린다. 끄면 다른 짝을 놓는다.
+  옛 길로 두 모델 가운데 하나로 바꾼 뒤에는 그 뒤에 들어온 프레임을 프레임 반복이 하나 받을 때까지 만들지 않는다(두 멈춤이 합쳐져 1초를 넘지 않게, 각각은 지금 길이).
 
 옛 길(do_model_swap)로 가는 경우. 한 줄을 찍고, 그 밖에는 지금과 같다.
-  - 다른 짝을 못 만듦: NPU 메모리, 파일 없음, sha 다름, 두 모델의 입출력 모양이 다름. 다시 켜거나(resident_det=1) 두 모델 이름이 바뀔 때까지 다시 해 보지 않는다.
+  - 다른 짝을 못 만듦: NPU 메모리, 파일 없음, sha 다름, 두 모델의 입출력 모양이 다름. 다시 켜거나(resident_det=1) 두 모델 이름이 바뀔 때까지 다시 해 보지 않는다
+    (그동안 /rules 는 'failed' 와 그 까닭을 보인다).
   - 켤 수 없는 실행: 도착하는 대로 넣기(코어 0·1 교대)가 아님, --mock, 두 개짜리(타일) 검출기, 검출 모델을 바꿀 수 없는 실행.
   - 기다림: 엔드투엔드 모델 사용 중(그 모델이 NPU 메모리를 쓴다. 켜면 다른 짝을 놓고, 끄면 다시 만든다), 두 모델 가운데 하나가 목록에 없음,
     지금 검출 모델이 두 모델이 아님, 짐벌이 따라가거나 움직임.
+    엔드투엔드 모델은 다른 짝을 놓은 뒤에만 만든다(e2e_ready: 프레임 반복이 e2e_live.apply 바로 앞에서 부른다. 다른 짝이 아직 NPU 에서 마지막 프레임을 돌리면
+    한 프레임 기다린다). 끄기는 기다리지 않는다.
+  - 바꾸려는 모델의 파일이 없거나 sha 가 다름: 프레임 반복이 옛 길 전에 page_settings.swap_refused 로 먼저 보고 결과 3 으로 답한다. 아무것도 멈추거나 놓지 않는다.
   - 두 모델이 아닌 셋째 모델을 손으로 고름: 다른 짝을 먼저 놓고(옛 길이 쓰는 NPU 메모리는 지금과 같게) 옛 길로 바꾼다. 나중에 두 모델 가운데 하나로 돌아오면(옛 길)
     다른 짝을 다시 만든다. 셋째 모델과 짝 하나를 같이 두면 다음 바꾸기마다 무엇을 놓고 만들지 따로 정해야 하므로 "상주 = 근거리·먼 거리 두 모델" 하나만 지킨다.
 
@@ -66,8 +72,11 @@ WHY = dict(
     missing=('the near or the far model is not listed', '근거리 또는 먼 거리 모델이 모델 목록에 없음'),
     other=('the detector in use is not one of the near / far pair', '지금 검출 모델이 근거리·먼 거리 모델이 아님'),
     gimbal=('waiting for the gimbal to stop following / moving (the frames stop while the engines are made)', '짐벌이 멈추기를 기다림 (올리는 동안 화면이 잠깐 멈춤)'),
+    swap=('waiting for a frame after the old-path model change', '옛 길로 바꾼 뒤 새 프레임을 기다림'),
 )
 REFUSED = ('mock', 'feed', 'tiled', 'catalog')
+QUIET = ('swap',)   # waits of a frame or two: no server log line
+FAILED_KO = '다른 모델을 NPU 0·1에 올리지 못함 · 다시 켜면 다시 해 봄'
 
 
 class _State:
@@ -86,7 +95,8 @@ class _State:
         self.switches = 0; self.fallbacks = 0; self.builds = 0; self.releases = 0
         self.last = None       # the last instant switch
         self.made = None       # the last build of the other pair
-        self.watch = None      # the last instant switch, until the first frame of the new model is taken
+        self.watch = None      # the last instant switch, until the first result of the new model is collected
+        self.swap_seq = None   # after an old-path change: the other pair is made only once the loop took a frame of this feed number or later
         self.err = ''
 
 
@@ -111,7 +121,7 @@ def _set(mode, code, why, reason):
     R = RES
     if (R.mode, R.code, R.why, R.reason) != (mode, code, why, reason):   # called every frame while it waits: the lock only on a change
         with R.lock: R.mode, R.code, R.why, R.reason = mode, code, why, reason
-    if mode in ('waiting', 'refused') and R.want and R.said != code:
+    if mode in ('waiting', 'refused') and R.want and R.said != code and code not in QUIET:
         R.said = code
         print('RESIDENT %s: %s. %s' % (mode, _ascii(why), OLD_PATH), flush=True)
 
@@ -174,8 +184,13 @@ def _frame_step(frame):
         _release('the near / far model names changed', '근거리·먼 거리 모델 이름이 바뀜')   # made again for the new pair at the next frame
         return
     if R.failed is not None:
-        if R.failed['keys'] == keys: return   # one try per turn-on (or per pair)
+        if R.failed['keys'] == keys:   # one try per turn-on (or per pair); /rules keeps saying why (a wait in between, e.g. a third model, had replaced it)
+            if R.mode != 'failed': _set('failed', None, R.failed['why'], FAILED_KO); R.said = 'failed'
+            return
         R.failed = None
+    if R.swap_seq is not None:   # the old path just changed the model: its pause and this build stay two pauses (each as long as today), not one over 1 s
+        if feed.prev_seq < R.swap_seq: _set('waiting', 'swap', *WHY['swap']); return
+        R.swap_seq = None
     if _gimbal_busy():
         _set('waiting', 'gimbal', *WHY['gimbal']); return
     _build(feed, keys, frame)
@@ -239,7 +254,7 @@ def _build(feed, keys, frame):
         made = None; gc.collect()
         with R.lock:
             R.failed = dict(why=why, keys=keys); R.mode = 'failed'; R.code = None; R.why = why
-            R.reason = '다른 모델을 NPU 0·1에 올리지 못함 · 다시 켜면 다시 해 봄'; R.said = 'failed'
+            R.reason = FAILED_KO; R.said = 'failed'
         print('RESIDENT refused: %s. %s' % (_ascii(why), OLD_PATH), flush=True)
         return False
     with R.lock:
@@ -320,14 +335,15 @@ def instant(rq_):
     return 0
 
 
-def _taken(r_):
-    """Feed.on_take (frame thread, Feed._next): after an instant switch, each frame the loop takes until the first one submitted to the new pair."""
+def _taken(r_, g_=None):
+    """Feed.on_take (frame thread, Feed.wait, the result collected): after an instant switch, each frame until the first one submitted to the new pair.
+    g_ = the engine pair the frame was submitted to (Feed.wait reads it before _collect drops it from the record)."""
     R = RES; w_ = R.watch; feed = _app('FEED')
     try:
         if w_ is None:
             if feed is not None: feed.on_take = None
             return
-        g_ = getattr(r_, 'grp', None)
+        g_ = g_ if g_ is not None else getattr(r_, 'grp', None)
         if g_ is None or g_[0] is not w_['eng']:
             w_['old'] += 1; return   # submitted to the old model before the switch: its result is used as it is
         now_ = time.time(); pc_ = time.perf_counter()
@@ -343,9 +359,11 @@ def _taken(r_):
 def before_swap(det):
     """Frame loop, the old path, right after Feed.pause (nothing is on the NPU then) and before do_model_swap. The other pair is released here, so
     do_model_swap works with the NPU memory of today (it releases the engine of the model in use and makes the new one; pause / resume do core 1).
-    It is made again by frame_step when the detector is one of the pair after the change."""
+    It is made again by frame_step when the detector is one of the pair after the change, once the loop has taken a frame that came after it (swap_seq)."""
     R = RES
     try:
+        feed = _app('FEED')
+        if feed is not None: R.swap_seq = feed.seq   # the feed is paused: frames numbered from here are the ones after this change
         if R.pairs is None: return
         if not R.want: w_ = ('turned off', '꺼서 놓음')
         elif det not in R.pairs: w_ = ('%s is not one of the pair (old path)' % det, '두 모델이 아닌 모델(%s)로 바꿈 · 옛 길' % det)
@@ -353,6 +371,19 @@ def before_swap(det):
         _release(*w_, final=True)
     except Exception as e_:
         R.err = repr(e_)[:160]; print('RESIDENT release failed: %s' % _ascii(R.err), flush=True)
+
+
+def e2e_ready():
+    """Frame loop, right before e2e_live.apply (the end-to-end model is made there). When it is about to be made, the other pair is let go first:
+    the click on the page may come after this frame's frame_step. -> False while the other pair still has a frame on the NPU (the end-to-end model
+    is then made a frame later; frame_step finishes the release). Turning it off is never held back. Never raises."""
+    try:
+        if e2e_live.E2E.get('want') != 'ftt' or e2e_live.E2E.get('on') == 'ftt' or RES.pairs is None: return True
+        _release(*WHY['e2e']); RES.said = 'e2e'   # the release line says why: no second line from frame_step
+        return RES.pairs is None
+    except Exception as e_:
+        RES.err = repr(e_)[:160]
+        return RES.pairs is None
 
 
 def close():

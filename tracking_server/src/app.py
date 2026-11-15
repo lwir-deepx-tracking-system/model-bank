@@ -612,12 +612,13 @@ def main():
             if APP.MODEL['req'] is not None:   # v23: a model change was asked for; taken here, between two frames
                 rq_ = APP.MODEL['req']; APP.MODEL['busy'] = True
                 code_ = resident_det.instant(rq_)   # 11-15: 0 = switched at once to the resident pair of the other model (no engine made or released), None = the old path below
+                if code_ is None and page_settings.swap_refused(rq_['det']): code_ = 3   # 11-15: file missing / sha differs: refused before anything is paused or released (the frames ahead stay valid)
                 if code_ is None:
                     for a_ in ahead:   # frames already submitted to the old model: collected and dropped, they go in again below
                         if a_[2]: APP.a.wait()
                     if APP.FEED is not None: APP.FEED.pause()
                     resident_det.before_swap(rq_['det'])   # 11-15: the other resident pair (if any) is released first; nothing is on the NPU after pause
-                    code_ = do_model_swap(rq_['det'])
+                    code_ = do_model_swap(rq_['det'], checked=True)
                     if APP.FEED is not None: APP.FEED.resume(code_)
                     if APP.args.pipeline and code_ != 5: ahead[:] = [(g_, submit_tiles(g_, i + n_) if s_ else t_, s_) for n_, (g_, t_, s_) in enumerate(ahead)]
                 with APP.MODEL['lock']:
@@ -797,7 +798,7 @@ def main():
                     if ch_: print('CONFIRM %g ms at %.1f fps: %d -> %d frames (frame %d)' % (APP.CONFIRM.ms, APP.CONFIRM.fps or 0.0, ch_[0], ch_[1], i), flush=True)
             if APP.TIMING is not None: APP.TIMING.mark()
             n_sync0 = len(sync_lat)
-            if getattr(APP, 'dx', None) is not None and not APP.args.mock: e2e_live.apply(APP.dx)   # 11-14: switch first, so this frame already follows the page
+            if getattr(APP, 'dx', None) is not None and not APP.args.mock and resident_det.e2e_ready(): e2e_live.apply(APP.dx)   # 11-14: switch first, so this frame already follows the page. 11-15: made only once the other resident pair is gone (off is never held back)
             own_ = e2e_live.skip_detector()
             if own_ != e2e_prev:   # 11-14: empty tracker both ways: no ghost tracks / predicted boxes while it is on, a clean start after
                 e2e_prev = own_; POSP['boxes'] = []

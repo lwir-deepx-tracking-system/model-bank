@@ -320,13 +320,22 @@ def det_has_kpt():
     return bool(req_ and req_.get('det') in KPT_DETS)
 
 
-def do_model_swap(new_det):
-    """Release the old engine and create the new one on the same core. -> PipelineResult code (0 Ok, 3 CreationFailed, 4 Restored, 5 RestoreFailed)."""
-    import gc
-    c_ = next(x_ for x_ in APP.MODEL['catalog'] if x_['det'] == new_det); key_ = c_['key']; old_det, old_key = APP.args.det, APP.det_names[0]
+def swap_refused(new_det):
+    """True (with the log line) when the file of new_det is missing or its sha is not the listed one: do_model_swap then answers 3 without touching an engine.
+    11-15: the frame loop asks this before the old path, so a refused change pauses, releases and rebuilds nothing (resident_det) and the frames ahead stay valid."""
+    key_ = next(x_ for x_ in APP.MODEL['catalog'] if x_['det'] == new_det)['key']
     try: bad_ = (key_ in BANK or not APP.args.mock) and sha(BANK.get(key_, HERE / 'models' / 'links' / (key_ + '.dxnn'))) != APP.man[key_]
     except OSError: bad_ = True   # v28: the file was removed after it was listed
-    if bad_: print('MODEL sha mismatch or missing file for', key_, flush=True); return 3
+    if bad_: print('MODEL sha mismatch or missing file for', key_, flush=True)
+    return bad_
+
+
+def do_model_swap(new_det, checked=False):
+    """Release the old engine and create the new one on the same core. -> PipelineResult code (0 Ok, 3 CreationFailed, 4 Restored, 5 RestoreFailed).
+    checked = the caller has just asked swap_refused (the file is read once)."""
+    import gc
+    c_ = next(x_ for x_ in APP.MODEL['catalog'] if x_['det'] == new_det); key_ = c_['key']; old_det, old_key = APP.args.det, APP.det_names[0]
+    if not checked and swap_refused(new_det): return 3
     t_ = time.perf_counter(); APP.eng.pop(old_key, None); APP.a = None; gc.collect(); time.sleep(0.3)
     try: APP.eng[key_] = APP.Engine(key_, CORE[key_], APP.args.npu_depth)
     except Exception as e_:

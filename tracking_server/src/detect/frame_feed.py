@@ -25,7 +25,7 @@ arrival은 코어 0과 1을 번갈아 쓴다. 변경 요청이 들어오면 새 
     빨리 차례를 얻게 하려는 것이다. LWIR_NPU_FEED_SWITCH_MS=0 이면 건드리지 않는다.
   - 넣는 스레드에서 오류가 나면 이 방식을 끄고 그 자리에서 보통 읽기(live_next)로 넘어간다 (다음 프레임 미리 넣기는 없는 채로). 한 줄을 찍는다.
   - 두 모델 상주 (11-15, resident_det.py, 기본 꺼짐): 넣는 곳(eng, busy)을 다른 모델의 엔진 짝으로 바로 돌릴 수 있다. 그래서 프레임마다 넣은 엔진 짝을
-    기억하고(_Rec.grp) 결과는 그 짝에서 받는다. 옛 짝이 아직 결과를 내지 않은 코어에는 새 짝도 넣지 않는다(held). 프레임 반복이 받아 가는 프레임은 on_take 로 알린다.
+    기억하고(_Rec.grp) 결과는 그 짝에서 받는다. 옛 짝이 아직 결과를 내지 않은 코어에는 새 짝도 넣지 않는다(held). 프레임 반복이 결과를 받은 프레임은 on_take 로 알린다.
 
 켤 수 없는 경우 (시작할 때 한 줄을 찍고 보통 방식 그대로 간다)
   실시간 실행이 아님, --pipeline 없음, --npu-depth 가 1 이 아님, --no-vit 없음(또는 --vit-budget / --vit-bench-n), --zoom, 검출 모델이 두 개짜리(타일),
@@ -219,7 +219,7 @@ class _Rec:
 
 class Feed:
     held = None      # 11-15 resident_det: busy flags of the other model's engines on the same cores (one frame per core at a time), None = none
-    on_take = None   # 11-15 resident_det: called with each frame record the frame loop takes (frame thread), None = nothing
+    on_take = None   # 11-15 resident_det: called (frame thread, Feed.wait) with each frame record and its engine pair once its result is collected, None = nothing
     _tgt_e = None    # the engine the feeding thread is submitting to (chosen under the lock)
 
     def __init__(self, second_, *, hot_switch=False):
@@ -375,7 +375,10 @@ class Feed:
     def wait(self):
         if self.direct or self.cur is None: return self.eng[0].wait()
         r_ = self.cur; self.cur = None
-        return self._collect(r_, True)
+        g_ = getattr(r_, 'grp', None)   # _collect drops it
+        o_ = self._collect(r_, True)
+        if self.on_take is not None: self.on_take(r_, g_)   # 11-15 resident_det: the result is in hand (timing of the first detection of the new model after an instant switch)
+        return o_
 
     def _collect(self, r_, keep_):
         if r_.e < 0: return None   # 11-14: queued without the detector
@@ -427,7 +430,6 @@ class Feed:
         if APP.GB is not None and APP.GB.gui: L_.raws.append(r_.raw if APP.args.gui_map == 'team' else (r_.g8.astype(np.uint16) * 257))
         L_.rawq.append(r_.raw)
         self.cur = r_
-        if self.on_take is not None: self.on_take(r_)   # 11-15 resident_det: the first frame of the new model after an instant switch (timing only)
         return r_.gg
 
     # ---------------------------------------------------------------- 멈추기, 모델 바꾸기, 끝내기

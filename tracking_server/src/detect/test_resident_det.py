@@ -3,7 +3,11 @@
 - 켜 두면 바꾸기 요청이 다음 프레임 경계에서 엔진을 만들지도 놓지도 않고 적용된다. 옛 짝에 이미 넣은 프레임(넣는 중이던 것, 넣어 둔 것)은
   옛 모델 결과로 쓰이고, 프레임이 빠지거나 두 번 들어가거나 순서가 바뀌지 않는다.
 - 다른 짝을 못 만들면(NPU 메모리, 입출력 모양 다름, 켤 수 없는 실행) 한 줄을 찍고 옛 길(do_model_swap)로 바꾼다. 다시 켜면 다시 해 본다.
-- 두 모델이 아닌 셋째 모델은 옛 길: 다른 짝을 먼저 놓고, 옛 엔진이 남지 않고, 두 모델로 돌아오면 다시 만든다.
+- 두 모델이 아닌 셋째 모델은 옛 길: 다른 짝을 먼저 놓고, 옛 엔진이 남지 않고, 두 모델로 돌아오면 그 뒤 프레임 하나를 받은 다음에 다시 만든다(두 멈춤이 합쳐지지 않게).
+- 파일이 없거나 sha 가 다른 모델로 바꾸기: 결과 3, 아무것도 멈추거나 놓거나 만들지 않는다.
+- 못 만든 뒤 기다림(셋째 모델, 엔드투엔드)이 끝나면 /rules 는 다시 'failed' 와 그 까닭을 보인다.
+- 엔드투엔드 모델은 다른 짝을 놓은 뒤에만 만든다(누름이 frame_step 뒤에 와도), 놓는 중이면 한 프레임 기다린다, 끄기는 기다리지 않는다.
+- 바꾸기 시간(last_switch.ms)은 새 모델의 첫 결과를 받을 때까지 잰다(그 추론 시간 포함).
 - /rules 의 resident_det 는 JSON 으로 바뀐다. /rules/set?resident_det= 는 나머지가 받아들여질 때만 바뀌고, 끄면 다른 짝을 놓는다.
 - 자동 선택(auto_det)은 즉시 바꾸기를 한 번만 센다.
 Run from tracking_server/: python -m unittest src.detect.test_resident_det"""
@@ -14,6 +18,7 @@ import os
 from pathlib import Path
 import tempfile
 import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
@@ -41,6 +46,7 @@ class Engine:
     log = []      # (name, core) of every engine made, in order
     gone = []     # names of the disposed engines
     shape = {}    # model key -> input shape (default 1x480x640x3)
+    delay = {}    # model key -> seconds wait() takes (inference time)
 
     def __init__(self, name, core, depth=1, model=None):
         self.name = name; self.core = core; self.model = model or name; self.b = self; self.packed = np.empty(3, np.float32)
@@ -55,6 +61,7 @@ class Engine:
     def wait(self):
         name, model, core, f = APP.pending.pop(self.name)
         if name != self.name: raise RuntimeError('job of %s waited on %s' % (name, self.name))   # the SDK cannot wait a job on another engine
+        if f >= 0 and Engine.delay.get(self.model): time.sleep(Engine.delay[self.model])
         return [np.array([f, model, core], np.float32)]
 
     def dispose(self):
@@ -70,7 +77,7 @@ class Base(unittest.TestCase):
         self.saved = dict(vars(APP)); self.core = dict(CORE); self.det = dict(DET); self.bank = dict(BANK)
         self.w480, self.kpt = set(W480_DETS), set(KPT_DETS)
         auto_det.reset(); resident_det.reset()
-        Engine.log = []; Engine.gone = []; Engine.shape = {}
+        Engine.log = []; Engine.gone = []; Engine.shape = {}; Engine.delay = {}
         self.tmp = tempfile.TemporaryDirectory()
         man = {}
         for key in (THIRD_KEY, NEAR_KEY, FAR_KEY):   # small stand-in files: the sha check is the real one
@@ -126,17 +133,23 @@ class Base(unittest.TestCase):
         return tuple(int(v) for v in APP.FEED.wait()[0])
 
     def boundary(self, i):
-        """Stand-in for the top of the frame loop in app.py: the v23 model change block (the instant switch first, else the old path) and resident_det.frame_step."""
+        """Stand-in for the top of the frame loop in app.py: the v23 model change block (the instant switch first, then the file check, else the old path)
+        and resident_det.frame_step."""
         rq = APP.MODEL['req']
         if rq is not None:
             APP.MODEL['busy'] = True
             code = resident_det.instant(rq)
+            if code is None and page_settings.swap_refused(rq['det']): code = 3
             if code is None:
-                APP.FEED.pause(); resident_det.before_swap(rq['det']); code = page_settings.do_model_swap(rq['det']); APP.FEED.resume(code)
+                APP.FEED.pause(); resident_det.before_swap(rq['det']); code = page_settings.do_model_swap(rq['det'], checked=True); APP.FEED.resume(code)
             with APP.MODEL['lock']:
                 APP.MODEL['req'] = None; APP.MODEL['busy'] = False; APP.MODEL['last'] = dict(id=rq['id'], result=code)
             self.codes.append(code)
         resident_det.frame_step(i)
+
+    def e2e_step(self):
+        """Stand-in for app.py later in the frame (after the detector result): e2e_live.apply only once resident_det.e2e_ready()."""
+        if resident_det.e2e_ready(): e2e_live.apply(object())
 
     def said(self, start):
         return [l for l in self.lines if l.startswith(start)]
@@ -183,6 +196,19 @@ class InstantSwitchTest(Base):
         self.assertGreaterEqual(st['last_switch']['ms'], 0.0); self.assertGreaterEqual(st['last_switch']['ms_switch'], 0.0)
         self.assertEqual(APP.MODEL['last']['result'], 0)
         json.dumps(st)
+
+    def test_switch_time_runs_until_the_first_result_of_the_new_model(self):
+        Engine.delay[FAR_KEY] = 0.1   # the far model's inference takes 100 ms
+        self.turn_on(); self.boundary(0)
+        self.push(4)
+        got = [self.take(0)]
+        self.wait_out(1)   # frame 1 is on the near pair when the switch comes
+        self.assertEqual(APP.model_request(3), -1); self.boundary(1)
+        got += [self.take(1), self.take(2)]
+        self.assertEqual([g[1] for g in got], [N, N, F])
+        ls = resident_det.state()['last_switch']
+        self.assertEqual(ls['old_frames'], 1)
+        self.assertGreaterEqual(ls['ms'], 100.0); self.assertGreaterEqual(ls['ms_switch'], 100.0)   # the new model's inference is inside the number
 
     def test_auto_det_counts_the_instant_switch_once(self):
         self.turn_on(); self.boundary(0)
@@ -241,9 +267,36 @@ class FallbackTest(Base):
         self.assertEqual(len(self.said('RESIDENT')), 1)   # still the one line
         self.assertEqual(resident_det.state()['fallbacks'], 1)
         json.dumps(resident_det.state())
-        self.turn_on(); self.boundary(4)   # turned on again: one more try (now near is the other model)
+        self.turn_on(); self.boundary(4)   # turned on again: one more try (now near is the other model), once a frame after the old-path change is taken
+        st = resident_det.state()
+        self.assertEqual((st['active'], st['mode'], st['why']), (False, 'waiting', resident_det.WHY['swap'][0]))
+        self.assertEqual(APP.Engine.call_count, calls + 2)   # only the old path's two engines so far
+        self.push(1); self.take(0); self.boundary(5)
         self.assertTrue(resident_det.state()['active'])
         self.assertEqual(Engine.log[-2:], [(NEAR_KEY, 0), (NEAR_KEY + SECOND, 1)])
+        self.assertEqual(self.said('RESIDENT waiting: waiting for a frame'), [])   # a wait of a frame: no log line
+
+    def test_a_failed_build_stays_reported_after_a_wait(self):
+        def engine(name, core, depth=1, model=None):
+            if name == FAR_KEY + SECOND: raise RuntimeError('NPU memory full')
+            return Engine(name, core, depth, model)
+        APP.Engine = engine
+        self.turn_on(); self.boundary(0)
+        why = resident_det.state()['why']; self.assertIn('NPU memory full', why)
+        self.assertEqual(APP.model_request(1), -1); self.boundary(1)   # a third model: waiting, then back to near
+        self.assertEqual(resident_det.state()['mode'], 'waiting')
+        self.assertEqual(APP.model_request(2), -1)
+        for i in (2, 3, 4): self.boundary(i)
+        st = resident_det.state()
+        self.assertEqual((st['mode'], st['why'], st['reason'], st['current_det'], st['builds']), ('failed', why, resident_det.FAILED_KO, NEAR_DET, 0))
+        with patch.dict(e2e_live.E2E, want='ftt'):   # end-to-end on for a frame, then off
+            self.boundary(5)
+            self.assertEqual(resident_det.state()['mode'], 'waiting')
+        self.boundary(6)
+        st = resident_det.state()
+        self.assertEqual((st['mode'], st['why'], st['reason'], st['builds']), ('failed', why, resident_det.FAILED_KO, 0))   # not "made again when it is off": no new try
+        self.assertEqual((len(self.said('RESIDENT waiting: the detector in use')), len(self.said('RESIDENT waiting: the end-to-end'))), (1, 1))
+        json.dumps(st)
 
     def test_different_input_output_form_is_not_made(self):
         Engine.shape[FAR_KEY] = (1, 640, 640, 3)
@@ -276,6 +329,83 @@ class FallbackTest(Base):
         self.assertEqual(len(self.said('RESIDENT waiting: the end-to-end model is on')), 1)
 
 
+class EndToEndTest(Base):
+    """The end-to-end model is made in e2e_live.apply, later in the frame than frame_step: a click on the page can land in between."""
+    def setUp(self):
+        super().setUp()
+        test = self; self.ftt_made = []
+
+        class FTT:   # stand-in for e2e_live.FTTLive: notes which detector engines were already let go when it is made
+            fail = False
+
+            def __init__(self, dx, d):
+                test.ftt_made.append(sorted(Engine.gone))
+                if FTT.fail: raise RuntimeError('NPU memory full')
+
+            def drain(self): pass
+        self.FTT = FTT
+        self.e2e_patches = [patch.dict(e2e_live.E2E), patch.object(e2e_live, 'info', return_value=(dict(label='stand-in', files={}), None)),
+                            patch.object(e2e_live, 'FTTLive', FTT)]
+        for p_ in self.e2e_patches: p_.start()
+
+    def tearDown(self):
+        for p_ in reversed(self.e2e_patches): p_.stop()
+        super().tearDown()
+
+    def test_click_after_frame_step_makes_it_only_after_the_pair_is_gone(self):
+        self.turn_on(); self.boundary(0)
+        e2e_live.E2E['want'] = 'ftt'   # the click lands after this frame's frame_step (the loop was waiting for the detector)
+        self.e2e_step()
+        self.assertEqual(self.ftt_made, [sorted([FAR_KEY, FAR_KEY + SECOND])])   # the far pair was gone when the end-to-end model was made
+        self.assertEqual(e2e_live.E2E['on'], 'ftt'); self.assertFalse(resident_det.state()['active'])
+        self.boundary(1); self.e2e_step()
+        self.assertEqual(resident_det.state()['mode'], 'waiting')
+        self.assertEqual((len(self.said('RESIDENT off: the end-to-end model is on')), self.said('RESIDENT waiting')), (1, []))   # one line
+        e2e_live.E2E['want'] = 'off'; self.e2e_step()   # off is never held back
+        self.assertEqual(e2e_live.E2E['on'], 'off')
+        self.boundary(2)
+        self.assertTrue(resident_det.state()['active']); self.assertEqual(Engine.log[-2:], [(FAR_KEY, 0), (FAR_KEY + SECOND, 1)])
+
+    def test_a_failed_end_to_end_model_does_not_leave_the_pair_loaded(self):
+        self.FTT.fail = True
+        self.turn_on(); self.boundary(0)
+        e2e_live.E2E['want'] = 'ftt'; self.e2e_step()
+        self.assertEqual(self.ftt_made, [sorted([FAR_KEY, FAR_KEY + SECOND])])
+        self.assertEqual((e2e_live.E2E['want'], e2e_live.E2E['on']), ('off', 'off'))   # e2e_live turned it off again
+        self.assertFalse(resident_det.state()['active'])
+        self.boundary(1)
+        self.assertTrue(resident_det.state()['active'])   # end-to-end is off: the pair comes back
+
+    def test_it_waits_a_frame_while_the_pair_runs_its_last_frame(self):
+        self.turn_on(); self.boundary(0)
+        far = resident_det.RES.pairs[FAR_DET]; far['busy'][1] = True   # its last frame is still on the NPU
+        e2e_live.E2E['want'] = 'ftt'; self.e2e_step()
+        self.assertEqual((self.ftt_made, e2e_live.E2E['on'], Engine.gone), ([], 'off', []))
+        self.assertEqual(resident_det.state()['release_waiting'], resident_det.WHY['e2e'][0])
+        far['busy'][1] = False; self.boundary(1); self.e2e_step()   # frame_step finishes the release, then it is made
+        self.assertEqual(self.ftt_made, [sorted([FAR_KEY, FAR_KEY + SECOND])]); self.assertEqual(e2e_live.E2E['on'], 'ftt')
+
+
+class RefusedChangeTest(Base):
+    def test_a_change_refused_for_its_file_touches_nothing(self):
+        self.turn_on(); self.boundary(0)
+        APP.man[THIRD_KEY] = 'not the sha of the file'
+        made = len(Engine.log)
+        self.push(4)
+        got = [self.take(0)]
+        self.wait_out(1)   # frame 1 is on the NPU when the change comes
+        self.assertEqual(APP.model_request(1), -1); self.boundary(1)
+        self.assertEqual((self.codes, APP.args.det), ([3], NEAR_DET))
+        self.assertEqual((len(Engine.log), Engine.gone, APP.FEED.st['swaps'], APP.FEED.st['redo']), (made, [], 0, 0))   # not paused, nothing released or made
+        st = resident_det.state()
+        self.assertEqual((st['active'], st['builds'], st['releases']), (True, 1, 0))
+        self.assertEqual(len(self.said('MODEL sha mismatch or missing file for %s' % THIRD_KEY)), 1); self.assertEqual(self.said('RESIDENT off'), [])
+        got += [self.take(1), self.take(2)]   # the frame on the NPU is used as it is
+        self.assertEqual([g[:2] for g in got], [(0, N), (1, N), (2, N)])
+        self.assertEqual(APP.model_request(3), -1); self.boundary(2)
+        self.assertEqual((self.codes, APP.args.det), ([3, 0], FAR_DET))   # the instant switch still works
+
+
 class ThirdModelTest(Base):
     def test_third_model_takes_the_old_path_and_the_pair_comes_back(self):
         self.turn_on(); self.boundary(0)
@@ -300,10 +430,16 @@ class ThirdModelTest(Base):
         got += [self.take(2), self.take(3)]   # frame 2 went in again for the new model (the old path, as before)
         n = len(Engine.log); self.boundary(3); self.boundary(4)
         self.assertEqual(len(Engine.log), n)   # not made while the third model runs
-        self.assertEqual(APP.model_request(2), -1); self.boundary(5)   # back to near (old path), then the far pair again
-        self.assertEqual(APP.args.det, NEAR_DET); self.assertTrue(resident_det.state()['active'])
-        self.assertEqual(Engine.log[n:], [(NEAR_KEY, 0), (NEAR_KEY + SECOND, 1), (FAR_KEY, 0), (FAR_KEY + SECOND, 1)])
-        got += [self.take(4), self.take(5)]
+        self.assertEqual(APP.model_request(2), -1); self.boundary(5)   # back to near (old path); frame 4 was on the NPU and goes in again
+        self.assertEqual(APP.args.det, NEAR_DET)
+        self.assertEqual(Engine.log[n:], [(NEAR_KEY, 0), (NEAR_KEY + SECOND, 1)])   # not the far pair at the same boundary: two pauses would make one input gap
+        st = resident_det.state()
+        self.assertEqual((st['active'], st['mode'], st['why']), (False, 'waiting', resident_det.WHY['swap'][0]))
+        got.append(self.take(4)); self.boundary(51)   # frame 4 came before the change: still waiting
+        self.assertEqual(len(Engine.log), n + 2)
+        got.append(self.take(5)); self.boundary(52)   # frame 5 came after it: now the far pair
+        self.assertTrue(resident_det.state()['active'])
+        self.assertEqual(Engine.log[n + 2:], [(FAR_KEY, 0), (FAR_KEY + SECOND, 1)])
         n = len(Engine.log)
         self.assertEqual(APP.model_request(3), -1); self.boundary(6)
         self.assertEqual((len(Engine.log), APP.args.det, self.codes[-1]), (n, FAR_DET, 0))
