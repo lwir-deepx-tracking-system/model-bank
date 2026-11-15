@@ -1,9 +1,9 @@
 // System controls
 let sysbusy=false, sysat=null;
 const CR=$('camreset'), SR=$('sysreboot'), restartButton=$('serverrestart');
-const feedToggle=$('npu-feed'), feedApply=$('npu-feed-apply');
+const feedToggle=$('npu-feed'), feedAuto=$('npu-feed-auto'), feedApply=$('npu-feed-apply');
 const feedState=$('npu-feed-state'), feedCounts=$('npu-feed-counts'), feedHint=$('npu-feed-hint');
-let feedChoice=null;
+let feedChoice=null;   // 11-16: the mode chosen on the page and not applied yet ('normal' / 'arrival' / 'auto'), null = as the server says
 
 function syncSystemButtons(){
   const pending=!!(rlast&&rlast.restart_pending);
@@ -13,14 +13,18 @@ function syncSystemButtons(){
 
   const reportedFeed=rlast?.npu_feed;
   const feed=reportedFeed?.mode==='normal'||reportedFeed?.mode==='arrival'?reportedFeed:null;
-  const requested=feed?.requested==='arrival';
+  const wanted=feed?(feed.requested==='arrival'||feed.requested==='auto'?feed.requested:'normal'):null;
+  const requested=wanted==='arrival', auto=wanted==='auto';
   const switching=feed?.pending===true;
-  if(feed&&!switching&&feedChoice===requested)feedChoice=null;
-  feedToggle.checked=feedChoice??requested;
-  feedToggle.disabled=sysbusy||pending||switching||!feed;
-  const selectedMode=feedToggle.checked?'arrival':'normal';
-  feedApply.disabled=feedToggle.disabled||feed?.can_toggle!==true||
-    (selectedMode===feed.requested&&selectedMode===feed.mode);
+  if(feed&&!switching&&feedChoice===wanted)feedChoice=null;
+  const selectedMode=feedChoice??wanted??'normal';
+  feedAuto.checked=selectedMode==='auto';
+  feedToggle.checked=selectedMode==='arrival'||(selectedMode==='auto'&&feed?.active===true);
+  feedAuto.disabled=sysbusy||pending||switching||!feed;
+  feedToggle.disabled=feedAuto.disabled||feedAuto.checked;   // auto chooses the cores itself
+  feedApply.disabled=feedAuto.disabled||feed?.can_toggle!==true||
+    (selectedMode===feed.requested&&(selectedMode==='auto'||selectedMode===feed.mode));
+  const mon=feed?.auto, per=mon?.period;   // 11-16: measured detection time against the camera period (also when auto is off)
 
   let state='상태를 확인하는 중…';
   if(rlast&&!feed)state='이 서버에는 이 설정이 없습니다.';
@@ -28,15 +32,22 @@ function syncSystemButtons(){
     state='지금 '+(feed.active?'번갈아 쓰는 중':'NPU 0만 쓰는 중');
     if(switching)state='전환 중 · '+state;
     else{
-      if(requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
+      if(auto)state='자동 · '+state+(mon?.why?' · '+mon.why:'');
+      else if(requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
       if(feed.reason)state+=' · '+feed.reason;
     }
+    if(per?.state)state+=' · '+per.text;
   }
   if(feedState.textContent!==state)feedState.textContent=state;
 
-  feedCounts.textContent=(feed?.active||requested)&&Array.isArray(feed.cores)&&feed.cores.length===2
+  let counts=(feed?.active||requested||auto)&&Array.isArray(feed.cores)&&feed.cores.length===2
     ?'투입 장 수 · '+feed.cores.map((count,index)=>'NPU '+index+' '+count.toLocaleString('ko-KR')+'장').join(' · ')
     :'';
+  if(mon?.service_ms?.p90!=null&&mon.period_ms!=null)counts+=(counts?' · ':'')+'검출 '+mon.service_ms.p50+' / p90 '+mon.service_ms.p90+' ms · 주기 '+mon.period_ms+' ms'
+    +' · 늦음 '+mon.misses.late.toLocaleString('ko-KR')+' · 버림 '+mon.misses.dropped.toLocaleString('ko-KR')
+    +(auto?' · 자동 전환 '+(mon.switches.up+mon.switches.down)+'번':'')
+    +(mon.npu?' · NPU '+Math.max(...mon.npu.temp_c)+'°C '+Math.min(...mon.npu.clock_mhz)+' MHz':'');
+  if(feedCounts.textContent!==counts)feedCounts.textContent=counts;
   const replay=document.body.classList.contains('replay-mode');
   const hint=feed&&!feed.can_toggle&&!sysbusy&&!pending&&!switching
     ?feed.toggle_reason||(replay?'녹화 재생을 먼저 끝내세요.':'현재 설정을 변경할 수 없습니다.')
@@ -88,12 +99,16 @@ async function waitForServer(previous){
 }
 
 feedToggle.addEventListener('change',()=>{
-  feedChoice=feedToggle.checked;
+  feedChoice=feedToggle.checked?'arrival':'normal';
+  syncSystemButtons();
+});
+feedAuto.addEventListener('change',()=>{
+  feedChoice=feedAuto.checked?'auto':(feedToggle.checked?'arrival':'normal');
   syncSystemButtons();
 });
 feedApply.addEventListener('click',async()=>{
   if(feedApply.disabled)return;
-  const mode=feedToggle.checked?'arrival':'normal';
+  const mode=feedAuto.checked?'auto':(feedToggle.checked?'arrival':'normal');
   try{
     const result=await syspost('/system/npu-feed?mode='+mode,'검출 NPU 사용 방식을 바꾸는 중…','');
     if(result.ok)await rtick();

@@ -558,6 +558,8 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
       <!-- 11-13: moved here from System. Detection frames alternate between NPU core 0 and 1 so the next frame starts before the previous one returns. -->
       <div class="feedbar advfeed" id="npu-feed-bar">
         <label class="chk"><input type="checkbox" id="npu-feed" aria-describedby="npu-feed-state npu-feed-hint" disabled> 검출 지연 줄이기 · NPU 0·1 번갈아 쓰기</label>
+        <!-- 11-16: NPU 0 only, and both by itself while detection cannot keep the camera period (src/detect/feed_auto.py) -->
+        <label class="chk"><input type="checkbox" id="npu-feed-auto" aria-describedby="npu-feed-state npu-feed-hint" disabled> 자동 · 느려지면 번갈아 쓰기</label>
         <button class="btn accent small" id="npu-feed-apply" disabled>적용</button>
         <span class="feedinfo"><span id="npu-feed-state" role="status">상태를 확인하는 중…</span> <span class="num" id="npu-feed-counts"></span> <span id="npu-feed-hint" role="status"></span></span>
       </div>
@@ -706,6 +708,8 @@ function netChip(){
   const sc=rlast?.cam_scene;   // 11-15: frames come but the picture has no scene (cam_pipe v2.13 SCENE_LOST; the server sends the Korean text)
   if(sc&&!document.body.classList.contains('replay-mode')){chip('cdot','ctext','bad',sc.reset?'카메라 장면 없음 · 자동 복구 중':'카메라 장면 없음 · USB 선 다시 꽂기');$('ctext').parentElement.title=sc.title+'. '+sc.text;return;}
   if(camFail>0){chip('cdot','ctext','bad','카메라 응답 없음 · USB 확인');$('ctext').parentElement.title='카메라 영상 '+Math.round(camIdle)+'초째 없음 · 자동 복구 '+camFail+'회 실패 · 카메라 USB 케이블을 뽑았다가 다시 꽂으세요';return;}
+  const pd=rlast?.npu_feed?.auto?.period;   // 11-16: detection of this model is too slow for the camera period even on both NPU cores (feed_auto.py; the server sends the Korean text)
+  if(pd?.state==='over'&&camIdle<=3){chip('cdot','ctext','warn','카메라 주기 못 지킴 · 검출 모델이 느림');$('ctext').parentElement.title=pd.text;return;}
   chip('cdot','ctext',camIdle>3?'warn':'good',camIdle>3?'카메라 영상 기다리는 중':'서버 연결됨');$('ctext').parentElement.title=camIdle>3?'카메라 영상 '+Math.round(camIdle)+'초째 안 들어옴 (스스로 복구 중)':'';}
 let reopenT=0;   // 11-15: one pending reopen at a time; none for a stream the page stopped itself. With fetch (picture_stream.js) an img error is one bad picture
 v.addEventListener('error',()=>{if(streamFetch||reopenT||!v.hasAttribute('src'))return;reopenT=setTimeout(()=>{reopenT=0;openStream();},2000);});
@@ -1363,9 +1367,9 @@ confirmApply.addEventListener('click',async()=>{
 // System controls
 let sysbusy=false, sysat=null;
 const CR=$('camreset'), SR=$('sysreboot'), restartButton=$('serverrestart');
-const feedToggle=$('npu-feed'), feedApply=$('npu-feed-apply');
+const feedToggle=$('npu-feed'), feedAuto=$('npu-feed-auto'), feedApply=$('npu-feed-apply');
 const feedState=$('npu-feed-state'), feedCounts=$('npu-feed-counts'), feedHint=$('npu-feed-hint');
-let feedChoice=null;
+let feedChoice=null;   // 11-16: the mode chosen on the page and not applied yet ('normal' / 'arrival' / 'auto'), null = as the server says
 
 function syncSystemButtons(){
   const pending=!!(rlast&&rlast.restart_pending);
@@ -1375,14 +1379,18 @@ function syncSystemButtons(){
 
   const reportedFeed=rlast?.npu_feed;
   const feed=reportedFeed?.mode==='normal'||reportedFeed?.mode==='arrival'?reportedFeed:null;
-  const requested=feed?.requested==='arrival';
+  const wanted=feed?(feed.requested==='arrival'||feed.requested==='auto'?feed.requested:'normal'):null;
+  const requested=wanted==='arrival', auto=wanted==='auto';
   const switching=feed?.pending===true;
-  if(feed&&!switching&&feedChoice===requested)feedChoice=null;
-  feedToggle.checked=feedChoice??requested;
-  feedToggle.disabled=sysbusy||pending||switching||!feed;
-  const selectedMode=feedToggle.checked?'arrival':'normal';
-  feedApply.disabled=feedToggle.disabled||feed?.can_toggle!==true||
-    (selectedMode===feed.requested&&selectedMode===feed.mode);
+  if(feed&&!switching&&feedChoice===wanted)feedChoice=null;
+  const selectedMode=feedChoice??wanted??'normal';
+  feedAuto.checked=selectedMode==='auto';
+  feedToggle.checked=selectedMode==='arrival'||(selectedMode==='auto'&&feed?.active===true);
+  feedAuto.disabled=sysbusy||pending||switching||!feed;
+  feedToggle.disabled=feedAuto.disabled||feedAuto.checked;   // auto chooses the cores itself
+  feedApply.disabled=feedAuto.disabled||feed?.can_toggle!==true||
+    (selectedMode===feed.requested&&(selectedMode==='auto'||selectedMode===feed.mode));
+  const mon=feed?.auto, per=mon?.period;   // 11-16: measured detection time against the camera period (also when auto is off)
 
   let state='상태를 확인하는 중…';
   if(rlast&&!feed)state='이 서버에는 이 설정이 없습니다.';
@@ -1390,15 +1398,22 @@ function syncSystemButtons(){
     state='지금 '+(feed.active?'번갈아 쓰는 중':'NPU 0만 쓰는 중');
     if(switching)state='전환 중 · '+state;
     else{
-      if(requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
+      if(auto)state='자동 · '+state+(mon?.why?' · '+mon.why:'');
+      else if(requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
       if(feed.reason)state+=' · '+feed.reason;
     }
+    if(per?.state)state+=' · '+per.text;
   }
   if(feedState.textContent!==state)feedState.textContent=state;
 
-  feedCounts.textContent=(feed?.active||requested)&&Array.isArray(feed.cores)&&feed.cores.length===2
+  let counts=(feed?.active||requested||auto)&&Array.isArray(feed.cores)&&feed.cores.length===2
     ?'투입 장 수 · '+feed.cores.map((count,index)=>'NPU '+index+' '+count.toLocaleString('ko-KR')+'장').join(' · ')
     :'';
+  if(mon?.service_ms?.p90!=null&&mon.period_ms!=null)counts+=(counts?' · ':'')+'검출 '+mon.service_ms.p50+' / p90 '+mon.service_ms.p90+' ms · 주기 '+mon.period_ms+' ms'
+    +' · 늦음 '+mon.misses.late.toLocaleString('ko-KR')+' · 버림 '+mon.misses.dropped.toLocaleString('ko-KR')
+    +(auto?' · 자동 전환 '+(mon.switches.up+mon.switches.down)+'번':'')
+    +(mon.npu?' · NPU '+Math.max(...mon.npu.temp_c)+'°C '+Math.min(...mon.npu.clock_mhz)+' MHz':'');
+  if(feedCounts.textContent!==counts)feedCounts.textContent=counts;
   const replay=document.body.classList.contains('replay-mode');
   const hint=feed&&!feed.can_toggle&&!sysbusy&&!pending&&!switching
     ?feed.toggle_reason||(replay?'녹화 재생을 먼저 끝내세요.':'현재 설정을 변경할 수 없습니다.')
@@ -1450,12 +1465,16 @@ async function waitForServer(previous){
 }
 
 feedToggle.addEventListener('change',()=>{
-  feedChoice=feedToggle.checked;
+  feedChoice=feedToggle.checked?'arrival':'normal';
+  syncSystemButtons();
+});
+feedAuto.addEventListener('change',()=>{
+  feedChoice=feedAuto.checked?'auto':(feedToggle.checked?'arrival':'normal');
   syncSystemButtons();
 });
 feedApply.addEventListener('click',async()=>{
   if(feedApply.disabled)return;
-  const mode=feedToggle.checked?'arrival':'normal';
+  const mode=feedAuto.checked?'auto':(feedToggle.checked?'arrival':'normal');
   try{
     const result=await syspost('/system/npu-feed?mode='+mode,'검출 NPU 사용 방식을 바꾸는 중…','');
     if(result.ok)await rtick();

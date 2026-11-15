@@ -183,6 +183,8 @@
       <!-- 11-13: moved here from System. Detection frames alternate between NPU core 0 and 1 so the next frame starts before the previous one returns. -->
       <div class="feedbar advfeed" id="npu-feed-bar">
         <label class="chk"><input type="checkbox" id="npu-feed" aria-describedby="npu-feed-state npu-feed-hint" disabled> 검출 지연 줄이기 · NPU 0·1 번갈아 쓰기</label>
+        <!-- 11-16: NPU 0 only, and both by itself while detection cannot keep the camera period (src/detect/feed_auto.py) -->
+        <label class="chk"><input type="checkbox" id="npu-feed-auto" aria-describedby="npu-feed-state npu-feed-hint" disabled> 자동 · 느려지면 번갈아 쓰기</label>
         <button class="btn accent small" id="npu-feed-apply" disabled>적용</button>
         <span class="feedinfo"><span id="npu-feed-state" role="status">상태를 확인하는 중…</span> <span class="num" id="npu-feed-counts"></span> <span id="npu-feed-hint" role="status"></span></span>
       </div>

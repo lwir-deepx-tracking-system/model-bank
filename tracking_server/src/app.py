@@ -907,6 +907,7 @@ def main():
             if i % 50 == 0 and not APP.args.mock:
                 td_ = stall_diag.mark()   # None unless LWIR_STALL_DIAG=1
                 s_ = APP.dx.DeviceStatus.get_current_status(0); util.append(dict(frame=i, core_util=[s_.get_core_utilization(k) for k in range(3)], mem=s_.get_memory_used()))
+                frame_feed.feed_auto.npu_note(s_)   # 11-16: NPU clock and temperature from the same answer, for /rules npu_feed.auto.npu (never raises)
                 stall_diag.span(td_, 'NPU status query (DeviceStatus, every 50 frames)')
             if stall_diag.ON: stall_diag.loop_frame(row, t5)
             if (i + 1) % 500 == 0: print('FRAMES', i + 1, round(time.monotonic() - t_start, 1), 'vit delivered', delivered, flush=True)

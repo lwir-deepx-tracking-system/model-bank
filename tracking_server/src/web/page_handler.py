@@ -407,11 +407,11 @@ def make_lv_Handler():
                 bad_mode = False
                 if system_path == '/system/npu-feed':
                     modes = parse_qs(query, keep_blank_values=True).get('mode', [])
-                    bad_mode = len(modes) != 1 or modes[0] not in ('arrival', 'normal')
+                    bad_mode = len(modes) != 1 or modes[0] not in ('arrival', 'normal', 'auto')   # 11-16: auto (src/detect/feed_auto.py)
                     if not bad_mode:
                         mode = modes[0]
                 if bad_mode:
-                    ok, message = False, 'NPU 검출 모드는 arrival 또는 normal이어야 합니다'
+                    ok, message = False, 'NPU 검출 모드는 arrival, normal, auto 가운데 하나여야 합니다'
                 elif mode is not None:
                     ok, message = system_buttons.request_npu_feed(mode)
                 else:
