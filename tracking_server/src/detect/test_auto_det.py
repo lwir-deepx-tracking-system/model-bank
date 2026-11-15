@@ -373,6 +373,30 @@ class GlueTest(unittest.TestCase):
         self.assertEqual(st['last_switch']['from'], 'near'); self.assertEqual(st['last_switch']['to'], 'far')
         json.dumps(st)   # the /rules answer must be JSON
 
+    def test_pose_detector_picks_the_keypoint_gru(self):
+        # 11-15 (user): choosing a pose ([관절]) detector selects the GRU + keypoint position memory by itself; near <-> far keeps the choice
+        from ..detect import model_scan
+        from ..track import position_memory as PM
+        saved_kpt = set(model_scan.KPT_DETS); saved_posp = dict(PM.POSP)
+        picked = []
+        def fake_select(k):
+            picked.append(k); PM.POSP['key'] = k; return True
+        try:
+            model_scan.KPT_DETS.update({NEAR_DET, FAR_DET})
+            PM.POSP['key'] = 'kalman'
+            with patch.object(page_settings, 'pos_select', side_effect=fake_select):
+                APP.args.det = 'w480'; APP.det_names = ['NEWMRW480']
+                page_settings.det_changed(NEAR_DET, auto_det.NEAR_KEY)          # plain -> pose: GRU + keypoints
+                self.assertEqual(picked, ['gru_kpt'])
+                PM.POSP['key'] = 'kalman'                                       # the user picks Kalman by hand on the pose model
+                page_settings.det_changed(FAR_DET, auto_det.FAR_KEY)            # pose -> pose (automatic near/far): the hand choice stays
+                self.assertEqual(picked, ['gru_kpt'])
+                PM.POSP['key'] = 'gru_kpt'
+                page_settings.det_changed('w480', 'NEWMRW480')                  # pose -> plain: back to Kalman (11-14 rule)
+                self.assertEqual(picked, ['gru_kpt', 'kalman'])
+        finally:
+            model_scan.KPT_DETS.clear(); model_scan.KPT_DETS.update(saved_kpt); PM.POSP.clear(); PM.POSP.update(saved_posp)
+
     def test_never_requests_while_another_change_is_pending_or_busy(self):
         self.turn_on()
         APP.MODEL['busy'] = True

@@ -354,8 +354,14 @@ def do_model_swap(new_det, checked=False):
     print('MODEL changed %s -> %s in %.1f s' % (old_det, new_det, time.perf_counter() - t_), flush=True); return 0
 
 
+AUTO_KPT_POS = 'gru_kpt'   # 11-15 (user): position memory picked when the detector becomes a keypoint (pose) model. models/README: PoseTrack18 val 21% (lost 22%) more accurate than Kalman; not yet measured on the device camera
+
+
 def det_changed(new_det, key_):
     """The run-wide detector names after a change that worked: do_model_swap, and the instant switch of resident_det (11-15), which keeps APP.a (the arrival feed)."""
+    old_det = APP.args.det
     APP.b = None; APP.det_names = [key_]; APP.det_yoff = DET[new_det]['yoff']; APP.args.det = new_det
     if POSP['key'].endswith('_kpt') and new_det not in KPT_DETS:   # 11-14 (user): a keypoint position memory needs a keypoint detector
         pos_select('kalman'); print('POS predictor back to kalman: %s gives no keypoints' % new_det, flush=True)
+    elif new_det in KPT_DETS and old_det not in KPT_DETS and not POSP['key'].endswith('_kpt'):   # 11-15 (user: a pose detector picks the GRU by itself):
+        if pos_select(AUTO_KPT_POS): print('POS predictor -> %s automatically: %s gives keypoints' % (AUTO_KPT_POS, new_det), flush=True)   # near<->far keeps the choice

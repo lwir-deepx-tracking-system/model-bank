@@ -340,6 +340,10 @@ def main():
                 if 'auto_det' in q_: APP.SEL.pop('auto_det_p', None)
                 for k_ in q_: APP.SEL.pop(k_, None)
             print('LAST selection %s -> %s (%s)' % (sorted(q_), 'taken' if ok_ else 'dropped', tx_), flush=True)
+        if 'predictor' not in APP.SEL and APP.args.det in model_scan.KPT_DETS:   # 11-15 (user): started on a pose detector with no saved position-memory choice -> the keypoint GRU
+            try: ok_, tx_ = APP.rules_request({'predictor': [page_settings.AUTO_KPT_POS]})
+            except Exception as e_: ok_, tx_ = False, repr(e_)[:120]
+            print('POS predictor %s at start for keypoint detector %s: %s' % (page_settings.AUTO_KPT_POS, APP.args.det, tx_ if not ok_ else 'queued'), flush=True)
         dv_ = APP.SEL.pop('det', None)
         APP.sel_save()   # the model name is written back only after the change worked: a model that breaks the start is not tried again
         if dv_ and dv_ != APP.args.det:
