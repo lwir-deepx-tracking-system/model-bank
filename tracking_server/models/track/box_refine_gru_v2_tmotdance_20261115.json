@@ -1,13 +1,13 @@
 {
- "status": "상자 다듬기 GRU v2 (TMOT+DanceTrack, 우리 근거리·원거리 자세 검출 출력) · 장치 미확인",
- "lut": "변환표 = 학습 분할 표에서 검출 상자 170 px 이상 두 줄을 130-170 px 줄(그대로)로 바꾼 것 (g2_lutfix.py: 그 두 줄은 DanceTrack 큰 사람 1,659 / 300 쌍의 잘못된 목표로 상자를 0.86 / 0.64 배로 줄였음. 가중치는 다시 학습하지 않음)",
- "source": "pos_refine_20261115/gru_v2 g2_train.py g2_gate_j4_l4, epoch 29 of 30, val-A run loss 0.33057",
+ "status": "상자 다듬기 GRU v3 = 2판을 고친 목표로 다시 학습 (TMOT+DanceTrack, 우리 근거리·원거리 자세 검출 출력) · 장치 미확인",
+ "lut": "변환표 = 고친 목표(검출기 자체 골반 관절이 상자 키의 0.80 이상에 있으면 목표 아래 변 >= 위 + (골반선 - 위)/0.95)로 학습 분할에서 다시 맞춘 것 (v3/data/lut_v3.pkl). 가중치도 고친 목표로 다시 학습",
+ "source": "pos_refine_20261115/gru_v2/v3 g2_train.py g3_gate_j1_l1, epoch 30 of 30, val-A run loss 0.21700",
  "inputs": "프레임당 사람마다 78개: 속도 2, 예측과 검출 차이 2, 중심 변화 2, 크기 변화 2, log 키, 가로세로 비, 화면 가장자리 4, 관절 51, 놓친 프레임 수, 카메라 이동 2, 변환표 보정 4, 시작 표시, 시작 후 줄 수, 이전 출력과 변환 상자의 차이 4",
  "output": "변환표로 바꾼 상자(머리 위~골반)와 이전 출력 사이를 성분별 비율 g 로 섞고 작은 보정을 더함(중심 ±0.4 키, 크기 x/ 2.2). 첫 줄은 변환 상자 + 보정. 그 뒤 크기(log 가로, log 세로)만 One Euro (size_euro = mc_s, beta_s, dcut)",
  "arch": "gate",
  "loss": {
-  "lam_j": 4.0,
-  "lam_l": 4.0
+  "lam_j": 1.0,
+  "lam_l": 1.0
  },
  "size_euro": [
   5.0,
@@ -15,47 +15,47 @@
   1.0
  ],
  "choices": {
-  "g2_gate_j1_l1": {
-   "J": 0.798813989843552,
-   "gate_violation": 0.0,
-   "epoch": 25
-  },
-  "g2_gate_j4_l1": {
-   "J": 0.6447435041232039,
-   "gate_violation": 0.004120300366724644,
+  "g3_res_j4_l1": {
+   "J": 0.7173913730867928,
+   "gate_violation": 0.0013501189837644423,
    "epoch": 26
   },
-  "g2_res_j1_l1": {
-   "J": 0.8612449799954456,
+  "g3_res_j1_l4": {
+   "J": 0.8610020634424411,
    "gate_violation": 0.0,
    "epoch": 28
   },
-  "g2_gate_j1_l4": {
-   "J": 0.8679908455348994,
+  "g3_gate_j1_l1": {
+   "J": 0.7391529284038765,
    "gate_violation": 0.0,
-   "epoch": 26
+   "epoch": 30
   },
-  "g2_res_j4_l1": {
-   "J": 0.7371702075618761,
-   "gate_violation": 0.0009414202784256281,
+  "g3_gate_j4_l4": {
+   "J": 0.6466956935678267,
+   "gate_violation": 0.0018374152561684565,
    "epoch": 27
   },
-  "g2_gate_j4_l4": {
-   "J": 0.6757213885912923,
-   "gate_violation": 0.0,
-   "epoch": 29
+  "g3_gate_j4_l1": {
+   "J": 0.6276779512623776,
+   "gate_violation": 0.006993510257657001,
+   "epoch": 27
   },
-  "g2_res_j1_l4": {
-   "J": 0.942584762043875,
+  "g3_res_j1_l1": {
+   "J": 0.8224833803263216,
    "gate_violation": 0.0,
-   "epoch": 26
+   "epoch": 30
   },
-  "g2_res_j4_l4": {
-   "J": 0.8333876458764298,
-   "gate_violation": 7.457262717572299e-06,
-   "epoch": 23
+  "g3_gate_j1_l4": {
+   "J": 0.7649368470909994,
+   "gate_violation": 0.0,
+   "epoch": 24
+  },
+  "g3_res_j4_l4": {
+   "J": 0.7646193805299588,
+   "gate_violation": 2.3341791066472384e-05,
+   "epoch": 27
   }
  },
  "chosen_feasible": true,
- "sha256": "b03ea8ad42afa833a038ecca326117c7db80109b5747f318a079df86fd0d4efe"
+ "sha256": "6bc86cf1eb3a98103bebd3fd4016d253dec29c7d5946b321f478db7871182657"
 }

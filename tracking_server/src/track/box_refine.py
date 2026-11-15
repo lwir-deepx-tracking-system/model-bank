@@ -4,7 +4,7 @@
 짐벌 보내기 바로 전에 apply 를 부른다. 추적기 안의 상자(Kalman 상태), 짝짓기, KeepID, 녹화 채점, 검출 모델 자동 선택, 측정 기록, 피부 온도는
 그대로 원래 상자를 쓴다.
 
-모드 (/rules/set?box_refine=off|euro|gru|size|gru2, last_selection.json 에 남음):
+모드 (/rules/set?box_refine=off|euro|gru|size|gru2|body, last_selection.json 에 남음):
   off   아무것도 안 함 (기본). 이때 apply 는 받은 행을 그대로 돌려주고 아무 상태도 만들지 않는다.
   size  크기만 부드럽게 (11-15 v2). 위치는 추적기 행 그대로(SIZE['anchor']: 'top' = 위 가장자리와 가로 중심, 'centre' = 중심, 'aim' = 짐벌 조준점
         위 + aim_y x 키 를 추적기 행과 똑같이 둠(aim_y = 돌고 있는 짐벌 프로그램의 --aim-y, 없으면 --gimbal-aim-y): 짐벌 조준은 지금과 같고 그리는 크기만 바뀜), 상자 크기
@@ -26,6 +26,11 @@
         One Euro 로 한 번 더 거른다(값은 가중치 파일의 size_euro). 속도는 고정 이득 필터(Kalman 없음). 관절을 내는 검출 모델에서만.
         다시 시작 규칙은 엔진 것 하나(빠진 프레임 > 30, 카메라 움직임으로 옮긴 앞 검출에서 키의 1.5배 넘게 떨어짐). 번호 넘겨받기는 다른 모드와 같다.
         변환표의 검출 상자 170 px 이상 두 줄은 그대로(130-170 px 줄)로 고친 것이다(가까운 사람 상자가 0.64 배로 줄던 결함, models/README).
+  body  상체 네모로 통일 (11-15 밤, 사용자: 그리는 / 짐벌에 보내는 사람 상자는 가까이든 멀리든 한 모양 = 머리 위 ~ 골반, 검출 모델은 안 바꿈).
+        추적기 행을 gru2 와 같은 파일의 변환표(상자 높이 x 가로세로 비 -> 몸 네모, 겹선형 보간; 이미 몸 네모인 상자는 그대로)로 바꾸고,
+        크기(log 가로, log 세로)만 One Euro 로 거른다(BODY 값 = gru_v2 val-A 에서 맞춘 변환표 + One Euro 의 크기 값; 파일에 body_euro 가 있으면 그 값).
+        위치: 변환한 상자의 위 가장자리와 가로 중심을 그대로 둔다(머리 위는 두 정의에서 같다). GRU 도 관절도 쓰지 않으므로 모든 검출 모델에서 된다.
+        dt = 실제 초, 카메라 배율은 거르지 않음, 검출 모델이 바뀌어도 상태 유지(바뀐 크기가 시간에 걸쳐 퍼짐), 번호 넘겨받기·다시 시작 규칙은 다른 모드와 같다.
 섞기 (/rules/set?box_blend=초, 0 = 끔, 기본 끔): 검출 모델이 바뀌면(자동 선택, 두 모델 상주) 사람마다, 그 사람의 앞 출력이 앞 모델에서 나왔고
   3 프레임 안이며 0.15 초(낮은 프레임 속도에서는 그 사람의 앞 프레임 간격 x 2) 안이면, 앞 출력(카메라 움직임만큼 옮기고, 카메라 몫을 뺀 그 사람의
   마지막 한 프레임 움직임을 초당으로 바꿔 지난 시간만큼 앞으로 옮김)과 새 출력의 차이(중심 / 키, log 크기)를 시작할 때의 섞기 시간 동안 1 에서 0 으로
@@ -51,10 +56,18 @@ import numpy as np
 from ..common.state import APP
 from ..common.shared_values import PERSON_CLS
 
-MODES = ('off', 'euro', 'gru', 'size', 'gru2')
-MODE_KO = dict(off='끔', euro='One Euro 필터', gru='학습 GRU (몸 네모 하나로)', size='크기만 부드럽게', gru2='학습 GRU 2판 (시작 튐·뒤처짐 고침)')
+MODES = ('off', 'euro', 'gru', 'size', 'gru2', 'body')
+MODE_KO = dict(off='끔', euro='One Euro 필터', gru='학습 GRU (몸 네모 하나로)', size='크기만 부드럽게', gru2='학습 GRU 2판 (시작 튐·뒤처짐 고침)',
+               body='상체 네모로 통일 (변환표 + 크기 부드럽게)')
 KPT_MODES = ('gru', 'gru2')   # modes that read keypoints: only with a keypoint detector
-V2_PREFIX = 'box_refine_gru_v2_'   # version-2 weight files; the version-1 loader skips them
+V2_PREFIX = 'box_refine_gru_v'   # version-2 format files (box_refine_gru_v2_*, a later v3 ... : name order last wins, no code change); the version-1 loader skips them
+TABLE_MODES = ('gru2', 'body')   # modes that need that file (body reads only its lookup table)
+# body mode: size-only One Euro after the lookup conversion of the tracker row: min_cutoff Hz, beta, derivative cutoff Hz = the size part of the tuned
+# 'lookup + One Euro' of pos_refine_20261115/gru_v2/results/valA_selection.json (conv_euro_t = centre 1 Hz beta 3, size 0.4 Hz beta 0, picked on val-A by
+# the pre-registered smoothness rule with aim-error / lag gates). A file may carry its own values as 'body_euro'.
+# anchor 'top' (user rule: the converted box's top edge and centre x stay, the filtered size hangs from the head top) or 'centre' (the converted box's
+# centre stays; scored for comparison in gru_v2/results/tables_body.md, not used).
+BODY = dict(mc_s=0.4, beta_s=0.0, dcut=1.0, anchor='top')
 # One Euro values chosen on val-A (pos_refine_20261115/results/euro_valA.json): centre min_cutoff Hz, beta (per box height per s), size min_cutoff Hz, beta
 EURO = dict(mc=3.0, beta=3.0, mc_s=0.4, beta_s=0.3, dcut=1.0)   # grid min_cutoff 0.05..8 Hz x beta 0..3; centre beta at the grid's top (flat: 3.0 / 1.0 within 0.1 %)
 # size mode (v2, pos_refine_20261115/v2/PREREG_V2.json): One Euro on log w / log h, min_cutoff Hz, beta (per log unit per s), derivative cutoff Hz;
@@ -158,6 +171,9 @@ class G2Model:
         self.tab, self.lh_cen, self.ar_cen = g('lut_tab'), g('lut_lh_cen'), g('lut_ar_cen'); assert self.tab.shape == (len(self.lh_cen), len(self.ar_cen), 4)
         self.kc, self.ks, self.vb, self.clip = float(w['kc']), float(w['ks']), float(w['vb']), float(w['clip'])
         self.lost_max, self.jump_h = int(w['lost_max']), float(w['jump_h']); self.size = tuple(float(v) for v in np.asarray(w['size_euro']).ravel()); assert len(self.size) == 3
+        be = tuple(float(v) for v in np.asarray(w['body_euro']).ravel()) if 'body_euro' in w else None; assert be is None or len(be) == 3
+        self.body = dict(mc_s=be[0], beta_s=be[1], dcut=be[2]) if be is not None else None   # body mode's size filter, when the file gives one
+        d = self.conv_delta(np.array([[320., 256., 20., 40.], [320., 256., 180., 300.]])); assert d.shape == (2, 4) and np.isfinite(d).all()
 
     def conv_delta(self, z):
         """the lookup table read with bilinear interpolation between the bin centres -> [N,4] (dx / h, dy / h, log w ratio, log h ratio)."""
@@ -358,11 +374,13 @@ class Refiner:
     'size' takes the position from the row's own box, the other modes start from the detection. 'gru2' computes all ids of the frame in one
     batch (G2Engine, which also owns the reset rule: gap > LOST_MAX, jump; the hand-over is the same). The state of id k after a step is self.tr[k]
     ('k' = rows since that state started, 'new' = started on this frame, 'hs' = camera warp since the id's previous frame or None)."""
-    def __init__(self, mode, model=None, euro=None, blend_s=0.0, size=None, aim_y=AIM_Y):
+    def __init__(self, mode, model=None, euro=None, blend_s=0.0, size=None, aim_y=AIM_Y, body=None):
         self.mode = mode; self.model = model; self.euro = dict(euro or EURO); self.size = dict(SIZE, **(size or {})); self.blend_s = float(blend_s)
         self.aim_y = float(aim_y)   # the gimbal's aim point (size anchor 'aim'); apply() sets the running bridge's value every frame
         self.tr = {}; self.frame = 0; self.eff_key = None; self.blends = 0; self.handovers = 0
         self.eng = G2Engine(model) if mode == 'gru2' and model is not None else None   # gru2: one batched engine for all ids
+        self.body = dict(BODY, **((model.body if model is not None and getattr(model, 'body', None) else None) or {}))   # the file's values win over BODY
+        if body: self.body.update(body)                                                                                 # ... and an explicit choice over both (scoring)
 
     @staticmethod
     def _recent_s(st):
@@ -419,9 +437,18 @@ class Refiner:
             for i, w_ in enumerate(work):
                 if g2['start'][i] and not w_[4]['new']:   # the engine restarted this id (gap, jump): everything restarts together
                     work[i] = w_[:4] + (fresh(w_[1]), None); self.tr[w_[0]] = work[i][4]
+        conv = None
+        if self.mode == 'body' and self.model is not None and work:   # body: the lookup conversion of every tracker row in one call
+            ZR = np.array([w_[3] for w_ in work], np.float64).reshape(-1, 4); ZR[:, 2:] = np.maximum(ZR[:, 2:], 1.); d_ = self.model.conv_delta(ZR)
+            conv = np.c_[ZR[:, 0] + d_[:, 0] * ZR[:, 3], ZR[:, 1] + d_[:, 1] * ZR[:, 3] - ZR[:, 3] * np.exp(d_[:, 3]) / 2, np.log(ZR[:, 2]) + d_[:, 2], np.log(ZR[:, 3]) + d_[:, 3]].tolist()   # cx, top, log w, log h
         for i, (tid, z, kp, zr, st, Hs) in enumerate(work):   # 2) every person: the box
             if g2 is not None:
                 b = g2['out_f'][i].copy()
+            elif conv is not None:   # centre x, top edge of the converted box; (log w, log h) of it through the size filter
+                p = self.body; cx_, top_, lw, lh = conv[i]; hc_ = math.exp(lh)
+                if st['se'] is None: st['se'] = SizeEuro(p['mc_s'], p['beta_s'], p['dcut'])
+                lw, lh = st['se'].step(lw, lh, t - st['t'] if st['out'] is not None else 0.04, log_scale(Hs)); h_ = math.exp(lh)
+                b = np.array([cx_, top_ + (h_ if p.get('anchor', 'top') == 'top' else hc_) / 2, math.exp(lw), h_])
             elif self.mode == 'size':
                 p = self.size; src = z if p['src'] == 'det' else zr
                 if st['se'] is None: st['se'] = SizeEuro(p['mc_s'], p['beta_s'], p['dcut'])
@@ -488,7 +515,8 @@ def scan():
 
 
 def scan2():
-    """newest models/track/box_refine_gru_v2_*.npz (gru2; read again only when it changed and is older than 5 s)."""
+    """newest models/track/box_refine_gru_v*.npz (gru2 weights + the lookup table of gru2 and body; read again only when it changed and is
+    older than 5 s). Name order last wins, so a later file (same name or a later version name) dropped into the folder is taken without a code change."""
     d = model_dir()
     try: c_ = sorted(f for f in os.listdir(d) if f.startswith(V2_PREFIX) and f.endswith('.npz'))
     except OSError: c_ = []
@@ -509,7 +537,7 @@ def scan2():
 
 
 def _model(mode):
-    return BR['model2'] if mode == 'gru2' else BR['model'] if mode == 'gru' else None
+    return BR['model2'] if mode in TABLE_MODES else BR['model'] if mode == 'gru' else None
 
 
 def _e2e_on():
@@ -607,15 +635,15 @@ def apply(rows, dets=None, t=None):
     try:
         with BR['lock']:
             if _e2e_on(): BR['why'] = '엔드투엔드 사용 중: 검출 상자와 관절이 없어 그대로 둠'; BR['tr'] = {}; BR.pop('obj', None); return rows
-            mode = BR['mode']; learned = mode in KPT_MODES
+            mode = BR['mode']; learned = mode in KPT_MODES; filed = learned or mode in TABLE_MODES   # modes that need a file
             if learned and not _det_kpt():
                 BR['why'] = '관절 없는 검출 모델: 학습 GRU 쉼 (그대로 둠)'; BR.pop('obj', None); return rows
             key = _reset_key(); obj = BR.get('obj')
-            if obj is None or not _same_key(key, BR['reset_key']) or obj.mode != mode or (learned and obj.model is not _model(mode)):
+            if obj is None or not _same_key(key, BR['reset_key']) or obj.mode != mode or (filed and obj.model is not _model(mode)):
                 obj = BR['obj'] = Refiner(mode, _model(mode), EURO, BR['blend_s'], SIZE); BR['reset_key'] = key
             obj.blend_s = BR['blend_s']; obj.aim_y = _aim_y()   # a new blend time keeps every person's state
-            if learned and obj.model is None:
-                BR['why'] = 'GRU 가중치 파일이 없어 그대로 둠'; return rows
+            if filed and obj.model is None:
+                BR['why'] = '변환표 파일이 없어 그대로 둠' if mode == 'body' else 'GRU 가중치 파일이 없어 그대로 둠'; return rows
             kpd = _kp_cur() if learned else None; items = []; idx = []
             for i, r in enumerate(rows):
                 if int(r[6]) != PERSON_CLS: continue
@@ -658,12 +686,13 @@ def apply(rows, dets=None, t=None):
 
 def state():
     m = scan() if BR['mode'] == 'gru' or BR['model'] is None else BR['model']
-    m2 = scan2() if BR['mode'] == 'gru2' or BR['model2'] is None else BR['model2']
+    m2 = scan2() if BR['mode'] in TABLE_MODES or BR['model2'] is None else BR['model2']
     obj = BR.get('obj'); kpt = _det_kpt(); soon = _det_kpt_soon(); have = dict(gru=m is not None, gru2=m2 is not None)
     return dict(mode=BR['mode'], mode_name=MODE_KO.get(BR['mode']), blend_s=BR['blend_s'],
-                modes=[dict(key=k, name=MODE_KO[k], available=(k not in KPT_MODES or (have[k] and soon))) for k in MODES],
+                modes=[dict(key=k, name=MODE_KO[k], available=((have[k] and soon) if k in KPT_MODES else have['gru2'] if k == 'body' else True)) for k in MODES],
                 gru_file=BR['file'], gru_note=BR['note'] or ('' if kpt else '관절을 내는 검출 모델에서만'), euro=dict(EURO), size=dict(SIZE),
                 gru2_file=BR['file2'], gru2_note=BR['note2'] or ('' if kpt else '관절을 내는 검출 모델에서만'), gru2_size=list(m2.size) if m2 is not None else None,
+                body=dict(BODY, **((m2.body if m2 is not None else None) or {})),
                 ms=round(BR['ms'], 3), ms_max=round(BR['ms_max'], 3), ms_track=round(BR['ms_track'], 3),
                 tracks=len(obj.tr) if obj is not None else 0, people=BR['n'], frames=BR['frames'], blends=BR['blends'], handovers=BR['handovers'], why=BR['why'],
                 err=BR['err'], errors=BR['errors'], errors_all=BR['errors_all'])
@@ -679,9 +708,10 @@ def parse_request(q_):
     mode = None; blend = None
     if 'box_refine' in q_:
         v_ = str(q_['box_refine'][0]).strip().lower()
-        if v_ not in MODES: return False, '상자 다듬기는 off, euro, gru, size, gru2 가운데 하나', None
+        if v_ not in MODES: return False, '상자 다듬기는 off, euro, gru, size, gru2, body 가운데 하나', None
         if v_ == 'gru' and scan() is None: return False, 'GRU 상자 다듬기 가중치 파일이 없음 (models/track/box_refine_gru_*.npz)', None
         if v_ == 'gru2' and scan2() is None: return False, 'GRU 2판 상자 다듬기 가중치 파일이 없음 (models/track/%s*.npz)' % V2_PREFIX, None
+        if v_ == 'body' and scan2() is None: return False, '상체 네모 변환표 파일이 없음 (models/track/%s*.npz)' % V2_PREFIX, None
         if v_ in KPT_MODES and not _det_kpt_soon(): return False, '학습 GRU 는 관절을 내는 검출 모델([관절])을 먼저 고르세요', None
         mode = v_
     if 'box_blend' in q_:
@@ -695,7 +725,7 @@ def parse_request(q_):
             if blend is not None: BR['blend_s'] = blend
             BR['err'] = ''; BR['errors'] = 0; BR['why'] = ''; BR['ms'] = 0.0; BR['ms_max'] = 0.0   # no status of the earlier choice stays on the page
             if BR['mode'] == 'gru': scan()
-            if BR['mode'] == 'gru2': scan2()
+            if BR['mode'] in TABLE_MODES: scan2()
         print('RULES set box_refine %s blend %g s' % (BR['mode'], BR['blend_s']), flush=True)
         sel_ = _app('sel_save')
         if sel_ is not None: sel_(box_refine=BR['mode'], box_blend=BR['blend_s'])

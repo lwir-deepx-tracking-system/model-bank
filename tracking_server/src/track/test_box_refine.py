@@ -467,7 +467,7 @@ class Gru2Tests(unittest.TestCase):
         g2_lib 'out_f' (g2_server_parity.py wrote the fixture; the whole val-B and the device recordings were compared there: 0 px)."""
         import hashlib
         m = g2_model(); fx = np.load(FIXTURE, allow_pickle=False)
-        self.assertEqual(hashlib.sha256(open(_G2['path'], 'rb').read()).hexdigest(), str(fx['weights_sha256']))   # the fixture belongs to these weights
+        with open(_G2['path'], 'rb') as fh: self.assertEqual(hashlib.sha256(fh.read()).hexdigest(), str(fx['weights_sha256']))   # the fixture belongs to these weights
         for c in ('a', 'b'):
             ids, f, z, kp, W, ref = fx[c + '_id'], fx[c + '_f'], fx[c + '_z'].astype(np.float64), fx[c + '_kp'].astype(np.float64), fx[c + '_W'].astype(np.float64), fx[c + '_out']
             fps = float(fx[c + '_fps']); worst = 0.; starts = 0
@@ -490,9 +490,10 @@ class Gru2Tests(unittest.TestCase):
         hs = [b0[3]]
         for k in range(1, 8): hs.append(r.step([(1, z, kp_of(z))], 0.04 * k, None)[1][3])
         self.assertLess(np.abs(np.diff(hs)).max() / z[3], 0.05); self.assertEqual(r.tr[1]['k'], 7)   # version 1 moved 0.15+ heights on row 1 for 79 % of new tracks
-        # a close person (the detector box already is the body box): the lookup must not shrink it (was x 0.64 before the 170 px rows were fixed)
+        # a close person (the detector box already is the body box): the lookup must not shrink it (was x 0.64 with the first table; the retrained
+        # table's last row, 280 px and above, sits at 0.94, the rows below at 0.99-1.02)
         d = m.conv_delta(np.array([[320., 256., 190., 300.], [320., 256., 130., 200.], [320., 256., 250., 420.]]))
-        self.assertLess(np.abs(d).max(), 0.01)
+        self.assertLess(np.abs(d).max(), 0.08); self.assertLess(np.abs(d[1]).max(), 0.02)
         r = BR.Refiner('gru2', m); zb = np.array([320., 260., 190., 300.])
         for k in range(10): b = r.step([(1, zb, kp_of(zb))], 0.04 * k, None)[1]
         self.assertGreater(b[3] / zb[3], 0.8); self.assertLess(b[3] / zb[3], 1.1)
@@ -634,6 +635,163 @@ class Gru2GlueTests(unittest.TestCase):
             APP.args.det = 'near_kpt'; self.assertIsNot(BR.apply(rows, None, 1.04), rows)
         finally:
             vars(APP).pop('sel_save', None)
+
+
+# ------------------------------------------------------------------------------------------------ body (11-15): one body box for near and far, lookup + size filter
+def table_model(rng=None, body_euro=None):
+    """a version-2 format file content with a simple lookup: boxes up to 60 px tall and at most 0.45 wide / tall are whole-person boxes
+    (head-to-hip box = top the same, height x 0.52, width x 0.8), everything else already is the body box (identity)."""
+    rng = rng or np.random.default_rng(0); n = 8; tab = np.zeros((4, 4, 4)); tab[:2, :2] = (0.0, -0.24, math.log(0.8), math.log(0.52))
+    w = {'cell.weight_ih': rng.normal(0, 0.3, (3 * n, BR.G2_NF)), 'cell.weight_hh': rng.normal(0, 0.3, (3 * n, n)), 'cell.bias_ih': rng.normal(0, 0.3, 3 * n), 'cell.bias_hh': rng.normal(0, 0.3, 3 * n),
+         'head.weight': rng.normal(0, 0.3, (8, n)), 'head.bias': rng.normal(0, 0.3, 8), 'arch': np.array('gate'), 'lut_tab': tab, 'lut_lh_cen': np.log([20., 60., 120., 280.]),
+         'lut_ar_cen': np.array([0.3, 0.45, 0.6, 0.9]), 'kc': np.array(0.4), 'ks': np.array(math.log(2.2)), 'vb': np.array(0.35), 'size_euro': np.array([5., 0., 1.]), 'lost_max': np.array(30),
+         'jump_h': np.array(1.5), 'clip': np.array(5.)}
+    if body_euro is not None: w['body_euro'] = np.array(body_euro, np.float64)
+    return w
+
+
+def top_of(b): return b[1] - b[3] / 2
+
+
+class BodyTests(unittest.TestCase):
+    def test_already_body_boxes_stay(self):
+        """close and mid people (the detector box already is head-to-hip): the box is the tracker row; only its size is smoothed."""
+        m = BR.G2Model(table_model()); rng = np.random.default_rng(1)
+        for w, h in ((190., 300.), (75., 120.), (45., 70.)):
+            r = BR.Refiner('body', m); zr = np.array([300., 250., w, h])
+            for k in range(6): np.testing.assert_allclose(r.step([(1, zr, None, zr)], 0.04 * k, None)[1], zr, atol=1e-9)
+            r = BR.Refiner('body', m); hb = []; hz = []
+            for k in range(60):   # a noisy tracker row: top edge and centre x exactly the row's, the height steps smaller
+                g = 1 + rng.normal(0, 0.04); zr = np.array([300. + 2 * k + rng.normal(0, 1), 250. + rng.normal(0, 1), w * g, h * g]); b = r.step([(1, zr, None, zr)], k / 25., None)[1]
+                self.assertAlmostEqual(b[0], zr[0], places=9); self.assertAlmostEqual(top_of(b), top_of(zr), places=9); hb.append(b[3]); hz.append(zr[3])
+            self.assertLess(np.std(np.diff(hb)), 0.3 * np.std(np.diff(hz))); self.assertLess(abs(np.mean(hb[20:]) / h - 1), 0.02)
+
+    def test_small_whole_person_boxes_become_body_boxes(self):
+        m = BR.G2Model(table_model()); r = BR.Refiner('body', m); zr = np.array([300., 250., 16., 44.])   # a far person: the detector gives the whole person
+        for k in range(5):
+            b = r.step([(1, zr, None, zr)], 0.04 * k, None)[1]
+            np.testing.assert_allclose(b, [300., 250. - 22. + 0.52 * 22., 16. * 0.8, 44. * 0.52], atol=1e-9)   # from the first frame on: head top kept, x 0.52 tall
+        # the tracker row is converted, not the matched detection (the row is what the page draws today)
+        z = zr + [3., 2., 10., 30.]; b2 = BR.Refiner('body', m).step([(1, z, None, zr)], 0.0, None)[1]; np.testing.assert_allclose(b2, b, atol=1e-9)
+        # in between the table is interpolated: no step where the detector's box definition changes with the person's size
+        hs = []
+        for h in np.linspace(50., 130., 81): hs.append(BR.Refiner('body', m).step([(1, np.array([300., 250., 0.4 * h, h]), None)], 0.0, None)[1][3])
+        self.assertLess(np.abs(np.diff(hs)).max(), 2.5); self.assertAlmostEqual(hs[0], 26.0, places=6); self.assertAlmostEqual(hs[-1], 130.0, places=6)
+
+    def test_real_table_close_people_unchanged_and_far_people_converted(self):
+        """the committed file: a close person's box (body-box shape) stays (within 3 % up to 240 px; the table's last row, 280 px and above, was fitted
+        on few pairs and may sit a little under 1: at most 8 %), a small whole-person box becomes about half as tall with the head top kept
+        (the by-eye check of 11-15 found close people shrunk to 0.7 with the first table, in height and width)."""
+        m = g2_model()
+        for w, h, tol in ((130., 210., 0.03), (115., 180., 0.03), (140., 230., 0.04), (190., 300., 0.08), (250., 400., 0.08)):
+            zr = np.array([320., 256., w, h]); b = BR.Refiner('body', m).step([(1, zr, None, zr)], 0.0, None)[1]
+            self.assertLess(abs(b[3] / h - 1), tol, (w, h)); self.assertLess(abs(b[2] / w - 1), tol, (w, h)); self.assertLess(abs(top_of(b) - top_of(zr)) / h, tol / 2 + 0.01); self.assertLess(abs(b[0] - zr[0]) / h, 0.02 if tol < 0.05 else 0.04)   # last row: centre x moves 0.03 heights
+        for w, h in ((14., 36.), (18., 48.), (22., 58.)):
+            zr = np.array([320., 256., w, h]); b = BR.Refiner('body', m).step([(1, zr, None, zr)], 0.0, None)[1]
+            self.assertGreater(b[3] / h, 0.42, (w, h)); self.assertLess(b[3] / h, 0.66, (w, h)); self.assertLess(abs(top_of(b) - top_of(zr)) / h, 0.06, (w, h))
+
+    def test_handover_reset_and_detector_switch(self):
+        m = BR.G2Model(table_model()); z = np.array([300., 250., 50., 120.]); ra = BR.Refiner('body', m); rb = BR.Refiner('body', m); rng = np.random.default_rng(2)
+        for k in range(8):
+            zk = z + [2 * k, 0, 0, rng.normal(0, 5)]; ra.step([(1, zk, None, zk)], 0.04 * k, None); rb.step([(1, zk, None, zk)], 0.04 * k, None)
+        st1 = ra.tr[1]; z9 = z + [16, 0, 0, 9.]
+        a = ra.step([(9, z9, None, z9)], 0.32, None)[9]; b = rb.step([(1, z9, None, z9)], 0.32, None)[1]   # KeepID gave the person another number
+        self.assertIs(ra.tr[9], st1); self.assertEqual(ra.tr[9]['k'], 8); self.assertEqual(ra.handovers, 1); np.testing.assert_allclose(a, b, atol=1e-12); self.assertNotAlmostEqual(a[3], z9[3], places=1)
+        for miss, kept in ((BR.LOST_MAX, True), (BR.LOST_MAX + 1, False)):   # the gap rule of the other modes
+            r = BR.Refiner('body', m)
+            for k in range(3): r.step([(5, z, None, z)], 0.04 * k, None)
+            for k in range(miss): r.step([], 0.2 + 0.04 * k, None)
+            r.step([(5, z, None, z)], 5.0, None); self.assertEqual(r.tr[5]['k'] == 3, kept, miss)
+        H = np.array([[1., 0, 20.], [0, 1., 0]]); r = BR.Refiner('body', m)   # warp-aware jump rule: a 12 px person in a 20 px / frame pan keeps the state
+        for k in range(30):
+            zk = np.array([100. + 20 * k, 200., 5., 12.]); r.step([(1, zk, None, zk)], k / 25., H)
+        self.assertEqual(r.tr[1]['k'], 29)
+        far = z + [400., 0, 0, 80.]; r = BR.Refiner('body', m); r.step([(2, z, None, z)], 0.0, None); r.step([(2, z, None, z)], 0.04, None)   # another person: from that box at once
+        np.testing.assert_allclose(r.step([(2, far, None, far)], 0.08, None)[2], far, atol=1e-9); self.assertTrue(r.tr[2]['new'])
+        # near -> far for a small person: body box 26 px, then the far detector's whole-person box 50 px: the state is kept and the drawn box stays the body box
+        r = BR.Refiner('body', m); hs = []; tops = []
+        for k in range(60):
+            zk = np.array([300., 213., 16., 26.]) if k < 30 else np.array([300., 225., 16., 50.])   # same head top (200), near box ar 0.62, far box ar 0.32
+            b = r.step([(1, zk, None, zk)], k / 25., None, 'near' if k < 30 else 'far', True)[1]; hs.append(b[3]); tops.append(top_of(b))
+        self.assertEqual(r.tr[1]['k'], 59); self.assertEqual(r.blends, 0); np.testing.assert_allclose(tops, 200., atol=1e-9); np.testing.assert_allclose(hs, 26., atol=1e-6)
+
+    def test_camera_zoom_and_real_seconds(self):
+        m = BR.G2Model(table_model()); s = 1.02; H = np.array([[s, 0, 320 * (1 - s)], [0, s, 256 * (1 - s)]]); r = BR.Refiner('body', m); z = np.array([320., 256., 60., 120.])
+        for k in range(20):   # the camera zooms 2 % per frame: the box grows with the picture at once (the camera scale is not filtered)
+            b = r.step([(1, z, None, z)], k / 25., H if k else None)[1]; np.testing.assert_allclose(b, z, rtol=1e-9); z = BR.warp_box(z, H)
+        out = []
+        for fps in (10, 30):   # the same second of a growing box at 10 and 30 fps
+            r = BR.Refiner('body', m)
+            for k in range(fps + 1):
+                t = k / fps; z = np.array([300., 250., 60., 100. if t < 0.5 else 150.]); b = r.step([(1, z, None, z)], t, None)[1]
+            out.append(b[3])
+        self.assertLess(abs(out[0] - out[1]), 0.06 * 50)
+
+    def test_filter_values_from_the_file_or_the_default(self):
+        self.assertEqual(BR.Refiner('body', BR.G2Model(table_model())).body, BR.BODY)
+        m = BR.G2Model(table_model(body_euro=[2.0, 1.0, 1.0])); self.assertEqual(BR.Refiner('body', m).body, dict(mc_s=2.0, beta_s=1.0, dcut=1.0, anchor='top'))
+        self.assertEqual(BR.Refiner('body', m, body=dict(mc_s=5.0)).body['mc_s'], 5.0)
+        r = BR.Refiner('body', None); zr = np.array([200., 250., 20., 50.]); np.testing.assert_allclose(r.step([(1, zr + 1, None, zr)], 0.0, None)[1], zr)   # no table: the tracker row
+        # anchor: 'top' (default, the user's rule) hangs the filtered size from the converted top edge; 'centre' keeps the converted centre
+        mm = BR.G2Model(table_model()); rt = BR.Refiner('body', mm); rc = BR.Refiner('body', mm, body=dict(anchor='centre')); z1 = np.array([300., 250., 60., 100.]); z2 = np.array([300., 275., 60., 150.])
+        for k in range(3): rt.step([(1, z1, None, z1)], 0.04 * k, None); rc.step([(1, z1, None, z1)], 0.04 * k, None)
+        bt = rt.step([(1, z2, None, z2)], 0.12, None)[1]; bc = rc.step([(1, z2, None, z2)], 0.12, None)[1]   # the row grew downward by 50 px in one frame
+        self.assertAlmostEqual(top_of(bt), 200., places=9); self.assertAlmostEqual(bc[1], 275., places=9); self.assertAlmostEqual(bt[3], bc[3], places=9); self.assertLess(bt[3], 110.)
+
+
+class BodyGlueTests(unittest.TestCase):
+    def setUp(self):
+        self.saved = dict(BR.BR); APP.args = SimpleNamespace(det='s640'); APP.CTL = dict(lead_motion=None); APP.tracker = object()   # a detector WITHOUT keypoints
+        self.kpt = patch.object(model_scan, 'KPT_DETS', {'near_kpt'}); self.kpt.start(); BR.BR['dir'] = TRACK_DIR
+        self.now = patch.object(BR.time, 'time', return_value=4e9); self.now.start()
+
+    def tearDown(self):
+        self.kpt.stop(); self.now.stop()
+        BR.BR.clear(); BR.BR.update(self.saved)
+        for k in ('args', 'CTL', 'tracker', 'SEL', 'sel_save'): vars(APP).pop(k, None)
+
+    def test_every_detector_no_keypoints_needed(self):
+        saved = []; APP.sel_save = lambda **kw: saved.append(kw)
+        ok, txt, ap = BR.parse_request({'box_refine': ['body']}); self.assertTrue(ok, txt); ap(); self.assertEqual(saved[-1], dict(box_refine='body', box_blend=0.0))
+        st = BR.state(); self.assertTrue(next(x for x in st['modes'] if x['key'] == 'body')['available']); self.assertFalse(next(x for x in st['modes'] if x['key'] == 'gru2')['available'])
+        self.assertEqual(st['mode_name'], BR.MODE_KO['body']); self.assertEqual(st['body'], dict(BR.BODY, **(BR.BR['model2'].body or {})))
+        dets = np.array([[60., 100., 140., 300., 0.9, 0.]]); out = None   # the matched detection differs from the tracker row: body converts the ROW
+        for k in range(4):
+            rows = rows_at([(7, 320., 256., 190., 300.), (8, 100., 200., 16., 40.)]); rows.append([10., 10., 50., 40., 3, 0.9, 2, 5]); out = BR.apply(rows, dets, 0.04 * k)
+            self.assertIsNot(out, rows); self.assertEqual(out[2], rows[2]); self.assertEqual(out[0][4:], rows[0][4:])
+        np.testing.assert_allclose(out[0][:4], rows[0][:4], atol=0.08 * 300)                       # the close person: unchanged (within the table's last-row tolerance)
+        self.assertLess((out[1][3] - out[1][1]) / 40., 0.66); self.assertLess(abs(out[1][1] - rows[1][1]), 0.06 * 40)   # the far person: half as tall, head top kept
+        self.assertEqual(BR.state()['people'], 2); self.assertEqual(BR.state()['err'], '')
+        for det in ('near_kpt', 's640'):   # a detector change keeps the state machine and every person's state
+            APP.args.det = det; obj = BR.BR['obj']; BR.apply(rows_at([(7, 320., 256., 190., 300.)]), None, 0.2); self.assertIs(BR.BR['obj'], obj); self.assertGreaterEqual(obj.tr[7]['k'], 4)
+        APP.tracker = object(); BR.apply(rows_at([(7, 320., 256., 190., 300.)]), None, 0.3); self.assertEqual(BR.BR['obj'].tr[7]['k'], 0)   # a new tracker: from scratch
+        BR.parse_request({'box_refine': ['off']})[2](); rows = rows_at([(7, 320., 256., 190., 300.)]); self.assertIs(BR.apply(rows, None, 1.0), rows); self.assertNotIn('obj', BR.BR)
+        BR.BR['mode'] = 'off'; done = []   # startup restore of the saved choice, on a detector without keypoints
+        for q in BR.restore_queries({'box_refine': 'body', 'box_blend': 0.0}):
+            o, _, ap = BR.parse_request(q); done.append(o)
+            if o: ap()
+        self.assertEqual(done, [True, True]); self.assertEqual(BR.BR['mode'], 'body')
+
+    def test_no_table_file(self):
+        BR.BR['dir'] = '/nonexistent_dir_for_test'; BR.BR.update(model2=None, file2=None, mt2=None)
+        ok, txt, _ = BR.parse_request({'box_refine': ['body']}); self.assertFalse(ok); self.assertIn('변환표', txt); self.assertEqual(BR.BR['mode'], 'off')
+        self.assertFalse(next(x for x in BR.state()['modes'] if x['key'] == 'body')['available'])
+        BR.BR['mode'] = 'body'; rows = rows_at([(1, 100., 200., 40., 100.)]); self.assertIs(BR.apply(rows, None, 1.0), rows); self.assertIn('변환표', BR.BR['why'])
+
+    def test_a_later_file_is_taken_without_a_code_change(self):
+        """one table for gru2 and body: the newest version-2 format file by name; a retrained file under the same or a later version name replaces it."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            np.savez(os.path.join(d, 'box_refine_gru_tmotdance_20261115.npz'), **gru_weights(np.random.default_rng(0), 48))        # a version-1 file
+            np.savez(os.path.join(d, 'box_refine_gru_v2_tmotdance_20261115.npz'), **table_model())
+            BR.BR['dir'] = d; BR.BR.update(model=None, file=None, mt=None, model2=None, file2=None, mt2=None)
+            m1 = BR.scan(); m2 = BR.scan2(); self.assertIsNotNone(m1); self.assertEqual(BR.BR['file'], 'box_refine_gru_tmotdance_20261115.npz'); self.assertEqual(BR.BR['file2'], 'box_refine_gru_v2_tmotdance_20261115.npz')
+            self.assertIsNone(m2.body); BR.parse_request({'box_refine': ['body']})[2](); BR.apply(rows_at([(1, 100., 200., 16., 40.)]), None, 0.0); obj = BR.BR['obj']; self.assertIs(obj.model, m2)
+            np.savez(os.path.join(d, 'box_refine_gru_v3b_tmotdance_20261116.npz'), **table_model(body_euro=[2.0, 0.5, 1.0]))            # the retrained file arrives
+            m3 = BR.scan2(); self.assertIsNot(m3, m2); self.assertEqual(BR.BR['file2'], 'box_refine_gru_v3b_tmotdance_20261116.npz'); self.assertEqual(BR.state()['body']['mc_s'], 2.0)
+            self.assertIsNotNone(BR.scan()); self.assertEqual(BR.BR['file'], 'box_refine_gru_tmotdance_20261115.npz')                   # version 1 still its own file
+            BR.apply(rows_at([(1, 100., 200., 16., 40.)]), None, 0.04); self.assertIsNot(BR.BR['obj'], obj); self.assertIs(BR.BR['obj'].model, m3); self.assertEqual(BR.BR['obj'].body['mc_s'], 2.0)
+            np.savez(os.path.join(d, 'box_refine_gru_v9_broken.npz'), x=np.zeros(3)); self.assertIsNone(BR.scan2()); self.assertIn('읽지 못함', BR.BR['note2'])   # an unreadable newest file: said so, not silently the older one
 
 
 if __name__ == '__main__':

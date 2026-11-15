@@ -2,16 +2,21 @@
 1) every val-B stream (near, far, sw of every sequence) and the 3 device-rate recordings: Refiner('gru2') frame by frame vs g2_lib.run_rows ('out_f'),
    with the hand-over switched off (g2_lib has none) -> max |difference| px; then with the hand-over on -> how many hand-overs and rows it changes.
 2) a small fixture for the server's unit test: two val-B windows (detector boxes + keypoints, rounded to float32, no ground truth) with g2_lib's output.
-Usage: python g2_server_parity.py <tracking_server dir> <fixture.npz> [device rec ...]
+The reference g2_lib is the one of <g2 scripts dir> (gru_v2/scripts, or the scripts folder of a retrain such as gru_v2/v3b/scripts: same engine, its own lookup table);
+the weights are <npz>, the rows <rows_valB.pkl>. Writes gru_v2/results/server_parity.json.
+Usage: python g2_server_parity.py <tracking_server dir> <fixture.npz> <g2 scripts dir> <npz> <rows_valB.pkl> [device rec ...]
 """
 import json
 import pickle
 import sys
 from collections import defaultdict
 
+from pathlib import Path
+
 import numpy as np
 
-import g2_lib as L
+sys.path.insert(0, sys.argv[3])   # the reference engine (before this script's own folder)
+import g2_lib as L   # noqa: E402
 
 sys.path.insert(0, sys.argv[1])
 from src.track import box_refine as BR   # noqa: E402
@@ -30,16 +35,17 @@ def server_rows(model, ids, W, n, times, fps, handover):
 
 
 def main():
-    exp = json.loads((L.G2 / 'export' / 'EXPORT.json').read_text()); wp = L.G2 / 'export' / exp['npz']; net = L.load_net(wp); z = np.load(wp, allow_pickle=False)
+    import hashlib
+    wp = Path(sys.argv[4]); exp = dict(npz=wp.name, sha256=hashlib.sha256(wp.read_bytes()).hexdigest()); net = L.load_net(wp); z = np.load(wp, allow_pickle=False)
     model = BR.G2Model({k: z[k] for k in z.files}); size = model.size
     assert np.abs(model.tab - L.TAB).max() == 0 and np.abs(model.lh_cen - L.LH_CEN).max() == 0, 'the exported table is not the one g2_lib reads'
-    d = pickle.loads((L.G2 / 'data' / 'rows_valB.pkl').read_bytes()); recs, Wd, nd = d['recs'], d['W'], d['n']; groups = defaultdict(list)
+    d = pickle.loads(Path(sys.argv[5]).read_bytes()); recs, Wd, nd = d['recs'], d['W'], d['n']; groups = defaultdict(list)
     for r in recs: groups[(r['name'], r['stream'])].append(r)
     worst = 0.; rows = 0; hand = 0; changed = 0; worst_h = 0.; fix = {}
     cases = [(k, {r['id']: dict(f=r['e']['f'], z=r['e']['z'], kp=r['e']['kp']) for r in rr}, Wd[k[0]], nd[k[0]], None, rr[0]['fps']) for k, rr in sorted(groups.items())]
-    if len(sys.argv) > 3:
+    if len(sys.argv) > 6:
         import g2_device as GD
-        for ri, rec in enumerate(sys.argv[3:]):
+        for ri, rec in enumerate(sys.argv[6:]):
             S, _ = GD.streams(rec, ri)
             for st, inp in S.items(): cases.append(((rec, st), {i: dict(f=e['f'], z=e['z'], kp=e['kp']) for i, e in inp['ids'].items()}, inp['W'], inp['n'], inp['times'], inp['fps']))
     for key, ids, W, n, times, fps in cases:
@@ -72,7 +78,8 @@ def main():
         print('FIXTURE %s: %s rows %d ids %d frames %d starts %d' % (name, 'thermal switch stream' if name == 'a' else 'dance near stream', len(fix[name + '_f']), len(ids), n, int(fix[name + '_start'].sum())), flush=True)
     fix['weights_sha256'] = np.array(exp['sha256']); np.savez_compressed(sys.argv[2], **fix)
     res = dict(weights=exp['npz'], sha256=exp['sha256'], streams=len(cases), rows=rows, max_abs_px_no_handover=worst, handovers=hand, rows_changed_by_handover=changed, max_abs_px_with_handover=worst_h)
-    (L.G2 / 'results' / 'server_parity.json').write_text(json.dumps(res, indent=1)); print('SERVER_PARITY_DONE', json.dumps(res), flush=True)
+    res['reference'] = str(Path(L.__file__).resolve().parent.parent.name) + '/scripts/g2_lib.py'
+    (Path(__file__).resolve().parent.parent / 'results' / 'server_parity.json').write_text(json.dumps(res, indent=1)); print('SERVER_PARITY_DONE', json.dumps(res), flush=True)
 
 
 if __name__ == '__main__':
