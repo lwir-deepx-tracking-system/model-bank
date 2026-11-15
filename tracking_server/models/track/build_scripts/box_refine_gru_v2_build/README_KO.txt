@@ -1,3 +1,5 @@
+[11-16 기록용] 서버의 box_refine=gru2 / gru / euro 모드와 가중치 파일(box_refine_gru_v2_tmotdance_20261115.*, box_refine_gru_tmotdance_20261115.*), 서버 시험 조각 box_refine_gru2_fixture.npz 는 11-16 에 뺐습니다(사용자 "필요한 것만 남기자"; git 기록에 있음). 이 폴더의 GRU 스크립트는 지금 서버(Refiner(mode, table, ...), 행 (id, z, row))와 맞지 않는 기록입니다. 남은 쓰임: v3b/g2_data.py lut (상체 네모 변환표를 맞춘 코드), g2_body*.py (올렸던 body 의 숫자).
+
 상자 다듬기 학습 GRU 2판 (2026-11-15, 서버 모드 box_refine=gru2): 학습, 고르기, 채점, 내보내기, 눈으로 보기, 서버 비교 스크립트 사본.
 가중치: ../../box_refine_gru_v2_tmotdance_20261115.npz (+ .json). 결과 요약: REPORT.md (끝의 Addendum 이 눈으로 본 결함과 변환표 고침), 서버가 계산할 것: SERVER_NOTES.md.
 
