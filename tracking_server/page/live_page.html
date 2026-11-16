@@ -158,7 +158,7 @@ body:not(.adv) .adv-only{display:none!important}
 /* 11-13 (pass 4): camera-not-answering note and follow notes over the picture */
 .vdead{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;max-width:86%;text-align:center;background:rgba(20,20,20,.86);border:1px solid var(--bad);border-radius:10px;padding:14px 18px;pointer-events:none}
 .vdead[hidden]{display:none}.vdead b{font-size:19px;color:#fff}.vdead span{font-size:13.5px;color:#ddd;line-height:1.5}.vdead.wait{border-color:var(--warn)}
-.vtoast{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:3;background:rgba(20,20,20,.82);color:#fff;font-size:14px;font-weight:700;padding:6px 14px;border-radius:999px;border:1px solid var(--acc);pointer-events:none;white-space:nowrap}
+.vtoast{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:3;background:rgba(20,20,20,.82);color:#fff;font-size:14px;font-weight:700;padding:6px 14px;border-radius:999px;border:1px solid var(--acc);pointer-events:none;max-width:calc(100% - 32px);box-sizing:border-box;width:max-content;text-align:center;white-space:normal}
 .vtoast[hidden]{display:none}.vtoast.lost{border-color:var(--warn)}body.replay-mode .vtoast,body.replay-mode .vdead{display:none}
 /* 11-13 (design review 3): the picture chip at the top right (top left covered box numbers); replay status line below the section titles */
 .vchip{left:auto;right:16px;max-width:calc(100% - 32px)}.vchip.replay{box-shadow:inset -3px 0 0 var(--acc)}
@@ -739,7 +739,30 @@ let reopenT=0;   // 11-15: one pending reopen at a time; none for a stream the p
 v.addEventListener('error',()=>{if(streamFetch||reopenT||!v.hasAttribute('src'))return;reopenT=setTimeout(()=>{reopenT=0;openStream();},2000);});
 // v25: the bridge answers in English; shown in Korean
 const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
-let lostSince=null,autoNow=false,hzPrev=null;
+let lostSince=null,lostId=null,autoNow=false,hzPrev=null;
+let followFrame={id:0,held:false};
+function followHeld(t){return !!(t.auto&&(t.lost||t.guard?.[1]===1));}
+function followWaitText(t,cfg){
+  if(!t.lost)return '검출 확인 중 · 짐벌 추종 보류';
+  const search=t.search;
+  const seekPhase=t.seek?.[0];
+  if(search===5){
+    if(seekPhase===2)return '짐벌이 주변을 찾는 중';
+    if(seekPhase===3)return '예측 자리로 돌아가는 중';
+    return '짐벌이 재검출 위치를 탐색 중';
+  }
+  if(search===3)return '짐벌이 주변을 찾는 중';
+  if(search===2)return '마지막으로 본 방향으로 이동 중';
+  if(seekPhase===5)return '주변에 다른 사람이 있어 기다리는 중';
+  if(t.moving&&t.guard?.[3]===1)return '예측 위치로 이동 중';
+  if(t.moving)return '짐벌 이동 중 · 같은 ID 재검출 대기';
+  const timeout=Number(cfg?.reacquire_ms);
+  const limit=Number.isFinite(timeout)&&timeout>0?' (최대 '+timeout/1000+'초)':'';
+  return '같은 ID 재검출 대기'+limit;
+}
+function followBoxStyle(id){
+  return followFrame.id===id ? (followFrame.held ? 'held' : 'active') : '';
+}
 function cameraClickBlock(){
   const replay=rpLast?.state;
   if(rpBusy||replay?.busy)return '영상 전환 중입니다';
@@ -751,20 +774,26 @@ function cameraClickBlock(){
 }
 function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;netChip();
   renderGimbalPose(t.pose, t.position_estimate);
+  const followId=t.running&&!t.error&&t.auto?t.id:0;
+  const held=!!followId&&followHeld(t);
+  const holdText=held?t.id+'번'+(t.lost?' 놓침':'')+' · '+followWaitText(t,rlast?.gimbal_cfg):'';
   let txt,cls='good',sq='';
   if(!t.running){txt='짐벌 프로그램이 꺼져 있습니다';cls='bad';sq='bad';}
   else if(t.error){txt='짐벌 오류: 서버를 다시 켜야 합니다';cls='bad';sq='bad';}
-  else if(t.lost){const sp=t.seek?t.seek[0]:0;txt=t.id+'번 놓침, '+(sp===2?'짐벌이 주변을 찾는 중':sp===3?'예측 자리로 돌아가는 중':sp===5?'주변에 다른 사람이 있어 훑지 않고 기다립니다':'잠시 기다립니다');cls='warn';sq='lost';}   // 11-16: t.seek = the gimbal's search (bridge --seek 1)
+  else if(held){txt=holdText;cls='warn';sq='lost';}
   else if(t.auto){txt=t.id+'번을 따라가는 중';sq='auto';}
   else if(t.moving){txt='수동으로 움직이는 중';sq='man';}
   else if(t.ready===false){txt='짐벌 준비 중';cls='';}
   else{txt='대기 중 · '+(cameraClickBlock()||'영상에서 사람을 클릭하세요');cls='';}
   S.textContent=txt;$('sq').className='sq '+sq;$('ans').textContent=t.answer?(ANS[t.answer]||t.answer):'';
-  chip('gdot','gtext',cls,t.running?(t.auto?'추종 '+t.id+'번':t.moving?'수동 이동':'짐벌 대기'):'짐벌 꺼짐');
-  if(t.lost){if(lostSince==null)lostSince=Date.now();$('lt').textContent=((Date.now()-lostSince)/1000).toFixed(1)+' 초';}
-  else{lostSince=null;$('lt').textContent='–';}
-  autoNow=!!(t.running&&t.auto&&!t.lost);$('camera-center').hidden=!autoNow||document.body.classList.contains('replay-mode');if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
-  if(typeof followNote==='function')followNote(t);   // 11-13: notes over the picture
+  chip('gdot','gtext',cls,t.running?(held?t.id+'번 재확인 중':t.auto?'추종 '+t.id+'번':t.moving?'수동 이동':'짐벌 대기'):'짐벌 꺼짐');
+  if(held&&t.lost){
+    if(lostId!==t.id){lostId=t.id;lostSince=Date.now();}
+    $('lt').textContent=((Date.now()-lostSince)/1000).toFixed(1)+' 초';
+  }else{lostId=null;lostSince=null;$('lt').textContent='–';}
+  autoNow=!!followId&&!held;$('camera-center').hidden=!autoNow||document.body.classList.contains('replay-mode');if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
+  if(followFrame.id!==followId||followFrame.held!==held){followFrame={id:followId,held};ovDraw();}
+  followNote(t,holdText);
 }
 // 11-15 (user: 화면 전송 지연, "카메라 프레임 수준인가"): the picture stream is read with fetch, so the page knows when each picture
 // arrived and its camera time (JPEG comment 'LWIR n= t= s= [l=1]', src/web/stream_sender.py). Each picture is shown in the same
@@ -987,9 +1016,13 @@ function ovDraw(){const cv=OV.cv;if(!cv)return;
   const ox=(bw-w)/2,oy=(bh-h)/2,k=w/(d.w||640);
   x.save();x.scale(dpr,dpr);x.font='bold 13px sans-serif';x.textBaseline='bottom';
   for(const [x1,y1,x2,y2,id,fol] of (overlayOnMjpeg()&&OV.gen===PS.gen ? OV.boxes : null)||d.b||[]){const L=ox+x1*k,T=oy+y1*k,R=ox+x2*k,B=oy+y2*k;
-    if(fol){x.strokeStyle='rgb(255,220,0)';x.lineWidth=4;x.strokeRect(L,T,R-L,B-T);
+    const style=fol?followBoxStyle(id):'';
+    if(style==='active'){x.strokeStyle='rgb(255,220,0)';x.lineWidth=4;x.strokeRect(L,T,R-L,B-T);
       const lab='FOLLOW '+id,tw=x.measureText(lab).width,ty=Math.max(T,18);
       x.fillStyle='rgb(255,220,0)';x.fillRect(L-2,ty-18,tw+10,18);x.fillStyle='#141414';x.fillText(lab,L+3,ty-3);}
+    else if(style==='held'){
+      x.strokeStyle=x.fillStyle='rgb(255,174,105)';x.lineWidth=2;x.setLineDash([5,3]);x.strokeRect(L,T,R-L,B-T);x.setLineDash([]);
+      x.fillText('검출 '+id+' · 제어 보류',L,Math.max(T-3,14));}
     else{const c=ovColor(id);x.strokeStyle=c;x.lineWidth=2;x.strokeRect(L,T,R-L,B-T);x.fillStyle=c;x.fillText(String(id),L,Math.max(T-3,14));}}
   x.font='12px sans-serif';
   for(const [x1,y1,x2,y2,id,lab,last,pts,rad,col,al] of d.p||[]){const X=v=>ox+v*k,Y=v=>oy+v*k;   // predicted boxes of lost people (pred_show), as the server drew them
@@ -2078,13 +2111,21 @@ setInterval(()=>{const d=$('vdead'),live=!document.body.classList.contains('repl
   $('vdeads').textContent=camFail>0?'카메라 USB 케이블을 뽑았다가 다시 꽂으세요 · '+s+'초째 영상 없음 (자동 복구 '+camFail+'회 실패)':s+'초째 영상 없음 · 카메라가 스스로 다시 연결하는 중 (보통 30초 안)';},500);
 let fnPrev=null,fnT=0;
 function fnShow(txt,cls,ms){const v=$('vtoast');v.textContent=txt;v.className='vtoast'+(cls?' '+cls:'');v.hidden=false;fnT=ms?Date.now()+ms:0;}
-function followNote(t){const p=fnPrev||{auto:0,id:0,lost:0,h:t.handoffs||0};fnPrev={auto:t.auto,id:t.id,lost:t.lost,h:t.handoffs||0};
-  if(t.auto&&t.lost){const sp=t.seek?t.seek[0]:0;fnShow(t.id+'번 놓침 · '+(sp===2?'짐벌이 주변을 찾는 중':sp===3?'예측 자리로 돌아가는 중':'다시 찾는 중')+(lostSince?' '+((Date.now()-lostSince)/1000).toFixed(0)+'초':''),'lost',0);return;}
-  if(p.auto&&t.auto&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}
-  if(!p.auto&&t.auto)fnShow(t.id+'번 따라가기 시작','',2000);
-  else if(p.auto&&!t.auto)fnShow('따라가기 멈춤','',2000);
-  else if(p.lost&&!t.lost&&t.auto)fnShow(t.id+'번 다시 찾음','',2000);
-  if(fnT&&Date.now()>fnT){$('vtoast').hidden=true;fnT=0;}else if(!fnT&&!(t.auto&&t.lost))$('vtoast').hidden=true;}
+function followNote(t,holdText){
+  const active=!!(t.running&&!t.error&&t.auto);
+  const p=fnPrev||{auto:false,id:0,held:false,h:t.handoffs||0};
+  fnPrev={auto:active,id:t.id,held:!!holdText,h:t.handoffs||0};
+  if(holdText){
+    const elapsed=lostSince===null?'':' · '+Math.floor((Date.now()-lostSince)/1000)+'초 경과';
+    const baked=!window.h264Mode&&rlast?.picture_first===false?' · 영상 속 상자는 검출 표시':'';
+    fnShow(holdText+elapsed+baked,'lost',0);return;
+  }
+  if(p.auto&&active&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}
+  if(!p.auto&&active)fnShow(t.id+'번 따라가기 시작','',2000);
+  else if(p.auto&&!active)fnShow('따라가기 멈춤','',2000);
+  else if(p.held&&active)fnShow(t.id+'번 다시 따라가는 중','',2000);
+  if(fnT&&Date.now()>fnT){$('vtoast').hidden=true;fnT=0;}else if(!fnT)$('vtoast').hidden=true;
+}
 
 // The H.264 proxy carries camera capture time in each sample's PTS.
 window.h264Mode=false;
