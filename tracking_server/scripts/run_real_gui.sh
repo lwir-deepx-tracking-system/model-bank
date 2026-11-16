@@ -48,6 +48,8 @@ flock -n 9 || { echo "tracker launcher busy"; exit 4; }
 pgrep -f 'python3 -B ([s]tart_tracking_server|[l]wir_tracker_m1)\.py' > /dev/null && { echo "NPU busy"; exit 4; }
 fuser "$GIMBAL_DEV" > /dev/null 2>&1 && { echo "gimbal busy"; exit 5; }
 echo "START $(date +%T) page=$BIND:$PORT gui=$GUI_HOST gimbal=$GIMBAL_DEV speed_max=$SPEED_MAX reacquire_ms=$REACQUIRE_MS confirm_ms=$CONFIRM_MS"
+# H.264 is optional; failure does not prevent JPEG tracking.
+bash scripts/start_h264_preview.sh || true
 export LWIR_REAL_GUI_LAUNCH=1
 tracker_args=(
   --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 2 --confirm-ms "$CONFIRM_MS" --warm-min 45000 --edge-birth 0.5
