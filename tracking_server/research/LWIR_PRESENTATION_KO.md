@@ -80,6 +80,19 @@ FLIR 8편·3,749프레임의 동일 M1 INT8 검출 출력에 추적 구성만 �
 
 비공개 원본 식별자: `FT16v7_FX_reviewed264_cos24_s0` 완료 기록 및 별도 `val/RESULT.json`, `FT16v8_aug_fixed_eval_v2/COMPACT_RESULTS.json`, `RepVGG_reviewed264_direct_v1/{TRAIN_RESULT,EXTERNAL_REID_RESULT}.json`, `m1/{LIVE_REPLACEMENT_VERIFIED,M1_DIAGNOSTIC_CAL256,FROZEN_JUDGE_SEQ17_COMPARISON}.json`. [자세 검출 학습의 이전 단계](lwir_pose_plan/README.md)도 참고한다.
 
+### SOLIDER 교사를 검수 264장에 맞춘 뒤 RepVGG에 증류한 비교
+
+SOLIDER의 마지막 정규화 scale·bias만 FP32로 4에폭·152회 갱신했다. 원교사와 적응교사의 확정 쌍 코사인 변화 중앙값은 **0.001007**로 사전 기준 **0.003**에 못 미쳤다. 이 판정을 기록한 뒤 같은 교사 가중치와 고정 중심을 재사용해 별도 탐색 비교를 했다. 직접 학습 A, 원교사 증류 B, 적응교사 증류 C는 같은 RepVGG 몸통·초기 투영·검수 데이터·시드별 배치와 증강으로 조건마다 **3시드 × 8에폭 × 304 업데이트**를 실행했다.
+
+| 외부 유지력 진단 | A 직접 | B 원교사 증류 | C 적응교사 증류 | 과거 증류 가중치 |
+| --- | ---: | ---: | ---: | ---: |
+| TMOT val Rank-1 / 432 | 386/386/386 | 386/386/386 | 386/386/386 | 361 |
+| CAMEL hold Rank-1 / 218 | 200/200/200 | 201/201/200 | 201/201/201 | 191 |
+
+세 시드 모두 사전 유지력 기준을 충족하지 못했다. CAMEL에서 C는 A보다 질의 1개씩 늘었지만 원교사 B보다 0/0/1개 차이였고, 고정 임계값의 오수락은 A와 C 모두 19건, 오거절은 A 60건에서 C 62건이었다. TMOT 오수락은 A 54/55/53건, C 54/56/55건, 오거절은 A 122건에서 C 121건이었다. 같은 방식으로 기존 직접 가중치도 386/432와 200/218을 재현했다.
+
+신규 훈련에는 검수 264장만 사용했다. 과거 R7 TEST와 원본 7장이 겹치고 그중 6장이 이번 학습 쌍에 들어가 그 TEST는 평가에서 제외했다. TMOT·CAMEL은 이전 실험에도 쓴 평가 자료다. 이 비교에서 적응교사의 추가 이득은 확인되지 않았으며, 실제 카메라의 공개 ID와 DX-M1 성능은 별도 검증 과제로 남았다. 비공개 원본: `SOLIDER_reviewed264_KD_v2/TEACHER_RESULT.json`, `SOLIDER_reviewed264_KD_exploratory_v3/{FIXED_EVAL_RESULT,VERIFICATION}.json`.
+
 ## 7. 발표 순서와 출처 범위
 
 | 장 | 보여줄 내용 | 붙일 조건 |
