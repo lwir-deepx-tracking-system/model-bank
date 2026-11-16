@@ -398,7 +398,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
 }
 </style></head><body>
 <header>
-  <h1>LWIR 추적</h1><label class="chip">화면 <select id="h264-mode" aria-label="영상 전송 방식"><option value="mjpeg">JPEG</option><option value="h264">H.264 (시험)</option></select></label><span class="chip" id="h264-status" role="status"></span>
+  <h1>LWIR 추적</h1><label class="chip">화면 <select id="h264-mode" aria-label="영상 전송 방식"><option value="mjpeg">JPEG</option><option value="h264">H.264 (고화질 시험)</option></select></label><span class="chip" id="h264-status" role="status"></span>
   <span class="chip"><span class="dot" id="cdot"></span><span id="ctext">연결 확인 중</span></span>
   <span class="chip desk num"><span id="fps">–</span></span>
   <span class="chip desk camera-only"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
@@ -1948,7 +1948,7 @@ async function h264Start(){
       const sb=h264media.addSourceBuffer('video/mp4; codecs="avc1.641028"');
       let resp;
       for(let attempt=0;attempt<12;attempt++){
-        resp=await fetch('http://'+location.hostname+':18773/video',{signal:ctrl.signal,cache:'no-store'});
+        resp=await fetch('http://'+location.hostname+':18774/video',{signal:ctrl.signal,cache:'no-store'});
         if(resp.status!==503)break;
         await new Promise(resolve=>setTimeout(resolve,250));
         if(gen!==h264gen)return;
