@@ -66,7 +66,24 @@ function evUnavailableMetric(e){
 function evMetricStatus(e){return e.metric_status==='unavailable'?evUnavailableMetric(e):({pending:'계산 중',ready:'계산 완료',error:'계산 오류'})[e.metric_status]||'미제공';}
 function evCoverage(e){const total=e.sequence_frames,done=e.pass_frames;if(total==null||done==null)return '';return ' · 영상 진행 '+done+' / '+total+'장';}
 function evSwitches(e){const events=Array.isArray(e.id_switches)?e.id_switches:[];
-  return events.length?'<b>ID 변경</b> · '+events.map(x=>'장 '+esc(x.frame)+': '+esc(x.from_id)+' → '+esc(x.to_id)+(x.gt_id!=null?' (정답 '+esc(x.gt_id)+')':'')).join('　'):'';
+  if(!events.length) return '';
+  // 정답 ID별로 묶기 (처음 나온 순서 유지): 흐름 = 처음 from → 매번 to, 장 번호 목록
+  const by=new Map();
+  for(const x of events){
+    const k=x.gt_id!=null?String(x.gt_id):'—';
+    let g=by.get(k);
+    if(!g){ g={flow:[x.from_id],frames:[]}; by.set(k,g); }
+    else if(String(g.flow[g.flow.length-1])!==String(x.from_id)) g.flow.push('…',x.from_id);   // 중간에 다른 번호를 거친 경우
+    g.flow.push(x.to_id); g.frames.push(x.frame);
+  }
+  const td='padding:3px 12px;text-align:left;vertical-align:top;border-bottom:1px solid rgba(128,128,128,.35)';
+  let h='<b>ID 변경</b><table style="border-collapse:collapse;margin-top:4px"><tr>'
+       +['정답 ID','추적 ID 변경 흐름','변경된 장 번호'].map(t=>'<th style="'+td+'">'+t+'</th>').join('')+'</tr>';
+  for(const [k,g] of by)
+    h+='<tr><td style="'+td+'"><b>'+esc(k)+'</b></td>'
+      +'<td style="'+td+'">'+g.flow.map(esc).join(' → ').replace(/ → … → /g,' … ')+'</td>'
+      +'<td style="'+td+';max-width:360px">'+g.frames.map(esc).join(', ')+'</td></tr>';
+  return h+'</table>';
 }
 // 11-16 (design review 14): the ID-change list under the replay picture is folded and only the count shows; drawn again only when it changed (so the button keeps its press). The comparison panel still lists them all.
 let rpIdsOpen=false,rpIdsHtml='',rpIdsE=null;
