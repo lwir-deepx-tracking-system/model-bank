@@ -24,10 +24,18 @@ arrival은 코어 0과 1을 번갈아 쓴다. 변경 요청이 들어오면 새 
   - Python 의 스레드 교대 간격을 5 ms 에서 1 ms 로 줄인다 (이 방식을 켰을 때만). 프레임 반복이 Python 계산을 하는 동안에도 카메라 읽기 스레드와 넣는 스레드가
     빨리 차례를 얻게 하려는 것이다. LWIR_NPU_FEED_SWITCH_MS=0 이면 건드리지 않는다.
   - 넣는 스레드에서 오류가 나면 이 방식을 끄고 그 자리에서 보통 읽기(live_next)로 넘어간다 (다음 프레임 미리 넣기는 없는 채로). 한 줄을 찍는다.
+  - 두 모델 상주 (11-15, resident_det.py, 기본 꺼짐): 넣는 곳(eng, busy)을 다른 모델의 엔진 짝으로 바로 돌릴 수 있다. 그래서 프레임마다 넣은 엔진 짝을
+    기억하고(_Rec.grp) 결과는 그 짝에서 받는다. 옛 짝이 아직 결과를 내지 않은 코어에는 새 짝도 넣지 않는다(held). 프레임 반복이 결과를 받은 프레임은 on_take 로 알린다.
 
 켤 수 없는 경우 (시작할 때 한 줄을 찍고 보통 방식 그대로 간다)
   실시간 실행이 아님, --pipeline 없음, --npu-depth 가 1 이 아님, --no-vit 없음(또는 --vit-budget / --vit-bench-n), --zoom, 검출 모델이 두 개짜리(타일),
   --mock, 둘째 엔진을 못 만듦(파일·NPU 메모리 등).
+
+자동 (11-16, LWIR_NPU_FEED=auto 또는 화면의 '자동', feed_auto.py): 코어 0 하나로 시작하고, 검출이 카메라 주기를 못 따라가면 스스로 코어 0·1 교대로,
+  다시 빨라지면 코어 0 하나로 바꾼다. 바꾸는 길은 위의 변경 요청과 같다(멈춤 -> 받음 -> 전환). 설정은 'auto' 그대로 남고 파일에 다시 쓰지 않는다.
+  LWIR_NPU_HOT_SWITCH 없이도 두 엔진을 보유한다. 자동일 때 넣는 스레드는 기다리는 프레임 가운데 가장 새 것만 넣는다(더 오래된 것은 버리고 센다).
+  화면에서 자동을 떠나도 다음 시작에 다시 고를 수 있게 두 엔진을 보유한다: LWIR_NPU_FEED=auto 이거나, 저장한 선택에 auto_live 가 있을 때
+  (LWIR_NPU_HOT_SWITCH 없이 자동 덕에 실행 중 전환이 되던 서버에서 화면으로 바꿔 저장한 것).
 
 보통 방식과 달라지는 숫자의 뜻
   - 기록의 pre_model_ms(화면의 "NPU 대기"): 검출기에 넣은 때부터 프레임 반복이 결과를 받은 때까지. 결과가 먼저 나와 기다린 시간도 들어간다.
@@ -51,11 +59,13 @@ from ..track.stabilizer import STAB, stab_live, stab_off
 from ..track import camera_motion
 from ..camera import camera_extra
 from . import detect_frame
+from . import feed_auto        # 11-16: the automatic choice between core 0 only and cores 0 and 1
+from ..track import e2e_live   # 11-14: no detector while the end-to-end model is on
 
 SECOND = '#core1'   # 둘째 엔진의 이름 꼬리 (APP.pending 의 열쇠가 첫째 엔진과 겹치지 않게)
 AHEAD = 1           # 검출기에 넣어 두고 프레임 반복이 아직 안 받아 간 프레임 수의 한도
 MODE_FILE = HERE / 'npu_feed.json'
-MODES = ('arrival', 'normal')
+MODES = ('arrival', 'normal', 'auto')   # the setting. The cores in use (Feed.mode) are 'arrival' or 'normal'
 
 
 def load_mode():
@@ -63,6 +73,10 @@ def load_mode():
         data = json.loads(MODE_FILE.read_text(encoding='utf-8'))
         if not isinstance(data, dict) or data.get('mode') not in MODES:
             raise ValueError('invalid mode')
+        env_ = os.environ.get('LWIR_NPU_FEED', '')
+        if env_ and env_ != data['mode']:   # 11-16: the saved page choice wins; say so once at the start (an export in live.env would otherwise do nothing silently)
+            print('FEED: npu_feed.json says %s (the last choice on the page); LWIR_NPU_FEED=%s is not used. Choose on the page, or delete npu_feed.json '
+                  'to use the environment' % (data['mode'], env_[:40]), flush=True)
         return data['mode']
     except FileNotFoundError:
         pass
@@ -71,10 +85,18 @@ def load_mode():
     mode = os.environ.get('LWIR_NPU_FEED', 'normal')
     if mode and mode not in MODES:
         print('FEED: unknown LWIR_NPU_FEED=%r; using normal' % mode[:40], flush=True)
-    return 'arrival' if mode == 'arrival' else 'normal'
+    return mode if mode in MODES else 'normal'
 
 
-def save_mode(mode):
+def saved_auto_live():
+    """11-16: True when the saved choice was made on a server whose live switch came from 'auto' (not from LWIR_NPU_HOT_SWITCH=1): start() keeps both
+    engines so the page can choose auto again. Older code reads the file as before (it only looks at 'mode')."""
+    try: data = json.loads(MODE_FILE.read_text(encoding='utf-8'))
+    except (OSError, ValueError): return False
+    return isinstance(data, dict) and data.get('auto_live') is True
+
+
+def save_mode(mode, auto_live=False):
     if mode not in MODES:
         raise ValueError('invalid NPU feed mode')
     tmp = None
@@ -82,7 +104,7 @@ def save_mode(mode):
         with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=MODE_FILE.parent,
                                          prefix='.npu_feed.', suffix='.tmp', delete=False) as file:
             tmp = file.name
-            json.dump({'mode': mode}, file)
+            json.dump(dict(mode=mode, auto_live=True) if auto_live else {'mode': mode}, file)
             file.write('\n')
             file.flush()
             os.fsync(file.fileno())
@@ -125,10 +147,28 @@ def status():
                                   and not feed.direct and not feed.closed and feed.err is None),
                           cores=list(feed.st['core']), submitted=feed.st['submitted'], taken=feed.st['taken'],
                           order_errors=feed.st['order_bad'], reason=reason)
+            m_ = feed.mon   # 11-16: measured service time, deadline misses, automatic switches. Not after the feed turned itself off (nothing is measured then)
+            if m_ is not None and not feed.direct and not feed.closed: result['auto'] = m_.state(mode == 'auto')
+            elif mode == 'auto' and feed.auto_err is not None: result['auto_error'] = feed.auto_err
     return result
 
 
-def switch_conflict():
+def sent(t_arr):
+    """11-16, page_handler.live_publish (frame loop), right after the frame's people went to the gimbal: the period monitor's 'result is out' time
+    for the frame that arrived at t_arr. Never raises."""
+    try:
+        f_ = vars(APP).get('FEED'); m_ = f_.mon if f_ is not None else None
+        if m_ is not None: m_.sent(t_arr, time.perf_counter())
+    except Exception: pass
+
+
+def manual_pending(feed):
+    """11-16: a change of the feed setting asked on the page (or by a script) waits for the frame loop. An automatic switch of the 'auto' setting
+    does not count: a model change drops it (Feed.pause) and a restart or camera work holds it (auto_conflict)."""
+    return feed is not None and feed.pending is not None and feed.auto_to is None
+
+
+def switch_conflict(gimbal=True):
     app = vars(APP)
     live = app.get('LIVE')
     feed = app.get('FEED')
@@ -138,7 +178,7 @@ def switch_conflict():
         return '현재 검출 설정에서는 실행 중에 모드를 바꿀 수 없습니다'
     if live.stopped or live.restart_pending or live.cam_hold or getattr(live, 'replay_busy', False):
         return '서버 또는 카메라 작업이 진행 중입니다'
-    if app.get('GB') is not None and (APP.GB.state.get('auto') or APP.GB.state.get('moving')):
+    if gimbal and app.get('GB') is not None and (APP.GB.state.get('auto') or APP.GB.state.get('moving')):
         return '짐벌이 멈춘 뒤 다시 시도하세요'
     model = app.get('MODEL')
     if model is not None and (model['req'] is not None or model['busy']):
@@ -146,6 +186,33 @@ def switch_conflict():
     ev = camera_extra.replay_eval.EV
     if getattr(live, 'replay', None) is not None and ev is not None and ev.position()['seek_to'] is not None:
         return '녹화 위치를 옮긴 뒤 다시 시도하세요'
+    return None
+
+
+AUTO_WORDS = {   # 11-16: the manual texts that tell the user to try again, as the automatic choice says them (nothing to retry there)
+    '짐벌이 멈춘 뒤 다시 시도하세요': '짐벌이 움직이는 동안은 바꾸지 않음',
+    '녹화 위치를 옮긴 뒤 다시 시도하세요': '녹화 위치를 옮기는 중',
+    '검출기를 초기화하고 있습니다': '검출기를 준비하는 중',
+}
+
+
+def _resident():   # resident_det, if loaded (not imported here: it imports this file)
+    return sys.modules.get(__package__ + '.resident_det')
+
+
+def auto_conflict():
+    """11-16 (feed_auto.py): why the automatic choice must not change the cores now (page text), None = it may. Frame loop, under the feed lock.
+    The manual rules, and: no second engine, a replay, the end-to-end model, the resident detector pair while it uses cores 0 and 1 (Feed._auto
+    takes the feed up to them when the pair is wanted and only the single core keeps it from being made).
+    The gimbal following is not a reason by default: the gap of a switch is shorter than the gap of one dropped frame."""
+    app = vars(APP); feed = app.get('FEED'); live = app.get('LIVE')
+    why = switch_conflict(gimbal=not (feed is not None and feed.mon is not None and feed.mon.gimbal_ok))
+    if why is not None: return AUTO_WORDS.get(why, why)
+    if len(feed.eng) != 2: return 'NPU 1에 검출 모델이 올라가 있지 않습니다'
+    if getattr(live, 'replay', None) is not None: return '녹화 재생 중에는 자동으로 바꾸지 않습니다'
+    if e2e_live.skip_detector(): return '엔드투엔드 모델 사용 중'
+    rm_ = _resident(); res = getattr(rm_, 'RES', None)
+    if res is not None and (res.pairs is not None or (feed.mode == 'arrival' and rm_.wants_cores())): return '두 모델 상주가 NPU 0·1 교대를 씁니다'
     return None
 
 
@@ -174,9 +241,12 @@ def make_second():
 
 def start():
     """Start the feed for arrival mode or for an opted-in live mode switch."""
-    hot_switch = APP.FEED_HOT_SWITCH and not APP.FEED_INCOMPATIBLE
-    if APP.FEED_MODE != 'arrival' and not hot_switch: return None
+    auto = APP.FEED_MODE == 'auto'   # 11-16: auto keeps both engines like LWIR_NPU_HOT_SWITCH=1, without that variable
+    asked_ = auto or os.environ.get('LWIR_NPU_FEED') == 'auto' or saved_auto_live()   # ... also after the page left auto: it can be chosen again
+    hot_switch = (APP.FEED_HOT_SWITCH or (asked_ and ready_prefetch_compatible(APP.args))) and not APP.FEED_INCOMPATIBLE
+    if APP.FEED_MODE == 'normal' and not hot_switch: return None
     why_ = APP.FEED_INCOMPATIBLE; second_ = None
+    if auto and not hot_switch and not why_: why_ = 'it needs --live-wait 0'   # the one condition of ready_prefetch_compatible that refuse_reason does not have
     reason = '현재 검출 설정에서는 두 NPU에 교대로 넣을 수 없습니다'
     if not why_:
         try: second_ = make_second()
@@ -186,17 +256,23 @@ def start():
     if why_:
         if not hot_switch:
             APP.FEED_REASON = reason
-            camera_extra.say('FEED arrival refused: %s. The normal path is used.' % why_)
+            camera_extra.say('FEED %s refused: %s. The normal path is used.' % ('auto' if auto else 'arrival', why_))
             return None
         camera_extra.say('FEED: %s. Core 0 remains available.' % why_)
     f_ = Feed(second_, hot_switch=hot_switch)
     if second_ is None and APP.FEED_MODE == 'arrival':
         f_.reason = 'NPU 1에 검출 모델을 올리지 못했습니다. NPU 0에서 실행 중입니다'
     sw_ = _switch_interval()
-    if f_.mode == 'arrival':
+    if auto:
+        m_ = f_.mon
+        camera_extra.say('FEED auto on: NPU core 0 only%s; cores 0 and 1 when detection p90 > %.2f x camera period for %g s or %d frames are dropped in %g s, '
+                         'back when p90 on core 0 < %.2f x period for %g s (least %g s between switches)'
+                         % ('' if second_ is not None else ' (no second engine: it stays there)', m_.up, m_.up_hold_s, m_.drops_up, m_.window_s, m_.down, m_.down_hold_s, m_.dwell_s))
+    elif f_.mode == 'arrival':
         camera_extra.say('FEED arrival on: frames go to the detector as they arrive, model %s on NPU cores 0 and 1%s' % (APP.det_names[0], ', thread switch interval %g ms' % (sw_ * 1000) if sw_ else ''))
     else:
-        camera_extra.say('FEED normal on: frames go to the detector on NPU core 0')
+        camera_extra.say('FEED normal on: frames go to the detector on NPU core 0%s' % (' (live switch kept: auto was chosen before and can be chosen again on the page)'
+                                                                                         if hot_switch and not APP.FEED_HOT_SWITCH else ''))
     return f_
 
 
@@ -211,16 +287,27 @@ def _switch_interval():
 
 
 class _Rec:
-    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc')
+    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc', 'grp')
 
 
 class Feed:
+    held = None      # 11-15 resident_det: busy flags of the other model's engines on the same cores (one frame per core at a time), None = none
+    on_take = None   # 11-15 resident_det: called (frame thread, Feed.wait) with each frame record and its engine pair once its result is collected, None = nothing
+    _tgt_e = None    # the engine the feeding thread is submitting to (chosen under the lock)
+    mon = None       # 11-16 feed_auto.Monitor: service time, deadline misses, the automatic choice of cores (None = not measured)
+    auto_to = None   # 11-16: 'arrival' / 'normal' while pending is the automatic choice's own switch (the setting stays 'auto')
+    auto_err = None  # 11-16: why the automatic choice stopped (an error in its rule), for /rules npu_feed.auto_error
+    auto_live = False   # 11-16: the live switch is there because auto was asked for (not LWIR_NPU_HOT_SWITCH=1): a saved page choice records it
+    _clock = staticmethod(time.perf_counter)   # 11-16: the automatic choice's clock (tests put their own)
+
     def __init__(self, second_, *, hot_switch=False):
         self.eng = [APP.a] + ([second_] if second_ is not None else [])
         self.busy = [False] * len(self.eng)
         self.last_e = len(self.eng) - 1
         self.hot_switch = hot_switch
-        self.mode = APP.FEED_MODE if second_ is not None else 'normal'
+        self.auto_live = bool(hot_switch and not vars(APP).get('FEED_HOT_SWITCH'))
+        self.mode = 'arrival' if (APP.FEED_MODE == 'arrival' and second_ is not None) else 'normal'   # auto starts on core 0 only
+        self.mon = feed_auto.Monitor()
         self.pending = None
         self.out = collections.deque()   # 검출기에 넣은 프레임 (도착 순서). 프레임 반복이 아직 받아 가지 않은 것
         self.redo = collections.deque()  # 모델을 바꿀 때 옛 모델에 들어가 있던 프레임: 새 모델에 다시 넣을 것 (도착 순서)
@@ -238,35 +325,55 @@ class Feed:
         return getattr(self.eng[0], name_)
 
     # ---------------------------------------------------------------- 넣는 스레드
+    def _idle(self, e_):   # engine e_ of the pair in use is free, and so is its core (resident_det: the other pair may still run its last frame there)
+        h_ = self.held
+        return not self.busy[e_] and not (h_ is not None and e_ < len(h_) and h_[e_])
+
     def _free(self):
         if self.mode == 'normal':
-            return 0 if not self.busy[0] else None
+            return 0 if self._idle(0) else None
         n_ = len(self.eng)
         for k_ in range(1, n_ + 1):
             e_ = (self.last_e + k_) % n_
-            if not self.busy[e_]: return e_
+            if self._idle(e_): return e_
         return None
 
+    def _core_bound(self):
+        """11-16, under the lock, while a waiting frame cannot be fed: True = every usable core holds a frame and the frame loop is waiting on one of
+        them (more cores or a faster detector would help: a 'busy' drop), False = a core is free but the frame fed ahead is not taken yet (the loop is
+        behind). A busy flag is cleared only when the loop takes the result, so 'held by the frame ahead' and 'held by the frame the loop waits on'
+        differ by the frames in out."""
+        if self._free() is not None: return False
+        n_ = 1 if self.mode == 'normal' else len(self.eng)
+        return sum(1 for k_ in range(min(n_, len(self.busy))) if self.busy[k_]) > len(self.out)
+
     def _run(self):
-        L_ = APP.LIVE; e_ = None
+        L_ = APP.LIVE; e_ = None; grp_ = None
         try:
             while True:
                 with L_.cond:
                     while True:
                         if self.quit or L_.stopped or getattr(L_, 'restart_stop', False): return
                         if not self.paused and self.pending is None:
-                            e_ = self._free() if len(self.out) < AHEAD else None
-                            if e_ is None and not camera_extra.replay_eval.lossless():
-                                while len(L_.q) > 1: L_.q.popleft(); L_.q_drop += 1; self.st['drop_wait'] += 1   # 지금은 넣을 수 없다: 기다리는 것은 가장 새 프레임 1 장만
+                            skip_ = e2e_live.skip_detector()   # 11-14: end-to-end model on -> the frame is queued without the detector (engine -1)
+                            e_ = (-1 if skip_ else self._free()) if len(self.out) < AHEAD else None
+                            if e_ is None and not camera_extra.replay_eval.lossless() and len(L_.q) > 1:
+                                b_ = self._core_bound()   # 11-16: before, len(out) < AHEAD (never true in arrival with both cores busy)
+                                while len(L_.q) > 1: self._drop(L_.q.popleft()[0], b_)   # 지금은 넣을 수 없다: 기다리는 것은 가장 새 프레임 1 장만
                             elif e_ is not None and (self.redo or L_.q): break
                         L_.cond.wait(timeout=0.5)
                     r_ = self.redo.popleft() if self.redo else None
                     if r_ is None:
+                        if getattr(APP, 'FEED_MODE', None) == 'auto' and not camera_extra.replay_eval.lossless():
+                            while len(L_.q) > 1: self._drop(L_.q.popleft()[0], False)   # 11-16 auto: never an older frame while a newer one waits (frames that queued up during a switch)
                         t_, raw_ = L_.q.popleft()
+                        if self.mon is not None: self.mon.arrive(t_)
                         if camera_extra.replay_eval.lossless():
                             L_.cond.notify_all()
-                    self.busy[e_] = True; self.working = True
-                    if sum(self.busy) > 1: self.st['overlap'] += 1
+                    grp_ = (self.eng, self.busy)   # the pair chosen under the lock: resident_det may point the feed at the other pair before this frame is submitted
+                    if e_ >= 0: self.busy[e_] = True; self._tgt_e = self.eng[e_]
+                    self.working = True
+                    if sum(self.busy) + (sum(self.held) if self.held is not None else 0) > 1: self.st['overlap'] += 1
                 self._job = None
                 if r_ is None:
                     restart = camera_extra.replay_eval.reset_first_input(t_)
@@ -274,16 +381,23 @@ class Feed:
                     sc_ = stab_live(g8_, t_, gg_) if STAB['on'] else stab_off()
                     r_ = _Rec(); r_.seq = self.seq; self.seq += 1; r_.t = t_; r_.raw = raw_; r_.g8 = g8_; r_.gg = gg_; r_.stab = sc_
                     r_.gmc = self._gmc(gg_, restart) if APP.args.gmc_thread else None
-                self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
-                r_.e = e_; r_.job = self._job
+                if e_ >= 0: self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
+                else: r_.t_sub = time.perf_counter_ns(); self._job = None; e2e_live.prefetch(r_.gg)   # 11-15: the end-to-end AE starts on arrival
+                r_.e = e_; r_.job = self._job; r_.grp = grp_ if e_ >= 0 else None; self._tgt_e = None
                 with L_.cond:
-                    self.out.append(r_); self.last_e = e_; self.working = False
-                    self.st['submitted'] += 1; self.st['core'][e_] += 1; self.st['max_ahead'] = max(self.st['max_ahead'], len(self.out))
-                    e_ = None; L_.cond.notify_all()
+                    self.out.append(r_); self.working = False
+                    if e_ >= 0: self.last_e = e_; self.st['submitted'] += 1; self.st['core'][e_] += 1
+                    else: self.st['e2e_skip'] = self.st.get('e2e_skip', 0) + 1
+                    self.st['max_ahead'] = max(self.st['max_ahead'], len(self.out))
+                    e_ = None; grp_ = None; L_.cond.notify_all()
         except BaseException as x_:
             with L_.cond:
-                if e_ is not None and self._job is None and e_ < len(self.busy): self.busy[e_] = False
-                self.err = repr(x_)[:200]; self.working = False; L_.cond.notify_all()
+                if e_ is not None and e_ >= 0 and self._job is None and grp_ is not None and e_ < len(grp_[1]): grp_[1][e_] = False
+                self._tgt_e = None; self.err = repr(x_)[:200]; self.working = False; L_.cond.notify_all()
+
+    def _drop(self, t_, busy_):   # under the lock: one waiting frame thrown away. busy_ = because no core was free (not because the frame loop is behind)
+        APP.LIVE.q_drop += 1; self.st['drop_wait'] += 1
+        if self.mon is not None: self.mon.drop(t_, busy_)
 
     def _gmc(self, gg_, restart=False):   # camera_motion.gmc_submit 과 같은 일 (첫 프레임에서 계산 객체를 만들고, 작업 스레드에 순서대로 맡긴다). 프레임 번호는 받아 갈 때 붙는다
         if restart or not APP.gmc_objs:
@@ -292,7 +406,7 @@ class Feed:
 
     def submit(self, x_, f_):   # detect_frame.submit_tiles 가 APP.a.submit 으로 부른다
         if self.direct: return self.eng[0].submit(x_, f_)
-        e_ = self.eng[self.tgt]
+        e_ = self._tgt_e if self._tgt_e is not None else self.eng[self.tgt]
         self._job = e_.b.run_async(x_, user_arg={'f': f_}, output_buffer=e_.packed)
 
     # ---------------------------------------------------------------- 프레임 반복 (app.py) 이 부르는 것
@@ -314,16 +428,18 @@ class Feed:
     def request_mode(self, mode):
         """Reserve one mode change under the same condition as submission."""
         if mode not in MODES:
-            return False, 'NPU 검출 모드는 arrival 또는 normal이어야 합니다'
+            return False, 'NPU 검출 모드는 arrival, normal, auto 가운데 하나여야 합니다'
         with APP.LIVE.cond:
             conflict = switch_conflict()
             if conflict is not None:
                 return False, conflict
-            if self.pending is not None:
+            if manual_pending(self):   # 11-16: an automatic switch waiting for the next frame is replaced by this choice
                 return False, 'NPU 검출 모드를 바꾸고 있습니다'
-            if mode == 'arrival' and len(self.eng) != 2:
+            if mode == 'auto' and APP.FEED_MODE == 'auto':   # 11-16: already auto (a second tab, a repeated request): the cores in use and the rule stay as they are
+                return True, '이미 자동입니다'
+            if mode != 'normal' and len(self.eng) != 2:
                 return False, 'NPU 1에 검출 모델이 올라가 있지 않습니다'
-            self.pending = mode
+            self.auto_to = None; self.pending = mode   # auto_to first: a reader without the lock (manual_pending) never sees a page choice as automatic
             self.reason = None
             APP.LIVE.cond.notify_all()
         return True, 'NPU 검출 모드 변경을 요청했습니다'
@@ -333,42 +449,92 @@ class Feed:
         mode = self.pending
         if mode is None or self.out or self.working or any(self.busy):
             return
+        to_ = self.auto_to
+        if to_ is not None:   # 11-16: the automatic choice's own switch. The setting stays 'auto', nothing is saved
+            try:
+                why_ = auto_conflict() if self.mon is not None else ''
+                if why_ is None:
+                    text_ = self.mon.switched(to_, self._clock())
+                    self.mode = to_; self.last_e = len(self.eng) - 1
+                    camera_extra.say('FEED auto: %s' % text_)
+                elif why_: self.mon.held(why_)
+            except Exception as x_:
+                self._auto_stop(x_)
+            self.pending = None; self.auto_to = None; APP.LIVE.cond.notify_all(); return
         self.reason = switch_conflict()
         if self.reason is None:
             try:
-                save_mode(mode)
+                save_mode(mode, auto_live=True) if self.auto_live else save_mode(mode)   # 11-16: the live switch came from auto: keep it at the next start
             except (OSError, ValueError) as exc:
                 print('FEED selection not saved: %r' % exc, flush=True)
                 self.reason = 'NPU 검출 모드를 저장하지 못했습니다'
             else:
-                self.mode = APP.FEED_MODE = mode
+                APP.FEED_MODE = mode
+                if mode != 'auto': self.mode = mode   # 11-16: into auto the cores in use stay (on two cores: the rule returns after its usual hold)
                 self.last_e = len(self.eng) - 1
+                if self.mon is not None: self.mon.reset()
                 camera_extra.say('FEED mode changed to %s' % mode)
         self.pending = None
         APP.LIVE.cond.notify_all()
+
+    def _auto_stop(self, x_):   # 11-16: an error in the rule stops the rule, not the frames (the cores in use stay); the page says so (status auto_error)
+        self.mon = None; self.auto_err = repr(x_)[:160]
+        print('FEED auto stopped on an error (%s): the cores in use stay as they are' % self.auto_err, flush=True)
+
+    def _auto(self):
+        """11-16, frame loop, once per frame, under the lock: measure and judge the camera period, and in the 'auto' setting ask for a switch when
+        the rule says so (feed_auto.py)."""
+        m_ = self.mon
+        if m_ is None: return
+        now_ = self._clock()
+        m_.close(now_)   # a frame whose result was not sent to the gimbal (sent() closes the others) is finished now
+        if self.paused or self.pending is not None: return
+        on_ = getattr(APP, 'FEED_MODE', None) == 'auto'
+        try:
+            to_ = m_.step(now_, self.mode, on_, auto_conflict, cores=len(self.eng), judge=getattr(APP.LIVE, 'replay', None) is None)
+            if m_.note: camera_extra.say(m_.note); m_.note = ''   # the period cannot be kept with this model / can again
+            if (to_ is None and on_ and m_.t_eval == now_ and self.mode == 'normal' and len(self.eng) == 2 and _resident() is not None
+                    and _resident().wants_cores() and auto_conflict() is None):   # the resident pair is wanted: only core 0 alone keeps it from being made
+                to_ = 'arrival'; m_.log = 'the resident detector pair (resident_det) needs cores 0 and 1 alternating'
+                m_.snap = dict(m_.snap, why='두 모델 상주에 NPU 0·1 교대가 필요함 · 바꾸는 중')
+        except Exception as x_:
+            self._auto_stop(x_); return
+        if to_ is not None: self.auto_to = to_; self.pending = 'auto'; APP.LIVE.cond.notify_all()
 
     def submit_time(self, g_, k_):
         if self.direct or self.cur is None: return detect_frame.submit_tiles(g_, k_)
         return self.cur.t_sub
 
+    def cur_submitted(self):
+        """Frame loop (11-14): False when the current frame was queued without the detector (end-to-end model on)."""
+        return self.direct or self.cur is None or self.cur.e >= 0
+
     def wait(self):
         if self.direct or self.cur is None: return self.eng[0].wait()
         r_ = self.cur; self.cur = None
-        return self._collect(r_, True)
+        g_ = getattr(r_, 'grp', None)   # _collect drops it
+        o_ = self._collect(r_, True)
+        if self.on_take is not None: self.on_take(r_, g_)   # 11-15 resident_det: the result is in hand (timing of the first detection of the new model after an instant switch)
+        return o_
 
     def _collect(self, r_, keep_):
-        e_ = self.eng[r_.e]
+        if r_.e < 0: return None   # 11-14: queued without the detector
+        eng_, busy_ = r_.grp if r_.grp is not None else (self.eng, self.busy)   # 11-15: the pair it was submitted to (resident_det may have switched the feed since)
+        e_ = eng_[r_.e]
         try:
-            APP.pending[e_.name] = r_.job; o_ = e_.wait()
+            APP.pending[e_.name] = r_.job; tw_ = time.perf_counter_ns(); o_ = e_.wait()
+            if keep_ and self.mon is not None: self.mon.result(r_.e, r_.t, r_.t_sub, tw_, time.perf_counter_ns())   # 11-16: service time of this frame
             if keep_: o_ = [np.array(v_, copy=True) if np.may_share_memory(v_, e_.packed) else v_ for v_ in o_]   # 같은 엔진에 다음 프레임이 곧 들어간다
         finally:
-            with APP.LIVE.cond: self.busy[r_.e] = False; APP.LIVE.cond.notify_all()
+            with APP.LIVE.cond: busy_[r_.e] = False; r_.grp = None; APP.LIVE.cond.notify_all()   # grp dropped: a released engine must not stay referenced (do_model_swap frees it by gc)
         return o_
 
     def _next(self):   # camera_link.live_next 와 같은 일을 한다. 다른 점: 줄 대신 "검출기에 넣어 둔 프레임"에서 꺼내고, 8 비트 바꾸기·흔들림 보정은 넣는 스레드가 이미 했다
         L_ = APP.LIVE
+        first_ = True
         while True:
             with L_.cond:
+                if first_: first_ = False; self._auto()   # 11-16
                 while not self.out and not getattr(L_, 'restart_stop', False):
                     self._apply_mode()
                     if self.err is not None or L_.stopped: break
@@ -420,9 +586,10 @@ class Feed:
 
     def _off(self, why_):   # 이 방식을 끈다: 여기서부터 read_frame 은 보통 읽기(live_next), APP.a 는 첫째 엔진
         self._stop_thread(); self._drain()
+        with APP.LIVE.cond: self.mon = None   # 11-16: nothing is measured from here; /rules must not keep the last period statement
         APP.a = self.eng[0]; second_ = self.eng[1:]; self.eng = self.eng[:1]; self.direct = True
         self.mode = 'normal'
-        self.pending = None
+        self.pending = None; self.auto_to = None
         for e_ in second_:
             try: e_.b.dispose()
             except Exception: pass
@@ -434,13 +601,14 @@ class Feed:
         L_ = APP.LIVE
         with L_.cond:
             self.paused = True
+            if self.auto_to is not None: self.pending = None; self.auto_to = None   # 11-16: an automatic switch asked for just before this change is dropped (it was for the old model)
             while self.working and self.th.is_alive(): L_.cond.wait(0.2)
         rs_ = self._drain(); self.st['swaps'] += 1; self.st['redo'] += len(rs_)
         self.redo.extendleft(reversed(rs_))   # 옛 모델에 들어가 있던 프레임: 바꾼 뒤 새 모델에 다시 넣는다 (보통 방식과 같다)
         APP.a = self.eng[0]
         for engine in self.eng[1:]:
             engine.b.dispose()
-        self.eng = []; self.busy = []   # 바꾸는 코드(do_model_swap)가 옛 첫째 엔진을 비우고 새 엔진을 만든다
+        self.eng = []; self.busy = []; self.held = None   # 바꾸는 코드(do_model_swap)가 옛 첫째 엔진을 비우고 새 엔진을 만든다 (상주하던 다른 짝은 resident_det.before_swap 이 놓는다)
 
     def resume(self, code_):   # 바꾼 뒤. code_ = do_model_swap 의 답 (5 = 되돌리기도 실패: 프레임 반복이 곧 오류로 끝난다)
         if self.direct or code_ == 5: return
@@ -453,9 +621,11 @@ class Feed:
                 self.reason = 'NPU 1에 검출 모델을 올리지 못했습니다. NPU 0에서 실행 중입니다'
             camera_extra.say('FEED arrival: the second detector engine on NPU core 1 could not be made for %s (%s). Frames are still fed as they arrive, on core 0 only.' % (APP.det_names[0], repr(e_)[:160]))
         self.eng = [prim_] + ([second_] if second_ is not None else []); self.busy = [False] * len(self.eng); self.last_e = len(self.eng) - 1
-        self.mode = APP.FEED_MODE if second_ is not None else 'normal'
+        self.mode = (APP.FEED_MODE if APP.FEED_MODE != 'auto' else self.mode) if second_ is not None else 'normal'   # auto: the cores in use stay, the new model is measured from here
         APP.a = self
-        with APP.LIVE.cond: self.paused = False; APP.LIVE.cond.notify_all()
+        with APP.LIVE.cond:
+            if self.mon is not None: self.mon.reset()
+            self.paused = False; APP.LIVE.cond.notify_all()
 
     def close(self):   # 프레임 반복이 끝난 뒤. 둘째 엔진을 닫는다 (첫째는 app.py 가 전처럼 닫는다)
         if self.closed: return

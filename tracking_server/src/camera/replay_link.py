@@ -12,10 +12,16 @@
 - 영상 플레이어처럼 조종 (11-12): 재생 프로그램의 표준 입력에 줄을 쓴다 (SEEK <번호>, PAUSE, PLAY, SPEED <fps>; 쓰는 곳 = Ctl). 같은 종류는 모아서 마지막 것만 보낸다.
   재생 프로그램이 이미 끝났거나(끊어진 파이프) 줄이 몰려도 서버는 멈추지 않는다. 위치(pos)는 프레임 머리에서 읽은 값이다 (replay_eval.Eval.position).
   건너뛰면 재생 프로그램이 1.2 초 쉬고 새 프레임을 보내서, 서버의 "입력이 1 초 넘게 끊기면 추적을 새로 시작" 규칙이 추적을 비운다. 멈춘 동안은 같은 프레임을
-  초당 5 장 "되풀이" 표시를 달아 보낸다 (서버가 카메라가 죽었다고 다시 띄우지 않게, 그림이 계속 갱신되게. 채점하지 않는다). 짐벌 안전은 그대로다 (멈춘 중·건너뛰는 중에도 사람 없음).
+  초당 5 장 "되풀이" 표시를 달아 보낸다 (서버가 카메라가 죽었다고 다시 띄우지 않게. 채점하지 않는다). 정답 라벨이 있는 녹화는 되풀이 장을
+  처리 줄에 넣지 않으므로 그림을 새로 만들지 않고, 이미 나간 그 장면의 그림을 그대로 둔다 (11-13: camera_link.replay_holds_picture 가 "영상 없음" 그림으로 덮지 않게 막는다). 짐벌 안전은 그대로다 (멈춘 중·건너뛰는 중에도 사람 없음).
 - 재생을 한 번도 쓰지 않으면 이 파일은 아무것도 바꾸지 않는다 (cam_argv() 는 전과 같은 명령을 돌려준다, LIVE.replay 는 None).
+- 카메라로 돌아가기 (11-15): 재생을 멈추면(또는 재생 프로그램이 스스로 끝나면) 카메라 프로그램을 한 번만 띄운다. 그 프로그램은 서버만큼 오래 사는 스레드가
+  띄운다 (spawn_keeper.py: 바꾸기 스레드가 띄우면 그 스레드가 끝날 때 cam_pipe 가 SIGTERM 을 받아 카메라를 다시 닫았고, 20초 뒤 두 번째로 열었다).
+  멈춘 때부터 카메라의 첫 프레임까지 state()['returning'] 이 True 이고 화면은 그동안 "카메라로 돌아가는 중"을 보여 준다.
 - 정답과 비교 (11-12, replay_eval.py): 재생 카메라는 늘 프레임 머리(LWIR_CAM_STAMP=1)와 PNG 번호(--tag)를 붙여 띄운다 (spawn).
   카메라 쪽 설정(LWIR_CAM_STAMP)과 상관없이 재생 프로그램에만 그렇게 하고, 진짜 카메라를 띄우는 길은 바꾸지 않는다.
+- 저장된 결과 (11-13, src/track/replay_backends.py): --replay-tracks-root 를 주면 <그 폴더>/<녹화 이름>/<key>.mot.txt 와 <key>.json 을 찾아
+  그 녹화의 재생 추적기 'pre:<key>' 로 내놓는다. 고르면 서버 추적기의 상자 대신 파일의 상자와 번호를 그리고 채점한다. 옵션을 주지 않으면 아무것도 바뀌지 않는다.
 """
 import os
 import re
@@ -26,15 +32,18 @@ import time
 from ..common.state import APP
 from ..common.shared_values import HERE
 from ..track.bytetrack import available_bytetrack_library
+from ..track import replay_backends
 from ..web.preview_worker import set_preview_producer
 from . import camera_extra
 from . import replay_eval
+from . import stall_diag   # 11-13: stall log (LWIR_STALL_DIAG=1 only)
 
 FPS_MIN, FPS_MAX, FPS_DEF = 5.0, 30.0, 25.0
 LIST_TTL = 60.0
 MAX_DEPTH = 4                     # root 아래 이 깊이까지 찾는다 (opi_sequences/seq_018 = 2)
 NUM_PNG = re.compile(r'^\d+\.png$', re.I)
 SEEK_GAP_S = 1.2                  # replay_cam.py 의 --gap 기본값과 같다 (참고용: 건너뛴 뒤 첫 프레임까지)
+RETURN_MAX_S = 60.0               # '카메라로 돌아가는 중' 표시의 한도. 그 뒤에도 영상이 없으면 화면의 보통 카메라 안내가 대신한다
 NOTE_8BIT = '8비트 녹화: 온도 Filter 가 맞지 않아 사람이 걸러질 수 있음. 보려면 온도 Filter 를 잠시 끄세요'
 _C = dict(t=-1e9, items=[], root=None)
 
@@ -113,12 +122,13 @@ def listing(refresh_=False):
     if r_ is None and m_ is None: return []
     key_ = (r_, m_)
     if refresh_ or _C['root'] != key_ or time.monotonic() - _C['t'] > LIST_TTL:
-        items_ = []
+        items_ = []; td_ = stall_diag.mark()   # None unless LWIR_STALL_DIAG=1
         try: items_ += _scan(r_) if r_ else []
         except OSError: pass
         try: items_ += _scan_measure(m_) if m_ else []
         except OSError: pass
         _C.update(t=time.monotonic(), items=items_, root=key_)
+        stall_diag.span(td_, 'scan of the recordings list (GET /replay, at most once a minute per page)')
     return _C['items']
 
 
@@ -142,6 +152,60 @@ def find(name_):   # 이름 -> (목록 항목, images 폴더의 절대 경로) �
     if os.path.commonpath([rr_, d_]) != rr_ or not os.path.isdir(d_): return None, '녹화 폴더 밖을 가리킴'
     if not it_['usable']: return None, it_.get('note', '쓸 수 없는 녹화')
     return it_, d_
+
+
+NO_STORED = '이 녹화에는 저장된 결과가 없습니다'
+_T = dict(t=-1e9, key=None, items=None, found={}, sigs={})
+_T_LOCK = threading.Lock()   # 다시 읽는 동안 들어온 다른 요청이 같은 읽기를 겹쳐 시작하지 않게 한다
+
+
+def tracks_root():   # 저장된 결과 폴더 (--replay-tracks-root). 주지 않았거나 폴더가 없으면 None = 이 기능은 아무것도 하지 않는다
+    t_ = getattr(APP.args, 'replay_tracks_root', '') or ''
+    return t_ if t_ and os.path.isdir(t_) else None
+
+
+def _stored_sig(d_, im_, frames_):   # 한 녹화의 저장된 결과가 그대로인지 보는 값: 결과·설명 파일의 (이름, 크기, 바뀐 시각) + 녹화의 PNG 수 + images 폴더의 바뀐 시각. 읽지 못하면 None (= 다시 읽는다)
+    try:
+        with os.scandir(d_) as es_:
+            fs_ = sorted((e_.name, e_.stat().st_size, e_.stat().st_mtime_ns) for e_ in es_ if e_.name.endswith((replay_backends.MOT_EXT, replay_backends.META_EXT)))
+        return tuple(fs_), frames_, os.stat(im_).st_mtime_ns
+    except OSError: return None
+
+
+def stored_tracks(items_, refresh_=False):
+    """{녹화 이름: (쓸 수 있는 것 [dict(id, key, label)], 못 쓰는 것 [dict(key, why)])}. 녹화 목록처럼 60초마다 다시 본다.
+
+    다시 볼 때 파일을 처음부터 읽는 것(sha256, 모든 줄 풀기)은 _stored_sig 가 바뀐 녹화만 한다. 화면이 열려 있으면 카메라 추적 중에도
+    60초마다 여기로 오기 때문이다. 새로 고침(refresh=1)은 모두 다시 읽는다. 크기와 바뀐 시각이 같은 채 내용만 바뀐 파일은 새로 고침 전까지
+    목록에서 알아채지 못하지만, 재생을 시작할 때 _stored_target 과 replay_backends.make 가 언제나 처음부터 다시 읽고 확인한다."""
+    t_ = tracks_root(); r_ = root()
+    if t_ is None or r_ is None: return {}
+    key_ = (t_, r_)
+    with _T_LOCK:
+        if refresh_ or _T['key'] != key_ or _T['items'] is not items_ or time.monotonic() - _T['t'] > LIST_TTL:
+            found_ = {}; sigs_ = {}; old_ = _T['sigs'] if _T['key'] == key_ and not refresh_ else {}
+            for it_ in items_:
+                parts_ = it_['name'].split('/')
+                if not it_.get('usable') or parts_[0] == MEAS: continue
+                d_ = replay_backends.stored_dir(t_, it_['name'])
+                if d_ is None or not os.path.isdir(d_): continue
+                im_ = os.path.join(r_, *parts_, 'images')
+                sig_ = _stored_sig(d_, im_, it_.get('frames')); prev_ = old_.get(it_['name'])
+                res_ = prev_[1] if sig_ is not None and prev_ is not None and prev_[0] == sig_ else replay_backends.scan_stored(d_, im_, it_['name'])
+                if sig_ is not None: sigs_[it_['name']] = (sig_, res_)
+                if res_[0] or res_[1]: found_[it_['name']] = res_
+            _T.update(t=time.monotonic(), key=key_, items=items_, found=found_, sigs=sigs_)
+        return _T['found']
+
+
+def _stored_target(it_, d_, key_):   # 재생을 시작할 때: 고른 녹화의 저장된 결과를 지금 다시 읽어 확인한다 -> (dict(key, mot, meta, label), None) 또는 (None, 이유)
+    t_ = tracks_root()
+    paths_ = replay_backends.stored_paths(t_, it_['name'], key_) if t_ is not None and it_['name'].split('/')[0] != MEAS else None
+    if paths_ is None: return None, NO_STORED
+    try: item_ = replay_backends.PrecomputedTracks(key_, paths_[0], paths_[1], replay_backends.png_numbers(d_), it_['name'])
+    except replay_backends.Refused as e_: return None, '저장된 결과를 쓸 수 없습니다: %s' % e_
+    except Exception as e_: return None, '저장된 결과를 쓸 수 없습니다 (%s)' % type(e_).__name__   # OSError(전부터) 와 미처 생각하지 못한 깨진 파일: 409 로 답한다
+    return dict(key=key_, mot=paths_[0], meta=paths_[1], label=item_.label), None
 
 
 def blocking():   # 짐벌을 막아야 하는가 (재생 중 또는 바꾸는 중)
@@ -221,7 +285,8 @@ def spawn():   # lv_spawn 의 재생 판 (LIVE.replay 가 있을 때만): 머리
 
 
 def top_text(r_):   # 화면 그림 맨 윗줄 앞에 붙는 글 (cv2 는 한글을 못 그려서 ASCII 만)
-    return 'REPLAY ' + r_['name'].encode('ascii', 'replace').decode('ascii')
+    t_ = 'REPLAY ' + r_['name'].encode('ascii', 'replace').decode('ascii')
+    return t_ + ' | STORED ' + r_['tracks']['key'] if r_.get('tracks') else t_   # 저장된 결과를 그리는 중임을 그림에도 적는다
 
 
 def _msg(t_):
@@ -233,6 +298,21 @@ def _gimbal_stop():
         APP.GB.mover = None; APP.GB.state['answer'] = ''; APP.gb_send('H')
 
 
+def returning(live=None):
+    """11-15: True from 'stop the recording' until the first frame of the camera program started for it (at most
+    RETURN_MAX_S). The page shows '카메라로 돌아가는 중' instead of a black picture. Never raises."""
+    L_ = APP.LIVE if live is None else live
+    t_ = getattr(L_, 'replay_return_t', None)
+    if t_ is None: return False
+    if time.monotonic() - t_ > RETURN_MAX_S:
+        L_.replay_return_t = None; return False
+    if getattr(L_, 'replay_busy', False) or getattr(L_, 'replay', None) is not None: return True   # the switch has not started the camera program yet
+    p0_ = getattr(L_, 'proc_t0', None)
+    if p0_ is not None and p0_ >= t_ and getattr(L_, 'last_frame_t', 0.0) > p0_:   # a frame of the program started after the stop
+        L_.replay_return_t = None; return False
+    return True
+
+
 def async_preview(replay, worker):
     return bool(worker is not None and worker.async_replay and replay.get('preview', 'async') == 'async')
 
@@ -241,6 +321,7 @@ def state():
     L_ = APP.LIVE; r_ = getattr(L_, 'replay', None) if L_ is not None else None
     st_ = dict(on=r_ is not None, busy=bool(getattr(L_, 'replay_busy', False)), name=None, fps=None, loop=None, bits=None, frames=None, total=None, shown=None, pos=None, paused=False,
                seeking=False, seek_to=None, note=None, msg=getattr(L_, 'replay_msg', None)); st_['pass'] = None
+    st_['returning'] = returning(L_) if L_ is not None else False   # 11-15: the recording was stopped and the camera's first frame has not come yet
     if r_ is not None:
         n_ = max(0, L_.frames_in - r_['fin0']) if r_.get('fin0') is not None else 0
         ev_ = replay_eval.EV
@@ -253,6 +334,7 @@ def state():
                    pos=ps_.get('pos'), paused=bool(r_.get('paused')), seeking=ps_.get('seek_to') is not None, seek_to=ps_.get('seek_to'))   # pos = 0-based index of the frame on screen, from the frame header
         st_['pass'] = ps_.get('pass_')
         st_['backend'] = r_.get('backend', 'python')
+        if r_.get('tracks'): st_['backend_label'] = r_['tracks']['label']
         st_['preview'] = 'async' if async_preview(r_, worker) else 'sync'
         st_['pacing'] = r_.get('pacing', 'legacy')
     return st_
@@ -265,7 +347,22 @@ def get_info(q_):
     backends = [dict(id='python', label='현재 추적기')]
     if available_bytetrack_library(APP.args) is not None:
         backends.append(dict(id='cpp_bytetrack', label='C++ ByteTrack'))
-    return dict(backends=backends, result_views=True, available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=listing(refresh_) if r_ else [], state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
+    items_ = listing(refresh_) if r_ else []
+    stored_ = stored_tracks(items_, refresh_) if r_ else {}
+    if stored_:   # 저장된 결과가 있는 녹화에만 tracks 를 붙인다 (화면은 고른 녹화의 것만 보여 준다). backends 에는 이름을 찾을 수 있게 모두 넣고 stored 표시를 한다
+        labels_ = {}
+        for name_ in sorted(stored_):
+            for b_ in stored_[name_][0]: labels_.setdefault(b_['id'], b_['label'])
+        backends += [dict(id=id_, label=label_, stored=True) for id_, label_ in labels_.items()]
+        shown_ = []
+        for it_ in items_:
+            ok_, bad_ = stored_.get(it_['name'], ((), ()))
+            if ok_ or bad_:
+                it_ = dict(it_, tracks=[dict(id=b_['id'], label=b_['label']) for b_ in ok_])
+                if bad_: it_['tracks_note'] = '저장된 결과 %s 못 씀: %s' % (bad_[0]['key'], bad_[0]['why']) + (' (외 %d개)' % (len(bad_) - 1) if len(bad_) > 1 else '')
+            shown_.append(it_)
+        items_ = shown_
+    return dict(backends=backends, result_views=True, available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=items_, state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
 
 
 def start_request(q_):   # -> (http 코드, 글)
@@ -280,12 +377,17 @@ def start_request(q_):   # -> (http 코드, 글)
     pacing = pacing_values[0]
     backend = q_.get('backend', ['python'])[0]
     library = available_bytetrack_library(APP.args) if backend == 'cpp_bytetrack' else None
-    if backend not in ('python', 'cpp_bytetrack'):
+    stored_key = replay_backends.stored_key(backend) if tracks_root() is not None else None   # 'pre:<key>' (저장된 결과). 옵션이 없으면 전처럼 모르는 이름이다
+    if backend not in ('python', 'cpp_bytetrack') and stored_key is None:
         return 400, '알 수 없는 재생 추적기'
     if backend == 'cpp_bytetrack' and library is None:
         return 409, 'C++ ByteTrack 라이브러리가 설정되지 않았습니다'
     it_, d_ = find(q_.get('seq', [''])[0])
     if it_ is None: return (409 if not on() else 400), d_
+    tracks_ = None
+    if stored_key is not None:
+        tracks_, why_ = _stored_target(it_, d_, stored_key)
+        if tracks_ is None: return 409, why_
     L_ = APP.LIVE
     worker = getattr(L_, 'preview_worker', None)
     can_async = worker is not None and worker.async_replay
@@ -299,10 +401,12 @@ def start_request(q_):   # -> (http 코드, 글)
         if L_.stopped or APP.args.live_wait: return 409, '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
         if L_.cam_hold: return 409, '카메라 초기화나 다른 재생 바꾸기가 진행 중. 잠시 뒤 다시 누르세요'
         L_.cam_hold = True; L_.replay_busy = True   # 이 순간부터 짐벌에 사람을 보내지 않는다
+        L_.replay_return_t = None
         set_preview_producer(L_, None, before=time.perf_counter())
     _gimbal_stop()
     tgt_ = dict(name=it_['name'], dir=d_, fps=fps_, loop=lp_ == '1', bits=it_['bits'], frames=it_['frames'], fin0=None, paused=False,
                 backend=backend, tracker_library=library, preview=preview_mode, pacing=pacing)
+    if tracks_ is not None: tgt_['tracks'] = tracks_
     APP.lv_th.Thread(target=_switch, args=(tgt_,), daemon=True).start()
     return 200, '재생 시작: %s' % it_['name']
 
@@ -373,16 +477,44 @@ def restart_request():
     return start_request(query)
 
 
+def restart_after_change(why, *, tries=20, wait_s=0.5, start=None):
+    """11-13 (user): the detector model changed while a recording plays -> play it again from the first frame, so the
+    numbers are counted with one model only. Same recording, speed, repeat, tracker. Runs in its own thread (the caller is
+    the frame loop, which must not wait for the camera switch). -> the thread, or None when no recording plays."""
+    live_ = getattr(APP, 'LIVE', None)
+    target = getattr(live_, 'replay', None) if live_ is not None else None
+    if target is None:
+        return None
+    query = {'seq': [target['name']], 'fps': [str(target['fps'])], 'loop': ['1' if target.get('loop') else '0'],
+             'backend': [target.get('backend', 'python')]}
+    for k_ in ('preview', 'pacing'):
+        if k_ in target:
+            query[k_] = [target[k_]]
+    start = start or start_request
+
+    def run():
+        for _ in range(tries):   # 409 = another camera switch is still going: wait and try again
+            code_, text_ = start(query)
+            if code_ != 409:
+                break
+            time.sleep(wait_s)
+        print('REPLAY restart from the first frame (%s): %s %s' % (why, code_, text_), flush=True)
+    th_ = threading.Thread(target=run, daemon=True)
+    th_.start()
+    return th_
+
+
 def stop_request():
     L_ = APP.LIVE
     with L_.sys_lock, L_.cam_lock:
         if getattr(L_, 'replay', None) is None: return 409, '재생 중이 아님'
         if L_.cam_hold: return 409, '재생 바꾸기가 진행 중. 잠시 뒤 다시 누르세요'
         L_.cam_hold = True; L_.replay_busy = True
+        L_.replay_return_t = time.monotonic()   # 11-15: the page shows '카메라로 돌아가는 중' until the camera's first frame
         set_preview_producer(L_, None, before=time.perf_counter())
     _gimbal_stop()
     APP.lv_th.Thread(target=_switch, args=(None,), daemon=True).start()
-    return 200, '재생 멈춤: 카메라로 돌아가는 중 (영상은 10~60초 뒤)'
+    return 200, '재생 멈춤: 카메라로 돌아가는 중 (영상은 보통 5초 안)'
 
 def step_request():   # POST /replay/step: 멈춘 상태에서 다음 한 장만 보내고 다시 멈춤 (추적이 이어짐)
     r_, ctl_, e_ = _ctl_target()
@@ -416,6 +548,9 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
             if ev_ is None and tgt_.get('backend') == 'cpp_bytetrack':
                 _msg('C++ ByteTrack을 열지 못해 재생을 시작하지 않았습니다')
                 return
+            if ev_ is None and tgt_.get('tracks'):   # 저장된 결과를 다시 읽다가 실패: 서버 추적기의 상자를 대신 보여 주지 않는다
+                _msg('저장된 결과를 열지 못해 재생을 시작하지 않았습니다')
+                return
         if not _end_old(old_proc_, old_ is not None):
             _msg('카메라 프로그램이 45초 안에 끝나지 않아 재생을 시작하지 않음. 잠시 뒤 다시 누르세요'); return
         time.sleep(1.5)   # 옛 프로그램의 읽기 스레드가 파이프 끝을 먼저 본다. 옛 영상과 새 영상 사이가 1초를 넘어 추적이 새로 시작한다
@@ -436,11 +571,13 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
                 with L_.meas_lock:
                     if L_.meas is not None: L_.meas.setdefault('replay', []).append(tgt_['name'])
             _msg('재생 중: %s (%g fps, %s)' % (tgt_['name'], tgt_['fps'], '반복' if tgt_['loop'] else '한 번'))
-        else: _msg('재생 멈춤: 카메라 프로그램을 다시 시작함. 영상은 10~60초 뒤. 짐벌은 사람을 다시 누를 때까지 따라가지 않음')
+        else: _msg('재생 멈춤: 카메라 프로그램을 다시 시작함. 영상은 보통 5초 안. 짐벌은 사람을 다시 누를 때까지 따라가지 않음')
     except Exception as e_: _msg('재생 바꾸기 오류: %s' % type(e_).__name__)
     finally:
         if ev_ is not None and not installed:
             ev_.close('not started')
+        if tgt_ is None and not installed:
+            L_.replay_return_t = None   # the camera program was not started: no 'back to the camera' notice
         if (not installed and old_ is not None and not L_.stopped
                 and L_.proc is old_proc_ and getattr(L_, 'replay', None) is old_):
             set_preview_producer(L_, old_proc_, before=time.perf_counter())
@@ -457,12 +594,13 @@ def on_cam_lost(now_):   # lv_cam_wait (cam_lock 안, 주 스레드): 재생 프
             if now_ - L_.proc_t0 > 30: L_.proc.kill()
             return True
     L_.replay_src_t = time.perf_counter()
+    L_.replay_return_t = time.monotonic()   # 11-15: '카메라로 돌아가는 중' until the camera's first frame
     set_preview_producer(L_, None, before=L_.replay_src_t)
     L_.replay = None
     replay_eval.activate(None, None, 'ended' if rc_ == 0 else 'replay program ended with code %s' % rc_)
     with L_.cond: L_.q.clear()
     L_.cam_fail_n = 0; L_.cam_unrec_n = 0; L_.cam_next_spawn = None
     _gimbal_stop()
-    _msg(('재생 끝: %s. 카메라로 돌아감 (영상은 10~60초 뒤)' % r_['name']) if rc_ == 0 else ('재생 프로그램이 코드 %s 로 끝남 (%s). 카메라로 돌아감' % (rc_, r_['name'])))
+    _msg(('재생 끝: %s. 카메라로 돌아감 (영상은 보통 5초 안)' % r_['name']) if rc_ == 0 else ('재생 프로그램이 코드 %s 로 끝남 (%s). 카메라로 돌아감' % (rc_, r_['name'])))
     APP.lv_spawn()
     return True

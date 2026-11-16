@@ -70,6 +70,49 @@ class LiveTracksTests(unittest.TestCase):
         self.assertEqual(APP.GB.wq[-1], b'A 17\n')
         self.assertIsNone(APP.GB.wframe)
 
+    def test_picture_goes_to_the_bridge_only_while_a_pc_gui_wants_it(self):
+        """11-15: GUI_PICTURE 0 from the bridge = no PC GUI connected: the people go as a short F line, the same rows."""
+        APP.GB.gui = True
+        raw = np.full((480, 640), 413, np.uint16)
+        self.publish(raw16=raw)                     # a bridge that never said GUI_PICTURE (older build): picture, as before
+        g_header, g_picture = APP.GB.wframe.split(b'\n', 1)
+        self.assertTrue(g_header.startswith(b'G ') and g_picture == raw.tobytes())
+        APP.GB.gui_picture = False
+        self.publish(raw16=raw)
+        f_header, f_picture = APP.GB.wframe.split(b'\n', 1)
+        self.assertTrue(f_header.startswith(b'F '))
+        self.assertEqual(f_picture, b'')
+        self.assertEqual(f_header.split()[3:], g_header.split()[5:])   # <n> and the people rows are the same
+        self.assertEqual(APP.GB.people, self.people)
+        self.assertTrue(live_tracks.click(120, 100)[0])                # a click still selects from these rows
+        self.assertEqual(APP.GB.wq[-1], b'A 17\n')
+        APP.GB.gui_picture = True                   # the PC GUI connected: the very next frame carries the picture again
+        self.publish(raw16=raw, acknowledge=False)
+        self.assertTrue(APP.GB.wframe.startswith(b'G ') and APP.GB.wframe.endswith(raw.tobytes()))
+
+    def test_bridge_line_gui_picture_sets_the_switch(self):
+        gb = APP.GB
+        gb.lock = Lock(); gb.dev = 'synthetic'; gb.gui = True; gb.gui_picture = None
+        gb.state.update(running=True, ready=True, error=0, gui=dict(on=True, client=0, picture=1))
+        seen = []
+
+        def lines():
+            yield b'GUI_PICTURE 0\n'
+            seen.append((gb.gui_picture, gb.state['gui']['picture']))
+            yield b'GUI_PICTURE 2\n'            # not a valid value: ignored
+            yield b'GUI_PICTURE\n'
+            seen.append((gb.gui_picture, gb.state['gui']['picture']))
+            yield b'GUI_PICTURE 1\n'
+            seen.append((gb.gui_picture, gb.state['gui']['picture']))
+            yield b''
+
+        incoming = lines()
+        gb.proc = NS(stdout=NS(readline=lambda: next(incoming)), wait=lambda timeout: 0)
+        APP.lv_os = NS(O_WRONLY=1, O_NOCTTY=2, O_NONBLOCK=4,
+                       open=lambda *args: (_ for _ in ()).throw(OSError('simulated device is absent')))
+        gimbal_link.gb_reader(gb.proc)
+        self.assertEqual(seen, [(False, 0), (False, 0), (True, 1)])
+
     def test_camera_stabilization_keeps_click_in_display_coordinates(self):
         self.publish(correction=(10., 20.))
         self.assertEqual(APP.GB.people, self.people)

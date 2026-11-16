@@ -146,7 +146,7 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
         return std::atan(normalized * std::tan(fov * radians / 2));
     };
     const double x = double(t.x) + double(t.width) / 2 - width / 2.0;
-    const double y = observed_y(t, aim_y) - height / 2.0;
+    const double y = observed_y(t, aim_y) - height * smoothing_.aim_screen_y;   // 0.5 = picture centre (default)
     const double measured_x = error(x, width / 2.0, config_.fov_x_deg);
     const double measured_y = error(y, height / 2.0, config_.fov_y_deg);
     GimbalDemand d;
@@ -192,9 +192,27 @@ GimbalDemand AutoTrackingController::calculate(const Track& t, int width, int he
     d.x = direction(d.pid_x.value);
     // Image Y grows downward; the shared GUI/device command contract is +Y up.
     d.y = -direction(d.pid_y.value);
-    if (!d.stop())
-        d.speed = std::clamp(std::max(std::abs(d.pid_x.value), std::abs(d.pid_y.value)),
-                             double(config_.speed_min), double(config_.speed_max));
+    if (!d.stop()) {
+        double sx = std::abs(d.pid_x.value), sy = std::abs(d.pid_y.value);
+        if (smoothing_.far_gain > 1.0 || smoothing_.brake_px_per_spd > 0.0) {   // 11-13: far gain and near brake (off by default)
+            const auto shape = [&](double s, double err_px, double deadband_px) {
+                if (s <= 0) return s;
+                const double a = std::abs(err_px);
+                if (smoothing_.far_gain > 1.0 && a > smoothing_.far_start_px) {
+                    const double span = std::max(1.0, smoothing_.far_full_px - smoothing_.far_start_px);
+                    s *= 1.0 + (smoothing_.far_gain - 1.0) * std::min(1.0, (a - smoothing_.far_start_px) / span);
+                }
+                if (smoothing_.brake_px_per_spd > 0.0)
+                    s = std::min(s, std::max(double(config_.speed_min), (a - deadband_px) / smoothing_.brake_px_per_spd));
+                return s;
+            };
+            const double px = 640.0 / width;   // the pixel numbers refer to a 640-wide picture
+            sx = shape(sx, x * px, config_.deadband_x * 320.0);
+            sy = shape(sy, y * px, config_.deadband_y * 240.0);
+        }
+        d.speed_x = sx; d.speed_y = sy;
+        d.speed = std::clamp(std::max(sx, sy), double(config_.speed_min), double(config_.speed_max));
+    }
     if (smoothing_.catchup_speed > 0 && healthy_live) {
         const int knee = std::min(smoothing_.catchup_speed, config_.speed_max);
         const bool consecutive = have_catchup_sample_ && dt > 0 &&

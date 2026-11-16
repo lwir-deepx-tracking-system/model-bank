@@ -1,0 +1,83 @@
+{
+ "title": "box_refine=body v2 ('상체 네모로 통일'): aim-point anchor, repaired lookup table in its own file, detector families, detector-switch transition, size filter tuned on val-A - pre-registration",
+ "written": "2026-11-16, before any val-A, val-B or device-recording number of v2. Already known before writing: the train-split cell look (body_v2/results/train_look.json, body_v2/results/table_stats.json: train split only), every number of the pushed body mode and of gru2 (gru_v2/results/tables_body.md: val-B and the device-rate recordings), all earlier val-B looks of this line (v1 base, v1 combo, size v2, size v3, gru_v2 twice, body once). val-B has therefore been looked at about seven times in this line of work: it is weak evidence and is reported as such. The three device-rate recordings were used for gru_v2, gru_v3, body (pushed) and the by-eye sheets: also weak evidence.",
+ "user_rules": "2026-11-16: the detector model stays ('범용' pose); every box drawn and sent to the gimbal is one shape, head top to hips, near and far; it must change smoothly ('확확 변하면 안 되고') without more gimbal-aim lag or jitter; a simple method is preferred. The device gimbal aims at the box centre (bridge --aim-y 0.5).",
+ "anchor": {
+  "rule": "default anchor 'aim': the CONVERTED (unfiltered) box keeps its aim point top_c + aim_y x h_c and its centre x; the filtered width / height are placed around it: top = top_c + aim_y x (h_c - h_f). aim_y = the running bridge's --aim-y (box_refine._aim_y(), the size mode's reader and fallback: --gimbal-aim-y, else 0.5). 'top' (the pushed rule) and 'centre' stay selectable (BODY['anchor']).",
+  "check": "by construction the aim point (x and y) of body v2 equals the converted row's at every row; tested at aim_y 0.5, 0.37 and 0.08 in the unit tests and reported on val-B and the device recordings as the largest |difference| / h over all rows (must be < 1e-6) and as equal jitter and lag numbers"
+ },
+ "table_repair": {
+  "data": "TRAIN split only (TMOT train 19 + DanceTrack train 28 sequences), our two pose detectors (near expE_v1_best, far C_control_v1_epoch2), the corrected head-to-hip targets of gru_v2/v3b (g2_lib.fix_target), 402,155 pairs. Grid and reading unchanged: 11 detector-box height rows (edges 25, 35, 45, 55, 65, 80, 100, 130, 170, 230 px) x 8 aspect columns (edges 0.30, 0.36, 0.42, 0.48, 0.55, 0.65, 0.80), bilinear between the cell centres (box_refine.BodyTable.conv_delta).",
+  "fitted_value": "median of (dx / h, dy / h, log w ratio, log h ratio) of the cell's pairs (as before)",
+  "body_cell": "a cell is a BODY cell when at least min_hip_pairs of its pairs show both hips (keypoint visibility >= 0.5) and the median hip line lies inside body_hip_range of the detector box: the detection already is a body box by the detector's own keypoints (the body-box convention puts the hips at 0.93-0.96 of the box; the range allows the spread of the median). Value: identity (0, 0, 0, 0).",
+  "body_hip_range": [0.90, 1.00],
+  "min_hip_pairs": 20,
+  "why_min_hip_pairs": "the median of 20 hip positions separates a body box (hips at ~0.94) from a whole-person or knee-length box (hips at 0.5-0.78) by many standard errors (spread of the hip position in body boxes ~0.03 -> standard error ~0.01)",
+  "kept_cell": "a non-body cell keeps its fitted value only when ALL hold: n >= N pairs; pairs from >= min_sequences sequences; its sequence-bootstrap (bootstrap_draws draws, seed bootstrap_seed) 90 % interval of the height ratio is narrower than x max_boot90_ratio; and, when >= min_hip_pairs of its pairs show both hips, the fitted value puts their median hip line inside contradiction_hip_range of the converted box (else: contradiction).",
+  "N": 300,
+  "why_N": "train split (results/table_stats.json): in the well-populated whole-person cells the per-pair robust spread of the log height ratio is sigma = 0.078 and the pairs are strongly correlated (frames of one track): the sequence-bootstrap variance of the cell median is 16 x the independent-pairs variance (design effect, median over 9 cells). Standard error of the median = 1.2533 sigma sqrt(deff / n): 245 pairs for 0.025 (2.5 % in height), 382 for 0.02. N = 300 gives about 0.022 (90 % interval about +-3.7 %), well inside the 0.98-1.02 the close-people rule asks for, and excludes the cells the pushed table got wrong (300-pair last row is at the limit and is caught by its hips; 109 and 30 pairs at 65-100 px x 0.65-0.8).",
+  "min_sequences": 5,
+  "max_boot90_ratio": 1.15,
+  "why_max_boot90": "with N = 300 and the design effect 16 the expected 90 % interval width is about x 1.08; x 1.15 = twice that: a wider interval means the sequences disagree (mixed box definitions in the cell)",
+  "bootstrap_draws": 300,
+  "bootstrap_seed": 0,
+  "contradiction_hip_range": [0.90, 1.00],
+  "fill": "every other cell (no pairs, too few, unstable, contradiction) takes the value of the nearest BODY or KEPT cell of the same row (aspect column distance); on a tie the one whose log height ratio is closer to the cell's own fitted median (no pairs: the larger column); a row without any: the nearest row in the same column",
+  "file": "models/track/box_body_table_<date>.npz with keys tab, lh_cen, ar_cen, person (the person-family constant below), euro (the size filter chosen on val-A), anchor; + .json with how it was made (rules, counts, the cell traces summary, sha256). gru2 is removed from the server (coordinator 2026-11-16), so no second file is needed.",
+  "checks_before_val": "train split only: every non-identity cell listed with its rule; close people (rows >= 170 px) must be identity; the small whole-person cells (rows <= 100 px, aspect < 0.48) keep a fitted value of about 0.5 height"
+ },
+ "person_family": {
+  "why": "the table belongs to our pose detectors (body box above ~100 px, whole-person box below). Plain detectors (YOLO26x / YOLO26m / YOLO26s FLIR, YOLOv8, YOLOX, the internal names w480, s480, m640, s6, ft1, ft9) give a whole-person box at every size, so the table would leave close people as whole-person boxes.",
+  "server_rule": "family by the running detector key (APP.args.det, 'bank:<file stem>' or an internal name): 'pose' when the key contains 'bodybox' (both of our pose detector files, with or without keypoint heads), else 'person'. End-to-end models: the mode does not run (as before).",
+  "constant": "train split pairs whose detection is a body box by its own hips (both hips >= 0.5 and the pair's hip line inside body_hip_range of its detection) against the dataset's whole-person box (TMOT / DanceTrack ground truth, height >= min_gt_height): medians of top offset / person height, body height / person height, body width / person height or / person width (whichever has the smaller median absolute deviation of its log, the rule of PREREG_POS_REFINE target), centre x = the person box's (the measured cx offset is reported). Converted box: centre x of the person box, top = top + top_offset x h, height = k_h x h, width = k_w x h (or x w).",
+  "min_gt_height": 60,
+  "known_limit": "a plain detector boxes only the visible part: a person cut by the picture bottom or hidden behind something (desk) is drawn too small (0.53 of the visible part). Reported, eye-checked where possible; not corrected (no train-split data with visible-part boxes).",
+  "compare": "project BOX_ONLY (close_range_20261113/train/pose_partial.py: top +0.002, height 0.531, width 0.681 of the person width) and the stage 3a re-measurement (bodybox_ratio_mirrorfix.json: COCO 0.543, MOT17 0.519, OTP2 0.553, LLVIP 0.500 height)"
+ },
+ "detector_switch_transition": {
+  "rule": "per person, when the detector key in effect changes (box_refine eff_key, resident switch: only from the new model's first frame) and the person's previous output is recent (the blend rule: within 3 frames and 0.15 s or 2 frame intervals): delta0 = the conversion delta (dx/h, dy/h, log w ratio, log h ratio) the person's last row used, lh0 = the row's last log height (+ camera log scale since). On the following rows with a matched detection z of the new detector: delta_new = the new family's conversion of z; progress a = clip((log h_row - lh0) / (log h_z - lh0), 0, 1), never decreasing, a = 1 after T_SW = 1.0 s or when |log h_z - lh0| < 0.15 (the definitions agree); applied delta = (1 - a) delta0 + a delta_new. a = 1 ends the transition (back to the plain conversion of the row). Rows without a matched detection keep the last a. The row's height moves from the old definition to the new one through the tracker's Kalman filter; the mix follows exactly that progress, so the converted height and the aim point stay continuous for pose -> plain, plain -> pose and near <-> far.",
+  "state": "kept across the switch (size filter, hand-over, reset rules unchanged). box_blend stays available (size uses it); with body it only adds a blend of the (already continuous) output."
+ },
+ "filter_valA": {
+  "data": "val-A rows of gru_v2/v3b (data/rows_valA.pkl: TMOT seq12, 18, 26, 48, 64 + DanceTrack 0023, 0045, 0066, 0086; streams near, far, sw; corrected targets), every method run frame by frame through the server Refiner (hand-over on), detection = the matched detection when IoU(row, detection) >= 0.3 else the row (server rule), t = frame / fps, camera warp = server GMC, aim_y 0.5, family 'pose'.",
+  "grid": "mc_s in {0.2, 0.4, 0.8, 1.5, 3.0, 5.0, 8.0} Hz x beta_s in {0, 0.3, 1, 3, 10} (per log unit per s) x dcut 1 Hz = 35 points; anchor 'aim'; the repaired table",
+  "reference": "conv = the same converted rows without the size filter (the by-construction reference of the aim point)",
+  "objective": "J = mean over TMOT, DanceTrack (near + far + sw pooled) of (height-step p99 / conv's + per-track largest height step (median over tracks with >= 10 steps) / conv's) / 2; minimise",
+  "constraints": {
+   "C1_size_lag": "size lag in fast size changes (rows where the target's |d log h| >= 0.03 per frame): mean of sign(d log h_target) x (log h_out - log h_own_detection), own detection = the converted matched detection for body, the raw detection for the tracker row: body >= tracker row - 0.02 (2 % of the height), both datasets",
+   "C2_undersize_new": "first second of every state segment (t - t_start <= 1 s, rows k >= 1): share of rows with h_out / h_conv < 0.90 <= 5 %, both datasets",
+   "C3_undersize_growth": "fast growth (log h_conv grows >= 0.5 per second over the last 3 rows of the segment): median h_out / h_conv >= 0.90, both datasets (skipped with fewer than 50 rows)",
+   "C4_logh": "mean |log h_out / h_target| <= conv's + 0.005, both datasets"
+  },
+  "ties": "points within 0.005 of the best feasible J: the largest mc_s, then the largest beta_s (least lag)",
+  "infeasible": "if no point is feasible: the point with the smallest largest relative violation, reported as not meeting the val-A gates",
+  "compare": "the pushed 0.4 Hz beta 0 is a grid point: its J and constraint values are reported next to the choice",
+  "server_value": "the choice is written into the table file ('euro') and BODY before val-B / the device recordings are run"
+ },
+ "evaluation_once": {
+  "methods": "tracker row (today without smoothing) | size (the device's mode: SIZE = aim anchor, tracker size, 5 Hz, beta 3, aim_y = the metric's) | body_pushed (origin/main 3810b1f: lut_v3 table, top anchor, 0.4 Hz beta 0, no switch transition; checked equal to the origin/main code on one stream) | body_v2 | conv (body_v2 without the filter, reference)",
+  "valB": "gru_v2/v3b data/rows_valB.pkl (TMOT val 6 + DanceTrack 8; streams near, far = 'nf' pooled, and 'sw'), corrected targets",
+  "device": "the three device-rate recordings (MEASURE_20261109_140236_2, MEASURE_20261110_165240, MEASURE_20261110_170437; 23-24 fps, close indoor people, no GT; our two pose detectors on the PC CPU, server GMC, server ByteTrack; streams near, far, sw); reference height = tracker row",
+  "metrics_aim_y_0.5": "aim error / target h (val-B), aim jitter = RMS second difference of the aim point / reference h, aim lag vs the detection along the motion (own definition; speed bins 0.03-0.1 and > 0.1 h per frame); height-step p99, per-track largest step (median), first-5-rows step mean, detector-switch step (sw stream: switch frame and the next 2 frames mean / p95 / max), height / tracker row and |centre x - tracker centre x| / tracker h by tracker-row height bin (0-40, 40-70, 70-100, 100-170, 170-240, >= 240 px) and detector; the under-size numbers of C2 / C3; per-sequence bootstrap 90 % intervals (2000 draws, seed 0) for val-B differences against the tracker row and against body_pushed",
+  "aim_y_also": "the aim numbers again at aim_y 0.37 and 0.08 (body_v2 vs conv must be equal at each)"
+ },
+ "pass_rules": {
+  "valB_both_datasets_nf": {
+   "B1": "height-step p99 and per-track largest step: body_v2 - tracker upper bound < 0",
+   "B2": "aim error (aim 0.5): body_v2 - tracker upper bound <= +0.003",
+   "B3": "aim point equals conv's (max |diff| / h < 1e-6) at 0.5, 0.37, 0.08; aim jitter on rows with tracker height >= 100 px: body_v2^2 - tracker^2 upper bound <= 0.04 x tracker^2 (about +2 %); all-rows aim jitter vs tracker reported (not gated: on whole-person rows the body-box aim point is nearer the head by construction)",
+   "B4": "aim lag vs the own detection, fastest bin (> 0.1 h / frame): body_v2 - tracker lower bound >= -0.01",
+   "B5": "mean |log h / h_target|: body_v2 - body_pushed upper bound <= +0.005; median height / target inside [0.90, 1.10] in every tracker-height bin with >= 100 rows",
+   "B6": "C2 on val-B: share h_out / h_conv < 0.90 in the first second <= 5 %",
+   "B7": "sw stream: height step at the switch frame and the next 2 frames, p95: body_v2 - tracker upper bound < 0 (>= 20 events)"
+  },
+  "device": {
+   "D1": "close people (tracker row >= 170 px): median height / tracker row in [0.98, 1.02], median |centre x - tracker centre x| / h <= 0.01, both pose streams",
+   "D2": "height-step p99 <= tracker row's",
+   "D3": "aim point equals conv's (< 1e-6); aim jitter (0.5) <= 1.02 x tracker row's",
+   "D4": "first second: share h_out / h_conv < 0.90 <= 5 %"
+  },
+  "verdict": "all B and D rules pass -> body v2 is recommended to be switched on at the device (the code default stays 'off'); otherwise the failing rules are reported with the reason. Whatever the result, the eye check (task item 6) is reported separately and can veto."
+ },
+ "eye_check": "sheets under body_v2/eyecheck/: tracker row white, body v2 green; close, mid, far on the public val-B and on the device recordings, and our own camera's outdoor far frames (stage3a far_frames + model F predictions, single frames: each detection converted without the time filter). Count the green boxes that are not head top to hips, and why."
+}

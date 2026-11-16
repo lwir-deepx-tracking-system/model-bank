@@ -1,7 +1,7 @@
 #!/bin/bash
 # LWIR live server keep-alive v2 (2026-11-09). User requirement: once started, the tracker must never go off or stop.
 # Runs forever; cron starts it every minute under flock, so there is never a second copy and a dead copy is replaced within a minute:
-#   * * * * * flock -n $HOME/.lwir_keepalive.lock bash <clone>/tracking_server/scripts/keepalive.sh >> $HOME/lwir_keepalive.log 2>&1
+#   * * * * * flock -n --close $HOME/.lwir_keepalive.lock bash <clone>/tracking_server/scripts/keepalive.sh >> $HOME/lwir_keepalive.log 2>&1
 # Every 5 s it reads GET /healthz of the live server (read-only; it never POSTs /gimbal/ping, which is the web page's safety heartbeat) and restarts the server when
 #   - the python server process is missing (crash, killed, board rebooted),
 #   - /healthz does not answer for 30 s (6 checks in a row),
@@ -10,6 +10,9 @@
 # The camera is repaired inside cam_pipe (ResetMainBoard + reopen, about 30 s) and the server backs off after repeated cam_pipe failures; this script does not touch the camera.
 # Last rung, board reboot: only when ~/lwir_keepalive.allow_reboot exists, cam_pipe failed 3 rounds in a row (12 engine resets), no frame for 15 min, the board is up > 30 min,
 # no camera experiment runs, at most 2 reboots per 24 h and 60 min apart. Counter in the home directory (not /tmp).
+# 11-15: never when the camera's USB chip froze (cam_pipe v2.12 exit 8, CAMERA_FROZEN): a reboot does not cut the power of its port (4 reboots 11-10..11-13 never brought
+# it back; only a replug did). Known from /healthz cam_frozen (the server keeps it from the exit 8 until a camera frame comes) or, for a server without that field, from
+# the last camera line of this run's cam_pipe.log being CAMERA_FROZEN. The skipped reboot is logged at most every 10 min.
 # Pause everything (deploys, experiments): create ~/lwir_keepalive.pause; delete it to resume. All timing uses /proc/uptime (the board has no RTC: the wall clock jumps after boot).
 #
 # Differences from the copy that runs on our board (the logic is otherwise the same):
@@ -36,7 +39,40 @@ server_pid() { pgrep -f 'python3 -B [s]tart_tracking_server.py' | head -1; }
 # address the page binds to: LWIR_LIVE_BIND, else the Tailscale IPv4 address (empty until Tailscale is up)
 bind_addr() { if [ -n "${LWIR_LIVE_BIND:-}" ]; then echo "$LWIR_LIVE_BIND"; else ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1; fi; }
 probe_addr() { local a; a=$(bind_addr); [ "$a" = "0.0.0.0" ] && a=127.0.0.1; echo "$a"; }
-health() { local a; a=$(probe_addr); [ -n "$a" ] && curl -s -m 4 "http://$a:$PORT/healthz"; }
+get_page() { local a; a=$(probe_addr); [ -n "$a" ] && curl -s -m 4 "http://$a:$PORT/$1"; }
+health() { get_page healthz; }
+replay_holding() {
+  local replay; replay=$(get_page replay) || return 1
+  printf '%s\n' "$replay" | python3 -I -c '
+import json, sys
+
+try:
+    replay = json.load(sys.stdin)
+    state, evaluation = replay["state"], replay["eval"]
+    total, pos, shown = state.get("total"), state.get("pos"), state.get("shown")
+    # An async replay can have no JPEG position even after all input frames arrived.
+    # shown counts queued input frames for this run, excluding repeated hold packets.
+    at_end = (state.get("loop") is False and type(total) is int and total > 0
+              and ((type(pos) is int and pos == total - 1)
+                   or (pos is None and type(shown) is int and shown == total)))
+    counts = evaluation["counts"]
+    received, published, skipped, untagged = (
+        counts[key] for key in ("received", "published", "server_skipped", "untagged"))
+    # The eval summary can be cached. Compare received with the live input count
+    # before using it to rule out a frame still in flight after leaving the queue.
+    drained = (all(type(value) is int and value >= 0
+                   for value in (shown, received, published, skipped, untagged))
+               and untagged == 0 and shown == received == published + skipped)
+    holding = (state.get("on") is True and state.get("name") == sys.argv[1]
+               and state.get("busy") is False and state.get("seeking") is False
+               and (state.get("paused") is True or at_end)
+               and evaluation.get("on") is True and evaluation.get("name") == sys.argv[1]
+               and drained)
+except (AttributeError, KeyError, TypeError, ValueError):
+    holding = False
+raise SystemExit(0 if holding else 1)
+' "$1"
+}
 jget() { echo "$1" | python3 -I -c "import json,sys
 try: d=json.load(sys.stdin); v=d.get('$2'); print('' if v is None else (int(v) if isinstance(v,bool) else v))
 except Exception: print('')" 2>/dev/null; }
@@ -46,6 +82,8 @@ prereq_ok() { [ -e /dev/dxrt0 ] && pgrep -x dxrtd > /dev/null && addr_up; }
 experiment_running() { pgrep -x cam_pipe_exp > /dev/null || pgrep -x cam_diag > /dev/null; }
 # 2026-11-11: 카메라(i3system 0547:0080)가 USB 에 아예 안 보이면 재부팅해도 살아나지 않는다(두 번 확인). 그때는 재부팅하지 않는다: 선을 다시 꽂아야 한다.
 cam_on_usb() { grep -qs 0547 /sys/bus/usb/devices/*/idVendor; }
+# 11-15: the last camera line of this server run's cam_pipe.log is CAMERA_FROZEN (no successful open "CAMERA <w> <h>" after it)
+cam_frozen_log() { local l; l=$(grep -a -E '^(CAMERA_FROZEN |CAMERA [0-9]+ [0-9]+$)' "$T/real_gui_1/cam_pipe.log" 2>/dev/null | tail -n 1); [ -n "$l" ] && [ "${l#CAMERA_FROZEN }" != "$l" ]; }
 # 2026-11-11: 팀의 NPU 측정 프로그램이 도는 동안에는 서버를 켜지 않고 기다린다 (같이 돌면 NPU 서비스가 죽는다).
 npu_busy_other() { pgrep -x lwir_benchmark > /dev/null; }
 
@@ -87,11 +125,12 @@ crash_note() {   # reason + last lines of the dying server for the record
 }
 
 log "keepalive v2 started (pid $$)"
-fails=0; gbfails=0; hung=0; restarts=()
+fails=0; gbfails=0; hung=0; restarts=(); previous_replay_frames=; frozen_said=-100000   # frozen_said (11-15): uptime of the last "no reboot: frozen" line
 while true; do
   sleep 5
-  if [ -e "$PAUSE" ]; then fails=0; gbfails=0; hung=0; continue; fi
+  if [ -e "$PAUSE" ]; then fails=0; gbfails=0; hung=0; previous_replay_frames=; continue; fi
   reason=""; reboot=0
+  replay_frames=
   pid=$(server_pid)
   if [ -z "$pid" ]; then
     # The launcher retains its lock while it waits for DXRT between children.
@@ -104,19 +143,35 @@ while true; do
       sup=$(jget "$h" up); cam_idle=$(jget "$h" cam_idle); out_idle=$(jget "$h" out_idle); cam_fail=$(jget "$h" cam_fail); gb=$(jget "$h" gimbal_alive)
       sup=${sup%.*}; cam_idle=${cam_idle%.*}; out_idle=${out_idle%.*}
       if [ -n "$sup" ] && [ "$sup" -gt $START_GRACE ]; then
-        # frames flow but nothing is published: the tracker loop is stuck
-        if [ -n "$cam_idle" ] && [ -n "$out_idle" ] && [ "$cam_idle" -lt 5 ] && [ "$out_idle" -gt 30 ]; then hung=$((hung + 1)); else hung=0; fi
+        # Hold packets keep cam_idle low but don't enter the tracker queue or advance frames_in.
+        if [ -n "$cam_idle" ] && [ -n "$out_idle" ] && [ "$cam_idle" -lt 5 ] && [ "$out_idle" -gt 30 ]; then
+          hung=$((hung + 1))
+          replay_name=$(jget "$h" replay)
+          if [ -n "$replay_name" ] && [ "$replay_name" != None ]; then
+            replay_frames=$(jget "$h" frames_in)
+            if [ -n "$replay_frames" ] && [ "$replay_frames" = "$previous_replay_frames" ] &&
+               [ "$(jget "$h" q_len)" = 0 ] && replay_holding "$replay_name"; then
+              hung=0
+            fi
+          fi
+        else
+          hung=0
+        fi
         [ $hung -ge 2 ] && reason="tracker published nothing for ${out_idle} s while frames arrive"
         if [ -z "$reason" ]; then
           if [ "$gb" = "0" ]; then gbfails=$((gbfails + 1)); else gbfails=0; fi
           [ $gbfails -ge 3 ] && reason="gimbal_bridge missing"
         fi
         if [ -z "$reason" ] && [ -e "$ALLOW_REBOOT" ] && [ -n "$cam_fail" ] && [ "$cam_fail" -ge 3 ] && [ -n "$cam_idle" ] && [ "$cam_idle" -gt 900 ] && [ "$(up)" -gt 1800 ] && ! experiment_running && cam_on_usb; then
+         if [ "$(jget "$h" cam_frozen)" = 1 ] || cam_frozen_log; then   # 11-15: frozen USB chip: a reboot does not cut its power (see the top)
+          if [ $(( $(up) - frozen_said )) -ge 600 ]; then log "no reboot: the camera's USB chip is frozen (cam_pipe exit 8 / CAMERA_FROZEN, no frame for ${cam_idle} s); a reboot does not cut its power: unplug the camera USB cable ~10 s and plug it back"; frozen_said=$(up); fi
+         else
           now_epoch=$(date +%s); n24=0; last=0
           if [ "$(date +%Y)" -ge 2026 ] && [ -f "$REBOOTS" ]; then
             while read -r t; do [ -n "$t" ] && [ $((now_epoch - t)) -lt 86400 ] && n24=$((n24 + 1)) && last=$t; done < "$REBOOTS"
           fi
           if [ "$(date +%Y)" -ge 2026 ] && [ $n24 -lt 2 ] && [ $((now_epoch - last)) -gt 3600 ]; then reason="camera dead: $cam_fail cam_pipe failure rounds, no frame for ${cam_idle} s"; reboot=1; fi
+         fi
         fi
       fi
     else
@@ -124,6 +179,7 @@ while true; do
       [ $fails -ge 6 ] && reason="no answer from /healthz for 30 s"
     fi
   fi
+  previous_replay_frames=$replay_frames
   [ -z "$reason" ] && continue
   if [ $reboot = 0 ] && [ -n "$reason" ] && npu_busy_other; then   # 팀 NPU 측정이 끝날 때까지 기다림 (다시 켜기 횟수에 넣지 않음)
     [ $(( $(up) % 60 )) -lt 5 ] && log "waiting: the team NPU benchmark is running ($reason)"
@@ -147,5 +203,5 @@ while true; do
   log "restart: $reason"; crash_note "restart: $reason"
   stop_server
   if start_server; then log "server is up again (/healthz answers)"; else log "server gave no /healthz answer within 90 s after the start"; fi
-  fails=0; gbfails=0; hung=0
+  fails=0; gbfails=0; hung=0; previous_replay_frames=
 done

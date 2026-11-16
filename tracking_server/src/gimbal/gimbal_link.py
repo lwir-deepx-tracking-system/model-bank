@@ -4,6 +4,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
+from ..detect import auto_det   # 11-15: a model chosen on the PC GUI turns the automatic detector choice off
 
 
 def lead_shift(real_, seen_, id_, t_, w_, h_):
@@ -40,6 +41,7 @@ def lead_shift(real_, seen_, id_, t_, w_, h_):
 
 
 def gb_device():   # v26: the device given on the command line; when it is gone (USB dropped and came back under another ttyUSB name), the gimbal's fixed name under /dev/serial/by-id
+    if APP.lv_os.environ.get('LWIR_VG_GIMBAL_ONLY') == '1': return APP.args.gimbal   # virtual-gimbal test (2026-11-15): only the given device, never the real gimbal's fixed name
     if APP.lv_os.path.exists(APP.args.gimbal): return APP.args.gimbal
     c_ = sorted(APP.lv_glob.glob('/dev/serial/by-id/usb-Silicon_Labs_CP2102N_*'))
     return c_[0] if c_ else APP.args.gimbal
@@ -99,6 +101,11 @@ def _reset_bridge_lead(gb):
     gb.observation_barrier = None
     gb.observation_ns = 0
     gb.observation_ok = False
+    gb.search_control_supported = False
+    gb.coast_control_supported = False
+    gb.seek_control_supported = False
+    gb.fguard = None
+    gb.fseek = None
     reset_lead()
 
 
@@ -178,11 +185,14 @@ def gb_reader(p_):
         if not f_: continue
         if p_ is not APP.GB.proc: continue   # v26: lines of a bridge that was replaced
         if f_[0] == 'READY': APP.GB.state['ready'] = True; print('GIMBAL ready', APP.GB.dev, flush=True)
-        elif f_[0] in ('TRACK_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS') and f_[1:] == ['1']:
+        elif f_[0] in ('TRACK_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS', 'SEARCH_CONTROL', 'COAST_CONTROL', 'SEEK_CONTROL') and f_[1:] == ['1']:
             with APP.GB.wcond:
                 if p_ is APP.GB.proc and APP.GB.wopen:
                     if f_[0] == 'TRACK_CONTROL': APP.GB.track_control_supported = True
                     elif f_[0] == 'LEAD_CONTROL': APP.GB.lead_control_supported = True
+                    elif f_[0] == 'SEARCH_CONTROL': APP.GB.search_control_supported = True   # 11-15: bridge started with --search 1
+                    elif f_[0] == 'COAST_CONTROL': APP.GB.coast_control_supported = True   # 11-15: bridge started with --coast 1 (PRED suffix)
+                    elif f_[0] == 'SEEK_CONTROL': APP.GB.seek_control_supported = True   # 11-16: bridge started with --seek 1 (SEEK suffix)
                     else: APP.GB.observation_status_supported = True
         elif (f_[0] == 'CONTROL_EPOCH' and len(f_) == 2 and len(f_[1]) <= 20
               and f_[1].isascii() and f_[1].isdigit()):
@@ -193,6 +203,8 @@ def gb_reader(p_):
                     APP.GB.control_epoch = epoch
                     reset_lead()
                     APP.GB.wframe = without_lead(APP.GB.wframe)
+        elif f_[0] == 'SEARCH' and len(f_) == 2 and f_[1].isdigit():   # 11-15: --search 1 bridges: 0 none, 1 grace, 2 follow-through, 3 sweep, 4 done. 11-16: --seek 1 bridges: 5 = following the SEEK box
+            APP.GB.state['search'] = int(f_[1]); print('GIMBAL', line_.strip(), flush=True)
         elif f_[0] == 'HALTED' and len(f_) == 2:
             from .live_tracks import halted
             try: halted(int(f_[1]))
@@ -224,7 +236,13 @@ def gb_reader(p_):
                 APP.GB.position_sample = (p_, time.monotonic(), percent)
         elif f_[0] == 'M' and len(f_) >= 3:   # v23: the PC GUI asks for a model change: M <req> <id>
             r_ = APP.model_request(int(f_[2]), int(f_[1])); print('MODEL request from the PC GUI: id', f_[2], '->', 'queued' if r_ < 0 else r_, flush=True)
+            if r_ in (-1, 0): auto_det.manual_choice('PC GUI')   # 11-15: a model chosen by hand turns the automatic choice off
             if r_ >= 0: APP.gb_send('N %d %d' % (int(f_[1]), r_))
+        elif f_[0] == 'GUI_PICTURE' and f_[1:] in (['0'], ['1']):   # 11-15: the bridge wants the picture (G lines) only while a PC GUI is connected; else people only (F lines)
+            with APP.GB.wcond:
+                if p_ is not APP.GB.proc: continue
+                APP.GB.gui_picture = f_[1] == '1'; APP.GB.state['gui']['picture'] = int(f_[1])
+            print('GUI picture', 'wanted: sending the camera picture to the bridge' if f_[1] == '1' else 'not wanted (no PC GUI connected): sending people only', flush=True)
         elif f_[0] == 'T' and len(f_) >= 7:   # v20: GUI link status, once a second
             g_ = APP.GB.state['gui']; client_ = int(f_[1])
             if client_ != g_['client']:
@@ -262,10 +280,11 @@ def gb_spawn():   # v26: start (or start again) the bridge. A new bridge sends S
         p_ = APP.lv_sp.Popen([APP.args.gimbal_bridge or str(HERE / 'src' / 'gimbal' / 'gimbal_bridge_v25'), '--device', dev_, '--manual-speed', str(APP.args.gimbal_speed), '--speed-max', str(APP.args.gimbal_speed), '--kp', str(APP.args.gimbal_kp), '--aim-y', str(APP.args.gimbal_aim_y),
                           '--x-sign', str(APP.args.gimbal_x_sign), '--y-sign', str(APP.args.gimbal_y_sign), '--model-count', str(len(APP.MODEL['catalog'])), *APP.shlex.split(APP.args.gimbal_opts), *APP.gui_opts_], stdin=APP.lv_sp.PIPE, stdout=APP.lv_sp.PIPE, stderr=APP.GB.log)
         APP.GB.dev = dev_; APP.GB.dev_sig = sig_; APP.GB.spawn_t = time.monotonic(); APP.GB.restarts += 1
-        APP.GB.state.update(running=True, ready=False, auto=0, lost=0, moving=0, error=0, id=0); APP.GB.state['gui'].update(client=0)
+        APP.GB.state.update(running=True, ready=False, auto=0, lost=0, moving=0, error=0, id=0); APP.GB.state['gui'].update(client=0, picture=int(bool(APP.GB.gui)))
         with APP.GB.wcond:
             APP.GB.track_control_supported = False
             APP.GB.people_source = object()  # a replacement bridge needs a fresh STOP acknowledgement
+            APP.GB.gui_picture = None   # 11-15: None = this bridge has not said GUI_PICTURE (an older bridge never does): the picture is always sent, as before
             _reset_bridge_lead(APP.GB)
             APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.proc = p_; APP.GB.wopen = True; APP.GB.wcond.notify_all()
         APP.lv_th.Thread(target=APP.gb_writer, args=(p_,), daemon=True).start(); APP.lv_th.Thread(target=APP.gb_reader, args=(p_,), daemon=True).start()

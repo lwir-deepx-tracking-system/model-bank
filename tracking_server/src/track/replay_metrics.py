@@ -128,37 +128,69 @@ def _hota(frames: list[tuple[np.ndarray, np.ndarray, np.ndarray]]) -> float | No
     return float(100.0 * np.sqrt(deta * assa).mean())
 
 
-def _ap_for_iou(frames: list[tuple[np.ndarray, np.ndarray, np.ndarray]], threshold: float) -> float | None:
+def _ap_prepare(frames: list[tuple[np.ndarray, np.ndarray, np.ndarray]]):
+    """What every IoU threshold shares, computed once (11-15: the ten thresholds used to redo all of it,
+    one numpy call per detection each: 20 s for a 370-frame recording on the board).
+
+    -> None when there is no ground truth, else (total_gt, order, per_frame). ``order`` lists every candidate as
+    (frame slot, local rank) in COCO order: score descending, then frame, then rank inside the frame.
+    ``per_frame`` has one entry per frame with candidates: (number of GT, IoU rows, best IoU of each row), the rows
+    in local rank order (score descending, stable, at most 100).
+    """
     total_gt = sum(len(gt) for gt, _, _ in frames)
     if total_gt == 0:
         return None
     scored = []
+    per_frame = []
     for frame_index, (gt, _, det) in enumerate(frames):
         if not len(det):
             continue
         # COCO evaluates no more than maxDets candidates per image/category.
-        order = np.argsort(-det[:, 0], kind="stable")[:_MAX_DETS_PER_FRAME]
-        for local_rank, di in enumerate(order):
-            scored.append((float(det[di, 0]), frame_index, local_rank, det[di, 1:5]))
-    scored.sort(key=lambda item: (-item[0], item[1], item[2]))
-    matched = [np.zeros(len(gt), dtype=bool) for gt, _, _ in frames]
-    tp = np.zeros(len(scored), dtype=np.float64)
-    fp = np.zeros(len(scored), dtype=np.float64)
-    for i, (_, fi, _, box) in enumerate(scored):
-        gt = frames[fi][0]
+        ranked = np.argsort(-det[:, 0], kind="stable")[:_MAX_DETS_PER_FRAME]
+        slot = len(per_frame)
+        scored.extend((float(det[di, 0]), frame_index, local_rank, slot) for local_rank, di in enumerate(ranked))
         if len(gt):
-            ious = _iou(box[None, :], gt[:, 1:5])[0]
-            # COCO uses the highest-IoU eligible unmatched GT. Its scan
-            # accepts an equal IoU later in the stable ground-truth order.
-            eligible = np.flatnonzero((ious >= threshold - np.finfo(float).eps) & ~matched[fi])
-            if len(eligible):
-                best = eligible[len(eligible) - 1 - np.argmax(ious[eligible[::-1]])]
-                matched[fi][best] = True
-                tp[i] = 1.0
-                continue
-        fp[i] = 1.0
-    if not len(scored):
+            rows = _iou(det[ranked, 1:5], gt[:, 1:5]).tolist()
+            per_frame.append((len(gt), rows, [max(row) for row in rows]))
+        else:
+            per_frame.append((0, None, None))
+    scored.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return total_gt, [(item[3], item[2]) for item in scored], per_frame
+
+
+def _ap_for_iou(prepared, threshold: float) -> float | None:
+    if prepared is None:
+        return None
+    total_gt, order, per_frame = prepared
+    if not order:
         return 0.0
+    limit = float(threshold - np.finfo(float).eps)
+    hits = []
+    for n_gt, rows, best_iou in per_frame:
+        hit = [False] * (len(rows) if rows is not None else 0)
+        if n_gt:
+            # Inside one frame the COCO order is the local rank order, and a match only uses up
+            # ground truth of its own frame: each frame can be matched on its own.
+            matched = [False] * n_gt
+            for rank, row in enumerate(rows):
+                if best_iou[rank] < limit:
+                    continue
+                # COCO uses the highest-IoU eligible unmatched GT. Its scan
+                # accepts an equal IoU later in the stable ground-truth order.
+                best, best_value = -1, -1.0
+                for gi in range(n_gt):
+                    value = row[gi]
+                    if value >= limit and not matched[gi] and value >= best_value:
+                        best, best_value = gi, value
+                if best >= 0:
+                    matched[best] = True
+                    hit[rank] = True
+        hits.append(hit)
+    tp = np.zeros(len(order), dtype=np.float64)
+    for i, (slot, rank) in enumerate(order):
+        if per_frame[slot][0] and hits[slot][rank]:
+            tp[i] = 1.0
+    fp = 1.0 - tp
     cum_tp = np.cumsum(tp)
     cum_fp = np.cumsum(fp)
     recall = cum_tp / total_gt
@@ -176,9 +208,9 @@ def _ap_for_iou(frames: list[tuple[np.ndarray, np.ndarray, np.ndarray]], thresho
 def _ap_metrics(frames: list[tuple[np.ndarray, np.ndarray, np.ndarray | None]]) -> tuple[float | None, float | None]:
     if any(det is None for _, _, det in frames):
         return None, None
-    concrete = [(gt, tr, det) for gt, tr, det in frames]
-    ap50 = _ap_for_iou(concrete, 0.50)
-    aps = [_ap_for_iou(concrete, float(t)) for t in _AP_IOUS]
+    prepared = _ap_prepare([(gt, tr, det) for gt, tr, det in frames])
+    ap50 = _ap_for_iou(prepared, 0.50)
+    aps = [_ap_for_iou(prepared, float(t)) for t in _AP_IOUS]
     if ap50 is None or any(v is None for v in aps):
         return None, None
     return 100.0 * ap50, 100.0 * float(np.mean(aps))

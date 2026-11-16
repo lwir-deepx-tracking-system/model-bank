@@ -1,0 +1,26 @@
+{
+ "title": "box_refine v3: size mode with the 'aim' anchor (the gimbal aim point kept exactly) - pre-registration",
+ "written": "2026-11-15 evening, before any v3 number. Already known: every v1 and v2 number (results/, verify/, v2/results/, v2/review_*), so val-B has been looked at three times for this family (v1 base, v1 combo, v2) and this is the fourth look.",
+ "why": "review round 2 of 8dcba6a: (a) the v2 choice (anchor centre) raises the thermal aim jitter by about 1 % (val-A +1.1 %, val-B TMOT +0.5 % with the interval end +2.3 %, device +0.7..+1.2 %): smoothing h while keeping the centre moves the aim point by (0.5 - aim_y) x (h_row - h_smoothed). (b) The device bridge aims at top + 0.08 x h (scripts/run_real_gui.sh LWIR_GIMBAL_AIM_Y default 0.08 since 11-11), not the 0.37 used by the v2 metrics; at 0.08 the centre anchor moves the aim point by 0.42 x the height change. The user rules out more aim lag or jitter.",
+ "code": "worktree box_refine_20261115, tracking_server/src/track/box_refine.py after the review-2 fixes (blend: time gate, camera-warped anchor, size-only blend in size mode, fixed duration; server: state dropped while off, gru startup restore, status clear, auto-off saved). size_box anchor 'aim': centre x = row's, top = row top + aim_y x (h_row - h) so that top + aim_y x h equals the row's aim point; the server takes aim_y from the running bridge's --aim-y (else --gimbal-aim-y, else 0.5). Offline the anchor's aim_y is set equal to the metric's aim point.",
+ "data": "as PREREG_V2 (val-A = TMOT seq12, 18, 26, 48, 64 + DanceTrack 0023, 0045, 0066, 0086; val-B = TMOT val 6 + DanceTrack 8; streams near, far, sw; server GMC; t = frame / fps).",
+ "metrics": "as PREREG_V2 (v2_lib / combo_lib), metric aim point top + 0.37 h unless stated. New report-only: top-edge and bottom-edge one-frame steps / target h (p99 overall; p95 and mean at switch frames and at definition-flip frames, v2/review_numbers/scripts/review_edges.py definitions), and the aim metrics again with the metric aim point top + 0.08 h (the device value), the 'aim' anchor then using aim_y 0.08.",
+ "selection_valA": {
+  "grid": "anchor 'aim' x src {det, trk} x mc_s {0.2, 0.4, 0.8, 1.5, 3.0, 5.0} Hz x beta_s {0, 0.1, 0.3, 1.0, 3.0} x dcut 1.0 Hz: 60 points, box_blend 0",
+  "objective": "J as PREREG_V2 (mean over TMOT, DanceTrack of (dh_p99 / tracker + per-track max dh median / tracker) / 2), minimise",
+  "constraints": "the five PREREG_V2 constraints unchanged (aim error, aim jitter, |log h| within 2 % of the tracker; size lag vs target, fastest bin, >= tracker - 0.01; aim lag vs detection > 0.1 h/frame >= tracker - 0.005). With the 'aim' anchor the three aim constraints hold by construction; they are still computed and checked.",
+  "ties": "as PREREG_V2 (within 0.005 of the best feasible J -> largest mc_s, then largest beta_s, then src det)",
+  "infeasible": "if no point is feasible the size mode stays as v2 (no change of SIZE) and is reported as not meeting the gates",
+  "server_value": "the chosen (anchor aim, src, mc_s, beta_s, dcut) are written into box_refine.SIZE before val-B is run",
+  "report_only_valA": "the chosen point with box_blend 0.3 s (events at switches), and the chosen point at the metric aim 0.08"
+ },
+ "valB_once_v3": {
+  "methods": "raw, tracker (today), euro (server EURO), size_centre (the v2 choice: centre, trk, 5 Hz, beta 3), size_aim (the v3 choice), size_aim_b03 (size_aim + box_blend 0.3 s, report only). GRU and combo_a are not re-run (unchanged code paths at box_blend 0; v2 numbers stand).",
+  "passes": "metric aim 0.37 (as v2) and, report only, metric aim 0.08 with the anchor's aim_y 0.08",
+  "bootstrap": "per sequence, 2000 draws, seed 0",
+  "pass_rules": "size_aim vs tracker, the PREREG_V2 rules P1-P7 unchanged, both datasets, metric aim 0.37.",
+  "report_not_gated": "P7b (review suggestion for the next rules, NOT a gate here): dh p95 at the switch frame and the next 2 frames, upper bound < 0 with >= 20 events; size_aim vs size_centre; edge steps; the metric aim 0.08 pass; size_aim_b03",
+  "deploy": "the code default stays 'off' whatever the result; the judge decides"
+ },
+ "device_recordings": "re-run only if the v3 (src, mc_s, beta_s) differ from v2: the height steps of the 'aim' anchor equal those of the v2 'centre' choice at the same filter values by construction (same filtered size), and its aim point equals the tracker row's by construction"
+}

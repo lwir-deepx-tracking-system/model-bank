@@ -4,7 +4,15 @@ from __future__ import annotations
 from base64 import b64decode
 from dataclasses import dataclass
 from threading import Event, Thread
+import os
 import time
+
+# 11-13 (user, design review): the page shows mode, speed and gimbal state as chips, so the red / black text bars are no
+# longer drawn into the picture. LWIR_PICTURE_BANNER=1 draws them again (for viewers of /stream without the page).
+PICTURE_BANNER = os.environ.get('LWIR_PICTURE_BANNER') == '1'
+# 11-15 (user: 화면 전송 지연): the page picture's JPEG quality (was 80). 70 makes the noisy thermal picture smaller for slow links.
+JPEG_QUALITY = min(95, max(30, int(os.environ.get('LWIR_STREAM_JPEG_Q', '70'))))
+FOLLOW_COLOR = (0, 220, 255)   # the colour page_handler gives the followed person's box
 
 import numpy as np
 
@@ -32,6 +40,9 @@ class PreviewFrame:
     click_people: tuple | None = None
     click_ticket: int | None = None
     replay_position: tuple | None = None
+    proposals: tuple = ()   # 11-14: ((x1, y1), (x2, y2), score, covered) people proposals from the spatial spectrum
+    temps: tuple = ()   # 11-14: ((x1, y1), (x2, y2), text, colour) skin-temperature labels of person boxes (src/detect/skin_temp.py)
+    seek: tuple | None = None   # 11-16: (phase, cx, cy, sweep half-width, target offset or None) of the gimbal's search, picture px x scale (gimbal/search_follow.py)
 
 
 def transition_jpeg(cv2):
@@ -58,13 +69,22 @@ def _dash_rect(cv2, img, p1, p2, col, th, dash):
         cv2.line(img, (x2, y), (x2, min(y + dash, y2)), col, th)
 
 
-def render_preview(cv2, frame):
+def render_preview(cv2, frame, keep=None):
+    """The page picture as JPEG bytes (None if encoding failed). keep: a list that receives the drawn BGR picture,
+    from which /stream makes the lighter picture for slow viewers (11-15, stream_sender.light_jpeg)."""
     sc = frame.scale
     img = cv2.cvtColor(frame.gray, cv2.COLOR_GRAY2BGR)
     if sc != 1:
         img = cv2.resize(img, None, fx=sc, fy=sc, interpolation=cv2.INTER_LINEAR)
     font = cv2.FONT_HERSHEY_SIMPLEX
     for p1, p2, col, tid in frame.boxes:
+        if not frame.replay and tuple(col) == FOLLOW_COLOR:   # 11-13 (design review): the followed person stands out: thick box, filled tag
+            cv2.rectangle(img, p1, p2, col, 4)
+            label, (tw, th) = 'FOLLOW %d' % tid, cv2.getTextSize('FOLLOW %d' % tid, font, 0.6, 2)[0]
+            ty = max(p1[1], th + 8)
+            cv2.rectangle(img, (p1[0] - 2, ty - th - 8), (p1[0] + tw + 8, ty), col, -1)
+            cv2.putText(img, label, (p1[0] + 3, ty - 5), font, 0.6, (20, 20, 20), 2)
+            continue
         cv2.rectangle(img, p1, p2, col, 2)
         cv2.putText(img, str(tid), (p1[0], max(p1[1] - 4, 12)), font, 0.55, col, 2)
     hh, ww = img.shape[:2]
@@ -73,26 +93,68 @@ def render_preview(cv2, frame):
         b = min(max(int(x2 * sc), 0), ww - 1), min(max(int(y2 * sc), 0), hh - 1)
         if a[0] < b[0] and a[1] < b[1]:
             _dash_rect(cv2, img, a, b, (255, 255, 255) if kind == 0 else (200, 90, 255), 1, 4)
-    for p1, p2, col, tid in frame.predictions:
+    for pr in frame.predictions:
+        p1, p2, col, tid = pr[:4]
+        lab = pr[4] if len(pr) > 4 else '%d predict' % tid
+        last = pr[5] if len(pr) > 5 else None; pts = pr[6] if len(pr) > 6 else (); rad = pr[7] if len(pr) > 7 else 0
+        if len(pr) > 8 and pr[8] < 1.0:   # 11-16: the marks fade while the person stays lost (lost_marks): a darker colour
+            col = tuple(int(c * max(0.0, pr[8])) for c in col)
+        if rad > 0:   # 11-14: growing search range around the predicted centre (where the person may come back)
+            cv2.circle(img, ((p1[0] + p2[0]) // 2, (p1[1] + p2[1]) // 2), int(rad), col, 1, cv2.LINE_AA)
+        if last is not None:   # 11-14 (user): where the person was last seen = 위치 기억 (thin box + centre), path since then = 예측 이동
+            lx, ly, lw, lh = last
+            _dash_rect(cv2, img, (lx - lw // 2, ly - lh // 2), (lx + lw // 2, ly + lh // 2), col, 1, 3)
+            cv2.circle(img, (lx, ly), 4, col, 2)
+            cv2.putText(img, 'last seen', (lx - lw // 2, ly + lh // 2 + 14), font, 0.45, col, 1)
+            path = [(lx, ly)] + list(pts)
+            if len(path) > 1:
+                cv2.polylines(img, [np.array(path, np.int32).reshape(-1, 1, 2)], False, col, 1)
+                cv2.arrowedLine(img, path[-2] if len(path) > 2 else path[0], path[-1], col, 2, tipLength=0.4)
         _dash_rect(cv2, img, p1, p2, col, 2, 7)
-        cv2.putText(img, '%d predict' % tid, (p1[0], max(p1[1] - 4, 12)), font, 0.55, col, 2)
-    cv2.rectangle(img, (0, 0), (ww, 26), (0, 0, 150) if frame.replay else (0, 0, 0), -1)
-    cv2.putText(img, frame.top_text, (8, 19), font, 0.55, (255, 255, 255), 1)
-    if frame.gimbal_text is not None:
+        cv2.putText(img, lab, (p1[0], max(p1[1] - 4, 12)), font, 0.55, col, 2)
+    if frame.seek is not None and frame.seek[0] in (2, 3):   # 11-16: the gimbal is searching: the span its centre sweeps around the predicted place, and where it is heading
+        ph, sx, sy, sa, sto = frame.seek
+        sx, sy, sa = int(sx), int(sy), int(sa)
+        cv2.line(img, (sx - sa, sy), (sx + sa, sy), FOLLOW_COLOR, 1, cv2.LINE_AA)
+        for ex in (sx - sa, sx + sa): cv2.line(img, (ex, sy - 8), (ex, sy + 8), FOLLOW_COLOR, 2)
+        if sto is not None: cv2.circle(img, (sx + int(sto), sy), 5, FOLLOW_COLOR, -1, cv2.LINE_AA)
+        cv2.putText(img, 'SEARCH' if ph == 2 else 'BACK', (max(2, sx - sa), max(14, sy - 12)), font, 0.55, FOLLOW_COLOR, 2)
+    for p1, p2, sc_, cov_ in frame.proposals:   # 11-14 (user: an aid for what the detector missed)
+        if cov_:   # on a person the detector has: faint thin dashes, no text
+            _dash_rect(cv2, img, p1, p2, (140, 60, 140), 1, 4)
+        else:   # nobody detected there: bright magenta + 'miss?'
+            _dash_rect(cv2, img, p1, p2, (255, 0, 255), 2, 6)
+            cv2.putText(img, 'miss? %.1f' % sc_, (p1[0] + 2, max(p1[1] + 15, 12)), font, 0.5, (255, 0, 255), 2)
+    for p1, p2, text, col in frame.temps:   # 11-14: right of the box's top corner (left of it when there is no room), dark backing
+        (tw, th), _ = cv2.getTextSize(text, font, 0.5, 1)
+        x = p2[0] + 4 if p2[0] + 4 + tw <= ww else max(0, p1[0] - 4 - tw)
+        y = min(max(p1[1] + th + 2, th + 2), hh - 2)
+        cv2.rectangle(img, (x - 2, y - th - 3), (x + tw + 2, y + 3), (20, 20, 20), -1)
+        cv2.putText(img, text, (x, y), font, 0.5, col, 1, cv2.LINE_AA)
+    if PICTURE_BANNER:
+        cv2.rectangle(img, (0, 0), (ww, 26), (0, 0, 150) if frame.replay else (0, 0, 0), -1)
+        cv2.putText(img, frame.top_text, (8, 19), font, 0.55, (255, 255, 255), 1)
+    if PICTURE_BANNER and frame.gimbal_text is not None:
         cv2.rectangle(img, (0, 26), (ww, 50), (0, 0, 0), -1)
         cv2.putText(img, frame.gimbal_text, (8, 44), font, 0.55, frame.gimbal_color, 1)
-    ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+    ok, buf = cv2.imencode('.jpg', img, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    if keep is not None:
+        keep.append(img)
     return buf.tobytes() if ok and buf is not None else None
 
 
 def publish_jpeg_locked(live, jpeg, frame_t, *, paired=True, click_people=None, click_ticket=None,
-                        replay_position=None):
-    """Commit one JPEG under jcond. Placeholders have no frame latency sample."""
+                        replay_position=None, drawn=None, click=True):
+    """Commit one JPEG under jcond. Placeholders have no frame latency sample.
+    drawn: the picture before encoding (render_preview keep=), for /stream's lighter picture; None = none for this JPEG.
+    click=False: a picture without boxes (picture_first.py) leaves the click people and ticket of the boxes alone."""
     live.jpeg = jpeg
+    live.jpeg_drawn = (jpeg, drawn) if drawn is not None else None
     live.jpeg_frame_t = frame_t
-    live.jpeg_people = click_people
-    live.jpeg_tracks_ticket = click_ticket
-    live.jpeg_replay_position = replay_position
+    if click:
+        live.jpeg_people = click_people
+        live.jpeg_tracks_ticket = click_ticket
+        live.jpeg_replay_position = replay_position
     live.seq += 1
     if frame_t is not None:
         live.pic_n += 1
@@ -246,6 +308,7 @@ class PreviewWorker:
         with self._cond:
             self._closed = True
             self._live.jpeg = self._transition_jpeg
+            self._live.jpeg_drawn = None
             self._live.jpeg_frame_t = None
             self._live.jpeg_people = None
             self._live.jpeg_tracks_ticket = None
@@ -286,8 +349,9 @@ class PreviewWorker:
                 if frame.replay and self._seek is not None and not self._seek_matches(frame.replay_position):
                     self._dropped += 1
                     continue
+            drawn = []   # 11-15: the drawn picture, for /stream's lighter picture (made only when a slow viewer wants one)
             try:
-                jpeg = render_preview(self._cv2, frame)
+                jpeg = render_preview(self._cv2, frame, drawn)
             except Exception:
                 jpeg = None
             with self._cond:
@@ -305,9 +369,9 @@ class PreviewWorker:
                         self._seek_queued = False
                     publish_jpeg_locked(self._live, jpeg, frame.frame_t,
                                         click_people=frame.click_people, click_ticket=frame.click_ticket,
-                                        replay_position=frame.replay_position)
+                                        replay_position=frame.replay_position, drawn=drawn[0] if drawn else None)
             # Release the completed image while waiting on the next request.
-            del frame, jpeg
+            del frame, jpeg, drawn
 
 
 def invalidate_preview(live, *, before=None):

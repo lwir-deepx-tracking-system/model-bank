@@ -3,16 +3,18 @@
 어느 PNG 인지 아는 법
   - 재생 카메라(replay_cam.py --tag)는 프레임마다 48 바이트 머리(카메라 시간표와 같은 모양)를 붙이고, 머리의 flags 2 번 비트(값 2)를 켜고
     ring_id 에 PNG 번호(파일 이름의 숫자, 000123.png = 123, 아래 20 비트)와 바퀴 번호(위 12 비트, 0 부터), slot 에 녹화 안의 프레임 번호(0 부터)를 적는다.
-    멈춘 동안 같은 프레임을 되풀이해 보낼 때는 flags 에 값 4 도 켠다: 되풀이는 채점하지 않고 센 수만 남긴다 (화면 그림은 그대로 갱신된다).
+    멈춘 동안 같은 프레임을 되풀이해 보낼 때는 flags 에 값 4 도 켠다: 되풀이는 채점하지 않고 센 수만 남긴다 (그림을 새로 만들지 않고 이미 나간 그 장면의 그림을 그대로 둔다).
   - 서버는 재생 카메라를 늘 머리를 붙이게 띄운다 (replay_link.spawn). 머리를 읽는 곳(camera_extra._reader)이 프레임을 줄에 넣기 직전에
     tag() 를 불러 "도착 시각 -> (PNG 번호, 바퀴, 칸 번호)" 를 적는다. 화면을 만드는 곳(live_publish)이 그 프레임의 도착 시각으로 찾는다.
     그래서 서버가 중간 프레임을 버리거나 재생 카메라가 건너뛰어도 짝이 어긋나지 않는다. 번호를 모르는 프레임은 채점하지 않는다.
   - 재생 카메라가 건너뛴 프레임 수 = 같은 바퀴 안에서 프레임 번호가 1 보다 크게 뛴 만큼. 서버가 건너뛴 프레임 수 = 받은 프레임 - 화면에 낸 프레임.
 채점은 첫 회차의 처음부터 끝까지 순서대로 처리한 프레임을 기준으로 한다. 반복·되감기·정지는 점수를 다시 쌓지 않는다.
   검수됨으로 표시된 프레임에는 빈 장면도 포함한다. 삭제된 프레임은 제외한다. 검수 기록이 없다면 주석이 있는 프레임만 평가한다.
-  건너뛰거나 프레임이 누락되면 해당 실행은 최종 점수로 확정하지 않는다. HOTA와 사람 AP는 한 회차를 완료하면 별도 스레드에서 계산한다.
+  건너뛰거나 프레임이 누락되면 해당 실행은 최종 점수로 확정하지 않는다. HOTA와 사람 AP는 한 회차를 완료하면 별도 스레드가 자식 프로세스에 맡겨 계산한다 (11-15, src/track/replay_metrics_proc.py: 프레임 반복과 인터프리터 잠금을 나누지 않게).
 점수 계산과 규칙: src/track/gt_score.py. 재생이 끝나거나 바뀌면(서버가 끝날 때도) 결과를 <결과 폴더>/replay_eval_<이름>_<시각>.json 에 쓴다.
 재생을 쓰지 않으면 EV 가 None 이고, 서버의 다른 길에서 부르는 함수는 모두 바로 돌아간다.
+재생 추적기 (11-13, src/track/replay_backends.py): 'python' 은 서버 추적기의 행을 그대로 채점한다. 'cpp_bytetrack' 과 저장된 결과('pre:<key>')는
+  track_frame 이 프레임마다 그 추적기의 행을 받아 대신 채점하고 화면에도 그 행을 그린다. 저장된 결과는 검출 후보 점수(AP50 / mAP)를 비운다.
 """
 import collections
 import hashlib
@@ -22,9 +24,8 @@ import threading
 import time
 
 from ..common.state import APP
-from ..track import gt_score, replay_metrics
+from ..track import gt_score, replay_backends, replay_metrics_proc
 from ..track.stabilizer import stab_off, stab_people_real
-from ..track.bytetrack import NativeByteTrack
 
 LABEL = 'tracks_edited_mot.txt'
 AUTO = 'tracks_mot.txt'
@@ -119,19 +120,24 @@ class Eval:
         self.preview = tgt.get('preview', 'sync')
         self.pacing = tgt.get('pacing', 'legacy')
         self.backend_error = None
-        self.native_tracker = NativeByteTrack(tgt['tracker_library']) if self.backend == 'cpp_bytetrack' else None
+        # 재생 추적기 (src/track/replay_backends.py). None = 서버의 추적기가 낸 행을 그대로 쓴다 ('python')
+        self.native_tracker = replay_backends.make(tgt) if self.backend != 'python' else None
+        self.own_boxes = bool(self.native_tracker is not None and self.native_tracker.own_detector)   # 저장된 결과: 서버 검출기를 쓰지 않은 상자
+        self.backend_label = self.native_tracker.label if self.native_tracker is not None else None
+        self.backend_meta = self.native_tracker.meta() if self.native_tracker is not None else {}
         self.native_tag = None
         self.native_rows = []
+        self.native_people = None   # own_boxes 일 때: 방금 update 한 프레임의 사람 (640x480 그림 좌표, 파일 값 그대로)
         self.native_frames = 0
 
-    def track_frame(self, t_in, detections):
-        if self.backend != 'cpp_bytetrack':
+    def track_frame(self, t_in, detections):   # 잠금을 쥔 채 update 를 부른다: 한 장에 오래 걸리는 추적기(slow)를 붙일 때는 잠금 밖에서 부르게 고쳐야 한다
+        if self.native_tracker is None:
             return None
         with self.lock:
             tag = self.tags.get(t_in)
             repeat = self.rep.get(t_in)
             if self.ended is not None or (tag is None and repeat is None):
-                return None
+                return [] if self.own_boxes else None   # 저장된 결과: 번호를 모르는 프레임에 서버 추적기의 상자를 대신 그리지 않는다
             if repeat is not None:
                 return self.native_rows if repeat == self.native_tag else []
             if self.backend_error is not None:
@@ -139,19 +145,22 @@ class Eval:
             try:
                 if self.native_tag is not None and (tag[1] != self.native_tag[1] or tag[2] <= self.native_tag[2]):
                     self.native_tracker.reset()
-                self.native_rows = self.native_tracker.update(detections)
+                self.native_rows = self.native_tracker.update(tag, detections)
+                self.native_people = self.native_tracker.people() if self.own_boxes else None
                 self.native_tag = tag
                 self.native_frames += 1
                 self._sum = None
                 return self.native_rows
-            except (OSError, RuntimeError, ValueError) as error:
+            except self.native_tracker.errors as error:
                 self.native_tracker.close()
                 self.backend_error = str(error)
                 self.native_rows = []
+                self.native_people = [] if self.own_boxes else None
                 if self.phase == 'scoring':
                     self.phase = 'incomplete'
                 self._sum = None
-                print('REPLAY C++ ByteTrack failed:', self.backend_error, flush=True)
+                print('REPLAY C++ ByteTrack failed:' if self.backend == 'cpp_bytetrack' else 'REPLAY backend %s failed:' % self.backend,
+                      self.backend_error, flush=True)
                 return []
 
     def zero(self):
@@ -161,9 +170,10 @@ class Eval:
         self.uniq = set()
         self.log = []; self.since = time.strftime('%Y-%m-%d %H:%M:%S'); self.ver = 0; self._sum = None
 
-    def tag(self, ta, rid, slot, flags=2):   # 재생 카메라 읽기 스레드
+    def tag(self, ta, rid, slot, flags=2, *, blocking=True):   # 재생 카메라 읽기 스레드
         png, pss = rid & 0xFFFFF, (rid >> 20) + 1
-        with self.lock:
+        if not self.lock.acquire(blocking=blocking): return False
+        try:
             self.pos_in = slot
             if flags & 4:   # 멈춘 동안의 되풀이: 센 수만 남기고 채점 표에는 넣지 않는다
                 self.n['repeats'] += 1; self._sum = None; self.rep[ta] = (png, pss, slot)
@@ -171,12 +181,15 @@ class Eval:
                     _RT[ta] = 1
                     if len(_RT) > REP_KEEP: _RT.popitem(last=False)
                 if len(self.rep) > REP_KEEP: self.rep.popitem(last=False)
-                return
+                return True
             self.n['received'] += 1
             if self.last_pass == pss and self.last_k is not None and slot > self.last_k + 1: self.n['cam_skipped'] += slot - self.last_k - 1
             self.last_k = slot; self.last_pass = pss; self.passes = max(self.passes, pss)
             self.tags[ta] = (png, pss, slot)
             if len(self.tags) > TAG_KEEP: self.tags.popitem(last=False); self.n['tag_evicted'] += 1
+            return True
+        finally:
+            self.lock.release()
 
     def _shown(self, t_in, slot, pss):
         self.pos_shown = slot; self.pass_shown = pss; self.pos_t = t_in
@@ -200,7 +213,7 @@ class Eval:
 
     def _compute(self, frames):
         try:
-            metrics = replay_metrics.compute(frames)
+            metrics = replay_metrics_proc.compute(frames)   # 11-15: in a child process, so the frame loop does not share the interpreter lock with it
             status = 'ready'
         except Exception as exc:
             print('REPLAY METRICS failed', type(exc).__name__, str(exc)[:120], flush=True)
@@ -235,17 +248,22 @@ class Eval:
         kept_tracks = [tracks[j] for j in kept]
         if detections is None:
             return targets, kept_tracks, None
+        rows = detections.tolist() if hasattr(detections, 'tolist') else detections   # 11-15: Python numbers at once (same values), not one numpy read per number
         det = [(0, float(r[0]), float(r[1]) - 16, float(r[2]), float(r[3]) - 16, float(r[4]))
-               for r in detections if int(r[5]) == 0]
+               for r in rows if int(r[5]) == 0]
         if sc is not None:
             det = stab_people_real(det, sc, float(APP.LIVE_W), float(APP.LIVE_H))
         valid_overlap = gt_score.iou_matrix([b for _, b in people], [d[1:5] for d in det])
+        # 11-15: one test for all candidates (the pose models give 100-300 a frame; one numpy call per candidate cost
+        # the frame loop several ms a frame). Same rule: kept when it overlaps a person, or lies in no ignore region.
+        on_person = (valid_overlap >= gt_score.IOU_MIN).any(axis=0)
         det_out = [(d[5], *d[1:5]) for j, d in enumerate(det)
-                   if (valid_overlap[:, j] >= gt_score.IOU_MIN).any()
+                   if on_person[j]
                    or not any(gt_score.ioa(d[1:5], b) >= gt_score.IOA_MIN for b in ignore)]
         return targets, kept_tracks, det_out
 
-    def frame(self, t_in, rows, sc, image_id, detections=None, *, preview_receipt=None):
+    def frame(self, t_in, rows, sc, image_id, detections=None, *, preview_receipt=None, people=None):
+        # people: 이미 640x480 그림 좌표인 사람 [(번호, x1, y1, x2, y2, 점수)] (저장된 결과). 주면 rows 와 sc 를 채점에 쓰지 않는다
         with self.lock:
             if self.src_t is not None and t_in < self.src_t: return None   # 이 재생보다 먼저 도착한 프레임 (옛 영상)
             rp = self.rep.pop(t_in, None)
@@ -280,8 +298,11 @@ class Eval:
                     self._complete()
                 self._sum = None
                 return None
-            ppl = [(int(r[4]), float(r[0]), float(r[1]) - 16.0, float(r[2]), float(r[3]) - 16.0, float(r[5])) for r in rows if int(r[6]) == 0]
-            ppl = stab_people_real(ppl, sc, float(APP.LIVE_W), float(APP.LIVE_H)) if sc is not None else ppl   # 짐벌 줄과 같은 실제 카메라 좌표
+            if people is None:
+                ppl = [(int(r[4]), float(r[0]), float(r[1]) - 16.0, float(r[2]), float(r[3]) - 16.0, float(r[5])) for r in rows if int(r[6]) == 0]
+                ppl = stab_people_real(ppl, sc, float(APP.LIVE_W), float(APP.LIVE_H)) if sc is not None else ppl   # 짐벌 줄과 같은 실제 카메라 좌표
+            else:
+                ppl = people
             out = [(p[0], p[1], p[2], p[3], p[4]) for p in ppl]
             switches, kept = [], []
             fn = self.new.frame(gt, out, pss, switches=switches, kept=kept)
@@ -312,6 +333,9 @@ class Eval:
                  matching='CLEAR MOT (Bernardin & Stiefelhagen 2008, as py-motmetrics): last frame pairs kept while IoU >= 0.5, Hungarian for the rest',
                  per_frame_hungarian=dict(note='same frames, plain Hungarian every frame without keeping last frame pairs; not shown on the page',
                                           new=self.new_h.result(), old=self.old_h.result()) if lab['ok'] else None)
+        if self.own_boxes:   # 저장된 결과: 무엇이 상자를 만들었는지 적고, 검출 후보 점수(AP50 / mAP)는 없다고 알린다. 만든 PC 의 긴 설명(offline_run)은 결과 파일에만 적는다
+            meta = self.backend_meta if not with_rules else {k: v for k, v in self.backend_meta.items() if k != 'offline_run'}
+            s.update(backend_label=self.backend_label, backend_meta=meta, detector_metrics=False)
         if with_rules: self._sum = s
         return s
 
@@ -339,7 +363,7 @@ class Eval:
                     new.frame(gt, rows, 1)
                     old.frame(gt, rows, 1)
                     metric_inputs.append(metric_input)
-                metrics = replay_metrics.compute(metric_inputs) if metric_inputs else dict(hota=None, ap50=None, map=None)
+                metrics = replay_metrics_proc.compute(metric_inputs) if metric_inputs else dict(hota=None, ap50=None, map=None)
                 result = dict(new=dict(new.result(), **metrics), old=old.result(), metric_status='ready' if metric_inputs else 'unavailable')
             except Exception as exc:
                 print('REPLAY PREFIX failed', type(exc).__name__, str(exc)[:120], flush=True)
@@ -405,6 +429,10 @@ class Eval:
                                  'not_reviewed / not_labelled = PNG without a reviewed label (not scored); scored = frames in the numbers; server_skipped = received but not shown; '
                                  'repeats = frames repeated during pause or at the end (not scored); scored_unique = distinct PNGs scored in the first pass',
                      id_switches=self.id_switches, frames_cols=['image_id', 'png', 'pass', 'new_found', 'new_missed', 'new_false', 'old_found', 'old_missed', 'old_false', 'pos'], frames=self.log)
+            if self.own_boxes:
+                d['metric_scope'] = ('Boxes and IDs come from a stored result file (see backend_meta), not from the detector and tracker of this server. '
+                                     'HOTA uses the stored track IDs and project ignore rules. AP50 and mAP50:95 are not computed: the stored file has no detector candidates. '
+                                     'Full first pass only. Nothing here measures device speed.')
             try:
                 p.write_text(json.dumps(d, ensure_ascii=False), encoding='utf-8'); self.file = str(p.name); self._sum = None
                 print('REPLAY EVAL written %s: frames scored %d, new false %d missed %d, old false %d missed %d' % (p.name, self.n['scored'], d['new']['false'], d['new']['missed'], d['old']['false'], d['old']['missed']), flush=True)
@@ -436,9 +464,9 @@ def activate(ev, src_t, reason, sync=False):   # 재생 바꾸기 (cam_lock 안)
         else: threading.Thread(target=_write, args=(old, reason)).start()   # daemon 이 아님: 서버가 끝나도 다 쓴 뒤 끝난다
 
 
-def tag(p, ta, rid, slot, flags=2):   # camera_extra._reader: 재생 카메라의 프레임 하나 (flags 2, 되풀이는 4 도)
+def tag(p, ta, rid, slot, flags=2, *, blocking=True):   # camera_extra._reader: flags 2, 되풀이는 4 도
     ev = getattr(p, 'lwir_eval', None)
-    if ev is not None: ev.tag(ta, rid, slot, flags)
+    return ev is None or ev.tag(ta, rid, slot, flags, blocking=blocking)
 
 
 def lossless(p=None):
@@ -469,6 +497,18 @@ def on_frame(t_in, rows, sc, image_id, detections=None, tracker_detections=None,
     if ev is None:
         return None, None
     native_rows = ev.track_frame(t_in, tracker_detections)
+    if native_rows is not None and ev.own_boxes:
+        # 저장된 결과: 상자는 이미 실제 카메라 그림 좌표다. 채점에는 흔들림 보정과 서버 검출 후보를 넣지 않고 (AP50 / mAP 는 비운다),
+        # 화면에 그릴 행만 정답 상자처럼 보정한 그림 자리로 옮긴다 (draw_boxes 와 같은 방향).
+        shown = native_rows
+        if sc is not None and (sc[0] or sc[1]):
+            shown = [[r[0] + sc[0], r[1] + sc[1], r[2] + sc[0], r[3] + sc[1], *r[4:]] for r in native_rows]
+        try:
+            return ev.frame(t_in, native_rows, None, image_id, None, preview_receipt=preview_receipt,
+                            people=ev.native_people), shown
+        except Exception as e:
+            print('REPLAY EVAL frame failed', type(e).__name__, str(e)[:120], flush=True)
+            return None, shown
     try:
         return ev.frame(t_in, rows if native_rows is None else native_rows, sc, image_id, detections,
                         preview_receipt=preview_receipt), native_rows

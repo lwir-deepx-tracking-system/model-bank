@@ -24,7 +24,7 @@ def restart_conflict(live):
 def npu_feed_state():
     state = frame_feed.status()
     reason = frame_feed.switch_conflict()
-    if reason is None and state['pending']:
+    if reason is None and state['pending'] and frame_feed.manual_pending(APP.FEED):   # 11-16: the page may replace an automatic switch
         reason = 'NPU 검출 모드를 바꾸고 있습니다'
     if reason is None and state['requested'] == 'normal' and len(APP.FEED.eng) != 2:
         reason = 'NPU 1에 검출 모델이 올라가 있지 않습니다'
@@ -46,8 +46,7 @@ def reserve_restart():
         reason = restart_conflict(live)
         if reason is not None:
             return False, reason
-        feed = vars(APP).get('FEED')
-        if feed is not None and feed.pending is not None:
+        if frame_feed.manual_pending(vars(APP).get('FEED')):   # 11-16: an automatic switch of the 'auto' feed is held by the restart (auto_conflict)
             return False, 'NPU 검출 모드를 바꾸고 있습니다'
         live.restart_pending = True
         live.cam_hold = True

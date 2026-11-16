@@ -67,6 +67,44 @@ void test_hysteresis()
     }
 }
 
+// ---------- 5: --aim-screen-y: the aim point is held at that height of the picture instead of the centre
+void test_aim_screen_y()
+{
+    const auto demand = [](double screen_y, double head_y_px) {
+        SmoothingConfig s; s.aim_screen_y = screen_y;
+        AutoTrackingController c(control_config(), s);
+        Track t; t.track_id = 7; t.width = 40; t.height = 80; t.confidence = 0.9f; t.x = 300; t.y = float(head_y_px - 0.5 * 80);   // aim_y 0.5: the aim point is the box centre
+        FrameMetadata m; m.frame_id = 1; m.captured_at = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+        return c.calculate(t, 640, 480, m);
+    };
+    check(demand(0.5, 240).stop(), "aim-screen-y default 0.5: a box centred on the picture centre is at rest (team rule)");
+    const auto low = demand(0.5, 160);
+    check(!low.stop() && std::fabs(low.error_y - (160 - 240) / 240.0) < 1e-6, "aim-screen-y 0.5: aim point at 160 px is 80 px above the target");
+    check(demand(1.0 / 3.0, 160).stop(), "aim-screen-y 1/3: a box whose aim point is at 160 px (one third) is at rest");
+    const auto mid = demand(1.0 / 3.0, 240);
+    check(!mid.stop() && std::fabs(mid.error_y - (240 - 160) / 240.0) < 1e-6, "aim-screen-y 1/3: aim point at the centre is 80 px below the target");
+}
+
+// ---------- 6: --far-gain / --brake-px-per-spd shape the speed demand; defaults leave it unchanged
+void test_far_gain_and_brake()
+{
+    const auto speed = [](double far_gain, double brake, double ex_px) {
+        SmoothingConfig s; s.far_gain = far_gain; s.brake_px_per_spd = brake;
+        AutoControlConfig a = control_config(); a.speed_max = 100;
+        AutoTrackingController c(a, s);
+        FrameMetadata m; m.frame_id = 1; m.captured_at = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+        return c.calculate(person(ex_px / 320.0, 0.0), 640, 480, m).speed;
+    };
+    const double p150 = 30.0 * 150.0 / 320.0;   // the PD demand of a first frame (no D yet) at 150 px
+    check(std::fabs(speed(1.0, 0.0, 150) - p150) < 1e-9, "far gain / brake off: speed = PD demand (team rule)");
+    check(std::fabs(speed(2.0, 0.0, 50) - 30.0 * 50 / 320.0) < 1e-9, "far gain 2: no change below far_start (64 px)");
+    check(std::fabs(speed(2.0, 0.0, 200) - 2.0 * 30.0 * 200 / 320.0) < 1e-9, "far gain 2: full gain beyond far_full (160 px)");
+    check(std::fabs(speed(2.0, 0.0, 112) - 1.5 * 30.0 * 112 / 320.0) < 1e-9, "far gain 2: half way at 112 px");
+    check(std::fabs(speed(1.0, 4.0, 150) - std::min(p150, (150 - 19.2) / 4.0)) < 1e-9, "brake 4: no cap where the cap is above the demand");
+    check(std::fabs(speed(4.0, 4.0, 150) - (150 - 19.2) / 4.0) < 1e-9, "far gain 4 + brake 4: capped at (|e| - deadband) / 4");
+    check(speed(4.0, 40.0, 40) >= 1.0, "brake never asks less than the minimum speed while moving");
+}
+
 // ---------- executor with a recording fake device
 struct Command { int x, y, speed; bool stop; std::chrono::steady_clock::time_point at{}; };
 struct Recorder {
@@ -187,6 +225,34 @@ void test_soft_stop()
     for (int v : soft) std::printf(" %d", v);
     std::printf("\n");
 }
+
+// ---------- 7: the executor uses the shaped demand also with --axis-reversal 1 (it used to recompute the shared SPD
+// from the unshaped PID values, so --far-gain and --brake-px-per-spd did nothing there)
+int steady_speed(bool axis_reversal, double far_gain, double brake, double ex = 0.4, double ey = 0.0)
+{
+    SmoothingConfig s; s.axis_reversal = axis_reversal; s.far_gain = far_gain; s.brake_px_per_spd = brake;
+    Rig r(s);
+    if (!r.follow(ex, ey, 0.9)) return -1;
+    const auto got = r.rec.since(0);
+    for (auto c = got.rbegin(); c != got.rend(); ++c) if (!c->stop) return c->speed;
+    return -1;
+}
+
+void test_far_gain_with_axis_reversal()
+{
+    // 128 px right of the centre: PD demand 12; far gain 2 (64..160 px) is x 1.667 there -> 20
+    const int plain = steady_speed(false, 1.0, 0.0), plain_axis = steady_speed(true, 1.0, 0.0);
+    check(plain == 12 && plain_axis == 12, "far gain 1 (default): SPD = PD demand with and without axis_reversal (unchanged)");
+    const int far = steady_speed(false, 2.0, 0.0), far_axis = steady_speed(true, 2.0, 0.0);
+    check(far == 20, "far gain 2 without axis_reversal: SPD 20 at 128 px (as before)");
+    check(far_axis == 20, "far gain 2 with axis_reversal: the same SPD 20 (was 12: the gain was dropped)");
+    const int brake = steady_speed(false, 1.0, 20.0), brake_axis = steady_speed(true, 1.0, 20.0);
+    check(brake == 5 && brake_axis == 5, "brake 20 px/SPD: SPD (128 - 19.2) / 20 = 5 with and without axis_reversal");
+    // the shared SPD is the larger shaped axis: X 128 px (far gain -> 20), Y 48 px below (PD 6, under far_start)
+    check(steady_speed(true, 2.0, 0.0, 0.4, 0.2) == 20, "far gain 2 with axis_reversal, both axes moving: shared SPD = the larger shaped axis");
+    std::printf("      SPD plain %d/%d  far 2 %d/%d  brake 20 %d/%d (without/with axis_reversal)\n",
+                plain, plain_axis, far, far_axis, brake, brake_axis);
+}
 }
 
 int main()
@@ -194,6 +260,9 @@ int main()
     test_hysteresis();
     test_reversal();
     test_soft_stop();
+    test_aim_screen_y();
+    test_far_gain_and_brake();
+    test_far_gain_with_axis_reversal();
     std::printf(failures ? "FAILED %d\n" : "ALL OK\n", failures);
     return failures ? 1 : 0;
 }

@@ -48,3 +48,33 @@
 .ot-sum{border-top:1px solid var(--line);padding-top:8px;font-size:13px;color:var(--ink2);-webkit-user-select:text;user-select:text}
 #ot-sum{color:var(--ink)}
 @media(max-width:560px){.ot-row{grid-template-columns:1fr;gap:6px}.ot-lab{padding-top:0}.ot-lab small{display:inline;margin-left:6px}}
+/* 11-13 (design review): recommended tag, lock reason in the node, the 'now' line on top */
+.ot-rec{display:inline-block;margin-left:6px;padding:0 6px;border-radius:999px;border:1px solid #5fb36f;color:#7fd08e;font-size:11px;line-height:1.5;vertical-align:1px}
+.ot-n small.ot-why{color:var(--warn)}
+.ot-sumtop{margin:0 0 8px;padding:6px 9px;border:1px solid var(--acc);border-radius:6px;background:rgba(224,122,36,.08);color:var(--ink)}
+body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is locked shows even in the brief view */
+/* 11-13 (design review 3): the 'now' summary as label / value lines; names keep Korean words whole */
+#ot-sum{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:3px 12px;margin-top:4px}
+#ot-sum b{font-weight:400;color:var(--ink2);white-space:nowrap}#ot-sum span{color:var(--ink);word-break:keep-all;overflow-wrap:anywhere}
+.ot-sumh{font-size:11.5px;color:var(--acc);font-weight:700}
+.ot-n{word-break:keep-all;overflow-wrap:anywhere}.ot-n small:empty{display:none}
+/* 11-16 (design review, round 1) */
+.ot-own>.ot-kid+.ot-kid{border-top:1px solid var(--line2)}   /* a chosen tile with two child rows (BoT-SORT: 외형 비교, engine) */
+.sec-t{display:inline-flex;flex-direction:column;gap:2px;min-width:0;max-width:calc(100% - 28px);vertical-align:middle}   /* 1: the combination in use under the section title, only while the section is folded */
+.sec-t small{font-size:12.5px;font-weight:400;color:var(--ink);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.sec-t small:empty,details.sec[open] .sec-t small{display:none}
+.ot-hint{position:sticky;bottom:10px;z-index:5}   /* 3: the answer to a tap floats at the bottom of the screen (it was under the tree, off screen) */
+.ot-hint:not(:empty){background:#2b2618;border:1px solid var(--warn);border-radius:6px;padding:9px 12px;box-shadow:0 4px 14px rgba(0,0,0,.55);color:#f0d9a0;cursor:pointer}
+@media(max-width:900px){#ot-tree .ot-n{min-height:44px;min-width:56px}details.sec>summary{min-height:44px}}   /* 9: phones, tiles big enough for a finger */
+/* 11-16 (design review, round 2) */
+.ot-g{margin:14px 0 2px;font-size:12px;font-weight:700;color:var(--ink2);display:flex;align-items:center;gap:8px}   /* 4: group titles */
+.ot-g:after{content:"";flex:1;height:1px;background:var(--line)}
+.ot-adv{margin-top:16px;border:1px solid var(--line2);border-radius:6px;padding:0 10px}
+.ot-adv.open{padding-bottom:6px}
+.ot-advh{font:inherit;display:block;width:calc(100% + 20px);margin:0 -10px;text-align:left;background:rgba(255,255,255,.04);border:0;color:var(--ink);padding:9px 12px;cursor:pointer;min-height:44px;border-radius:6px}
+.ot-advh b{font-size:13px}.ot-advh small{display:block;font-size:12px;color:var(--ink2);margin-top:2px;word-break:keep-all;overflow-wrap:anywhere}
+.ot-advh:focus-visible{outline:1px solid var(--ink2);outline-offset:1px}
+.ot-box{display:inline-block;width:15px;height:15px;border:1.5px solid var(--ink2);border-radius:3px;margin-right:8px;vertical-align:-2px;position:relative}   /* 8: check box in the tiles of a switch-several row */
+.ot-box.on{background:var(--acc);border-color:var(--acc)}
+.ot-box.on:after{content:"";position:absolute;left:4px;top:1px;width:4px;height:8px;border:solid var(--acc-ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.ot-sumtop{border-color:var(--line2);background:rgba(255,255,255,.04)}.ot-sumh{color:var(--ink2)}   /* 13: orange only means 'selected'; the summary box is not a tile */

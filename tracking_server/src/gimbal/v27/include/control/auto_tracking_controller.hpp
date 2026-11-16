@@ -8,6 +8,9 @@
 struct GimbalDemand {
     int x = 0, y = 0; // command coordinates: +X right, +Y up
     double speed = 0;
+    // v27: each axis' speed demand after --far-gain / --brake-px-per-spd (= |pid value| when both are off).
+    // The executor's per-axis reversal takes the shared SPD from these, so the shaping also works with --axis-reversal 1.
+    double speed_x = 0, speed_y = 0;
     double error_x = 0, error_y = 0; // image coordinates: +Y down
     PidOutput pid_x, pid_y; // signed outputs in image coordinates
     bool stop() const { return x == 0 && y == 0; }

@@ -1,5 +1,0 @@
-{
- "display_name": "실내 fine-tuning patch 판 (11-11) · YOLO26m_(FLIR) 640x480",
- "sha256": "ae29d607462cf5b790991ad244f54f1d08d762476502da1382ad4b3a7b9bdc07",
- "note": "YOLO26m_fine-tuning_(실내)_20261111_patch. 실내 영상 + 사람 아닌 조각을 '모름'으로 붙여 학습, 20 epoch 중 11번째. 실내 test(conf .25): 찾음 221, 잘못된 박스 48, 놓침 84 (YOLO26m_fine-tuning_(실내)_20261110: 216 / 39 / 89, YOLO26m_(FLIR): 78 / 65 / 227). 11-10 실내 모델보다 좋다고 할 수 없음. 실외에서는 쓰지 않음. 시험용. 장치 INT8 정확도 미측정."
-}

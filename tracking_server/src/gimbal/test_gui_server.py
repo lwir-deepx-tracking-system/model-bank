@@ -2,6 +2,7 @@
 """Checks the live server with the PC GUI link on the M1 without a gimbal and without the PC: the server runs on the fake camera (FLIR frames) with a
 pseudo terminal as its gimbal device and --gui-host 127.0.0.1 (software H.264). This script plays the PC: it reads the track metadata (UDP 5001),
 decodes the video (UDP 5000, GStreamer Python binding) and sends GUI commands (TCP 5002), and compares with what the web page reports.
+11-15: the picture goes to the bridge (and video + metadata to the PC) only while the PC GUI is connected on TCP 5002.
 Usage: test_gui_server.py <tracking_server folder> <fake camera script> <out folder name>
 Leaves the server stopped. Exit code 0 only when every check passes."""
 import json, os, pty, select, signal, socket, struct, subprocess, sys, time, tty, urllib.error, urllib.request
@@ -142,6 +143,18 @@ try:
     else: check(False, 'server did not start')
     check(serial(3.) == STOP, 'the first gimbal command is STOP')
     post('/gimbal/ping')
+    # 11-15: no PC GUI connected yet: the server sends the bridge people only (no picture), nothing is encoded or sent to the PC
+    time.sleep(1.5)
+    st = people()['state']
+    check(st['gui']['on'] and st['gui'].get('picture') == 0 and st['gui']['client'] == 0 and st['gui']['sent'] == 0 and st['gui']['rtp_bytes'] == 0,
+          'no PC GUI: the web page reports picture 0 and nothing sent: %s' % st['gui'])
+    check(not datagrams(.5), 'no PC GUI: no track metadata on UDP %d' % META)
+    # the PC GUI connects: picture, video and metadata start
+    pc = Pc()
+    s = pc.wait(1, 3); check(s is not None and len(s) == 8, 'STATUS on connection: %s' % (s.hex() if s else None))
+    end = time.monotonic() + 3
+    while time.monotonic() < end and not people()['state']['gui'].get('picture'): post('/gimbal/ping'); time.sleep(.1)
+    check(people()['state']['gui'].get('picture') == 1, 'PC GUI connected: the web page reports picture 1')
     # metadata against the web page
     pk = datagrams(2.0)
     check(len(pk) >= 20, 'track metadata datagrams arrive on UDP %d (%d in 2 s)' % (META, len(pk)))
@@ -160,13 +173,12 @@ try:
     dv = decoded_frames(4.0)
     if dv is not None: check(dv[0] >= 20 and dv[1] == (640, 480), 'the video decodes to 640x480 (%d frames in 4 s)' % dv[0])
     # GUI commands
-    pc = Pc()
-    s = pc.wait(1, 3); check(s is not None and len(s) == 8, 'STATUS on connection: %s' % (s.hex() if s else None))
     end = time.monotonic() + 3
     while time.monotonic() < end and not people()['state']['gui']['client']: post('/gimbal/ping'); time.sleep(.2)
     check(people()['state']['gui']['client'] == 1, 'the web page reports the GUI client')
     a = None
     for attempt in range(5):   # a person that is in the frames right now
+        post('/gimbal/ping')   # the GUI connected a while ago: keep the executor's heartbeat fresh
         pk = datagrams(.3)
         cur = [decode_metadata(p)['tracks'] for p in pk[-1:]]
         if not cur or not cur[0]: continue
@@ -185,7 +197,8 @@ try:
     pc.send(2, 2); a = pc.wait(1, 1); check(a == bytes([2, 2, 0]), 'MANUAL -> ACK OK')
     check(serial_until(lambda c: c == STOP, 3.0) is not None, 'leaving AUTO sends STOP')
     pc.close()
-    time.sleep(1.0)
+    time.sleep(1.5)
+    check(people()['state']['gui'].get('picture') == 0, 'the GUI left: the web page reports picture 0 again')
     # the web page works after the GUI left
     post('/gimbal/ping'); time.sleep(.3); post('/gimbal/ping')
     p = people()

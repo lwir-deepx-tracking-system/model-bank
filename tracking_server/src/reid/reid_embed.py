@@ -1,18 +1,86 @@
 """사람 조각을 외형 모델에 넣어 특징을 뽑는 함수들과, 외형 모델을 새로 올리거나 비우는 함수."""
+from collections import deque
+import os
 import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE, PERSON_CLS, sha
+from ..common import fast_path
+
+
+def _crop_into(gray, box, output, width, height):
+    x1, y1, x2, y2 = box
+    left, top, right, bottom = int(max(0, x1)), int(max(0, y1)), int(min(640, x2)), int(min(512, y2))
+    if right - left < 2 or bottom - top < 2:
+        return False
+    resized = APP.cv2.resize(gray[top:bottom, left:right], (width, height), interpolation=APP.cv2.INTER_LINEAR)
+    output[0] = APP.cv2.cvtColor(resized, APP.cv2.COLOR_GRAY2RGB)
+    return True
+
+
+def _embed_slot_batch(engine, keys, gray, boxes, got, base=0):
+    start = time.perf_counter_ns()
+    jobs = deque()
+    try:
+        for slot, key in enumerate(keys, base):
+            if not _crop_into(gray, boxes[key], engine.ins[slot], engine.W, engine.H):
+                continue
+            jobs.append((key, engine._submit_slot(slot), engine.outs[slot].size))
+        count = len(jobs)
+        while jobs:
+            key, job, size = jobs.popleft()
+            outputs = engine._wait_slot(job)
+            e = np.asarray(outputs[0]).ravel()
+            if e.size != size or not np.isfinite(e).all():
+                raise AssertionError(('re-ID output', e.shape, size))
+            # Division allocates a feature independent of the reusable NPU output slot.
+            got[key] = e / max(np.linalg.norm(e), 1e-12)
+    except BaseException:
+        engine._drain_known(job for _, job, _ in jobs)
+        raise
+    if count:
+        if not engine.birth_pipeline_batches:
+            print('REID same-frame pipeline active: max %d jobs, shared KeepID/BoT-SORT/refresh-overflow path' % (fast_path.EMBED_MAX if fast_path.FAST['embed'] else 2), flush=True)
+        engine.birth_pipeline_batches.append((count, (time.perf_counter_ns() - start) / 1e6))
+
+
+def _free_slots(engine):
+    """(first free slot, crops at a time) of the slot engine, or None when the crops must go one by one.
+    Nothing in flight: all slots. 2026-11-15 (fast_path 'embed'): while only KeepID's refresh crops of the last frame are in flight
+    (AsyncEmbedder.submit wrote down which slots they may hold), the slots above them are free, and up to EMBED_MAX crops go together."""
+    fast = fast_path.FAST['embed']
+    if engine.inflight == 0:
+        return 0, (min(fast_path.EMBED_MAX, engine.n) if fast else 2)
+    held = getattr(engine, 'reserved', None)
+    if not fast or held is None or held[1] != engine.inflight or engine.n - held[0] < 2:
+        return None
+    return held[0], min(fast_path.EMBED_MAX, engine.n - held[0])
 
 
 def rl_embed(ks, g_, boxes):
-    """--relabel: crop -> submit -> wait, batch 1 on NPU_2, one after another (crop rule = crop_from_pred.py on the saved-PRED box form)"""
+    """Return features within this call for KeepID, BoT-SORT, and refresh overflow.
+
+    Optional slot batches use a few batch-1 jobs at a time (see _free_slots). Their wall time is recorded
+    separately from serial per-crop and deferred-refresh timings.
+    """
+    if os.environ.get('LWIR_REID_BIRTH_PIPELINE') == '1':
+        engine = vars(APP).get('rl_async')
+        free = _free_slots(engine) if engine is not None and not engine.quarantined and engine.n > 1 else None
+        if free is not None:
+            ks = tuple(ks)
+            if len(ks) > 1:
+                if not hasattr(engine, 'birth_pipeline_batches'):
+                    engine.birth_pipeline_batches = deque(maxlen=512)
+                got = {}; base, step = free
+                for start in range(0, len(ks), step):
+                    _embed_slot_batch(engine, ks[start:start + step], g_, boxes, got, base)
+                    fast_path.STAT['embed_batches'] += 1; fast_path.STAT['embed_beside_refresh'] += int(base > 0)
+                return got
+
     got = {}
     for k_ in ks:
-        t0_ = time.perf_counter_ns(); x1, y1, x2, y2 = boxes[k_]
-        a_, b_, c_, d_ = int(max(0, x1)), int(max(0, y1)), int(min(640, x2)), int(min(512, y2))
-        if c_ - a_ < 2 or d_ - b_ < 2: continue
-        APP.rl_x[0] = APP.cv2.cvtColor(APP.cv2.resize(g_[b_:d_, a_:c_], (APP.rl_eng.W, APP.rl_eng.H), interpolation=APP.cv2.INTER_LINEAR), APP.cv2.COLOR_GRAY2RGB)
+        t0_ = time.perf_counter_ns()
+        if not _crop_into(g_, boxes[k_], APP.rl_x, APP.rl_eng.W, APP.rl_eng.H): continue
         APP.rl_eng.submit(APP.rl_x, -1); e = APP.rl_eng.wait()[0].ravel(); got[k_] = e / max(np.linalg.norm(e), 1e-12)
         APP.rl_crop_ms.append((time.perf_counter_ns() - t0_) / 1e6)
         if not APP.args.mock: APP.rl_npu.append(APP.rl_eng.b.get_npu_inference_time() / 1000)

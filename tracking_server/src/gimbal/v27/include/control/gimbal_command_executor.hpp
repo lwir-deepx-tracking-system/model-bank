@@ -19,6 +19,7 @@ struct ControlSnapshot {
     bool moving = false;
     bool error = false;
     std::uint32_t selected_id = 0;
+    int search = 0; // v27: 0 none, 1 grace, 2 follow-through, 3 sweep, 4 done (holding); 5 = following the server's SEEK box (--seek 1)
     std::uint64_t command_generation = 0;
     double pan_estimate = 50.0;
     double tilt_estimate = 50.0;
@@ -66,6 +67,7 @@ class GimbalCommandExecutor {
     Clock::time_point ping_{}, lost_since_{}, last_output_{}, next_auto_{};
     int x_ = 0, y_ = 0, sent_speed_ = 0;
     double limited_speed_ = 0;
+    bool arrived_ = false;   // v27 arrival control: ingest() took in a new frame during this worker wake
     bool hold_x_ = false, hold_y_ = false;   // v27: axis halted by a per-axis reversal, waiting to rejoin
     Clock::time_point hold_x_since_{}, hold_y_since_{};
     struct PredictiveBrake {
@@ -76,11 +78,31 @@ class GimbalCommandExecutor {
         int used_direction = 0;
         Clock::time_point hold_since{};
     } brake_;
+    // v27 search when lost (SmoothingConfig::search). Worker-owned.
+    struct Search {
+        enum Phase { None, Grace, Follow, Sweep, Done } phase = None;
+        Clock::time_point lost_at{}, last_step{}, follow_since{};
+        int dir_x = 0, follow_speed = 0, side = 1, leg = 0, tilt_dir = 1;
+        double pan = 0, tilt = 0;      // estimated picture px from the pose at the loss (+ right, + up)
+        bool blind = false;
+    } search_;
+    int follow_x_ = 0, follow_speed_ = 0;   // last following output while the target was seen
+    double follow_error_x_ = 0;            // last observed horizontal error (+ right)
+    double follow_vx_ = 0;                 // last predictive-control velocity of the target (VEL), picture px/s
+    Clock::time_point follow_v_at_{};
+    // v27 coast (SmoothingConfig::coast). Worker-owned.
+    Track coast_track_{};
+    bool coasting_ = false, coasted_ = false;   // following the PRED box now / during this loss
+    const Track* coast_target(Clock::time_point now);
+    bool seeking_ = false;   // v27 seek (SmoothingConfig::seek): coast_track_ is the server's SEEK box now
+    const Track* seek_target(Clock::time_point now);
 
     void run();
+    void search_step(Clock::time_point now);
+    bool searching() const { return search_.phase == Search::Follow || search_.phase == Search::Sweep; }
     bool ingest(Observation);
     void mark_lost(Clock::time_point now);
-    void tick();
+    void tick(bool arrival = false);   // v27: arrival = called for a newly taken-in frame (SmoothingConfig::arrival_control)
     bool apply_predictive_brake(const Track&, const GimbalDemand&, const TrackLead&);
     bool alive() const;
     bool ready() const;

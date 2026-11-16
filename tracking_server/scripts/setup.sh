@@ -84,7 +84,8 @@ if bad:
 EOF
 
 # 카메라 프로그램. SDK 가 없으면 실시간 서버만 못 쓰고, 파일로 돌리는 실행은 된다.
-# 셔터 설정 파일 cam_shutter.txt 를 쓰는 장치에서는 그 파일을 src/camera/ (cam_pipe 옆) 에 둔다. 파일이 없으면 cam_pipe 는 기본 셔터 설정으로 연다.
+# 셔터 설정 파일 src/camera/cam_shutter.txt (11-15 부터 저장소에 있음: T120) 는 cam_pipe 옆에 있어야 cam_pipe 가 읽는다. 이 스크립트는 그 파일을 만들거나 덮어쓰지 않는다.
+# 파일이 없으면 cam_pipe 는 기본 셔터 설정(d)으로 연다. 11-12 에 cam_pipe 를 이 폴더로 옮기며 파일이 빠져 T120 이 꺼졌던 일이 있다.
 if [ -f /usr/local/include/i3system/i3system_TE.h ]; then
   g++ -O2 src/camera/cam_pipe.cpp -o src/camera/cam_pipe -D_LINUX -I/usr/local/include/i3system $(pkg-config --cflags --libs opencv4) -li3system_te_64 -li3system_usb_64 -li3system_imgproc_impl_64 -lpthread
   echo "cam_pipe built"
