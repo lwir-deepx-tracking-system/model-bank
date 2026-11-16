@@ -314,11 +314,16 @@ def with_comment(jpeg, text):
     return jpeg[:pos] + b'\xff\xfe' + (len(text) + 2).to_bytes(2, 'big') + text + jpeg[pos:]
 
 
+def frame_key(frame_t):
+    """Camera arrival time in integer microseconds in the server's monotonic clock."""
+    return round(frame_t * 1_000_000)
+
+
 def picture_comment(seq, frame_t, now_perf, now_unix, level=0):
     """'LWIR n=<seq> t=<frame arrival> s=<now>' in unix seconds (+ ' l=<level>' on a lighter picture); frame_t is a
     time.perf_counter() value or None."""
     text = b'LWIR n=%d s=%.3f' % (seq, now_unix) if frame_t is None else \
-        b'LWIR n=%d t=%.3f s=%.3f' % (seq, now_unix - (now_perf - frame_t), now_unix)
+        b'LWIR n=%d t=%.3f s=%.3f k=%d' % (seq, now_unix - (now_perf - frame_t), now_unix, frame_key(frame_t))
     return text + b' l=%d' % level if level else text
 
 

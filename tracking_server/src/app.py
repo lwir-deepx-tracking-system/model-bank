@@ -842,6 +842,10 @@ def main():
                 er_ = e2e_live.step(g)
                 if er_ is not None: tr_rows = er_
             base_rows = tr_rows; rl_ms = 0.0
+            click_relabel_namespace = None
+            click_raw_to_public = None
+            click_raw_ids = (tuple(int(r[4]) for r in base_rows if int(r[6]) == PERSON_CLS)
+                             if APP.LIVE is not None else ())
             if APP.relabeler is not None and APP.RULES['relabel'] and not e2e_live.skip_detector():   # 11-14: not with the end-to-end model (its own numbers). --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
@@ -849,6 +853,10 @@ def main():
                 tr_rows = APP.relabeler.step(tr_rows, P_, lambda ks, g_=g, b_=P_: APP.rl_embed(ks, g_, b_), frame=Path(im['file_name']).name,
                                          embed_async=(lambda ks, g_=g, b_=P_: APP.rl_async.submit(ks, g_, b_)) if APP.rl_async is not None else None, **mamba_kw_)
                 rl_ms = (time.perf_counter_ns() - tr0_) / 1e6
+                if APP.LIVE is not None:
+                    click_relabel_namespace = getattr(APP.relabeler, 'id_map', None)
+                    click_raw_to_public = ({raw: click_relabel_namespace.get(raw) for raw in click_raw_ids}
+                                           if click_relabel_namespace is not None else {})
             zc_ms = 0.0; n_zc = 0; n_zw = 0
             if zoom_eng is not None and ahead and i + 1 < len(APP.images) and APP.images[i + 1]['extra_info']['video_id'] == vid:
                 # v9: candidates of THIS frame (jo480 = its decoded pre-NMS tiles, still intact until detect(i+1)) -> windows cut from the NEXT frame's gray
@@ -900,7 +908,10 @@ def main():
             if APP.relabeler is not None:
                 APP.tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
                                         tracks_xyxy_id_conf_class_detectionindex=frame_records.track_array(base_rows, APP.FRAME_DY[0])))
-            if APP.LIVE is not None: live_publish(g, tr_rows, row, detections=p, tracker_detections=arr)
+            if APP.LIVE is not None:
+                live_publish(g, tr_rows, row, detections=p, tracker_detections=arr,
+                             click_raw_ids=click_raw_ids, click_raw_to_public=click_raw_to_public,
+                             click_namespace=click_relabel_namespace)
             if APP.TIMING is not None: APP.TIMING.frame(i, t0, t1, t2, t4, rl_ms, t5)
             prev_gray = g
             if budget: prev_arr = arr

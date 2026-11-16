@@ -9,6 +9,7 @@ import time
 
 import numpy as np
 
+from ..camera import replay_link
 from ..common.state import APP
 from ..track.stabilizer import stab_people_real
 from . import follow_guard, predictive_lead, search_follow
@@ -39,12 +40,19 @@ def _boundary_locked(gb, source):
     gb.tracks_ticket = getattr(gb, 'tracks_ticket', 0) + 1
     gb.wq.appendleft(('H %d\n' % gb.tracks_ticket).encode())
     gb.people = []
+    gb.click_owners = {}
     gb.people_source = source
     gb.people_t = 0.0
     gb.selection_reset = True
     gb.lead_pending = 0
     reset_lead()
     gb.wcond.notify()
+
+
+def stop_with_ack_locked(gb):
+    """Cancel pending selections and ask the bridge to acknowledge STOP."""
+    gb.people_source = object()
+    _boundary_locked(gb, current_source())
 
 
 def halted(ticket):
@@ -54,6 +62,7 @@ def halted(ticket):
         if ticket == getattr(gb, 'tracks_ticket', None):
             gb.state.update(auto=0, lost=0, moving=0, id=0)
             gb.selection_reset = False
+            gb.selection_ack_wait_state = False
 
 
 def _bridge_option(gb, name):
@@ -529,7 +538,19 @@ def _search_velocity_locked(gb, selected, real, rows, frame_t, correction):
     return ' VEL %d %.1f %.1f' % (selected, lv.vx, lv.vy)
 
 
-def publish(people, correction, frame_t, raw16, source, blocked=False, *, healthy_live=False):
+def _record_click_owners(gb, raw_owners, namespace):
+    previous = getattr(gb, 'click_owners', {}) if getattr(gb, 'click_namespace', None) is namespace else {}
+    gb.click_owners = {}
+    gb.click_namespace = namespace
+    visible = {p[0] for p in gb.people}
+    for public, raw in raw_owners.items():
+        if public in visible:
+            owner = previous.get(public)
+            gb.click_owners[public] = owner if owner is not None and owner[0] == raw else (raw, object())
+
+
+def publish(people, correction, frame_t, raw16, source, blocked=False, *, healthy_live=False,
+            click_owners=None, click_namespace=None):
     """Publish the same IDs as the drawn boxes, with existing coordinate rules."""
     gb = APP.GB
     if gb is None:
@@ -556,6 +577,7 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         # Never offer frozen, replayed, or switch-pending rows for a new click.
         gb.people = [] if blocked or source is None or not stamp_ok or (marked and not healthy) else list(people[:60])
         gb.people_t = frame_t if stamp_ok and (not marked or healthy) else 0.0
+        _record_click_owners(gb, (click_owners or {}) if healthy else {}, click_namespace)
         if healthy:
             gb.observation_ns = captured_ns
         gb.frame += 1
@@ -645,6 +667,19 @@ def hit_id(people, x, y):
     return hit[0] if hit is not None else None
 
 
+AMBIGUOUS_CLICK = object()
+
+
+def unique_hit_id(people, x, y):
+    """Reject intersecting people and any second box with the target ID."""
+    ids = [p[0] for p in people if p[1] <= x <= p[3] and p[2] <= y <= p[4]]
+    if not ids:
+        return None
+    if len(ids) != 1 or sum(p[0] == ids[0] for p in people) != 1:
+        return AMBIGUOUS_CLICK
+    return ids[0]
+
+
 def preview_people(frame_t, visible_ids):
     """Snapshot click boxes and the acknowledged tracker boundary for one JPEG."""
     gb = APP.GB
@@ -656,10 +691,20 @@ def preview_people(frame_t, visible_ids):
         return people, getattr(gb, 'tracks_ticket', 0)
 
 
+def preview_click_owners(frame_t):
+    """Selection ownership tokens from the frame used by the browser."""
+    gb = APP.GB
+    with gb.wcond:
+        if getattr(gb, 'people_t', None) != frame_t or getattr(gb, 'selection_reset', True):
+            return {}
+        return {public: token for public, (_raw, token) in getattr(gb, 'click_owners', {}).items()}
+
+
 _UNGUARDED_CLICK = object()
 
 
-def click(x, y, *, expected_id=_UNGUARDED_CLICK, expected_ticket=None):
+def click(x, y, *, expected_id=_UNGUARDED_CLICK, expected_ticket=None,
+          shown_frame_t=None, expected_owner=None, viewer_ip=None):
     """Select from the published live snapshot, then send its frame BEFORE A."""
     if not math.isfinite(x) or not math.isfinite(y) or not 0 <= x <= APP.LIVE_W or not 0 <= y <= APP.LIVE_H:
         return False, '영상 밖의 좌표입니다'
@@ -667,24 +712,47 @@ def click(x, y, *, expected_id=_UNGUARDED_CLICK, expected_ticket=None):
     with gb.wcond:
         if not getattr(gb, 'track_control_supported', False):
             return False, '짐벌 연결 프로그램을 새로 빌드하고 서버를 다시 시작해 주세요'
+        if getattr(APP.LIVE, 'restart_pending', False):
+            return False, '서버가 다시 시작되는 중입니다'
         source = current_source()
         if (not gb.wopen or source is None or getattr(gb, 'selection_reset', True)
                 or source != getattr(gb, 'people_source', None)
                 or not 0 <= time.perf_counter() - getattr(gb, 'people_t', 0.0) < 0.5):
             return False, '현재 카메라 추적 결과를 기다려 주세요'
-        target = hit_id(gb.people, x, y)
+        if shown_frame_t is not None:
+            live = APP.LIVE
+            if (not 0 <= time.perf_counter() - shown_frame_t < 0.5
+                    or replay_link.frame_blocked(shown_frame_t)
+                    or getattr(gb, 'usb_hold', False)
+                    or any(getattr(live, flag, False) for flag in
+                           ('stopped', 'cam_hold', 'cam_lost', 'restart_pending'))):
+                return False, '선택할 수 있는 최신 카메라 화면을 기다려 주세요'
+            target = unique_hit_id(gb.people, x, y)
+        else:
+            target = hit_id(gb.people, x, y)
+        if target is AMBIGUOUS_CLICK:
+            return False, '상자가 겹치거나 같은 추적 ID가 여러 곳에 있습니다. 최신 화면에서 다시 누르세요'
         if expected_id is not _UNGUARDED_CLICK and (
                 target != expected_id or expected_ticket != getattr(gb, 'tracks_ticket', 0)):
             return False, '화면의 사람과 최신 추적 결과가 다릅니다. 새 화면에서 다시 누르세요'
+        if shown_frame_t is not None and target is not None:
+            owner = getattr(gb, 'click_owners', {}).get(target)
+            if owner is None or owner[1] is not expected_owner:
+                return False, '같은 추적 ID가 다른 사람에 연결되었습니다. 최신 화면에서 다시 누르세요'
+        if target is not None and len(gb.wq) >= (61 if viewer_ip is not None else 62):
+            return False, '명령 전송이 밀렸습니다. 잠시 뒤 다시 눌러 주세요'
+        if viewer_ip is not None:
+            # Accept the viewer and enqueue its heartbeat only with a validated H.264 click.
+            gb.mover_t[viewer_ip] = time.monotonic()
+            gb.mover = None
+            if len(gb.wq) < 64:
+                gb.wq.append(b'P\n')
         if target is None:
             # Empty-picture clicks retain Python's stop behavior.
             # Reuse the same acknowledged boundary mechanism; repeated empty
             # clicks cannot pile up STOP commands or retain queued selections.
-            gb.people_source = object()
-            _boundary_locked(gb, source)
+            stop_with_ack_locked(gb)
         else:
-            if len(gb.wq) >= 62:
-                return False, '명령 전송이 밀렸습니다. 잠시 뒤 다시 눌러 주세요'
             reset_lead()
             gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
             # The writer normally flushes commands before the latest G/F slot.

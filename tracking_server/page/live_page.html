@@ -978,7 +978,11 @@ function ovDraw(){const cv=OV.cv;if(!cv)return;
   const dpr=window.devicePixelRatio||1,bw=cv.clientWidth,bh=cv.clientHeight,W=Math.round(bw*dpr),H=Math.round(bh*dpr);
   if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
   const x=cv.getContext('2d');x.clearRect(0,0,W,H);
-  const d=OV.data;if(!d||!d.pf||Date.now()-OV.at>1000||document.body.classList.contains('replay-mode'))return;
+  if(window.h264Mode)h264Drawn=null;
+  const frame=window.h264Mode&&h264Shown?h264Overlays.get(h264Shown.key):null;
+  const d=window.h264Mode?frame:OV.data;
+  if(!d||!d.pf||(!window.h264Mode&&Date.now()-OV.at>1000)||document.body.classList.contains('replay-mode'))return;
+  if(window.h264Mode)h264Drawn=d;
   let w=bw,h=bw*3/4;if(h>bh){h=bh;w=bh*4/3;}   // the picture inside its box (object-fit: contain)
   const ox=(bw-w)/2,oy=(bh-h)/2,k=w/(d.w||640);
   x.save();x.scale(dpr,dpr);x.font='bold 13px sans-serif';x.textBaseline='bottom';
@@ -1011,6 +1015,13 @@ function ovOpen(){if(OV.es||typeof EventSource!=='function')return;
     try{OV.data=JSON.parse(e.data);}catch(_){return;}
     OV.at=Date.now();
     const data=OV.data;
+    if(window.h264Mode){
+      if(!data?.pf)h264Overlays.clear();
+      else if(Number.isSafeInteger(data.k)){
+        h264Overlays.set(data.k,data);
+        if(h264Overlays.size>90)h264Overlays.delete(h264Overlays.keys().next().value);
+      }
+    }
     const useCenter=overlayCenterEnabled&&data?.pf&&overlayOnMjpeg();
     if(!useCenter||OV.gen!==PS.gen)overlayCenter.reset();
     OV.gen=PS.gen;
@@ -1024,6 +1035,7 @@ function ovOpen(){if(OV.es||typeof EventSource!=='function')return;
   };
 }
 function overlayResetHistory(){
+  if(window.h264Mode)h264Overlays.clear();
   OV.boxes=null;
   OV.gen=null;
   overlayCenter.reset();
@@ -1052,7 +1064,6 @@ function ovTick(){if(!document.hidden&&rlast&&rlast.picture_first)ovOpen();else 
 setInterval(ovTick,1000);addEventListener('resize',ovDraw);
 function post(u,ka){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',keepalive:!!ka}).then(r=>r.json()).then(show).catch(()=>{S.textContent='명령이 전달되지 않았습니다';netChip();});}
 v.addEventListener('click',e=>{
-  if(window.h264Mode){$('ans').textContent='H.264 시험 중에는 영상 시간차가 있어 사람 선택이 제한됩니다. JPEG로 전환 후 선택하세요.';return;}
   if(Date.now()<joyClickBlock)return;   // v40: the click that ends a joystick drag picks nobody
   const blocked=cameraClickBlock();
   if(blocked){$('ans').textContent=blocked;return;}
@@ -1060,7 +1071,24 @@ v.addEventListener('click',e=>{
   // the image keeps 4:3 inside its box (object-fit: contain): map the click into the picture itself
   const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
   const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;
-  post('/gimbal/click?x='+x+'&y='+y);});
+  const coords='?x='+x+'&y='+y;
+  if(!window.h264Mode){post('/gimbal/click'+coords);return;}
+  const shown=h264Drawn;
+  if(!shown||!h264Shown||h264Shown.key!==shown.k||performance.now()-h264Shown.at>300||
+      h264v.seeking||h264v.paused||h264v.readyState<2){
+    $('ans').textContent='H.264 영상과 같은 프레임의 추적 결과를 기다려 주세요. JPEG로도 선택할 수 있습니다.';
+    return;
+  }
+  const px=x*shown.w,py=y*shown.h;
+  const boxes=shown.b||[];
+  const hits=boxes.filter(([x1,y1,x2,y2])=>x1<=px&&px<=x2&&y1<=py&&py<=y2);
+  const id=hits.length?hits[0][4]:'none';
+  if(hits.length>1||(hits.length===1&&boxes.filter(box=>box[4]===id).length!==1)){
+    $('ans').textContent='상자가 겹치거나 같은 추적 ID가 여러 곳에 있습니다. 최신 화면에서 다시 누르세요';
+    return;
+  }
+  post('/gimbal/click-frame'+coords+'&frame='+shown.k+'&shown='+id);
+});
 const stopAll=()=>post('/gimbal/stop');
 // v40: no stop key on the page: a tap / click on an empty place of the picture stops (the server does it), and so does the space bar
 for(const el of [v]){el.addEventListener('contextmenu',e=>e.preventDefault());el.addEventListener('dragstart',e=>e.preventDefault());}
@@ -2058,11 +2086,16 @@ function followNote(t){const p=fnPrev||{auto:0,id:0,lost:0,h:t.handoffs||0};fnPr
   else if(p.lost&&!t.lost&&t.auto)fnShow(t.id+'번 다시 찾음','',2000);
   if(fnT&&Date.now()>fnT){$('vtoast').hidden=true;fnT=0;}else if(!fnT&&!(t.auto&&t.lost))$('vtoast').hidden=true;}
 
-// H.264 is a preview path; there is no per-frame identity timestamp yet.
+// The H.264 proxy carries camera capture time in each sample's PTS.
 window.h264Mode=false;
 const h264v=document.getElementById('h264-video'),h264choice=document.getElementById('h264-mode');
 let h264abort=null,h264media=null,h264url=null,h264gen=0;
+let h264Shown=null,h264Drawn=null,h264FrameCallback=null;
+const h264Overlays=new Map();
 function h264Stop(){
+  if(h264FrameCallback!==null)h264v.cancelVideoFrameCallback(h264FrameCallback);
+  h264FrameCallback=h264Shown=h264Drawn=null;
+  h264Overlays.clear();
   ++h264gen;if(h264abort)h264abort.abort();h264abort=null;
   h264v.pause();h264v.removeAttribute('src');h264v.load();
   if(h264url)URL.revokeObjectURL(h264url);h264url=null;h264media=null;
@@ -2091,6 +2124,18 @@ async function h264Start(){
         if(gen!==h264gen)return;
       }
       if(!resp.ok||!resp.body)throw Error('서버 응답 '+resp.status);
+      const origin=Number(resp.headers.get('X-LWIR-Frame-Origin'));
+      const canMatch=Number.isSafeInteger(origin)&&origin>0&&typeof h264v.requestVideoFrameCallback==='function';
+      $('h264-status').textContent=canMatch?'H.264 · 카메라 프레임에 맞춘 추적 상자':'H.264 · 사람 선택은 JPEG에서 가능';
+      if(canMatch){
+        const onFrame=(now,frame)=>{
+          if(gen!==h264gen)return;
+          h264Shown={key:origin+Math.round(frame.mediaTime*1e6),at:now};
+          ovDraw();
+          h264FrameCallback=h264v.requestVideoFrameCallback(onFrame);
+        };
+        h264FrameCallback=h264v.requestVideoFrameCallback(onFrame);
+      }
       const reader=resp.body.getReader();
       for(;;){
         const {done,value}=await reader.read();if(done)throw Error('영상 연결 종료');
@@ -2111,11 +2156,10 @@ async function h264Start(){
     }catch(e){if(gen===h264gen&&e.name!=='AbortError')h264Fallback(e.message);}
   },{once:true});
 }
-h264v.addEventListener('playing',()=>{$('h264-status').textContent='H.264 미리보기 · 박스와 영상 시간차 가능 · 사람 선택은 JPEG에서';});
 h264v.addEventListener('error',()=>{if(window.h264Mode)h264Fallback('디코딩 오류');});
 h264choice.addEventListener('change',()=>{
   window.h264Mode=h264choice.value==='h264';
-  if(window.h264Mode){streamStop();v.style.opacity='0';h264v.hidden=false;$('h264-status').textContent='H.264 연결 중';h264Start();}
+  if(window.h264Mode){streamStop();v.style.opacity='0';h264v.hidden=false;$('h264-status').textContent='H.264 연결 중';ovOpen();h264Start();}
   else{h264Stop();h264v.hidden=true;v.style.opacity='';$('h264-status').textContent='';openStream();}
 });
 

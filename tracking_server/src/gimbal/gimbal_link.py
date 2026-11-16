@@ -96,6 +96,7 @@ def without_lead(frame):
 def _reset_bridge_lead(gb):
     gb.lead_control_supported = False
     gb.lead_pending = 0
+    gb.selection_ack_wait_state = False
     gb.control_epoch = None
     gb.observation_status_supported = False
     gb.observation_barrier = None
@@ -112,6 +113,12 @@ def _reset_bridge_lead(gb):
 def gb_send(line_):
     with APP.GB.wcond:
         if not APP.GB.wopen: return False
+        if (line_ == 'H' and getattr(APP.GB, 'track_control_supported', False)
+                and (getattr(APP.GB, 'lead_pending', 0) or getattr(APP.GB, 'selection_ack_wait_state', False))):
+            # A followed by plain H in one batch can leave the bridge idle without an S change.
+            from .live_tracks import stop_with_ack_locked
+            stop_with_ack_locked(APP.GB)
+            return True
         if len(APP.GB.wq) >= 64: APP.GB.skipped += 1; return False
         if line_.split(' ', 1)[0] in ('H', 'M', 'V'):
             reset_lead()
@@ -214,6 +221,8 @@ def gb_reader(p_):
                 if p_ is not APP.GB.proc: continue
                 if f_[1] == 'A':
                     APP.GB.lead_pending = max(0, getattr(APP.GB, 'lead_pending', 0) - 1)
+                    if f_[2] == 'OK':
+                        APP.GB.selection_ack_wait_state = True
                     reset_lead()
                 APP.GB.state['answer'] = {'OK': '', 'INVALID': 'that person is not available', 'NOT_READY': 'the gimbal is not ready'}.get(f_[2], f_[2])
             print('GIMBAL', line_.strip(), flush=True)
@@ -226,6 +235,8 @@ def gb_reader(p_):
                     reset_lead()
                     APP.GB.wframe = without_lead(APP.GB.wframe)
                 state.update(auto=auto, lost=lost, moving=moving, error=error, id=track_id)
+                if auto:
+                    APP.GB.selection_ack_wait_state = False
             print('GIMBAL', line_.strip(), flush=True)
         elif f_[0] == 'POSE':
             APP.GB.pose_sample = (p_, time.monotonic(), parse_pose(f_[1:]))
