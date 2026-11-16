@@ -12,7 +12,8 @@ from ..common.shared_values import PERSON_CLS, TRACKED
 # ---- v32 (user 11-10): learned position predictor for LOST tracks (GRU / Mamba residual on Kalman + camera-motion warp). Default 'kalman' = no change.
 POS_HIST, POS_MINOBS, POS_STEPS, POS_C, POS_S = 20, 5, 60, 0.5, float(np.log(1.1))
 POS_NAMES = (('kalman', 'Kalman filter + 카메라 움직임 보정 (기본)'),
-             ('gru_kpt', 'GRU 위치 기억 + 관절 (관절 내는 검출 모델과 함께)'), ('mamba_kpt', 'Mamba 위치 기억 + 관절 (관절 내는 검출 모델과 함께)'))   # 11-14: 관절 없는 GRU·Mamba 판은 지움(사용자)   # v40: 위치 기억 · 신뢰도. 11-14: 관절 판
+             ('gru_kpt', 'GRU 위치 기억 + 관절 (관절 내는 검출 모델과 함께)'), ('mamba_kpt', 'Mamba 위치 기억 + 관절 (관절 내는 검출 모델과 함께)'),
+             ('gru_near_kpt', 'GRU 위치 기억 + 관절, 가까운 사람·관절 없는 큰 사람 판 (11-16 v3, 고를 수 있는 다른 판)'))   # 11-16: trade-off file (user rule: better-in-some-cases goes up as an extra option)   # 11-14: 관절 없는 GRU·Mamba 판은 지움(사용자)   # v40: 위치 기억 · 신뢰도. 11-14: 관절 판
 POSP = dict(key='kalman', model=None, gen=0, show=False, boxes=[], boxes_t=0.0, avail={}, dir=None, err=0, used=0, lock=_pos_th.Lock())
 _POS_Z4 = np.zeros(4); _POS_Z2 = np.zeros(2)
 
@@ -192,7 +193,7 @@ def pos_scan():
     """Look for the weight files (cheap: one stat per file; a file is read again only when it changed and is older than 5 s = not being copied)."""
     d = POSP['dir'] or os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'models', 'track')
     with POSP['lock']:
-        for key, cls in (('gru_kpt', PosKpt), ('mamba_kpt', PosKpt)):   # 11-14: box-only pos_gru / pos_mamba removed (user)
+        for key, cls in (('gru_kpt', PosKpt), ('mamba_kpt', PosKpt), ('gru_near_kpt', PosKpt)):   # 11-14: box-only pos_gru / pos_mamba removed (user)
             p = os.path.join(d, 'pos_%s.npz' % key)
             if key.endswith('_kpt'):   # 11-14: newest pos_<arm>_kpt_*.npz (name carries data and date); 11-15: by the _YYYYMMDD date, then name
                 c_ = sorted((f_ for f_ in os.listdir(d) if f_.startswith('pos_%s_' % key) and f_.endswith('.npz')), key=_pos_date_key) if os.path.isdir(d) else []

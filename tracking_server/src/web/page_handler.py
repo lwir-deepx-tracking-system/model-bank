@@ -92,7 +92,7 @@ def _predictions(sc_, marks_, gb_id_):
     memory, fading: the 9th value is the alpha)."""
     predictions = []
     try:
-        src_name_ = {'kalman': 'Kalman', 'gru': 'GRU', 'mamba': 'Mamba', 'gru_kpt': 'GRU+kpt', 'mamba_kpt': 'Mamba+kpt'}
+        src_name_ = {'kalman': 'Kalman', 'gru': 'GRU', 'mamba': 'Mamba', 'gru_kpt': 'GRU+kpt', 'mamba_kpt': 'Mamba+kpt', 'gru_near_kpt': 'GRU+kpt near'}
         for tid_, b_, inf_ in marks_:
             if APP.GB is not None and tid_ != gb_id_: continue
             pc_ = (0, 220, 255) if gb_id_ and tid_ == gb_id_ else track_color(tid_)
