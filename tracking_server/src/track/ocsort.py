@@ -55,7 +55,7 @@ class OCSortTracker(AltTracker):
         cost = 1 - (iou + self.vdc * ang * sc[None]); cost[iou < self.iou_min] = 1.0
         return cost.astype(np.float32)
 
-    def __init__(self, kind=None, iou_min=0.3, buffer_scale=0.0, lost_output_frames=0, **kw):
+    def __init__(self, kind=None, iou_min=0.3, buffer_scale=0.5, lost_output_frames=1, **kw):
         # 기본값이면 지금과 같다: iou_min 0.3, biou 단계 없음, L1 없음
         super().__init__(kind, **kw)
         self.iou_min = iou_min
