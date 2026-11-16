@@ -27,6 +27,7 @@ class AltTracker(ByteTrackTracker):
         self.kind = self._tracker_kind
         self.dt, self.vdc, self.iou_min = 3, 0.2, 0.3
         self.b1, self.b2 = 0.3, 0.5
+        self.lost_out = 0
 
     @staticmethod
     def _box(d):
@@ -91,4 +92,10 @@ class AltTracker(ByteTrackTracker):
             if t not in self.tracked: self.tracked.append(t)
         self.lost = [t for t in self.lost if t.state == LOST and t not in self.tracked] + [t for t in lost if t not in self.tracked]
         self.lost = [t for t in self.lost if t.state != REMOVED]
-        return [[*t.xyxy.tolist(), t.track_id, t.score, t.cls, t.idx] for t in self.tracked if t.is_activated]
+        out = [[*t.xyxy.tolist(), t.track_id, t.score, t.cls, t.idx] for t in self.tracked if t.is_activated]
+        if self.lost_out > 0:
+            # L1 (옵션): 출력된 적 있는 Track은 놓친 뒤 lost_out 프레임까지 Kalman 예측 박스로 낸다.
+            # 이번 프레임에 짝지어진 검출이 없으므로 검출 번호(idx)는 -1
+            out += [[*t.xyxy.tolist(), t.track_id, t.score, t.cls, -1] for t in self.lost
+                    if t.is_activated and 1 <= self.frame_id - t.end_frame <= self.lost_out]
+        return out
