@@ -5,6 +5,7 @@ import numpy as np
 from ..common.shared_values import LOST
 from .alt_tracker import AltTracker
 from .kalman import KF, gmc_warp
+from .biou import grow_xyxy
 from .tracker_common import iou_xyxy, linear_assignment, xyxy_of
 
 
@@ -54,6 +55,15 @@ class OCSortTracker(AltTracker):
         cost = 1 - (iou + self.vdc * ang * sc[None]); cost[iou < self.iou_min] = 1.0
         return cost.astype(np.float32)
 
+    def __init__(self, kind=None, iou_min=0.3, buffer_scale=0.5, lost_output_frames=1, **kw):
+        # 기본값이면 지금과 같다: iou_min 0.3, biou 단계 없음, L1 없음
+        super().__init__(kind, **kw)
+        self.iou_min = iou_min
+        self.oc_buffer = buffer_scale
+        if not 0 <= lost_output_frames <= self.buffer:
+            raise ValueError('lost_output_frames must be in [0, max_age]')
+        self.lost_out = lost_output_frames
+
     def _prepare_prediction(self):
         # Stored observations and the saved Kalman state follow the same warp as the prediction.
         warp = getattr(self.kf, 'warp', None)
@@ -75,7 +85,7 @@ class OCSortTracker(AltTracker):
     def _associate(self, pool, dets):
         return linear_assignment(self._cg(self._ocm(pool, dets), pool, dets), 0.95)
 
-    def _recover(self, pool, ut, dets, ud, act, refind, done):
+    def _ocr(self, pool, ut, dets, ud, act, refind, done):
         # OCR matches last observations of the remaining tracks against unused high-score detections.
         if not ud:
             return ud
@@ -84,6 +94,27 @@ class OCSortTracker(AltTracker):
             return ud
         remaining = [dets[j] for j in ud]
         cost = (1 - iou_xyxy([t.obs[-1][1] for t in tracks], [self._box(d) for d in remaining])).astype(np.float32)
+        matches, _, unmatched = linear_assignment(self._cg(cost, tracks, remaining), 1 - self.iou_min)
+        for track_index, det_index in matches:
+            track = tracks[track_index]
+            was_lost = track.state == LOST
+            self._take(track, remaining[det_index])
+            (refind if was_lost else act).append(track)
+            done.add(id(track))
+        return [ud[index] for index in unmatched]
+    
+    def _recover(self, pool, ut, dets, ud, act, refind, done):
+        ud = self._ocr(pool, ut, dets, ud, act, refind, done)
+        if self.oc_buffer <= 0 or not ud:
+            return ud
+        # Buffered IoU (옵션): OCR 뒤에 남은 Track의 예측 박스 ↔ 남은 high 검출을 둘 다 넓혀 한 번 더 매칭
+        tracks = [pool[i] for i in ut if id(pool[i]) not in done]
+        if not tracks:
+            return ud
+        remaining = [dets[j] for j in ud]
+        a = grow_xyxy(xyxy_of(tracks), self.oc_buffer)
+        b = grow_xyxy([self._box(d) for d in remaining], self.oc_buffer)
+        cost = (1 - iou_xyxy(a, b)).astype(np.float32)
         matches, _, unmatched = linear_assignment(self._cg(cost, tracks, remaining), 1 - self.iou_min)
         for track_index, det_index in matches:
             track = tracks[track_index]
