@@ -157,12 +157,12 @@ def _click_live(x, y, *, shown_key=None, shown_id=None, viewer_ip=None):
             snapshot = next((record for record in reversed(getattr(live, 'overlay_clicks', ()))
                              if record[0] == shown_key), None)
             if not pf_ or snapshot is None:
-                return False, 'H.264 화면에 해당하는 추적 결과를 기다려 주세요'
+                return False, '표시된 화면에 해당하는 추적 결과를 기다려 주세요'
             _, frame_t, people, ticket, owners = snapshot
             if (not 0 <= time.perf_counter() - frame_t < 0.5
                     or live.stopped or getattr(live, 'cam_hold', False)
                     or getattr(live, 'cam_lost', False) or replay_link.frame_blocked(frame_t)):
-                return False, 'H.264 화면이 지연되었습니다. 최신 화면에서 다시 누르세요'
+                return False, '표시된 화면이 지연되었습니다. 최신 화면에서 다시 누르세요'
             target = live_tracks.unique_hit_id(people, x, y)
             if target is live_tracks.AMBIGUOUS_CLICK:
                 return False, '상자가 겹치거나 같은 추적 ID가 여러 곳에 있습니다. 최신 화면에서 다시 누르세요'
