@@ -39,6 +39,7 @@ from .common.pc_dry_run import make_mock_dx
 from .common.research_prepare import prepare
 from .detect import model_scan, npu_engine, detect_frame
 from .web import system_buttons, page_handler, page_settings, measure
+from .web.pipeline_perf import PipelinePerf
 from .track import camera_motion
 from .reid import reid_embed
 from .camera import camera_link, replay_eval, stall_diag
@@ -463,6 +464,7 @@ def main():
             APP.LIVE.restart_pending = False
             APP.LIVE.restart_stop = False
             APP.LIVE.instance = str(time.monotonic_ns())
+            APP.LIVE.pipeline_perf = PipelinePerf()
             APP.LIVE.jpeg = b''; APP.LIVE.seq = 0; APP.LIVE.viewers = 0; APP.LIVE.pic_t = -1e9; APP.LIVE.pic_n = 0; APP.LIVE.snap_t = -1e9; APP.LIVE.jcond = APP.lv_th.Condition(); APP.LIVE.t0 = time.monotonic(); APP.LIVE.cam_fps = 0.0; APP.LIVE.done_ts = APP.lv_col.deque(maxlen=40)
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
             APP.LIVE.lo = None; APP.LIVE.hi = None; APP.LIVE.last = None; APP.LIVE.log = open(APP.out / 'cam_pipe.log', 'w'); APP.LIVE.raws = APP.lv_col.deque(); APP.LIVE.rawq = APP.lv_col.deque(); APP.LIVE.warm_dropped = 0; APP.LIVE.last_frame_t = time.monotonic(); APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.cam_next_spawn = None; APP.LIVE.cam_hold = False; APP.LIVE.cam_reset = None; APP.LIVE.sys_lock = APP.lv_th.Lock(); APP.LIVE.cam_lock = APP.lv_th.Lock(); APP.LIVE.frames_in = 0; APP.LIVE.q_drop = 0; APP.LIVE.prev_t = None; APP.LIVE.upd_t = None; APP.LIVE.gap_n = 0; APP.LIVE.delays = APP.lv_col.deque(maxlen=2000); APP.LIVE.dlock = APP.lv_th.Lock(); APP.LIVE.perf = APP.lv_col.deque(maxlen=900); APP.LIVE.perf_acc = [time.perf_counter(), 0, 0.0, 0.0, 0.0]   # v26b: q_drop = camera frames thrown away because the tracker was 3 frames behind, gap_n = input gaps over 1 s, delays = (time, capture-to-picture ms) of the last frames. v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)
@@ -744,7 +746,12 @@ def main():
                 zlog_['raw_canvas_boxes'] = int(len(pz_)); zlog_['accepted'] = [[round(float(v_), 2) for v_ in r_[:4]] + [round(float(r_[4]), 5), int(r_[6])] for r_ in zacc_]
                 if n_zacc:   # appended AFTER the normal rows (their indices are unchanged); PRED gets a 'zoom' 0/1 flag per row
                     zoom_flags = [0] * len(p) + [1] * n_zacc; p = np.concatenate([p, zacc_[:, :6]]).astype(np.float32); arr = np.concatenate([arr, zacc_[:, :6]]).astype(np.float32)
-                z_ms = ((tz1_ - tz0_) / 1e6, (time.perf_counter_ns() - tz1_) / 1e6)
+                det_done_ns = time.perf_counter_ns()
+                z_ms = ((tz1_ - tz0_) / 1e6, (det_done_ns - tz1_) / 1e6)
+            else:
+                det_done_ns = t2
+            if APP.LIVE is not None and sub_ and APP.LIVE.arr:
+                APP.LIVE.pipeline_perf.detected(APP.LIVE.arr[0], det_done_ns / 1e9)
             if synth_hide is not None:     # --synth-plan: hide the planned person BEFORE the tracker and the ViT (its time is excluded from tracker_ms)
                 ts_ = time.perf_counter_ns(); hb_ = synth_hide.get(Path(im['file_name']).name); n_hid = 0
                 if hb_ is not None:

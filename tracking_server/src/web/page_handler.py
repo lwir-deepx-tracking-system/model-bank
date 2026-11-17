@@ -332,6 +332,9 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
                                     frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_,
                                     click_owners=click_owners_, click_namespace=click_namespace)
+    pipeline_ = getattr(APP.LIVE, 'pipeline_perf', None)
+    if pipeline_ is not None and paired_stamp_:
+        pipeline_.tracked(t_in, time.perf_counter())
     frame_feed.sent(t_in)   # 11-16 period monitor (feed_auto): this frame's result is out (gimbal); its deadline is arrival + one camera period
     marks_ = _lost_marks(t_in, display_rows, gb_id_, fps_, own_pool=camera_rows is None)   # 11-16: every frame, so the kept marks follow the camera motion
     seek_ = APP.GB.state.get('seek') if has_gimbal_ and gb_id_ else None   # 11-16: the gimbal's search while the followed person is lost (bridge --seek 1)
@@ -663,7 +666,7 @@ def make_lv_Handler():
                     try: since_ = float(pq3_(us3_(self.path).query).get('since', ['0'])[0])   # the page asks only for the samples after the last one it has
                     except ValueError: since_ = 0.0
                     with APP.LIVE.dlock: pr_ = [r_ for r_ in APP.LIVE.perf if r_[0] > since_]
-                    b_ = json.dumps(dict(now=round(time.time(), 1), delay_kind='tracker_output', cols=['t', 'track_fps', 'cam_fps', 'delay_ms', 'delay_max_ms', 'compute_ms', 'paired_n', 'picture_delay_ms'], rows=pr_)).encode()
+                    b_ = json.dumps(dict(now=round(time.time(), 1), delay_kind='tracker_output', cols=['t', 'track_fps', 'cam_fps', 'delay_ms', 'delay_max_ms', 'compute_ms', 'paired_n', 'picture_delay_ms'], rows=pr_, pipeline=APP.LIVE.pipeline_perf.snapshot())).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/healthz'):   # v24d: read-only liveness for the keep-alive supervisor (never POST /gimbal/ping from a script: that is the page's safety heartbeat). 11-15: cam_frozen = the camera's USB chip froze (cam_pipe exit 8, no camera frame since): keepalive.sh does not reboot then
                     now_ = time.monotonic(); last_out_ = APP.LIVE.done_ts[-1] if APP.LIVE.done_ts else None

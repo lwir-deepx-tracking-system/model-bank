@@ -1,6 +1,6 @@
 // v26d: small speed / delay graphs below the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
-const PF={rows:[],span:60,off:0,busy:false,on:!MOB.matches,marks:[],seen:null};   /* marks: setting changes seen while this page is open, drawn as vertical lines */
-try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if(typeof s_.on==='boolean')PF.on=s_.on;if([60,300,900].includes(s_.span))PF.span=s_.span;}catch(_){}
+const PF={rows:[],span:60,off:0,busy:false,marks:[],seen:null,pipeline:null,receivedAt:0};   /* marks: setting changes seen while this page is open, drawn as vertical lines */
+try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if([60,300,900].includes(s_.span))PF.span=s_.span;if(s_.detail===true)$('pfdetail').open=true;}catch(_){}
 const PF_LATENCY_LIMIT=100;
 const PFC=[
   {cv:$('pfc0'),series:[[2,'--c2',1.8],[1,'--c1',2.5]],min:30,labels:true},
@@ -84,9 +84,69 @@ function pfmark(){
   }
   PF.seen=now;
 }
+function pfplaceLabels(markers,limit){
+  const key=$('pf-pipe-key'),width=key.clientWidth,gap=6;
+  if(!width)return;
+  const labels=markers.filter(([,value])=>Number.isFinite(value)).map(([stage,value])=>{
+    const node=$('pf-rail-'+stage+'-label'),w=node.offsetWidth;
+    const left=Math.max(0,Math.min(width-w,value/limit*width-w/2));
+    return {node,left,right:left+w};
+  });
+  const height=Math.max(...labels.map(({node})=>node.offsetHeight));
+  const rows=[];
+  for(const label of labels){
+    const {node,left,right}=label;
+    let row=rows.findIndex(placed=>placed.every(other=>right+gap<=other.left||left>=other.right+gap));
+    if(row<0)row=rows.push([])-1;
+    rows[row].push(label);
+    node.style.left=left+'px';
+    node.style.top=row*(height+3)+'px';
+  }
+  key.style.height=(rows.length*(height+3)-3)+'px';
+}
+function pfpipe(){
+  const p=Date.now()-PF.receivedAt<5000&&PF.pipeline?PF.pipeline:{};
+  const fmt=(value,unit)=>Number.isFinite(value)?value.toFixed(1)+' '+unit:'–';
+  const stages=[['input',p.camera_fps,p.camera_p95_ms],['detect',p.det_fps,p.det_p95_ms],['track',p.track_fps,p.track_p95_ms]];
+  for(const [key,fps,latency] of stages){
+    $('pf-'+key+'-fps').textContent=fmt(fps,'FPS');
+    $('pf-'+key+'-latency').textContent=fmt(latency,'ms');
+  }
+  const liveCamera=!document.body.classList.contains('replay-mode')&&p.camera_p95_ms>0;
+  const cameraMs=liveCamera?p.camera_p95_ms:0;
+  $('pf-rail-camera-value').textContent=fmt(liveCamera?cameraMs:null,'ms');
+  $('pf-rail-detect-value').textContent=fmt(p.det_p95_ms,'ms');
+  $('pf-rail-track-value').textContent=fmt(p.track_p95_ms,'ms');
+  const goal=Number.isFinite(p.goal_ms)?p.goal_ms:33;
+  const tracked=Number.isFinite(p.track_p95_ms),detected=Number.isFinite(p.det_p95_ms);
+  const target=$('pf-goal-status');
+  target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms';
+  target.dataset.met=String(tracked&&p.track_p95_ms<=goal);
+  const samples=Number.isFinite(p.sample_count)?p.sample_count:0;
+  $('pf-pipe-samples').textContent=samples?'최근 1분 · 추적 '+samples.toLocaleString()+'장':'프레임 집계 중';
+  const detEnd=detected?p.det_p95_ms:0;
+  const trackEnd=tracked?Math.max(p.track_p95_ms,detEnd):detEnd;
+  const limit=cameraMs+Math.max(goal,trackEnd)*1.12;
+  const pos=value=>(value/limit*100)+'%';
+  const rail=$('pf-rail-goal').parentNode;
+  rail.style.setProperty('--pf-server',pos(cameraMs));
+  rail.style.setProperty('--pf-detect-end',pos(cameraMs+detEnd));
+  rail.style.setProperty('--pf-track-end',pos(cameraMs+trackEnd));
+  $('pf-rail-goal').style.left=pos(cameraMs+goal);
+  const markers=[['camera',liveCamera?0:null],['server',cameraMs],
+    ['detect',detected?cameraMs+p.det_p95_ms:null],['track',tracked?cameraMs+p.track_p95_ms:null]];
+  for(const [key,value] of markers){
+    const mark=$('pf-rail-'+key),label=$('pf-rail-'+key+'-label');
+    const valid=Number.isFinite(value);
+    mark.hidden=label.hidden=!valid;
+    if(valid)mark.style.left=pos(value);
+  }
+  pfplaceLabels(markers,limit);
+}
 function pfdraw(){
-  $('pfo').classList.toggle('off',!PF.on);$('pfbtn').classList.toggle('on',PF.on);$('pfbtn').setAttribute('aria-pressed',PF.on?'true':'false');$('pfspan').textContent=(PF.span/60)+'분';$('pfago').textContent=(PF.span/60)+'분 전';
-  if(!PF.on)return;
+  pfpipe();
+  if(!$('pfdetail').open)return;
+  $('pfspan').textContent=(PF.span/60)+'분';$('pfago').textContent=(PF.span/60)+'분 전';
   const now=Date.now()/1000+PF.off,t0=now-PF.span,vis=PF.rows.filter(r=>r[0]>=t0-2);
   const style=getComputedStyle(document.documentElement);
   for(const chart of PFC)pfplot(chart,vis,t0,style);
@@ -96,13 +156,13 @@ function pfdraw(){
   pfOverflow.textContent=pfOverflow.hidden?'':`▲ ${PF_LATENCY_LIMIT} ms 초과 · 기간 최대 ${peak.toFixed(1)} ms`;
   const last=PF.rows.length?PF.rows[PF.rows.length-1]:null,r=last&&now-last[0]<5?last:null;   // values older than 5 s are not shown as current
   [[0,1],[1,2],[2,3],[3,4],[4,5],[5,8],[6,9]].forEach(([i,k])=>{$('pfv'+i).textContent=r&&Number.isFinite(r[k])?r[k].toFixed(0):'–';});}
-function pftick(){pfmark();if(document.hidden||!PF.on||PF.busy)return;PF.busy=true;const since=PF.rows.length?PF.rows[PF.rows.length-1][0]:0;
-  fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
+function pftick(){pfmark();if(document.hidden||PF.busy)return;PF.busy=true;const since=PF.rows.length?PF.rows[PF.rows.length-1][0]:0;
+  fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.receivedAt=lastOk;PF.pipeline=p.pipeline||null;PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
     for(const r of p.rows){   // r[7] = arrival -> picture ready (server, mean of the second)
       const [age,guess]=pfdelay();$('pft6').textContent=guess?'내 화면 (추정)':'내 화면';
       r[8]=Number.isFinite(r[7])?r[7]:null;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&Number.isFinite(age)?age:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
-const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({on:PF.on,span:PF.span}));}catch(_){}};
-$('pfbtn').addEventListener('click',e=>{e.stopPropagation();PF.on=!PF.on;pfsave();pfdraw();pftick();});
+const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({detail:$('pfdetail').open,span:PF.span}));}catch(_){}};
+$('pfdetail').addEventListener('toggle',()=>{pfsave();pfdraw();});
 $('pfspan').addEventListener('click',e=>{e.stopPropagation();PF.span={60:300,300:900,900:60}[PF.span];pfsave();pfdraw();});
 addEventListener('resize',pfdraw);setInterval(pftick,1000);pfdraw();pftick();
