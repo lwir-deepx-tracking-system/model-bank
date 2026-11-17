@@ -46,19 +46,20 @@ class PipelinePerfTests(unittest.TestCase):
         self.assertEqual((data['camera_p95_ms'], data['det_p95_ms'], data['track_p95_ms']), (None, None, None))
 
     def test_schedule_uses_real_offsets_and_includes_only_three_paired_frames(self):
-        for received, detected, tracked in (
-            (100.010, 100.059, 100.061),
-            (100.043, 100.081, 100.095),
-            (100.077, 100.123, 100.126),
-            (100.109, 100.160, 100.165),
+        for received, detected, tracked, cores in (
+            (100.010, 100.059, 100.061, (0,)),
+            (100.043, 100.081, 100.095, (1,)),
+            (100.077, 100.123, 100.126, (0, 1)),
+            (100.109, 100.160, 100.165, ()),
         ):
             self.perf.camera(received, 2)
-            self.perf.detected(received, detected)
+            self.perf.detected(received, detected, cores)
             self.perf.tracked(received, tracked)
         self.now = 100.2
         self.assertEqual(self.perf.snapshot()['frame_schedule_ms'], [
             [0.0, 38.0, 52.0], [34.0, 80.0, 83.0], [66.0, 117.0, 122.0],
         ])
+        self.assertEqual(self.perf.snapshot()['frame_schedule_npu'], [[1], [0, 1], []])
 
     def test_schedule_never_joins_different_frames_or_reversed_stages(self):
         for received in (100.01, 100.04, 100.07, 100.10):
@@ -74,9 +75,9 @@ class PipelinePerfTests(unittest.TestCase):
         self.assertEqual(self.perf.snapshot()['frame_schedule_ms'], [[0.0, 30.0, 50.0]])
 
     def test_schedule_orders_an_out_of_order_completion_by_camera_receipt(self):
-        for received in (100.01, 100.04, 100.07):
+        for received, core in ((100.01, 1), (100.04, 0), (100.07, 1)):
             self.perf.camera(received, 2)
-            self.perf.detected(received, received + .01)
+            self.perf.detected(received, received + .01, (core,))
         self.perf.tracked(100.07, 100.09)
         self.perf.tracked(100.01, 100.10)
         self.perf.tracked(100.04, 100.11)
@@ -84,6 +85,7 @@ class PipelinePerfTests(unittest.TestCase):
         self.assertEqual(self.perf.snapshot()['frame_schedule_ms'], [
             [0.0, 10.0, 90.0], [30.0, 40.0, 100.0], [60.0, 70.0, 80.0],
         ])
+        self.assertEqual(self.perf.snapshot()['frame_schedule_npu'], [[1], [0], [1]])
 
     def test_schedule_clears_for_replay_and_when_live_frames_stop(self):
         self.perf.camera(100.02, 1)

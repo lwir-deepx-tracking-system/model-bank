@@ -40,6 +40,7 @@
         <dl class="pfpipe-guide">
           <dt>입력 간격</dt><dd>30 FPS = 33.3 ms마다 한 장</dd>
           <dt>지연 목표</dt><dd>서버 수신 → 추적 완료 <strong id="pf-goal-budget">33 ms</strong> 이내</dd>
+          <dt id="pf-feed-label" hidden>현재 탐지 모드</dt><dd id="pf-feed-mode" title="p95는 최근 1분 값을 집계하므로 전환 전 프레임이 포함될 수 있습니다." hidden></dd>
         </dl>
         <div class="pfpipe-steps">
           <div class="pfstep pfstep-input"><div><h3>카메라 입력</h3><span class="num" id="pf-input-fps">–</span></div><p>열화상 원본 수신</p><div class="pfstep-value"><span>카메라 → 서버</span><b class="num" id="pf-input-latency">–</b></div></div>
@@ -50,7 +51,11 @@
           <h3 id="pf-schedule-title">최근 3장 처리 시간표</h3>
           <p id="pf-schedule-status">실시간 프레임 측정 대기 중</p>
           <div id="pf-schedule-data" hidden>
-            <p class="pf-schedule-caption">첫 프레임의 서버 수신이 0 ms입니다.</p>
+            <table class="pf-schedule-gaps num" id="pf-schedule-gaps" aria-label="연속 프레임의 실측 간격" hidden>
+              <thead><tr><th scope="col">프레임</th><th scope="col">서버 수신 간격</th><th scope="col">추적 출력 간격</th></tr></thead>
+              <tbody id="pf-schedule-gap-rows"></tbody>
+            </table>
+            <p class="pf-schedule-caption">아래 시각은 첫 장이 서버에 도착한 때부터 잰 값입니다.</p>
             <div class="pf-schedule-axis num" id="pf-schedule-axis" aria-hidden="true"></div>
             <ol class="pf-schedule-frames" id="pf-schedule-frames"></ol>
           </div>

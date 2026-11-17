@@ -42,17 +42,17 @@ class PipelinePerf:
     def camera(self, arrived, transport_ms=None):
         self._record(0, arrived, transport_ms)
 
-    def detected(self, arrived, finished):
+    def detected(self, arrived, finished, cores=()):
         delay = _delay_ms(arrived, finished)
         if delay is not None:
-            self._record(1, finished, delay, arrived)
+            self._record(1, finished, delay, arrived, cores)
 
     def tracked(self, arrived, finished):
         delay = _delay_ms(arrived, finished)
         if delay is not None:
             self._record(2, finished, delay, arrived)
 
-    def _record(self, stage, finished, delay, arrived=None):
+    def _record(self, stage, finished, delay, arrived=None, cores=()):
         bucket = floor(finished - self._start)
         with self._lock:
             if bucket > self._latest_bin:
@@ -70,9 +70,9 @@ class PipelinePerf:
                 while samples and samples[0][0] <= finished - _HISTORY_S:
                     samples.popleft()
                 samples.append((finished, delay))
-            self._pair(stage, finished, delay, arrived)
+            self._pair(stage, finished, delay, arrived, cores)
 
-    def _pair(self, stage, finished, delay, arrived):
+    def _pair(self, stage, finished, delay, arrived, cores):
         if stage == 0:
             # A transport sample marks camera-stamped live input. Replay
             # packets and the fallback without camera stamps supply no sample.
@@ -86,12 +86,13 @@ class PipelinePerf:
                 self._pending.pop(next(iter(self._pending)))
         elif stage == 1:
             if arrived in self._pending and self._pending[arrived] is None:
-                self._pending[arrived] = finished
+                self._pending[arrived] = (finished, cores)
         else:
             detected = self._pending.pop(arrived, None)
-            if detected is not None and detected <= finished:
+            if detected is not None and detected[0] <= finished:
+                det_time, det_cores = detected
                 rows = self._completed
-                rows.append((arrived, detected, finished))
+                rows.append((arrived, det_time, finished, det_cores))
                 if len(rows) > 1 and rows[-2][0] > arrived:
                     rows.sort()
                 if len(rows) > _SCHEDULE_SIZE:
@@ -105,8 +106,8 @@ class PipelinePerf:
             c_ms, d_ms, t_ms = ([ms for t, ms in rows if now - _HISTORY_S < t <= now] for rows in self._samples)
             frames = [row for row in self._completed if now - _SCHEDULE_FRESH_S < row[0] and row[2] <= now]
         first = frames[0][0] if frames else 0
-        schedule = [[round((stamp - first) * 1000, 3) for stamp in row] for row in frames]
+        schedule = [[round((stamp - first) * 1000, 3) for stamp in row[:3]] for row in frames]
         return dict(camera_fps=camera, det_fps=det, track_fps=track,
                     camera_p95_ms=_p95(c_ms), det_p95_ms=_p95(d_ms), track_p95_ms=_p95(t_ms),
                     camera_count=len(c_ms), det_count=len(d_ms), sample_count=len(t_ms), goal_ms=33,
-                    frame_schedule_ms=schedule)
+                    frame_schedule_ms=schedule, frame_schedule_npu=[list(row[3]) for row in frames])

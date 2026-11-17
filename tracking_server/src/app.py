@@ -692,6 +692,7 @@ def main():
                     if APP.args.gmc_thread: gmc = True
                     else: gmc_fail += gmc.n_fail if gmc is not None else 0; gmc = GMC(APP.args.gmc_ds); gmc.fp = dict(gmc.fp, maxCorners=APP.args.gmc_corners, minDistance=APP.args.gmc_mindist)
             async_vit = vit is not None and not budget                  # --vit-budget: every crop is synchronous inside / right after update()
+            feed_core = None
             if APP.args.pipeline:
                 if (ready_prefetch or replay_eval.lossless()) and not ahead:
                     # The last result was already published before we waited here.
@@ -723,6 +724,10 @@ def main():
                     break
                 fd_ = APP.FEED is not None and not APP.FEED.direct   # 11-14: with the arrival feed the feeding thread decided (and already submitted or not)
                 sub_ = APP.FEED.cur_submitted() if fd_ else not e2e_live.skip_detector(); t0 = submit_tiles(g, i) if (sub_ or fd_) else time.perf_counter_ns()
+                if fd_ and sub_ and not APP.args.mock:
+                    rec = APP.FEED.cur
+                    if rec is not None and rec.e >= 0:
+                        feed_core = rec.grp[0][rec.e].core
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                          # sync point 1
                 ra = APP.a.wait() if sub_ else None; rb = (APP.b.wait() if APP.b is not None else None) if sub_ else None; t1 = time.perf_counter_ns(); t_nms0 = t1
                 if fd_ and not sub_: APP.FEED.cur = None
@@ -751,7 +756,14 @@ def main():
             else:
                 det_done_ns = t2
             if APP.LIVE is not None and sub_ and APP.LIVE.arr:
-                APP.LIVE.pipeline_perf.detected(APP.LIVE.arr[0], det_done_ns / 1e9)
+                cores = ()
+                if not APP.args.mock:
+                    cores = (APP.a.core if feed_core is None else feed_core,)
+                    if APP.b is not None:
+                        cores += (APP.b.core,)
+                    if z_ms != (0.0, 0.0):
+                        cores += (zoom_eng.core,)
+                APP.LIVE.pipeline_perf.detected(APP.LIVE.arr[0], det_done_ns / 1e9, cores)
             if synth_hide is not None:     # --synth-plan: hide the planned person BEFORE the tracker and the ViT (its time is excluded from tracker_ms)
                 ts_ = time.perf_counter_ns(); hb_ = synth_hide.get(Path(im['file_name']).name); n_hid = 0
                 if hb_ is not None:

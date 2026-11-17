@@ -27,6 +27,7 @@ class Decoder:
 class Engine:
     def __init__(self, name, core, depth=1, model=None):
         self.name = name; self.depth = depth; self.q = []; self.nsub = 0; self.split6 = False; self.kpt = False; model = model or name   # v9: model = the DXNN when it differs from the pending key ('ZOOM')
+        self.core = core
         o = APP.dx.InferenceOption(); o.devices = [0]; o.bound_option = getattr(APP.dx.InferenceOption.BOUND_OPTION, 'NPU_%d' % core); o.use_ort = True; o.buffer_count = depth
         self.b = APP.dx.InferenceEngine(str(BANK[model] if model in BANK else HERE / 'models' / 'links' / (model + '.dxnn')) if not APP.args.mock else model, o)
         i = self.b.get_input_tensors_info()[0]; assert np.dtype(i['dtype']) == np.dtype('uint8'), i

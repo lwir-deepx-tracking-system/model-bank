@@ -40,7 +40,13 @@
 .pf-schedule h3{margin:0;font-size:14px;color:var(--ink)}
 .pf-schedule p{margin:4px 0 0;color:var(--ink2);font-size:12px}
 .pf-schedule [hidden]{display:none}
-.pf-schedule-axis,.pf-schedule-frame{display:grid;grid-template-columns:38px minmax(0,1fr);gap:8px}
+.pf-schedule-gaps{width:100%;margin-top:5px;border-collapse:collapse;text-align:right;font-size:12px}
+.pf-schedule-gaps th,.pf-schedule-gaps td{padding:4px 5px;border-bottom:1px solid var(--line)}
+.pf-schedule-gaps thead th{font-size:11px;font-weight:500;color:var(--ink2)}
+.pf-schedule-gaps tr>:first-child{text-align:left;color:var(--ink2)}
+.pf-schedule-gaps td:nth-child(2){color:var(--pf-in)}
+.pf-schedule-gaps td:nth-child(3){color:var(--pf-track)}
+.pf-schedule-axis,.pf-schedule-frame{display:grid;grid-template-columns:52px minmax(0,1fr);gap:8px}
 .pf-schedule-axis{margin-top:7px;color:var(--mut);font-size:11px}
 .pf-schedule-axis div{grid-column:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding-inline:5px}
 .pf-schedule-axis span:nth-child(2){text-align:center}
@@ -49,6 +55,7 @@
 .pf-schedule-frame{align-items:start;padding:5px 0}
 .pf-schedule-frame+.pf-schedule-frame{border-top:1px solid var(--line)}
 .pf-schedule-frame>span{margin-top:1px;color:var(--ink2);font-size:12px}
+.pf-schedule-core{display:block;margin-top:2px;color:var(--pf-det);font-size:10px;font-weight:700;white-space:nowrap}
 .pf-schedule-lane{position:relative;height:18px;margin-inline:5px;background:linear-gradient(var(--line),var(--line)) center/100% 1px no-repeat}
 .pf-schedule-lane::before{content:'';position:absolute;left:50%;height:100%;border-left:1px dashed var(--line2)}
 .pf-schedule-bar,.pf-schedule-mark{position:absolute;top:50%;background:var(--stage)}

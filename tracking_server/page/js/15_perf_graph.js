@@ -130,6 +130,14 @@ function pfSchedule(pipeline){
       : Array.isArray(data) ? '실시간 프레임 측정 대기 중' : '프레임별 실측 데이터 없음';
     return;
   }
+  $('pf-schedule-gaps').hidden=frames.length<2;
+  $('pf-schedule-gap-rows').innerHTML=frames.slice(1).map((frame,i)=>{
+    const received=frame[0]-frames[i][0], published=frame[2]-frames[i][2];
+    const output=published<0?'순서 역전':published.toFixed(1)+' ms';
+    return '<tr><th scope="row">'+(i+1)+' → '+(i+2)+'</th><td>'+received.toFixed(1)
+      +' ms</td><td>'+output+'</td></tr>';
+  }).join('');
+  const cores=Array.isArray(pipeline.frame_schedule_npu) ? pipeline.frame_schedule_npu : [];
   const last=Math.max(...frames.map(row=>row[2]));
   const limit=Math.max(20,Math.ceil(last/20)*20);
   const pct=value=>String(value/limit*100)+'%';
@@ -143,7 +151,9 @@ function pfSchedule(pipeline){
       +'" style="left:'+pct(frame[j])+'"></i>').join('');
     const values=stages.map(([stage,label],j)=>'<span class="pf-schedule-'+stage+'">'
       +label+' <b>'+frame[j].toFixed(1)+'</b> ms</span>').join('');
-    return '<li class="pf-schedule-frame"><span>'+(i+1)+'번째</span><div>'
+    const npu=Array.isArray(cores[i]) ? cores[i].filter(core=>Number.isInteger(core)&&core>=0) : [];
+    const coreLabel=npu.length ? '<small class="pf-schedule-core">NPU '+npu.join('·')+'</small>' : '';
+    return '<li class="pf-schedule-frame"><span>'+(i+1)+'번째'+coreLabel+'</span><div>'
       +'<div class="pf-schedule-lane" aria-hidden="true">'+segment('detect',receive,detect)
       +segment('track',detect,track)+dots+'</div><div class="pf-schedule-times num">'
       +values+'</div></div></li>';
@@ -189,6 +199,13 @@ function pfpipe(){
     label.dataset.clipped=value<PF_RAIL_MIN_MS?'left':value>PF_RAIL_MAX_MS?'right':'';
   }
   pfplaceLabels(markers);
+  const feed=typeof rlast==='undefined' ? null : rlast?.npu_feed;
+  const modeLabel=$('pf-feed-mode');
+  modeLabel.hidden=$('pf-feed-label').hidden=!feed?.submitted||document.body.classList.contains('replay-mode');
+  if(!modeLabel.hidden){
+    const mode=feed.active?'NPU 0·1 교대':'NPU 0 단독';
+    modeLabel.textContent=(feed.requested==='auto'?'자동 · ':'')+mode;
+  }
   pfSchedule(p);
 }
 function pfdraw(){
