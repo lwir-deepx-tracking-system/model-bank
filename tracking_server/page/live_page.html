@@ -2022,7 +2022,12 @@ function pfSchedule(pipeline){
       return a?.length===1&&b?.length===1&&[0,1].includes(a[0])&&[0,1].includes(b[0])&&a[0]!==b[0];
     });
     $('pf-output-values').textContent=intervals.map(({duration})=>duration.toFixed(1)).join(' / ')+' ms';
-    $('pf-output-mode').textContent=alternating?'· 교대 실측':'· 최근 '+frames.length+'장';
+    const fps=pipeline.track_fps;
+    let outputNote='· 최근 '+frames.length+'장';
+    if(alternating){
+      outputNote=fps>=29&&fps<=31?'· NPU 교대로 약 30 FPS 출력 유지':'· NPU 교대 실측';
+    }
+    $('pf-output-mode').textContent=outputNote;
     $('pf-output-summary').hidden=$('pf-output-label').hidden=false;
   }
   const last=Math.max(...frames.map(row=>row[2]));
