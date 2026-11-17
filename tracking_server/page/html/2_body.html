@@ -37,6 +37,10 @@
           <span id="pf-rail-detect-label" hidden>탐지 완료 <b class="num" id="pf-rail-detect-value">–</b></span>
           <span id="pf-rail-track-label" hidden>최종 추적 <b class="num" id="pf-rail-track-value">–</b></span>
         </div>
+        <dl class="pfpipe-guide">
+          <dt>입력 간격</dt><dd>30 FPS = 33.3 ms마다 한 장</dd>
+          <dt>지연 목표</dt><dd>서버 수신 → 추적 완료 <strong id="pf-goal-budget">33 ms</strong> 이내</dd>
+        </dl>
       </section>
       <label class="hint camera-only" style="display:block;margin:6px 0"><input id="overlay-center-switch" type="checkbox"> 박스 떨림 보정 (JPEG 화면 표시만 · 상자 중앙 클릭)</label>
       <div class="rpseek" id="rpseek" hidden>

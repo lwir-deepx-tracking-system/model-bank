@@ -118,6 +118,7 @@ function pfpipe(){
   $('pf-rail-detect-value').textContent=fmt(p.det_p95_ms,'ms');
   $('pf-rail-track-value').textContent=fmt(p.track_p95_ms,'ms');
   const goal=Number.isFinite(p.goal_ms)?p.goal_ms:33;
+  $('pf-goal-budget').textContent=goal+' ms';
   const tracked=Number.isFinite(p.track_p95_ms),detected=Number.isFinite(p.det_p95_ms);
   const target=$('pf-goal-status');
   target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms';
