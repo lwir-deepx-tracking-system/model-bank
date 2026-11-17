@@ -66,24 +66,7 @@ function evUnavailableMetric(e){
 function evMetricStatus(e){return e.metric_status==='unavailable'?evUnavailableMetric(e):({pending:'계산 중',ready:'계산 완료',error:'계산 오류'})[e.metric_status]||'미제공';}
 function evCoverage(e){const total=e.sequence_frames,done=e.pass_frames;if(total==null||done==null)return '';return ' · 영상 진행 '+done+' / '+total+'장';}
 function evSwitches(e){const events=Array.isArray(e.id_switches)?e.id_switches:[];
-  if(!events.length) return '';
-  // 정답 ID별로 묶기 (처음 나온 순서 유지): 흐름 = 처음 from → 매번 to, 장 번호 목록
-  const by=new Map();
-  for(const x of events){
-    const k=x.gt_id!=null?String(x.gt_id):'—';
-    let g=by.get(k);
-    if(!g){ g={flow:[x.from_id],frames:[]}; by.set(k,g); }
-    else if(String(g.flow[g.flow.length-1])!==String(x.from_id)) g.flow.push('…',x.from_id);   // 중간에 다른 번호를 거친 경우
-    g.flow.push(x.to_id); g.frames.push(x.frame);
-  }
-  const td='padding:3px 12px;text-align:left;vertical-align:top;border-bottom:1px solid rgba(128,128,128,.35)';
-  let h='<b>ID 변경</b><table style="border-collapse:collapse;margin-top:4px"><tr>'
-       +['정답 ID','추적 ID 변경 흐름','변경된 장 번호'].map(t=>'<th style="'+td+'">'+t+'</th>').join('')+'</tr>';
-  for(const [k,g] of by)
-    h+='<tr><td style="'+td+'"><b>'+esc(k)+'</b></td>'
-      +'<td style="'+td+'">'+g.flow.map(esc).join(' → ').replace(/ → … → /g,' … ')+'</td>'
-      +'<td style="'+td+';max-width:360px">'+g.frames.map(esc).join(', ')+'</td></tr>';
-  return h+'</table>';
+  return events.length?'<b>ID 변경</b> · '+events.map(x=>'장 '+esc(x.frame)+': '+esc(x.from_id)+' → '+esc(x.to_id)+(x.gt_id!=null?' (정답 '+esc(x.gt_id)+')':'')).join('　'):'';
 }
 // 11-16 (design review 14): the ID-change list under the replay picture is folded and only the count shows; drawn again only when it changed (so the button keeps its press). The comparison panel still lists them all.
 let rpIdsOpen=false,rpIdsHtml='',rpIdsE=null;
@@ -271,10 +254,18 @@ setInterval(()=>{const d=$('vdead'),live=!document.body.classList.contains('repl
   $('vdeads').textContent=camFail>0?'카메라 USB 케이블을 뽑았다가 다시 꽂으세요 · '+s+'초째 영상 없음 (자동 복구 '+camFail+'회 실패)':s+'초째 영상 없음 · 카메라가 스스로 다시 연결하는 중 (보통 30초 안)';},500);
 let fnPrev=null,fnT=0;
 function fnShow(txt,cls,ms){const v=$('vtoast');v.textContent=txt;v.className='vtoast'+(cls?' '+cls:'');v.hidden=false;fnT=ms?Date.now()+ms:0;}
-function followNote(t){const p=fnPrev||{auto:0,id:0,lost:0,h:t.handoffs||0};fnPrev={auto:t.auto,id:t.id,lost:t.lost,h:t.handoffs||0};
-  if(t.auto&&t.lost){const sp=t.seek?t.seek[0]:0;fnShow(t.id+'번 놓침 · '+(sp===2?'짐벌이 주변을 찾는 중':sp===3?'예측 자리로 돌아가는 중':'다시 찾는 중')+(lostSince?' '+((Date.now()-lostSince)/1000).toFixed(0)+'초':''),'lost',0);return;}
-  if(p.auto&&t.auto&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}
-  if(!p.auto&&t.auto)fnShow(t.id+'번 따라가기 시작','',2000);
-  else if(p.auto&&!t.auto)fnShow('따라가기 멈춤','',2000);
-  else if(p.lost&&!t.lost&&t.auto)fnShow(t.id+'번 다시 찾음','',2000);
-  if(fnT&&Date.now()>fnT){$('vtoast').hidden=true;fnT=0;}else if(!fnT&&!(t.auto&&t.lost))$('vtoast').hidden=true;}
+function followNote(t,holdText){
+  const active=!!(t.running&&!t.error&&t.auto);
+  const p=fnPrev||{auto:false,id:0,held:false,h:t.handoffs||0};
+  fnPrev={auto:active,id:t.id,held:!!holdText,h:t.handoffs||0};
+  if(holdText){
+    const elapsed=lostSince===null?'':' · '+Math.floor((Date.now()-lostSince)/1000)+'초 경과';
+    const baked=rlast?.picture_first===false?' · 영상 속 상자는 검출 표시':'';
+    fnShow(holdText+elapsed+baked,'lost',0);return;
+  }
+  if(p.auto&&active&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}
+  if(!p.auto&&active)fnShow(t.id+'번 따라가기 시작','',2000);
+  else if(p.auto&&!active)fnShow('따라가기 멈춤','',2000);
+  else if(p.held&&active)fnShow(t.id+'번 다시 따라가는 중','',2000);
+  if(fnT&&Date.now()>fnT){$('vtoast').hidden=true;fnT=0;}else if(!fnT)$('vtoast').hidden=true;
+}

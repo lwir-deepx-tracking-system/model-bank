@@ -10,7 +10,7 @@
 const PS_UA=navigator.userAgent||'',PS_CHOICE=new URLSearchParams(location.search).get('stream');
 const PS_WEBKIT=(/AppleWebKit/.test(PS_UA)&&!/Chrome|Chromium|Edg/.test(PS_UA))||/iPhone|iPad|iPod/.test(PS_UA)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
 let streamFetch=(PS_CHOICE==='fetch'||(PS_CHOICE!=='img'&&!PS_WEBKIT))&&typeof fetch==='function'&&typeof AbortController==='function'&&typeof ReadableStream==='function'&&!!(window.Response&&'body' in Response.prototype);
-const PS={gen:0,ctl:null,on:false,url:null,old:null,busy:false,next:null,info:null,got:0};
+const PS={gen:0,ctl:null,on:false,url:null,old:null,busy:false,next:null,info:null,got:0,nativeFailed:false};
 const PS_BOUNDARY=[13,10,45,45,102,114,97,109,101,13,10],PS_HEAD_END=[13,10,13,10];   // '\r\n--frame\r\n', '\r\n\r\n'
 function streamRunning(){return PS.on;}
 function streamStart(url){
@@ -21,12 +21,14 @@ function streamStart(url){
     .then(r=>{if(!r.ok||!r.body)throw new Error('stream '+r.status);return psRead(r.body.getReader(),gen);})
     .catch(()=>{})
     .finally(()=>{if(gen!==PS.gen||!PS.on)return;
-      if(!PS.got){streamFetch=false;v.src=url;return;}   // no picture came through fetch: the <img> stream from now on
+      if(!PS.got){streamFetch=false;window.overlayStreamReset?.();v.src=url;return;}   // no picture came through fetch: the <img> stream from now on
       PS.on=false;   // the stream ended or failed (server restart, network): open it again in 2 s
       setTimeout(()=>{if(gen===PS.gen&&!document.hidden)openStream();},2000);});
 }
-function streamStop(){PS.gen++;PS.on=false;if(PS.ctl){PS.ctl.abort();PS.ctl=null;}PS.next=null;
-  if(!streamFetch&&v.hasAttribute('src'))v.removeAttribute('src');}   // fetch: the last picture stays on screen
+function streamStop(){PS.gen++;PS.on=false;PS.nativeFailed=false;if(PS.ctl){PS.ctl.abort();PS.ctl=null;}PS.next=null;
+  if(!streamFetch&&v.hasAttribute('src'))v.removeAttribute('src');
+  window.overlayStreamReset?.();
+}   // fetch: the last picture stays on screen
 function psFind(b,p,from){const last=b.length-p.length;
   for(let i=b.indexOf(p[0],from);i>=0&&i<=last;i=b.indexOf(p[0],i+1)){let k=1;while(k<p.length&&b[i+k]===p[k])k++;if(k===p.length)return i;}
   return -1;}
@@ -59,9 +61,20 @@ function psShow(j){PS.got++;const info=psInfo(j);if(PS.busy){PS.next=[j,info];re
 function psPaint(j,info){PS.busy=true;PS.info=info;PS.old=PS.url;PS.url=URL.createObjectURL(new Blob([j],{type:'image/jpeg'}));v.src=PS.url;}
 function psDone(ok){if(!streamFetch||!PS.busy)return;PS.busy=false;
   if(PS.old){URL.revokeObjectURL(PS.old);PS.old=null;}
-  if(ok){const i=PS.info||{};pictureShown(Number.isFinite(i.t)?i.t:null,i.l||0);}
+  if(ok){
+    const i=PS.info||{}, t=Number.isFinite(i.t)?i.t:null;
+    pictureShown(t,i.l||0);
+    window.overlayPictureShown?.(t);
+  }
   if(PS.next){const [j,info]=PS.next;PS.next=null;psPaint(j,info);}}
-v.addEventListener('load',()=>psDone(true));v.addEventListener('error',()=>psDone(false));
+v.addEventListener('load',()=>psDone(true));
+v.addEventListener('error',()=>{
+  if(!streamFetch&&PS.on&&v.hasAttribute('src')){
+    PS.nativeFailed=true;
+    window.overlayStreamReset?.();
+  }
+  psDone(false);
+});
 // The delay readout under the picture chip: this screen's delay (camera frame in at the server -> picture on this screen) and
 // pictures per second over the last 2 s. Globals for other picture paths (e.g. a video path) and an automatic choice:
 //   pictureShown(t, light, source): a picture is on screen; t = its camera frame time in the server's unix seconds (null if

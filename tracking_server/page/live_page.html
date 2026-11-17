@@ -398,7 +398,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
 }
 </style></head><body>
 <header>
-  <h1>LWIR 추적</h1><label class="chip">화면 <select id="h264-mode" aria-label="영상 전송 방식"><option value="mjpeg">JPEG</option><option value="h264">H.264 (고화질 시험)</option></select></label><span class="chip" id="h264-status" role="status"></span>
+  <h1>LWIR 추적</h1>
   <span class="chip"><span class="dot" id="cdot"></span><span id="ctext">연결 확인 중</span></span>
   <span class="chip desk num"><span id="fps">–</span></span>
   <span class="chip desk camera-only"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>
@@ -409,7 +409,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
 <main>
   <section class="view">
     <div class="vbox">
-      <div class="frame"><img id="v" alt="실시간 영상" draggable="false"><video id="h264-video" autoplay muted playsinline hidden style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;pointer-events:none;z-index:0"></video><canvas class="vdraw" id="vdraw" aria-hidden="true"></canvas>
+      <div class="frame"><img id="v" alt="실시간 영상" draggable="false"><canvas class="vdraw" id="vdraw" aria-hidden="true"></canvas>
         <div class="vchip num" id="vchip" aria-live="polite" hidden></div>
         <div class="vchip vage num" id="vage" title="카메라 프레임이 서버에 들어온 때부터 이 화면까지 (서버 처리 + 전송). '그중 서버' = 그 가운데 서버 안에서 걸린 시간. 내 화면 fps 는 추적보다 느릴 때만 나옴. '약 …' = 이 브라우저(아이폰 등)는 사진 시각을 못 읽어 서버가 잰 값: 서버 처리 + 사진이 이 기기에 도착할 때까지(이 기기의 수신 확인으로 잼). 브라우저가 그리는 시간(화면 한 번 갱신쯤)은 빠져 있음. 중간·작은 사진 = 회선이 느려 480x360·320x240 사진을 받는 중" hidden></div>
         <div class="vdead" id="vdead" role="alert" hidden><b id="vdeadt"></b><span id="vdeads"></span></div>
@@ -719,8 +719,8 @@ let lastOk=Date.now(),grace=Date.now(),camIdle=0,camFail=0,wasDown=false,sN=0;
 // ran two streams over a slow link. A hidden page (background tab, phone screen off) takes no pictures; wake() reopens.
 // The stream itself is read in picture_stream.js (streamStart / streamStop), which also opens the first one.
 const pageId=Math.random().toString(36).slice(2,10)||'page';
-function openStream(){if(document.hidden){stopStream();return;}if(window.h264Mode){h264Start();return;}streamStart('/stream?p='+pageId+'&n='+(++sN));}
-function stopStream(){streamStop();if(window.h264Mode)h264Stop();}
+function openStream(){if(document.hidden){stopStream();return;}streamStart('/stream?p='+pageId+'&n='+(++sN));}
+function stopStream(){streamStop();}
 function netChip(){
   const idle=Date.now()-Math.max(lastOk,grace);
   expireGimbalPose();
@@ -902,7 +902,7 @@ function timeSync(){if(document.hidden)return;const t0=Date.now();
     DL.srv=j.v||null;DL.srvAt=t1;
     DL.sync.push([t1-t0,j.t-(t0+t1)/2000]);if(DL.sync.length>30)DL.sync.shift();DL.off=DL.sync.reduce((a,b)=>b[0]<a[0]?b:a)[1];}).catch(()=>{});}
 function lightText(level){if(!level)return '';const sv=serverStats(),n=sv&&sv.levels||1;return level>=n?' · 작은 사진':' · 중간 사진';}   // the lightest level = 작은 사진 (320x240)
-function delayTick(){const el=$('vage'),st=streamStats();if(!el)return;if(window.h264Mode){el.hidden=false;el.textContent='H.264 표시 지연 미측정';return;}
+function delayTick(){const el=$('vage'),st=streamStats();if(!el)return;
   if(document.hidden||!st.pictures||(!st.measured&&!PS.on)){el.hidden=true;return;}
   // 11-16 (design review 6): '지연 78 ms (그중 서버 47)'. The server's part is this page's own stream (GET /time), so it is never more than the whole;
   // this screen's fps only when it is clearly under the tracking speed (the chip above already says the tracking fps).
@@ -977,7 +977,7 @@ overlaySwitch.onchange=()=>{overlayCenterEnabled=overlaySwitch.checked;overlayRe
 const overlayGaps = [];
 function overlayOnMjpeg() {
   return PS.on && !PS.nativeFailed && (streamFetch || v.hasAttribute('src')) &&
-    !window.h264Mode && !document.hidden && !document.body.classList.contains('replay-mode');
+    !document.hidden && !document.body.classList.contains('replay-mode');
 }
 if (overlayDebugEnabled) {
   window.overlayPictureShown = (pictureTime) => {
@@ -1007,11 +1007,8 @@ function ovDraw(){const cv=OV.cv;if(!cv)return;
   const dpr=window.devicePixelRatio||1,bw=cv.clientWidth,bh=cv.clientHeight,W=Math.round(bw*dpr),H=Math.round(bh*dpr);
   if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
   const x=cv.getContext('2d');x.clearRect(0,0,W,H);
-  if(window.h264Mode)h264Drawn=null;
-  const frame=window.h264Mode&&h264Shown?h264Overlays.get(h264Shown.key):null;
-  const d=window.h264Mode?frame:OV.data;
-  if(!d||!d.pf||(!window.h264Mode&&Date.now()-OV.at>1000)||document.body.classList.contains('replay-mode'))return;
-  if(window.h264Mode)h264Drawn=d;
+  const d=OV.data;
+  if(!d||!d.pf||Date.now()-OV.at>1000||document.body.classList.contains('replay-mode'))return;
   let w=bw,h=bw*3/4;if(h>bh){h=bh;w=bh*4/3;}   // the picture inside its box (object-fit: contain)
   const ox=(bw-w)/2,oy=(bh-h)/2,k=w/(d.w||640);
   x.save();x.scale(dpr,dpr);x.font='bold 13px sans-serif';x.textBaseline='bottom';
@@ -1048,13 +1045,6 @@ function ovOpen(){if(OV.es||typeof EventSource!=='function')return;
     try{OV.data=JSON.parse(e.data);}catch(_){return;}
     OV.at=Date.now();
     const data=OV.data;
-    if(window.h264Mode){
-      if(!data?.pf)h264Overlays.clear();
-      else if(Number.isSafeInteger(data.k)){
-        h264Overlays.set(data.k,data);
-        if(h264Overlays.size>90)h264Overlays.delete(h264Overlays.keys().next().value);
-      }
-    }
     const useCenter=overlayCenterEnabled&&data?.pf&&overlayOnMjpeg();
     if(!useCenter||OV.gen!==PS.gen)overlayCenter.reset();
     OV.gen=PS.gen;
@@ -1068,7 +1058,6 @@ function ovOpen(){if(OV.es||typeof EventSource!=='function')return;
   };
 }
 function overlayResetHistory(){
-  if(window.h264Mode)h264Overlays.clear();
   OV.boxes=null;
   OV.gen=null;
   overlayCenter.reset();
@@ -1104,24 +1093,7 @@ v.addEventListener('click',e=>{
   // the image keeps 4:3 inside its box (object-fit: contain): map the click into the picture itself
   const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
   const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;
-  const coords='?x='+x+'&y='+y;
-  if(!window.h264Mode){post('/gimbal/click'+coords);return;}
-  const shown=h264Drawn;
-  if(!shown||!h264Shown||h264Shown.key!==shown.k||performance.now()-h264Shown.at>300||
-      h264v.seeking||h264v.paused||h264v.readyState<2){
-    $('ans').textContent='H.264 영상과 같은 프레임의 추적 결과를 기다려 주세요. JPEG로도 선택할 수 있습니다.';
-    return;
-  }
-  const px=x*shown.w,py=y*shown.h;
-  const boxes=shown.b||[];
-  const hits=boxes.filter(([x1,y1,x2,y2])=>x1<=px&&px<=x2&&y1<=py&&py<=y2);
-  const id=hits.length?hits[0][4]:'none';
-  if(hits.length>1||(hits.length===1&&boxes.filter(box=>box[4]===id).length!==1)){
-    $('ans').textContent='상자가 겹치거나 같은 추적 ID가 여러 곳에 있습니다. 최신 화면에서 다시 누르세요';
-    return;
-  }
-  post('/gimbal/click-frame'+coords+'&frame='+shown.k+'&shown='+id);
-});
+  post('/gimbal/click?x='+x+'&y='+y);});
 const stopAll=()=>post('/gimbal/stop');
 // v40: no stop key on the page: a tap / click on an empty place of the picture stops (the server does it), and so does the space bar
 for(const el of [v]){el.addEventListener('contextmenu',e=>e.preventDefault());el.addEventListener('dragstart',e=>e.preventDefault());}
@@ -2117,7 +2089,7 @@ function followNote(t,holdText){
   fnPrev={auto:active,id:t.id,held:!!holdText,h:t.handoffs||0};
   if(holdText){
     const elapsed=lostSince===null?'':' · '+Math.floor((Date.now()-lostSince)/1000)+'초 경과';
-    const baked=!window.h264Mode&&rlast?.picture_first===false?' · 영상 속 상자는 검출 표시':'';
+    const baked=rlast?.picture_first===false?' · 영상 속 상자는 검출 표시':'';
     fnShow(holdText+elapsed+baked,'lost',0);return;
   }
   if(p.auto&&active&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}
@@ -2126,83 +2098,5 @@ function followNote(t,holdText){
   else if(p.held&&active)fnShow(t.id+'번 다시 따라가는 중','',2000);
   if(fnT&&Date.now()>fnT){$('vtoast').hidden=true;fnT=0;}else if(!fnT)$('vtoast').hidden=true;
 }
-
-// The H.264 proxy carries camera capture time in each sample's PTS.
-window.h264Mode=false;
-const h264v=document.getElementById('h264-video'),h264choice=document.getElementById('h264-mode');
-let h264abort=null,h264media=null,h264url=null,h264gen=0;
-let h264Shown=null,h264Drawn=null,h264FrameCallback=null;
-const h264Overlays=new Map();
-function h264Stop(){
-  if(h264FrameCallback!==null)h264v.cancelVideoFrameCallback(h264FrameCallback);
-  h264FrameCallback=h264Shown=h264Drawn=null;
-  h264Overlays.clear();
-  ++h264gen;if(h264abort)h264abort.abort();h264abort=null;
-  h264v.pause();h264v.removeAttribute('src');h264v.load();
-  if(h264url)URL.revokeObjectURL(h264url);h264url=null;h264media=null;
-}
-function h264Fallback(reason){
-  if(!window.h264Mode)return;
-  window.h264Mode=false;h264choice.value='mjpeg';h264Stop();
-  h264v.hidden=true;v.style.opacity='';
-  $('h264-status').textContent='H.264 연결 실패: '+reason+' · JPEG로 돌아감';
-  openStream();
-}
-async function h264Start(){
-  if(h264abort&&!h264abort.signal.aborted)return;
-  h264Stop();const gen=++h264gen;
-  if(!window.MediaSource||!MediaSource.isTypeSupported('video/mp4; codecs="avc1.641028"')){h264Fallback('브라우저 미지원');return;}
-  h264abort=new AbortController();const ctrl=h264abort;
-  h264media=new MediaSource();h264url=URL.createObjectURL(h264media);h264v.src=h264url;
-  h264media.addEventListener('sourceopen',async()=>{
-    try{
-      const sb=h264media.addSourceBuffer('video/mp4; codecs="avc1.641028"');
-      let resp;
-      for(let attempt=0;attempt<12;attempt++){
-        resp=await fetch('http://'+location.hostname+':18774/video',{signal:ctrl.signal,cache:'no-store'});
-        if(resp.status!==503)break;
-        await new Promise(resolve=>setTimeout(resolve,250));
-        if(gen!==h264gen)return;
-      }
-      if(!resp.ok||!resp.body)throw Error('서버 응답 '+resp.status);
-      const origin=Number(resp.headers.get('X-LWIR-Frame-Origin'));
-      const canMatch=Number.isSafeInteger(origin)&&origin>0&&typeof h264v.requestVideoFrameCallback==='function';
-      $('h264-status').textContent=canMatch?'H.264 · 카메라 프레임에 맞춘 추적 상자':'H.264 · 사람 선택은 JPEG에서 가능';
-      if(canMatch){
-        const onFrame=(now,frame)=>{
-          if(gen!==h264gen)return;
-          h264Shown={key:origin+Math.round(frame.mediaTime*1e6),at:now};
-          ovDraw();
-          h264FrameCallback=h264v.requestVideoFrameCallback(onFrame);
-        };
-        h264FrameCallback=h264v.requestVideoFrameCallback(onFrame);
-      }
-      const reader=resp.body.getReader();
-      for(;;){
-        const {done,value}=await reader.read();if(done)throw Error('영상 연결 종료');
-        if(gen!==h264gen)return;
-        await new Promise((resolve,reject)=>{
-          const ok=()=>{sb.removeEventListener('error',bad);resolve();};
-          const bad=()=>{sb.removeEventListener('updateend',ok);reject(Error('영상 디코딩 실패'));};
-          sb.addEventListener('updateend',ok,{once:true});sb.addEventListener('error',bad,{once:true});
-          try{sb.appendBuffer(value);}catch(e){reject(e);}
-        });
-        if(sb.buffered.length){
-          const end=sb.buffered.end(sb.buffered.length-1);
-          if(end-h264v.currentTime>0.7)h264v.currentTime=Math.max(0,end-0.15);
-          if(h264v.paused)h264v.play().catch(()=>{});
-          if(!sb.updating && h264v.currentTime>8){const cut=h264v.currentTime-5;if(cut>sb.buffered.start(0))await new Promise(resolve=>{sb.addEventListener('updateend',resolve,{once:true});sb.remove(sb.buffered.start(0),cut);});}
-        }
-      }
-    }catch(e){if(gen===h264gen&&e.name!=='AbortError')h264Fallback(e.message);}
-  },{once:true});
-}
-h264v.addEventListener('error',()=>{if(window.h264Mode)h264Fallback('디코딩 오류');});
-h264choice.addEventListener('change',()=>{
-  window.h264Mode=h264choice.value==='h264';
-  if(window.h264Mode){streamStop();v.style.opacity='0';h264v.hidden=false;$('h264-status').textContent='H.264 연결 중';ovOpen();h264Start();}
-  else{h264Stop();h264v.hidden=true;v.style.opacity='';$('h264-status').textContent='';openStream();}
-});
-
 </script>
 </body></html>
