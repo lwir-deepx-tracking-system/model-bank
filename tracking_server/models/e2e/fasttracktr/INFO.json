@@ -1,0 +1,52 @@
+{
+ "label": "FastTrackTr_(DanceTrack+TMOT열화상)_20261115",
+ "files": {
+  "ae": "fasttracktr_r18_npu_dancetrack_tmot_20261115_thermal3_ae.dxnn",
+  "b0": "fasttracktr_r18_npu_dancetrack_tmot_20261115_thermal3_b0.dxnn",
+  "b1": "fasttracktr_r18_npu_dancetrack_tmot_20261115_thermal3_b1.dxnn"
+ },
+ "sha256": {
+  "ae": "35344ef6ce2d8c176561ff6361adde9ed6e1846154a9d840df78a8e0cb7bfc9d",
+  "b0": "231fa6c32bb4b096d57010a07c74639e69f8cfeb0481eb9549a2c5eed2da1582",
+  "b1": "0ed722a5afd4c087a8d6aa1b722f59843f883134232da62070898ce4b23de370"
+ },
+ "id_link": true,
+ "what": "FastTrackTr (liaopan-lp/fasttracktr, GPL-3.0) 장치 NPU 판(research/fasttracktr_npu): ResNet-18, 질의 300(15x20), 디코더 2층, 일반 어텐션. 그래프 3개(AE, 디코더 층 0, 층 1). 번호 출력(id_words)을 실시간 번호 잇기에 쓴다(id_link)",
+ "training": "6회 판(DanceTrack 흑백 6 epoch, 3-5 epoch 은 번호 손실 수정·4:3 다중 크기)에서 이어, TMOT 학습용 열화상 24편 + DanceTrack 약 30% 로 3 epoch (학습률 5e-5, 백본 0.1배, 1 epoch 워밍업, 2 epoch 뒤 0.1배, 배치 4, bf16). 상자는 공개 자료의 몸 전체 상자",
+ "calibration": "우리 실외 녹화 seq_001 17장(시험 녹화와 겹치지 않음), ema, opt 1",
+ "device_ms": {
+  "per_frame_mean": 28,
+  "note": "프레임 겹치기(AE 를 도착 즉시 NPU 2 에) 후 장 당 단계 시간. 겹치지 않으면 약 53ms"
+ },
+ "id_check": {
+  "note": "ftt_id_check.py, DanceTrack val(학습 안 함): 열화상 학습 뒤에도 같은 사람 맞히기 유지(5프레임 뒤 약 98%)"
+ },
+ "device_scores": {
+  "note": "장치 녹화 재생 채점, 같은 실시간 코드·번호 잇기(id). 6회 판 -> 이 판 IDF1",
+  "seq_003": [
+   50.0,
+   52.4
+  ],
+  "rec_inside_165240": [
+   31.1,
+   22.4
+  ],
+  "rec_inside_170437": [
+   13.6,
+   16.0
+  ],
+  "rec_seated_075028": [
+   71.2,
+   60.0
+  ],
+  "rec_person1_140236_5people": [
+   33.6,
+   61.1
+  ],
+  "tmot_val_mean_6": [
+   15.3,
+   27.1
+  ]
+ },
+ "status": "시험용. 6회 판보다 11 개 녹화 중 9 개에서 낫고(헛상자 크게 줄음), 두 실내 녹화에서는 덜 찾음. 검출+추적기(seq_003 IDF1 약 63~70, TMOT 약 66)보다는 아직 낮음"
+}

@@ -9,11 +9,15 @@ PRESENCE, SEQS, RESCAN 은 모든 부품이 같은 사전을 나눠 쓴다. 내�
 import os, re, threading
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))     # 이 src 폴더의 바로 위
-SAVE_NAMES = ('tracks_edited_mot.txt', 'review_state.json')
-READ_NAMES = ('tracks_mot.txt',) + SAVE_NAMES
+SOURCE_MOT = 'tracks_mot.txt'
+EDITED_MOT = 'tracks_edited_mot.txt'
+REVIEW_FILE = 'review_state.json'
+PARTS_FILE = 'person_parts.json'
+SAVE_NAMES = (EDITED_MOT, REVIEW_FILE, PARTS_FILE)
+READ_NAMES = (SOURCE_MOT,) + SAVE_NAMES
 IMG_RE = re.compile(r'^images/\d{6}\.png$')
-MOT_LINE = re.compile(r'^\d+,-?\d+(,-?[\d.]+){5},-?\d+,-?\d+,-?\d+$')
-LOCK = threading.Lock()
+MOT_LINE = re.compile(r'^\d+,-?\d+(,-?(?:\d+(?:\.\d*)?|\.\d+)){5},-?\d+,-?\d+,-?\d+$')
+LOCK = threading.RLock()  # startup scans and already-locked requests both use transaction recovery
 PRESENCE = {}          # rel -> {user: last_seen}
 SEQS = {}              # rel -> {'dir':..., 'frames': n}
 RESCAN = {'t': 0.0, 'only': ''}

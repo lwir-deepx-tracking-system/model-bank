@@ -1,5 +1,9 @@
 function post(u,ka){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',keepalive:!!ka}).then(r=>r.json()).then(show).catch(()=>{S.textContent='명령이 전달되지 않았습니다';netChip();});}
-v.addEventListener('click',e=>{if(Date.now()<joyClickBlock)return;const r=v.getBoundingClientRect();   // v40: the click that ends a joystick drag picks nobody
+v.addEventListener('click',e=>{
+  if(Date.now()<joyClickBlock)return;   // v40: the click that ends a joystick drag picks nobody
+  const blocked=cameraClickBlock();
+  if(blocked){$('ans').textContent=blocked;return;}
+  const r=v.getBoundingClientRect();
   // the image keeps 4:3 inside its box (object-fit: contain): map the click into the picture itself
   const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
   const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;
@@ -9,12 +13,13 @@ const stopAll=()=>post('/gimbal/stop');
 for(const el of [v]){el.addEventListener('contextmenu',e=>e.preventDefault());el.addEventListener('dragstart',e=>e.preventDefault());}
 addEventListener('dragstart',e=>{if(e.target&&e.target.tagName==='IMG')e.preventDefault();});
 const K={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,1],ArrowDown:[0,-1],KeyA:[-1,0],KeyD:[1,0],KeyW:[0,1],KeyS:[0,-1]};   // v34: W A S D move like the arrow keys (e.code, so it also works with the Korean keyboard on)
-let held=null;
+const held=new Set();let keyDir='0,0';   // 11-13 (user): keys held together combine, so up + right moves diagonally; left + right cancel
+function keyMove(){let x=0,y=0;held.forEach(c=>{x+=K[c][0];y+=K[c][1];});x=Math.max(-1,Math.min(1,x));y=Math.max(-1,Math.min(1,y));const d=x+','+y;if(d===keyDir)return;keyDir=d;post('/gimbal/move?x='+x+'&y='+y);}
 const typing=e=>{const t=e.target;return t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.tagName==='SELECT');};   // keys typed into the boxes never move the gimbal
-addEventListener('keydown',e=>{if(typing(e))return;if(e.code==='Space'){e.preventDefault();held=null;post('/gimbal/stop');return;}const m=K[e.code];if(!m)return;if(e.ctrlKey||e.metaKey||e.altKey)return;e.preventDefault();if(e.repeat||held===e.code)return;held=e.code;post('/gimbal/move?x='+m[0]+'&y='+m[1]);});
-addEventListener('keyup',e=>{if(typing(e))return;if(e.code===held){held=null;post('/gimbal/move?x=0&y=0');}});
+addEventListener('keydown',e=>{if(typing(e))return;if(e.code==='Space'){e.preventDefault();held.clear();keyDir='0,0';post('/gimbal/stop');return;}const m=K[e.code];if(!m)return;if(e.ctrlKey||e.metaKey||e.altKey)return;e.preventDefault();if(e.repeat||held.has(e.code))return;held.add(e.code);keyMove();});
+addEventListener('keyup',e=>{if(typing(e))return;if(held.delete(e.code))keyMove();});
 let padDown=false,padBtn=null;
-function release(){let sent=false;if(held){held=null;sent=true;}if(padDown){padDown=false;if(padBtn)padBtn.classList.remove('on');padBtn=null;sent=true;}if(joyEnd())sent=true;if(sent)post('/gimbal/move?x=0&y=0',true);}   // keepalive: the stop still leaves when the page is being hidden
+function release(){let sent=false;if(held.size){held.clear();keyDir='0,0';sent=true;}if(padDown){padDown=false;if(padBtn)padBtn.classList.remove('on');padBtn=null;sent=true;}if(joyEnd())sent=true;if(sent)post('/gimbal/move?x=0&y=0',true);}   // keepalive: the stop still leaves when the page is being hidden
 addEventListener('blur',release);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)release();});addEventListener('pagehide',release);   // v25: screen off / app switched while a key is held: stop
 for(const b of document.querySelectorAll('#pad button[data-x]')){

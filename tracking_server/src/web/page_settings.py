@@ -5,13 +5,25 @@ import time
 from ..common import settings
 from ..common.state import APP
 from ..common.shared_values import HERE, CORE, DET, sha
-from ..detect.model_scan import BANK
-from ..track.position_memory import POSP, pos_list
+from ..detect.model_scan import BANK, KPT_DETS
+from ..detect import auto_det   # 11-15 (user): automatic NEAR / FAR detector choice (off by default)
+from ..detect import resident_det   # 11-15 (user): both models of that pair resident on NPU cores 0 and 1, instant switch (off by default)
+from ..detect import frame_feed   # 11-16: manual_pending (a pending automatic switch of the 'auto' feed does not make a model change Busy)
+from ..track import native_backend
+from ..track.position_memory import POSP, POS_NAMES, pos_list, pos_select
+from ..track import e2e_live
+from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows (off by default)
 from ..track.stabilizer import STAB
-from ..track.trackers import Tracker, BotSortTracker, AltTracker
+from ..track.bytetrack import ByteTrackTracker
+from ..track.botsort import BotSortTracker
+from ..track.ocsort import OCSortTracker
+from ..track.sort import SortTracker
 from ..track.confirm_time import ConfirmByTime, MS_MAX
 from ..reid.reid_models import reid_catalog
 from ..gimbal.gimbal_link import gb_cfg
+from .system_buttons import npu_feed_state
+from ..camera import cam_frozen   # 11-15: the frozen-camera notice for the page (/rules key cam_frozen)
+from ..camera import cam_scene   # 11-15: frames without a scene (cam_pipe v2.13): /rules key cam_scene
 
 
 def sel_save(**over_):
@@ -43,10 +55,28 @@ def sel_det_late(dv_, tries_=30, gap_=2.0):
     print('LAST selection model %s -> not taken (%s)' % (dv_, why_), flush=True)
 
 
+ENGINE_KINDS = ('ocsort', 'botsort', 'sort')   # trackers whose engine (C++ first, or Python) is chosen on the page
+
+
+def tracker_engine():
+    """'auto' = C++ when its extension is built (the default click), 'python' = the operator chose Python."""
+    return APP.RULES.get('engine', 'auto')
+
+
 def mk_tracker_(kind_):
-    if kind_ in ('ocsort', 'sort'): return AltTracker(kind_, n_init=max(3, APP.args.n_init), class_gate=APP.args.class_gate, radius=APP.args.radius)   # v31
-    return (BotSortTracker if kind_ == 'botsort' else Tracker)('rebind' if kind_ == 'rebind' else 'bytetrack', sim=APP.args.sim, app=False, late_window=APP.args.late_window, app_first=False, gate=APP.args.gate, motion_fallback=not APP.args.no_motion_fallback,
-                vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h, hybrid=True, sync_k=APP.args.sync_k, hybrid_fallback=False, radius=APP.args.radius, n_init=max(3, APP.args.n_init) if kind_ == 'confirm3' else APP.args.n_init, class_gate=APP.args.class_gate)
+    use_native = not (kind_ in ENGINE_KINDS and tracker_engine() == 'python')
+    alternative = {'ocsort': OCSortTracker, 'sort': SortTracker}.get(kind_)
+    if alternative is not None:
+        kwargs = dict(n_init=max(3, APP.args.n_init), class_gate=APP.args.class_gate, radius=APP.args.radius)
+        return native_backend.create(kind_, kind_, kwargs, lambda: alternative(**kwargs), native=use_native)
+    cls = BotSortTracker if kind_ == 'botsort' else ByteTrackTracker
+    py_mode = 'rebind' if kind_ == 'rebind' else 'bytetrack'
+    native_mode = 'botsort' if kind_ == 'botsort' else py_mode
+    kwargs = dict(sim=APP.args.sim, app=False, late_window=APP.args.late_window, app_first=False, gate=APP.args.gate,
+                  motion_fallback=not APP.args.no_motion_fallback, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h,
+                  hybrid=True, sync_k=APP.args.sync_k, hybrid_fallback=False, radius=APP.args.radius,
+                  n_init=APP.args.n_init, class_gate=APP.args.class_gate)
+    return native_backend.create(kind_, native_mode, kwargs, lambda: cls(py_mode, **kwargs), native=use_native)
 
 
 def ctl_state():
@@ -62,20 +92,47 @@ def ctl_state():
                 app=APP.CTL['app'], apps=[dict(key='off', name='끔', available=True, note=''),
                                       dict(key='repvgg', name='RepVGG_(TMOT,CAMEL)', available=rl_ok_, note='' if rl_ok_ else 'KeepID 모델이 이 실행에 없습니다'),
                                       dict(key='vit', name='ViT', available=False, note='ViT 파일을 장치에 올려야 열립니다')],
-                lead=bool(APP.CTL['lead']), lead_ms=int(APP.CTL['lead_ms']), lead_px=round(float(APP.CTL['lead_px']), 1), warm_on=bool(settings.WARM_MIN > 0 or settings.WARM_MAX > 0), warm_prev=list(APP.CTL['warm_prev']),
+                lead=bool(APP.CTL['lead']), lead_ms=int(APP.CTL['lead_ms']), lead_px=round(float(APP.CTL['lead_px']), 1), lead_stats=dict(APP.CTL.get('lead_stats') or {}), warm_on=bool(settings.WARM_MIN > 0 or settings.WARM_MAX > 0), warm_prev=list(APP.CTL['warm_prev']),
                 gimbal=dict(present=gbs_ is not None, running=bool(gbs_ and gbs_.get('running')), id=int(gbs_.get('id', 0) or 0) if gbs_ else 0, auto=int(gbs_.get('auto', 0) or 0) if gbs_ else 0))
 
 
 def rules_state():
+    cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
+    camera_backend = cam_tracker.state() if cam_tracker is not None else None
+    if camera_backend is not None:
+        camera_backend['control_supported'] = bool(APP.GB is not None and getattr(APP.GB, 'track_control_supported', False))
     with APP.RULES['lock']:
-        return dict(warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
-                    gate_available=False, presets=[dict(key=k_, name=n_) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
-                    warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
-                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state())   # v32. v40: app / lead / gimbal / warm_on
+        return dict(camera_bytetrack=camera_backend,
+                    server_restart=bool(getattr(APP.LIVE, 'restart_supported', False)),
+                    npu_feed=npu_feed_state(),
+                    restart_pending=bool(getattr(APP.LIVE, 'restart_pending', False)), warm_max=settings.WARM_MAX, cam_reset=getattr(APP.LIVE, 'cam_reset', None), cam_frozen=cam_frozen.state(APP.LIVE), cam_scene=cam_scene.state(APP.LIVE), sys_buttons=APP.LIVE is not None and not APP.args.live_wait, warm_min=settings.WARM_MIN, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, tracker=APP.RULES['tracker'], relabel=APP.RULES['relabel'], relabel_available=bool(APP.args.relabel),
+                    gate_available=False, tracker_backend=native_backend.backend_of(APP.tracker), engine=tracker_engine(),
+                    presets=[dict(key=k_, name=n_, **native_backend.backend_status(k_)) for k_, n_ in APP.RULES_PRESETS], pending=APP.RULES['pending'], last=APP.RULES['last'], changes=APP.RULES['changes'],
+                    warm_dropped=(APP.LIVE.warm_dropped if APP.LIVE is not None else None), giant_dropped=_giant(), vit='꺼짐 (재시작 필요)' if APP.args.no_vit else '켜짐', mamba=bool(APP.args.mamba),
+                    det_kpt=det_has_kpt(), e2e_live=e2e_live.state(), relink_pred=(bool(getattr(APP.relabeler, 'pred_gate', False)) if APP.relabeler is not None and hasattr(APP.relabeler, 'pred_gate') else None),   # 11-14: the current or the waiting detector gives keypoints -> the keypoint position memories may be chosen
+                    predictor=POSP['key'], predictors=pos_list(), pred_show=POSP['show'], prop_show=_prop_state()['show'], prop=_prop_state(), pred_err=POSP['err'], pred_used=POSP['used'], **APP.ctl_state(), **_temp_keys(), **_pf_keys(), **_fast_keys())   # v32. v40: app / lead / gimbal / warm_on. 11-14: temp_show / temp
 
 
 def rules_state_2():
-    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg())   # gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
+    return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg(), auto_det=auto_det.state(), resident_det=resident_det.state(),
+                box_refine=box_refine.state())   # 11-15: 상자 다듬기 (src/track/box_refine.py): mode, blend_s, ms per frame, tracks   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). resident_det (11-15): 두 모델 상주·즉시 전환 (src/detect/resident_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
+
+
+def prefer_cpp_bytetrack(q_, tracker_key, cam_tracker):
+    """11-13: `engine=auto` on the ByteTrack menu row asks for C++ when it can fully replace Python on the camera:
+    library installed, camera (not a recording) on screen, nobody being followed, and a gimbal bridge that takes the
+    C++ IDs (or no gimbal). Every other request, including the explicit Python option, keeps the Python engine."""
+    if q_.get('engine', [''])[0] != 'auto' or tracker_key != 'confirm3': return False
+    try:
+        from ..camera import replay_link
+        if replay_link.blocking(): return False
+        try: gb_ = APP.GB
+        except NameError: gb_ = None   # server started without a gimbal
+        if gb_ is not None and (gb_.state.get('auto') or not getattr(gb_, 'track_control_supported', False)): return False
+        return bool(cam_tracker.state().get('available'))
+    except Exception as e_:
+        print('RULES engine auto -> Python (%s)' % repr(e_)[:120], flush=True)
+        return False
 
 
 def rules_request(q_):
@@ -102,7 +159,10 @@ def rules_request(q_):
         except (ValueError, IndexError): return False, '숫자가 아님'
     if 'lead' in q_ and q_['lead'][0] in ('1', 'true', 'on'):
         try: gb_ok_ = APP.GB is not None
-        except NameError: gb_ok_ = False
+        except (NameError, AttributeError): gb_ok_ = False
+        if not gb_ok_:
+            try: gb_ok_ = bool(APP.sel_restoring and APP.args.gimbal)
+            except (NameError, AttributeError): gb_ok_ = False   # 11-15: the saved choice is restored at start before the gimbal link exists; with --gimbal given the link comes right after (before this, every restart dropped 예측 제어)
         if not gb_ok_: return False, '짐벌이 연결되지 않음'
     if 'warm_on' in q_ and 'warm_min' not in q_ and 'warm_max' not in q_:   # v40: 온도 Filter on / off; the numbers are remembered while it is off
         if q_['warm_on'][0] in ('1', 'true', 'on'):
@@ -133,15 +193,55 @@ def rules_request(q_):
         if tk_ == 'gate': return False, 'GRU 확인은 없앰 (11-10)'   # v40
         if tk_ not in ('confirm3', 'rebind', 'ocsort', 'botsort', 'sort'): return False, '없는 추적기 종류'
         pend_['tracker'] = tk_
+        if tk_ in ENGINE_KINDS:   # 11-13: the plain click means C++ first; the engine row can ask for Python
+            pend_['engine'] = 'python' if q_.get('engine', [''])[0] == 'python' else 'auto'
+    if 'e2e_live' in q_:   # 11-14 (user): live end-to-end FastTrackTr on / off (applied by the frame loop at the next frame)
+        v_ = q_['e2e_live'][0]
+        if v_ not in ('ftt', 'off'): return False, '없는 엔드투엔드 모델'
+        if v_ == 'ftt' and e2e_live.info()[0] is None: return False, 'FastTrackTr 모델 파일이 장치에 없음'
+        e2e_live.E2E['want'] = v_
+    if 'e2e_link' in q_:   # 11-14: how the end-to-end model's people keep their numbers (auto | iou | id), see track/e2e_live.py
+        v_ = q_['e2e_link'][0]
+        if v_ not in ('auto', 'iou', 'id'): return False, '없는 번호 잇기 방식'
+        e2e_live.E2E['link'] = v_
+    if 'relink_pred' in q_:   # 11-14: KeepID growing search range on the predicted place (OnlineRelabel only)
+        if APP.relabeler is None or not hasattr(APP.relabeler, 'pred_gate'): return False, 'KeepID(외형 번호 되살리기)가 이 실행에 없음'
+        APP.relabeler.pred_gate = q_['relink_pred'][0] in ('1', 'true', 'on')
     if 'relabel' in q_:
         if not APP.args.relabel and q_['relabel'][0] in ('1', 'true', 'on'): return False, '재식별 모델이 이 실행에 없음'
         pend_['relabel'] = q_['relabel'][0] in ('1', 'true', 'on')
     if 'predictor' in q_:   # v32
         pk_ = q_['predictor'][0]
-        if pk_ not in ('kalman', 'gru', 'mamba'): return False, '없는 위치 예측기'
+        if pk_ not in {k_ for k_, _ in POS_NAMES}: return False, '없는 위치 예측기'   # 11-14: the list in position_memory (keypoint arms)
+        if pk_.endswith('_kpt') and not det_has_kpt(): return False, '관절을 내는 검출 모델([관절])을 먼저 고르세요'   # 11-14 (user)
         if pk_ != 'kalman' and not any(p_['key'] == pk_ and p_['available'] for p_ in pos_list()): return False, '이 위치 예측기는 가중치 파일이 없음 (학습 전)'
         if pk_ != POSP['key']: pend_['predictor'] = pk_
     if 'pred_show' in q_: POSP['show'] = q_['pred_show'][0] in ('1', 'true', 'on')
+    if 'prop_show' in q_:   # 11-14: people proposals from the spatial spectrum (display only)
+        from ..detect import spec_proposals
+        spec_proposals.PROP['show'] = q_['prop_show'][0] in ('1', 'true', 'on')
+        if not spec_proposals.PROP['show']: spec_proposals.PROP['boxes'] = []
+    if 'prop_fuse' in q_:   # 11-14 research: weak person boxes the spectrum calls a person get the new-track score (spec_proposals.fuse)
+        from ..detect import spec_proposals
+        v_ = q_['prop_fuse'][0]   # 1 = current rule, 2 = the first rule (boosts duplicates too), 0 = off
+        spec_proposals.FUSE['on'] = v_ in ('1', '2', 'true', 'on'); spec_proposals.FUSE['mode'] = 2 if v_ == '2' else 1; spec_proposals.FUSE['boosted'] = 0; spec_proposals.FUSE['frames'] = 0
+    if 'prop_log' in q_:   # 11-14 research log of the detector's weak boxes (spec_proposals.log_frame); 0 writes tracking_server/spec_prop_log.json
+        from ..detect import spec_proposals
+        on_ = q_['prop_log'][0] in ('1', 'true', 'on')
+        if on_: spec_proposals.LOG['rows'] = []
+        elif spec_proposals.LOG['on']: spec_proposals.log_write(str(HERE / 'spec_prop_log.json'))
+        spec_proposals.LOG['on'] = on_
+    if 'picture_first' in q_:   # 11-15 (user: total delay about one camera frame): picture at frame arrival, boxes drawn by the page (NOT kept over a restart)
+        from . import picture_first
+        picture_first.set_on(q_['picture_first'][0] in ('1', 'true', 'on'), APP.LIVE)
+        print('RULES set picture_first %d' % picture_first.PF['on'], flush=True)
+    if any(k_ in q_ for k_ in ('fast_embed', 'fast_kpts', 'fast_kpts_check')):   # 11-15: same-result speedups of the frame loop (src/common/fast_path.py; NOT kept over a restart)
+        from ..common import fast_path
+        print('RULES set %s -> %s' % (' '.join(fast_path.set_from(q_)), {k_: v_ for k_, v_ in fast_path.state().items() if k_ != 'fast_stat'}), flush=True)
+    if 'temp_show' in q_:   # 11-14: skin-temperature labels from the camera's temperature map (display only; NOT kept over a restart)
+        from ..detect import skin_temp
+        skin_temp.set_show(q_['temp_show'][0] in ('1', 'true', 'on'))
+        print('RULES set temp_show %d' % skin_temp.TEMP['show'], flush=True)
     if cm_ is not None:   # read once per frame by the frame loop (confirm_apply); the tracker itself is only touched there
         if APP.CONFIRM is None: APP.CONFIRM = ConfirmByTime(cm_)
         else: APP.CONFIRM.set_ms(cm_)
@@ -151,17 +251,43 @@ def rules_request(q_):
         with APP.REID['lock']: APP.REID['req'] = dict(key=rk_, t=time.time())
         print('RULES reid queued', rk_, flush=True)
     if 'lead_ms' in q_: APP.CTL['lead_ms'] = lm_
-    if 'lead' in q_: APP.CTL['lead'] = q_['lead'][0] in ('1', 'true', 'on'); APP.CTL['lv'] = None; APP.CTL['lead_px'] = 0.0; APP.CTL['lead_err'] = ''
+    if 'lead' in q_: APP.CTL['lead'] = q_['lead'][0] in ('1', 'true', 'on'); APP.CTL['lv'] = None; APP.CTL['lead_px'] = 0.0; APP.CTL['lead_err'] = ''; APP.CTL['lead_stats'] = {}
     if any(k_ in q_ for k_ in ('app', 'lead', 'lead_ms', 'warm_on')): print('RULES set app %s lead %d lead_ms %d' % (APP.CTL['app'], APP.CTL['lead'], APP.CTL['lead_ms']), flush=True)
     with APP.RULES['lock']:
         if pend_: APP.RULES['pending'] = dict(APP.RULES['pending'] or {}, **pend_, t=time.time())
         APP.RULES['changes'] += 1; APP.RULES['last'] = dict(at=time.strftime('%H:%M:%S'), warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, queued=sorted(pend_.keys()))
+    cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
+    if 'tracker' in pend_ and cam_tracker is not None:
+        cam_tracker.select(prefer_cpp_bytetrack(q_, pend_['tracker'], cam_tracker))
     print('RULES set warm_min %d warm_max %d edge_birth %.2f pending %s' % (settings.WARM_MIN, settings.WARM_MAX, settings.EDGE_BIRTH, pend_), flush=True)
-    APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), app=APP.CTL['app'], lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **(dict(confirm_ms=APP.CONFIRM.ms) if cm_ is not None else {}), **pend_)   # v36. v40: lead itself is not kept (comes back OFF)
+    APP.sel_save(warm_min=settings.WARM_MIN, warm_max=settings.WARM_MAX, edge_birth=settings.EDGE_BIRTH, edge_px=settings.EDGE_PX, pred_show=bool(POSP['show']), prop_show=bool(_prop_state()['show']), app=APP.CTL['app'], lead=bool(APP.CTL['lead']), lead_ms=int(APP.CTL['lead_ms']), warm_prev=list(APP.CTL['warm_prev']), **(dict(confirm_ms=APP.CONFIRM.ms) if cm_ is not None else {}), **pend_)   # v36. 11-13 (user): the prediction switch (lead) is kept too
     return True, '적용됨' if not (pend_ or rk_ is not None) else '다음 프레임에 적용'
 
 
 def rules_request_2(q_):
+    if 'box_refine' in q_ or 'box_blend' in q_ or 'lost_same' in q_:   # 11-15: box smoothing (src/track/box_refine.py); checked first, changed only when the rest of the query was taken too. 11-16: lost_same (lost box = seen box)
+        br_ = {k_: x_ for k_, x_ in q_.items() if k_ in ('box_refine', 'box_blend', 'lost_same')}
+        ok_, tx_, apply_ = box_refine.parse_request(br_)
+        if not ok_: return ok_, tx_
+        rest_ = {k_: x_ for k_, x_ in q_.items() if k_ not in br_}
+        ok_, tx2_ = rules_request_2(rest_) if rest_ else (True, tx_)
+        if ok_: apply_()
+        return ok_, tx2_
+    if 'resident_det' in q_:   # 11-15: two detector models resident (src/detect/resident_det.py); checked first, changed only when the rest of the query was taken too (like auto_det below)
+        ok_, tx_, apply_ = resident_det.parse_request({'resident_det': q_['resident_det']})
+        if not ok_: return ok_, tx_
+        rest_ = {k_: x_ for k_, x_ in q_.items() if k_ != 'resident_det'}
+        ok_, tx2_ = rules_request_2(rest_) if rest_ else (True, tx_)
+        if ok_: apply_()
+        return ok_, tx2_
+    ad_ = {k_: x_ for k_, x_ in q_.items() if k_ == 'auto_det' or k_.startswith('auto_det_')}
+    if ad_:   # 11-15: checked first, changed only when the rest of the query was taken too (like stab below)
+        ok_, tx_, apply_ = auto_det.parse_request(ad_)
+        if not ok_: return ok_, tx_
+        rest_ = {k_: x_ for k_, x_ in q_.items() if k_ not in ad_}
+        ok_, tx_ = rules_request_2(rest_) if rest_ else (True, '적용됨')
+        if ok_: apply_()
+        return ok_, tx_
     if 'stab' not in q_: return APP.rules_request0_(q_)
     v_ = str(q_['stab'][0]).strip().lower()
     if v_ not in ('1', '0', 'true', 'false', 'on', 'off'): return False, '흔들림 보정 값은 1 또는 0'
@@ -171,6 +297,47 @@ def rules_request_2(q_):
     STAB['on'] = v_ in ('1', 'true', 'on'); STAB['err'] = ''; APP.sel_save(stab=bool(STAB['on']))   # read once per frame in live_next: the change lands between two frames
     print('RULES set stab %d' % STAB['on'], flush=True)
     return ok_, tx_
+
+
+def _prop_state():
+    from ..detect import spec_proposals
+    return spec_proposals.state()
+
+
+def _giant():   # 11-15: person boxes dropped as impossibly tall (src/detect/detect_frame.drop_giant)
+    try:
+        from ..detect import detect_frame
+        return int(detect_frame.GIANT[0])
+    except Exception:
+        return None
+
+
+def _fast_keys():   # 11-15: same-result speedups (src/common/fast_path.py)
+    try:
+        from ..common import fast_path
+        return fast_path.state()
+    except Exception:   # noqa: BLE001
+        return {}
+
+
+def _pf_keys():   # 11-15: picture first (src/web/picture_first.py)
+    try:
+        from . import picture_first
+        return dict(picture_first=picture_first.PF['on'], picture_first_state=picture_first.state(APP.LIVE))
+    except Exception as e_:   # noqa: BLE001
+        return dict(picture_first=False, picture_first_state=dict(last_error=repr(e_)[:120]))
+
+
+def _temp_keys():   # 11-14: the skin-temperature switch and its numbers for the page (src/detect/skin_temp.py)
+    try:
+        from ..detect import skin_temp
+        st_ = dict(skin_temp.state())
+        try: env_ = int(os.environ.get('LWIR_CAM_TEMP', '') or 0)   # set by --cam-temp N (temp_ring.apply_cli) or by scripts/live.env
+        except ValueError: env_ = 0
+        st_['enabled'] = env_ > 0 or int(getattr(vars(APP).get('args'), 'cam_temp', 0) or 0) > 0   # 11-15 (user: every option on the page must work live): a temperature map only when cam_pipe gets LWIR_CAM_TEMP
+        return dict(temp_show=st_['show'], temp=st_)
+    except Exception as e_:
+        return dict(temp_show=False, temp=dict(show=False, last_error=repr(e_)[:120]))
 
 
 def model_state():
@@ -189,22 +356,56 @@ def model_request(model_id, req_no=None):
         c_ = next((x_ for x_ in APP.MODEL['catalog'] if x_['id'] == model_id), None)
         if c_ is None: return 1
         if APP.MODEL['req'] is not None or APP.MODEL['busy']: return 2
+        if frame_feed.manual_pending(vars(APP).get('FEED')): return 2   # 11-16: an automatic switch of the 'auto' feed is dropped by the change (Feed.pause), not a reason for Busy
         if c_['det'] == APP.args.det: APP.sel_save(det=APP.args.det); return 0   # already running
         APP.MODEL['req'] = dict(det=c_['det'], id=c_['id'], req=req_no, t=time.time()); return -1
 
 
-def do_model_swap(new_det):
-    """Release the old engine and create the new one on the same core. -> PipelineResult code (0 Ok, 3 CreationFailed, 4 Restored, 5 RestoreFailed)."""
-    import gc
-    c_ = next(x_ for x_ in APP.MODEL['catalog'] if x_['det'] == new_det); key_ = c_['key']; old_det, old_key = APP.args.det, APP.det_names[0]
+def det_has_kpt():
+    """11-14: True when the running detector, or the one waiting to be switched in, has keypoint heads (kind six_kpt)."""
+    if APP.args.det in KPT_DETS: return True
+    req_ = APP.MODEL.get('req') if isinstance(getattr(APP, 'MODEL', None), dict) else None   # the waiting model change (same field as the model list's 'pending')
+    return bool(req_ and req_.get('det') in KPT_DETS)
+
+
+def swap_refused(new_det):
+    """True (with the log line) when the file of new_det is missing or its sha is not the listed one: do_model_swap then answers 3 without touching an engine.
+    11-15: the frame loop asks this before the old path, so a refused change pauses, releases and rebuilds nothing (resident_det) and the frames ahead stay valid."""
+    key_ = next(x_ for x_ in APP.MODEL['catalog'] if x_['det'] == new_det)['key']
     try: bad_ = (key_ in BANK or not APP.args.mock) and sha(BANK.get(key_, HERE / 'models' / 'links' / (key_ + '.dxnn'))) != APP.man[key_]
     except OSError: bad_ = True   # v28: the file was removed after it was listed
-    if bad_: print('MODEL sha mismatch or missing file for', key_, flush=True); return 3
+    if bad_: print('MODEL sha mismatch or missing file for', key_, flush=True)
+    return bad_
+
+
+def do_model_swap(new_det, checked=False):
+    """Release the old engine and create the new one on the same core. -> PipelineResult code (0 Ok, 3 CreationFailed, 4 Restored, 5 RestoreFailed).
+    checked = the caller has just asked swap_refused (the file is read once)."""
+    import gc
+    c_ = next(x_ for x_ in APP.MODEL['catalog'] if x_['det'] == new_det); key_ = c_['key']; old_det, old_key = APP.args.det, APP.det_names[0]
+    if not checked and swap_refused(new_det): return 3
     t_ = time.perf_counter(); APP.eng.pop(old_key, None); APP.a = None; gc.collect(); time.sleep(0.3)
     try: APP.eng[key_] = APP.Engine(key_, CORE[key_], APP.args.npu_depth)
     except Exception as e_:
         print('MODEL creation of', key_, 'failed:', repr(e_)[:200], flush=True)
         try: APP.eng[old_key] = APP.Engine(old_key, CORE[old_key], APP.args.npu_depth); APP.a = APP.eng[old_key]; return 4
         except Exception as e2_: print('MODEL restore of', old_key, 'failed:', repr(e2_)[:200], flush=True); return 5
-    APP.a = APP.eng[key_]; APP.b = None; APP.det_names = [key_]; APP.det_yoff = DET[new_det]['yoff']; APP.args.det = new_det
+    APP.a = APP.eng[key_]; det_changed(new_det, key_)
     print('MODEL changed %s -> %s in %.1f s' % (old_det, new_det, time.perf_counter() - t_), flush=True); return 0
+
+
+AUTO_KPT_POS = 'gru_kpt'   # 11-15 (user): position memory picked when the detector becomes a keypoint (pose) model.
+# 11-16 numbers (models/README, GRU position memory): the 11-15 file beat Kalman by 10-16 % only on public val-B. On our labelled camera recordings the
+# 11-16 file is still slightly worse than Kalman on the lost box: TEST 0.118 with the no-keypoint Kalman rule (0.122 without) vs 0.110, worse in 9 of
+# 14 recordings; CHOOSE 0.103 vs 0.089; close people 0.138 vs 0.057 (10 losses); IDF1 / HOTA 74.7 / 74.6 vs 74.1 / 73.9 (no measurable difference).
+# Those recordings were already looked at (not a blind test); not measured on the device. Keeping this automatic pick is the user's decision.
+
+
+def det_changed(new_det, key_):
+    """The run-wide detector names after a change that worked: do_model_swap, and the instant switch of resident_det (11-15), which keeps APP.a (the arrival feed)."""
+    old_det = APP.args.det
+    APP.b = None; APP.det_names = [key_]; APP.det_yoff = DET[new_det]['yoff']; APP.args.det = new_det
+    if POSP['key'].endswith('_kpt') and new_det not in KPT_DETS:   # 11-14 (user): a keypoint position memory needs a keypoint detector
+        pos_select('kalman'); print('POS predictor back to kalman: %s gives no keypoints' % new_det, flush=True)
+    elif new_det in KPT_DETS and old_det not in KPT_DETS and not POSP['key'].endswith('_kpt'):   # 11-15 (user: a pose detector picks the GRU by itself):
+        if pos_select(AUTO_KPT_POS): print('POS predictor -> %s automatically: %s gives keypoints' % (AUTO_KPT_POS, new_det), flush=True)   # near<->far keeps the choice

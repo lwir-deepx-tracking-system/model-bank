@@ -88,8 +88,11 @@ class Rig:
             now = time.monotonic()
             if ping and now >= next_ping: self.send('P'); next_ping = now + .2
             self.frame(*people)
-            c = self.serial(.033)
-            if c is not None: got.append(c)
+            slot = time.monotonic() + .033
+            while True:   # every command of this frame time (v27 arrival control: one at the frame and one at the 25 ms period)
+                c = self.serial(max(slot - time.monotonic(), 0))
+                if c is None: break
+                got.append(c)
         return got
 
     def close(self):

@@ -27,11 +27,11 @@
   - 끝까지 가면 처음부터 다시 돈다 (--loops 0 = 끝없이, 기본). SIGTERM / SIGINT 를 받으면 바로 깨끗이 끝난다 (종료 코드 0). 받는 쪽이 닫혀도 0 으로 끝난다.
 
 조종 (11-12, --control 또는 LWIR_REPLAY_CONTROL=1 일 때만 표준 입력을 읽는다. 서버가 줄 단위로 쓴다)
-  SEEK <번호>    0 부터 센 프레임 번호로 건너뜀. 새 "바퀴"(pass)를 시작하고, 첫 프레임을 보내기 전에 --gap (기본 1.2 초) 동안 아무것도 보내지 않는다
+  SEEK <번호> [PAUSE]    PAUSE가 붙으면 이동한 장에서 멈춘다. 0 부터 센 프레임 번호로 건너뜀. 새 "바퀴"(pass)를 시작하고, 첫 프레임을 보내기 전에 --gap (기본 1.2 초) 동안 아무것도 보내지 않는다
                  (서버의 "입력이 1 초 넘게 끊기면 추적을 새로 시작" 규칙이 그 틈으로 추적을 비운다). 그 프레임은 멈춘 중이어도 한 번은 새 프레임으로 나간다.
   PAUSE          지금 프레임에서 멈춤. 멈춘 동안 같은 프레임을 "되풀이" 표시를 달아 초당 --rep-fps (기본 5) 장 보낸다 (서버가 카메라가 죽었다고 보지 않게, 그림도 계속 갱신되게. 서버는 되풀이를 채점하지 않는다).
   PLAY           이어서 재생 (멈춘 프레임의 다음 프레임부터)
-  (한 번만 재생(--loops)이 마지막 프레임을 보내고 끝날 때는 그 프레임을 "되풀이" 표시로 4 장 더 보낸 뒤 끝난다: 서버가 마지막 프레임을 화면에 내고 채점하게. 약 0.8 초)
+  웹 재생은 완주하면 마지막 장을 유지한다. PLAY는 처음부터 재생하고, SEEK는 원하는 장으로 이동한다.
   SPEED <fps>    초당 프레임 수 바꾸기
   줄은 서버가 모아서 마지막 것만 보낸다. 모르는 줄과 범위 밖의 번호는 (끝 쪽으로 맞춰) 조용히 처리한다. 표준 입력이 닫혀도 재생은 계속된다.
 
@@ -45,6 +45,7 @@
   --gap <초>                            LWIR_REPLAY_GAP   (기본 1.2)  SEEK 뒤 첫 프레임 전의 빈 시간
   --rep-fps <숫자>                      LWIR_REPLAY_REP_FPS (기본 5)  멈춘 동안 되풀이 프레임의 초당 장 수
   --control                             LWIR_REPLAY_CONTROL=1  표준 입력의 조종 줄을 읽는다
+  --prepare-frame                       LWIR_REPLAY_PREPARE_FRAME=1  --no-skip 재생에서 다음 한 장을 내보내기 전에 읽는다
   --tag                                 LWIR_REPLAY_TAG=1  (정답 비교용) 머리를 붙일 때(LWIR_CAM_STAMP=1) 어느 프레임인지 적는다:
                                         flags 2 번 비트(값 2)를 켠다. 멈춘 동안 되풀이하는 프레임은 flags 값 4 도 켠다. slot = 녹화 안의 프레임 번호(0 부터, 폴더도 .raw 도 같다),
                                         ring_id = PNG 번호(파일 이름의 숫자, 아래 20 비트) + 바퀴 번호(0 부터, 위 12 비트; 4095 에서 멈춘다),
@@ -207,6 +208,7 @@ class Ahead(threading.Thread):
     def __init__(self, src):
         super().__init__(daemon=True)
         self.src, self.cv, self.want, self.cache, self.done = src, threading.Condition(), [], {}, False
+        self.reading = None
 
     def run(self):
         while True:
@@ -218,11 +220,13 @@ class Ahead(threading.Thread):
                     if todo is not None:
                         break
                     self.cv.wait()
+                self.reading = todo
             try:
                 b = self.src.read(todo)
             except Exception:
                 b = None
             with self.cv:
+                self.reading = None
                 if todo in self.want:
                     self.cache[todo] = b
                 for k in [k for k in self.cache if k not in self.want]:
@@ -242,12 +246,25 @@ class Ahead(threading.Thread):
                 return self.cache.pop(i)
         return self.src.read(i)
 
+    def prepare(self, i):
+        with self.cv:
+            # Reuse an in-flight read of this frame. If another frame is in
+            # flight, claim this one so the worker won't also decode it.
+            self.cv.wait_for(lambda: self.reading != i)
+            self.want = [wanted for wanted in self.want if wanted != i]
+            if i in self.cache:
+                return self.cache.pop(i)
+        return self.src.read(i)
+
 
 class Control:
     """표준 입력의 조종 줄. 읽는 스레드는 값만 덮어쓴다 (모으기: 같은 종류는 마지막 것만 남는다)."""
     def __init__(self, say):
         self.lk, self.ev, self.say = threading.Lock(), threading.Event(), say
         self.seek = self.paused = self.speed = None
+        self.step = 0
+        self.clear_steps = False
+        self.step_paused = False
         self.n = self.bad = 0
 
     def start(self):
@@ -262,27 +279,39 @@ class Control:
                 k = f[0].upper()
                 try:
                     with self.lk:
-                        if k == 'SEEK' and len(f) == 2:
+                        if k == 'SEEK' and (len(f) == 2 or (len(f) == 3 and f[2].upper() == 'PAUSE')):
                             self.seek = int(f[1])
+                            self.step = 0
+                            self.clear_steps = True
+                            if len(f) == 3:
+                                self.paused = self.step_paused = True
                         elif k == 'SPEED' and len(f) == 2:
                             self.speed = float(f[1])
                         elif k in ('PAUSE', 'PLAY') and len(f) == 1:
-                            self.paused = k == 'PAUSE'
+                            self.paused = self.step_paused = k == 'PAUSE'
+                            if not self.paused:
+                                self.step = 0
+                                self.clear_steps = True
+                        elif k == 'STEP' and len(f) == 1:
+                            if self.step_paused:
+                                self.step += 1
                         else:
                             self.bad += 1
                             continue
                         self.n += 1
+                        self.ev.set()
                 except ValueError:
                     self.bad += 1
                     continue
-                self.ev.set()
         except (OSError, ValueError, AttributeError):   # 표준 입력이 없거나 닫힘
             pass
 
     def take(self):
         with self.lk:
-            c = (self.seek, self.paused, self.speed)
+            c = (self.seek, self.paused, self.speed, self.step, self.clear_steps)
             self.seek = self.paused = self.speed = None
+            self.step = 0
+            self.clear_steps = False
             self.ev.clear()
         return c
 
@@ -292,6 +321,22 @@ def write_all(fd, data):
     while len(mv):
         n = os.write(fd, mv)
         mv = mv[n:]
+
+
+def next_deadline(due, completed, period, *, no_skip, pacing):
+    """Pace lossless replay without adding every write time to its period.
+
+    Deadline pacing preserves all frame positions. If a whole next deadline
+    was missed, abandon the timing debt and wait a fresh period; do not burst
+    through a backlog. Sub-period lateness can shorten the following interval.
+    The legacy mode remains available for same-input comparisons.
+    """
+    nominal = due + period
+    if not no_skip:
+        return nominal
+    if pacing != 'deadline':
+        return max(due, completed) + period
+    return completed + period if nominal <= completed else nominal
 
 
 def main():
@@ -306,7 +351,16 @@ def main():
     ap.add_argument('--rep-fps', type=float, default=float(os.environ.get('LWIR_REPLAY_REP_FPS', '5') or 5))
     ap.add_argument('--control', action='store_true', default=os.environ.get('LWIR_REPLAY_CONTROL') == '1')
     ap.add_argument('--tag', action='store_true', default=os.environ.get('LWIR_REPLAY_TAG') == '1')
+    ap.add_argument('--no-skip', action='store_true', help='preserve sequential frames under backpressure')
+    ap.add_argument('--pacing', choices=['legacy', 'deadline'],
+                    default=os.environ.get('LWIR_REPLAY_PACING', 'legacy'),
+                    help='lossless replay timing; deadline includes read/write work in the frame period')
+    ap.add_argument('--prepare-frame', action='store_true',
+                    default=os.environ.get('LWIR_REPLAY_PREPARE_FRAME') == '1',
+                    help='read one frame before its scheduled release during lossless replay')
     a = ap.parse_args()
+    if a.pacing not in ('legacy', 'deadline'):
+        ap.error('LWIR_REPLAY_PACING must be legacy or deadline')
     err = sys.stderr
 
     def say(t):
@@ -324,7 +378,9 @@ def main():
     signal.signal(signal.SIGTERM, _on_signal)
     signal.signal(signal.SIGINT, _on_signal)
     stamp = os.environ.get('LWIR_CAM_STAMP') == '1'
+    prepare_frame = a.prepare_frame and a.no_skip
     ctl = Control(say) if a.control else None
+    hold_at_end = ctl is not None and stamp and a.tag and a.loops == 1
     if ctl is not None and not (os.path.isfile(a.dir) and a.dir.lower().endswith(('.raw', '.raw.gz'))):
         import cv2   # noqa: F401  (Windows: loading a DLL while another thread waits on the stdin pipe hangs, so cv2 / numpy are loaded before the control thread starts)
         import numpy   # noqa: F401
@@ -349,6 +405,9 @@ def main():
         say('CAMERA %d %d' % (W, H))
         tag = stamp and a.tag
         say('REPLAY %d frames (%s), %d skipped files, %g fps, loops %s, time stamps %s, png numbers %s, control %s' % (total, src.kind, src.bad, a.fps, a.loops or 'endless', 'on' if stamp else 'off', 'on' if tag else 'off', 'on' if ctl else 'off'))
+        say('REPLAY pacing %s, lossless %s' % (a.pacing, 'on' if a.no_skip else 'off'))
+        if prepare_frame:
+            say('REPLAY frame preparation on')
         if stamp and os.environ.get('LWIR_CAM_SHM') == '1':
             say('SHM_RING not used by replay_cam: pictures go through the pipe')
         fd = sys.stdout.fileno()
@@ -358,7 +417,9 @@ def main():
         if isinstance(src, PngSource):
             ahead = Ahead(src)
             ahead.start()
-        get = ahead.get if ahead is not None else src.read
+        get = src.read
+        if ahead is not None:
+            get = ahead.prepare if prepare_frame else ahead.get
         clock = time.perf_counter
         fps = a.fps
         period = 1.0 / fps
@@ -373,11 +434,15 @@ def main():
         first = True               # 새 프레임을 하나 보낼 차례 (멈춘 중이어도: 시작과 SEEK 뒤 첫 프레임)
         seek_wait = False          # SEEK 를 받았고 그 첫 프레임은 아직 안 보냄 (그 사이에 또 SEEK 가 오면 같은 구간으로 센다)
         paused = False
+        at_end = False
         cur = None                 # 마지막으로 보낸 새 프레임 (멈춘 동안 되풀이)
+        prepared = None            # 아직 보내지 않은 (위치, 이미지). SEEK 이 오면 버린다.
         cur_pos = cur_png = 0
         next_rep = 0.0
         seq = 0
         t_prev_ns = 0
+        steps_left = 0
+        stepping = False
 
         def emit(b, p, png, repeat):
             nonlocal seq, t_prev_ns
@@ -396,13 +461,22 @@ def main():
 
         while True:
             if ctl is not None:
-                c_seek, c_paused, c_speed = ctl.take()
+                c_seek, c_paused, c_speed, c_step, c_clear_steps = ctl.take()
+                if c_clear_steps:
+                    steps_left = 0
+                    if stepping:
+                        first = stepping = False
                 if c_speed is not None and 0.1 <= c_speed <= 240:
                     fps = c_speed
                     period = 1.0 / fps
                     say('REPLAY CMD speed %g' % fps)
+                if at_end and c_paused is False and c_seek is None:
+                    c_seek = 0   # Play after a completed pass uses the same gap/reset as an explicit seek.
+                    wraps = 0
                 if c_seek is not None:
+                    at_end = False
                     pos = min(max(c_seek, 0), total - 1)
+                    prepared = None
                     if not seek_wait:
                         pass_no += 1
                     seek_wait = True
@@ -419,7 +493,18 @@ def main():
                     elif not first:
                         due = clock()
                     say('REPLAY CMD %s at %d' % ('pause' if paused else 'play', cur_pos))
-            if paused and not first:   # 멈춤: 같은 프레임을 되풀이로 (조종 줄이 오면 바로 깬다)
+                if paused and not seek_wait and not at_end:
+                    steps_left += c_step
+            if not paused or at_end or seek_wait or pos >= total:
+                steps_left = 0
+                if stepping:
+                    first = stepping = False
+            elif not first and steps_left > 0:
+                steps_left -= 1
+                first = stepping = True  # 다음 한 장만 보통 프레임으로 보낸다 (되풀이 표시 없음).
+                due = clock()
+                say('REPLAY CMD step %d -> %d' % (cur_pos, pos))
+            if (paused or at_end) and not first:   # 멈춤: 같은 프레임을 되풀이로 (조종 줄이 오면 바로 깬다)
                 d = next_rep - clock()
                 if d > 0:
                     if ctl is not None:
@@ -432,13 +517,23 @@ def main():
                     repeats += 1
                 next_rep = max(next_rep + rep_period, clock() + rep_period * 0.5)
                 continue
+            if prepare_frame and (pos < total or a.loops <= 0 or wraps + 1 < a.loops):
+                prepare_pos = pos % total
+                if prepared is None or prepared[0] != prepare_pos:
+                    prepared = (prepare_pos, get(prepare_pos))
+                    continue  # Recheck controls before committing the frame or wrap.
             d = due - clock()
-            if not first and d < -period:   # 한 칸 넘게 늦었다: 지나간 칸은 건너뛴다 (몰아서 보내지 않는다)
+            if not a.no_skip and not first and d < -period:   # 한 칸 넘게 늦었다: 지나간 칸은 건너뛴다 (몰아서 보내지 않는다)
                 jump = int(-d / period)
-                pos += jump
-                skipped += jump
-                due += jump * period
-                continue
+                if hold_at_end and pos < total:
+                    jump = min(jump, total - 1 - pos)   # Never skip the frame we will hold.
+                if jump:
+                    pos += jump
+                    skipped += jump
+                    due += jump * period
+                    continue
+                due = clock()
+                d = 0
             if d > SPIN_S:
                 if ctl is not None:
                     if ctl.ev.wait(d - SPIN_S):
@@ -447,6 +542,8 @@ def main():
                     time.sleep(d - SPIN_S)
             while clock() < due:
                 pass
+            if prepare_frame and ctl is not None and ctl.ev.is_set():
+                continue
             while pos >= total:   # 끝에서 처음으로
                 wraps += 1
                 if a.loops > 0 and wraps >= a.loops:
@@ -461,7 +558,11 @@ def main():
                         emit(cur, cur_pos, cur_png, True)
                         repeats += 1
                 break
-            b = get(pos)
+            if prepare_frame:
+                _, b = prepared
+                prepared = None
+            else:
+                b = get(pos)
             if b is None:   # 못 읽은 프레임은 건너뛴다 (시간은 쓰지 않는다)
                 src.bad += 1
                 pos += 1
@@ -471,12 +572,15 @@ def main():
             seek_wait = False
             sent += 1
             pos += 1
-            due += period
-            first = False
-            if paused:
+            due = next_deadline(due, clock(), period, no_skip=a.no_skip, pacing=a.pacing)
+            first = stepping = False
+            if hold_at_end and pos == total:
+                at_end = True
+                say('REPLAY END: holding final frame')
+            if paused or at_end:
                 next_rep = clock() + rep_period
             if ahead is not None:
-                ahead.set_want([(pos + k) % total for k in range(AHEAD)] if not paused else [])
+                ahead.set_want([(pos + k) % total for k in range(AHEAD)] if not (paused or at_end) else [])
     except _Stop:
         pass
     except (BrokenPipeError, ConnectionError):

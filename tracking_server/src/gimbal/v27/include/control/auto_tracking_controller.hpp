@@ -8,6 +8,9 @@
 struct GimbalDemand {
     int x = 0, y = 0; // command coordinates: +X right, +Y up
     double speed = 0;
+    // v27: each axis' speed demand after --far-gain / --brake-px-per-spd (= |pid value| when both are off).
+    // The executor's per-axis reversal takes the shared SPD from these, so the shaping also works with --axis-reversal 1.
+    double speed_x = 0, speed_y = 0;
     double error_x = 0, error_y = 0; // image coordinates: +Y down
     PidOutput pid_x, pid_y; // signed outputs in image coordinates
     bool stop() const { return x == 0 && y == 0; }
@@ -25,13 +28,24 @@ class AutoTrackingController {
     std::uint64_t generation_ = 0;
     FrameMetadata previous_{};
     GimbalDemand cached_{};
+    struct CatchupAxis {
+        double position = 0, demand = 0;
+        bool outward = false, ready = false;
+    };
+    CatchupAxis catchup_x_, catchup_y_;
+    bool have_catchup_sample_ = false;
+    double catchup_aim_y_ = 0.5;
 public:
     explicit AutoTrackingController(AutoControlConfig config, SmoothingConfig smoothing = {})
         : config_(config), smoothing_(smoothing), x_(config.pid_x, config.controller, config.speed_max),
           y_(config.pid_y, config.controller, config.speed_max) {}
-    bool valid(const Track&, int width, int height) const;
+    bool valid(const Track&, int width, int height, double aim_y = 0.5) const;
     GimbalDemand calculate(const Track&, int width, int height,
-                          const FrameMetadata&, std::uint64_t model_generation = 0);
+                          const FrameMetadata&, std::uint64_t model_generation = 0,
+                          const TrackLead& lead = {}, double aim_y = 0.5,
+                          bool healthy_live = false);
     void set_applied_output(double image_x, double image_y);
+    bool take_catchup(int x, int y);
+    void reset_catchup();
     void reset();
 };

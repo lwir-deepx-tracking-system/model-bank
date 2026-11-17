@@ -8,6 +8,7 @@
   "REPVGG_FT_INSIDE_20261110": "e52eda7d8a3354f6cab3f83b3b44397afddaba394c1092091b1598fd101b6137",
   "VIT_LITE_DISTILL_INSIDE_20261111": "9c79e07bedefa097d36b4deb7716a72b404ba5f1f19366f448e5bd03b9a68199",
   "VIT_LITE_FT_INSIDE_20261111": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2",
+  "REPVGG_FT_OTP2_20261113": "92cf064b3dc627b5ddc6360b7e693e2ca973b519e7696cf207d5dd710f178d31",
   "_links": {
     "NEWMRW480": "detect/yolo26m/yolo26m_flir_nms_640x480.dxnn",
     "S480": "detect/yolo26s/yolo26s_nms_640x480.dxnn",
@@ -17,12 +18,15 @@
     "REPVGG_DISTILL_INSIDE_20261110": "reid/repvgg_distill_inside_20261110_reid.dxnn",
     "REPVGG_FT_INSIDE_20261110": "reid/repvgg_ft_inside_20261110_reid.dxnn",
     "VIT_LITE_DISTILL_INSIDE_20261111": "reid/vit_lite_distill_inside_20261111_reid.dxnn",
-    "VIT_LITE_FT_INSIDE_20261111": "reid/vit_lite_ft_inside_20261111_reid.dxnn"
+    "VIT_LITE_FT_INSIDE_20261111": "reid/vit_lite_ft_inside_20261111_reid.dxnn",
+    "REPVGG_FT_OTP2_20261113": "reid/repvgg_ft_otp2_20261113_reid.dxnn"
   },
   "_files": {
-    "detect/yolo26m/yolo26m_flir_inside_20261110_1742_640x480.dxnn": "d29ffca0618aef268ae98050a3def5a1df6d0acfd5dfd6e498be6ceb5bc756ff",
+    "detect/yolo26m/yolo26m_pose_otp2cocomot_20261114_bodybox_occl_kpt_640x480.dxnn": "8f97f3a1abc23fc26adf914efe277a3126556fa82953cc8ac742e94e51fd2db9",
+    "detect/yolo26m/yolo26m_pose_otp2cocomot_20261114_bodybox_occl_640x480.dxnn": "2ea4fcf8a722f8d77108f04da50329a1bca4ba21295aa2bc0c2d7b61395999ab",
+    "detect/yolo26m/yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480.dxnn": "d1c8e4c1c0f4260a75dfc7e18a32358b87648cec55853c23ce7e2a38714a9845",
+    "detect/yolo26m/yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_640x480.dxnn": "86858977aafddff83f286c7adf36d09fbfde022f993e0e571b2885e534a48fcc",
     "detect/yolo26m/yolo26m_flir_inside_20261110_2020_640x480.dxnn": "7a2571e1caf313d34762660e57f735a17e355ac727df08f4c5862fb4ef7b35fc",
-    "detect/yolo26m/yolo26m_flir_inside_20261111_patch_640x480.dxnn": "ae29d607462cf5b790991ad244f54f1d08d762476502da1382ad4b3a7b9bdc07",
     "detect/yolo26m/yolo26m_flir_nms_640x480.dxnn": "1aa827cf11f55d470b979d73cdae248babd77a80577613fcfe98097a9fcc18b9",
     "detect/yolo26m/yolo26m_flir_nms_640x640.dxnn": "b43d4e53a36ff7c0f29518f99244ea5947266b92faba18ba4a7c1373880909c3",
     "detect/yolo26m/yolo26m_flir_outside_20261110_patch_640x480.dxnn": "2aa5576a70bd35f63e0e073569830e0a7340d243a9754720ac1d59a487591d48",
@@ -37,7 +41,8 @@
     "reid/repvgg_ft_inside_20261110_reid.dxnn": "e52eda7d8a3354f6cab3f83b3b44397afddaba394c1092091b1598fd101b6137",
     "reid/repvgg_tmot_camel_reid.dxnn": "dc19d7862a77ffa1d7c7f71f84283e86c33267d9e741b59070b839cb1921ff53",
     "reid/vit_lite_distill_inside_20261111_reid.dxnn": "9c79e07bedefa097d36b4deb7716a72b404ba5f1f19366f448e5bd03b9a68199",
-    "reid/vit_lite_ft_inside_20261111_reid.dxnn": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2"
+    "reid/vit_lite_ft_inside_20261111_reid.dxnn": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2",
+    "reid/repvgg_ft_otp2_20261113_reid.dxnn": "92cf064b3dc627b5ddc6360b7e693e2ca973b519e7696cf207d5dd710f178d31"
   },
   "_note": "internal model name -> sha256 of the DXNN file. scripts/setup.sh links models/links/<name>.dxnn to the file given in \"_links\" and checks every sha256 here. The server checks the detector and the re-ID model it loads against these values and lists a model on the page only when its name is here and linked. \"_files\": sha256 of every DXNN under models/detect/*/ and models/reid/ (detectors without an internal name are found by the server itself in models/detect/*/). Keys that start with \"_\" are not model names."
 }

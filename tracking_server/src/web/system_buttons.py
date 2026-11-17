@@ -1,7 +1,77 @@
-"""화면의 장치 버튼: 재부팅."""
+"""화면의 시스템 버튼."""
 import os
 import time
 from ..common.state import APP
+from ..detect import frame_feed
+from .preview_worker import invalidate_preview
+
+
+RESTART_REQUESTED = object()
+
+
+from contextlib import nullcontext
+
+
+def restart_conflict(live):
+    if not getattr(live, 'restart_supported', False) or live.stopped:
+        return '표준 실행 스크립트로 서버를 시작한 뒤 사용할 수 있습니다'
+    if live.cam_hold or live.restart_pending:
+        return '시스템 작업이 진행 중입니다'
+    if live.meas is not None or getattr(live, 'replay', None) is not None:
+        return '측정 또는 녹화 재생을 종료한 뒤 다시 시도하세요'
+    gb = APP.GB
+    if gb is not None:
+        if gb.state.get('auto') or gb.state.get('moving'):
+            return '짐벌이 멈춘 뒤 다시 시도하세요'
+        if (getattr(gb, 'lead_pending', 0) or getattr(gb, 'selection_ack_wait_state', False)
+                or (getattr(gb, 'wopen', False) and getattr(gb, 'selection_reset', False))):
+            return '짐벌의 선택 또는 정지 확인을 기다려 주세요'
+    return None
+
+
+def npu_feed_state():
+    state = frame_feed.status()
+    reason = frame_feed.switch_conflict()
+    if reason is None and state['pending'] and frame_feed.manual_pending(APP.FEED):   # 11-16: the page may replace an automatic switch
+        reason = 'NPU 검출 모드를 바꾸고 있습니다'
+    if reason is None and state['requested'] == 'normal' and len(APP.FEED.eng) != 2:
+        reason = 'NPU 1에 검출 모델이 올라가 있지 않습니다'
+    state.update(can_toggle=reason is None, toggle_reason=reason)
+    return state
+
+
+def request_npu_feed(mode):
+    with APP.LIVE.sys_lock, APP.MODEL['lock']:
+        reason = frame_feed.switch_conflict()
+        if reason is not None:
+            return False, reason
+        return APP.FEED.request_mode(mode)
+
+
+def reserve_restart():
+    live = APP.LIVE
+    with live.sys_lock, live.cam_lock, live.meas_lock:
+        gb = APP.GB
+        with getattr(gb, 'wcond', nullcontext()):
+            reason = restart_conflict(live)
+            if reason is not None:
+                return False, reason
+            if frame_feed.manual_pending(vars(APP).get('FEED')):   # 11-16: an automatic switch of the 'auto' feed is held by the restart (auto_conflict)
+                return False, 'NPU 검출 모드를 바꾸고 있습니다'
+            live.restart_pending = True
+            live.cam_hold = True
+        invalidate_preview(live, before=time.perf_counter())
+    return True, '서버 재시작 요청을 받았습니다'
+
+
+def stop_for_restart():
+    live = APP.LIVE
+    print('Tracking server restart requested', flush=True)
+    with live.cond:
+        # Only the frame loop can mark the stream stopped. An in-flight frame
+        # still uses the live image index until its camera-motion work is queued.
+        live.restart_stop = True
+        live.cond.notify_all()
 
 
 def sys_reboot():   # v33: reboot button. Same command as the keepalive's last rung (no sudo; polkit allows it for this user).
@@ -12,6 +82,7 @@ def sys_reboot():   # v33: reboot button. Same command as the keepalive's last r
         if APP.LIVE.stopped or APP.args.live_wait: return False, '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
         if APP.LIVE.cam_hold: return False, '카메라 초기화 중. 끝난 뒤 다시 누르세요'
         APP.LIVE.cam_hold = True
+        invalidate_preview(APP.LIVE, before=time.perf_counter())
     print('SYSREBOOT requested from the page', flush=True)
     try:
         if APP.GB is not None: APP.gb_send('H')

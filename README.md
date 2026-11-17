@@ -4,7 +4,7 @@
 
 | 서버 | 포트 | 화면에서 하는 일 |
 |---|---|---|
-| [추적 서버](tracking_server/README.md#웹-인터페이스-빠른-사용법) | 8090 | 실시간 검출·추적 보기, 녹화 재생, 정답과 비교, 지연·출력 간격 측정 |
+| [추적 서버](#1-추적-서버-tracking_server) | 8090 | 실시간 검출·추적 보기, 녹화 재생, 정답과 비교, 지연·출력 간격 측정 |
 | [라벨 서버](#2-라벨-서버-label_server) | 8770 | 녹화에서 사람 박스와 ID를 고치고 프레임별 검수 상태를 저장 |
 
 **라벨 검수 → 추적 평가**
@@ -21,13 +21,24 @@ C++ Runtime을 실행할 때 PC 한 대에서 같은 디자인의 화면을 띄�
 
 > 이어서 일하는 사람이나 AI 작업자는 [HANDOFF.md](HANDOFF.md)(지금 상태, 다음 할 일, 규칙)를 먼저 읽으세요.
 
+> 발표 자료를 만드는 분은 [LWIR 사람 검출·추적 발표 인계](tracking_server/research/LWIR_PRESENTATION_KO.md)에서 학습 대조, 가림 전후 수치, DX-M1 실측과 남은 검증을 확인할 수 있습니다.
+
 ## 1. 추적 서버 (`tracking_server/`)
 
 열화상 영상에서 사람을 찾고, 같은 사람에게 같은 번호를 유지하고, 웹 화면에서 고른 사람을 짐벌로 따라갑니다.
 
+![8090 추적 서버 GUI의 영상, 재생 조작, 정답 비교, 설정 화면](tracking_server/images/interface_8090.png)
+
+*8090 추적 서버의 PC 미리보기입니다. 영상과 채점 수치는 합성 예시입니다.* [화면 사용법과 인터페이스](tracking_server/README.md#웹-인터페이스-빠른-사용법)
+
+<details>
+<summary>추적 파이프라인과 단계별 처리 그림</summary>
+
 ![파이프라인과 실시간 처리](tracking_server/images/pipeline_realtime_20261111.png)
 
 > 그림의 숫자는 2026-11-11 에 장치에서 짧게 읽은 값입니다. 검출을 NPU 코어 0·1 에 번갈아 넣는 방식은 장치 시험에서 기준을 넘지 못해 꺼 두었고, 지금은 코어 0 하나로 돕니다.
+
+</details>
 
 **하는 일**
 
@@ -38,20 +49,76 @@ C++ Runtime을 실행할 때 PC 한 대에서 같은 디자인의 화면을 띄�
 5. 외형을 비교해 돌아온 사람에게 옛 번호를 줍니다 (KeepID, NPU 코어 2).
 6. 고른 사람의 머리를 화면 가운데로 오게 짐벌에 속도 명령을 보냅니다 (150 ms 예측 + PID).
 
-**켜기**
+### 처음 설치하고 켜기
+
+Orange Pi에서 처음 내려받을 때 실행합니다. 이미 `~/model-bank`가 있다면 [기존 저장소 업데이트](#기존-저장소-업데이트)를 참고하세요.
 
 ```bash
-git clone https://github.com/lwir-deepx-tracking-system/model-bank.git
-bash model-bank/tracking_server/scripts/setup.sh         # 한 번만: 빌드, 모델 연결과 확인
-bash model-bank/tracking_server/scripts/run_real_gui.sh  # 켜기
+git clone https://github.com/lwir-deepx-tracking-system/model-bank.git "$HOME/model-bank"
+cd "$HOME/model-bank"
 ```
 
-- 브라우저에서 `http://<장치 주소>:8090/` 을 엽니다.
+저장소로 들어간 뒤 [빌드와 서버 실행](#빌드와-서버-실행)을 진행합니다.
 - 화면에서 할 수 있는 것: 사람을 눌러 따라가기, 손으로 짐벌 움직이기, 검출·외형 모델 바꾸기, Filter 값 바꾸기, 측정 저장, 카메라 초기화.
 - 팀 PC GUI 에도 영상과 상자를 보냅니다.
 - 꺼지면 스스로 다시 켜는 스크립트(`scripts/keepalive.sh`)가 있습니다.
 
 **자세한 안내:** [tracking_server/README.md](tracking_server/README.md) — 설정, 거르는 곳, 짐벌이 멈추는 경우, 장치에서 잰 속도, 끄는 법
+
+### 기존 저장소 업데이트
+
+`destination path 'model-bank' already exists and is not an empty directory`가 나오면 `~/model-bank` 폴더가 이미 있습니다. 먼저 사용하려는 저장소 폴더로 들어가 주소와 브랜치, 수정 파일을 확인합니다.
+
+```bash
+cd "$HOME/model-bank"
+git rev-parse --show-toplevel
+git remote get-url origin
+git status --short --branch
+```
+
+`~/model-bank` 안에서 다시 클론했다면 안쪽 저장소인 `~/model-bank/model-bank`로 들어가 위 Git 확인 명령을 실행합니다. 아래부터는 선택한 저장소의 최상위 폴더에서 실행합니다.
+
+`origin`이 `lwir-deepx-tracking-system/model-bank`를 가리키고, 현재 브랜치가 `main`이며 수정 파일이 없으면 아래를 실행합니다.
+
+```bash
+git pull --ff-only origin main
+git log -3 --oneline
+```
+
+다른 브랜치에 있거나 수정 파일이 표시되면 현재 작업을 먼저 확인합니다. 기존 폴더가 Git 저장소가 아니라면 다른 이름으로 내려받을 수 있습니다.
+
+```bash
+git clone https://github.com/lwir-deepx-tracking-system/model-bank.git "$HOME/model-bank-new"
+```
+
+업데이트 후에는 같은 폴더에서 [빌드와 서버 실행](#빌드와-서버-실행)을 진행합니다. 실행 중인 추적 서버의 Python 변경은 서버를 다시 시작할 때 적용됩니다. [추적 서버 시작과 종료](tracking_server/README.md#8-꺼지면-다시-켜기-끄기)
+
+### 빌드와 서버 실행
+
+1. 처음 설치하거나 바이너리·모델 파일이 바뀌었다면, 저장소 최상위 폴더에서 준비 스크립트를 실행합니다.
+
+   ```bash
+   bash tracking_server/scripts/setup.sh
+   ```
+
+   `cam_pipe built` 뒤에는 브리지 컴파일이 진행되는 동안 출력이 뜸할 수 있습니다. 실시간 카메라와 기본 PC GUI 구성은 `cam_pipe built`, `gimbal_bridge_v25 built`, 마지막 `setup done`을 확인합니다.
+
+2. 기존 추적 서버가 꺼져 있을 때 같은 폴더에서 실행합니다.
+
+   ```bash
+   bash tracking_server/scripts/run_real_gui.sh
+   ```
+
+3. 브라우저에서 `http://<장치 주소>:8090/`을 엽니다. 명령 직후 셸 프롬프트가 돌아왔다면 그 실행은 종료된 상태입니다. 같은 저장소에서 최근 로그와 8090 포트를 확인합니다. `LWIR_LIVE_PORT`를 바꿨다면 해당 포트를 확인합니다.
+
+   ```bash
+   tail -n 60 tracking_server/real_gui_1.out
+   ss -ltn 'sport = :8090'
+   ```
+
+   `LISTEN`이 보이면 브라우저로 추적 화면을 확인합니다. 로그에 `NPU busy`가 있으면 기존 서버 프로세스부터 확인합니다. 로그에 `gimbal busy`가 있으면 [짐벌 포트 점유 확인과 서버 재시작](tracking_server/README.md#gimbal-busy-해결)을 참고하세요. 다른 종료 이유는 [추적 서버 빠른 시작](tracking_server/README.md#2-빠른-시작)에 정리했습니다.
+
+영상 테두리에서 짐벌 위치까지 보려면 [v27 빌드와 8090 실행](tracking_server/README.md#v27로-실행하고-짐벌-위치-표시-확인)을 참고하세요.
 
 ## 2. 라벨 서버 (`label_server/`)
 
@@ -90,7 +157,7 @@ python3 start_label_server.py --root <라벨 폴더> --bind <주소> --port 8770
 
 | 일 | 시작 모델 | 고를 수 있는 수 |
 |---|---|---|
-| 검출 | YOLO26m_(FLIR) 640x480 | 9개 |
+| 검출 | YOLO26m_(FLIR) 640x480 | 13개 |
 | 외형 비교 | RepVGG_distillation_(TMOT,CAMEL)_20261103 | 5개 |
 
 - 모델 목록, 파일 이름, 입력·출력, 학습 자료, 측정값: [tracking_server/models/README.md](tracking_server/models/README.md)

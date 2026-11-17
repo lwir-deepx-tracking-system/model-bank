@@ -394,7 +394,11 @@ public:
             int x = 0, y = 0;
             if (in >> x >> y) executor_.move(x, y);
         }
-        else if (kind == "H") executor_.halt();
+        else if (kind == "H") {
+            executor_.halt();
+            std::uint64_t ticket = 0;
+            if (in >> ticket) say("HALTED " + std::to_string(ticket));
+        }
     }
 };
 }
@@ -431,6 +435,7 @@ int main(int argc, char** argv) try {
     }
     Bridge bridge(executor, gui.get(), session_changes);
     say("READY");
+    say("TRACK_CONTROL 1");
     std::string pending, reported;
     std::vector<char> buffer(262144);
     auto next_status = std::chrono::steady_clock::now() + std::chrono::seconds(1);

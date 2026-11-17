@@ -5,7 +5,8 @@ GET   /                목록 화면
       /edit            편집 화면
       /api/list        시퀀스 목록 (마지막으로 훑은 지 20초가 지났으면 라벨 폴더를 다시 훑는다)
       /api/meta        한 시퀀스의 상태. 이름을 함께 보내면 "지금 열어 둔 사람"으로 90초 동안 기억한다
-      /data/<시퀀스>/  RESULT.json, images/000001.png, tracks_mot.txt, tracks_edited_mot.txt, review_state.json
+      /api/annotations 한 저장 시점의 MOT, 검수 상태, 신체부위 데이터와 버전
+      /data/<시퀀스>/  RESULT.json, images/000001.png, tracks_mot.txt, tracks_edited_mot.txt, review_state.json, person_parts.json
 POST  /api/save, /api/purge, /api/seq_trash, /api/seq_rename   (하는 일은 file_ops.py)
 접속 키: 주소에 ?k=<키> 를 붙여 한 번 열면 쿠키가 심기고, 그 뒤로는 키 없이 열린다.
 """
@@ -13,11 +14,12 @@ import json, os, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs, unquote
 
-from .state import IMG_RE, LOCK, PRESENCE, READ_NAMES, RESCAN, SEQS
-from .sequences import scan, seq_info
+from .state import IMG_RE, LOCK, PARTS_FILE, PRESENCE, READ_NAMES, RESCAN, SEQS
+from .sequences import annotation_snapshot, scan, seq_info
 from .list_page import INDEX
 from .editor_page import build_editor
 from .file_ops import FileOps
+from .transactions import recover_transaction
 
 
 class H(FileOps, BaseHTTPRequestHandler):
@@ -86,33 +88,55 @@ class H(FileOps, BaseHTTPRequestHandler):
                         SEQS.clear(); SEQS.update(new)
                     except Exception:
                         pass
-                return self.send(200, [seq_info(r) for r in SEQS], extra={'Cache-Control': 'no-store'})
-        if p == '/api/meta':
-            rel = self.seq_of(q)
-            if not rel:
-                return self.send(404, {'error': 'unknown sequence'})
-            user = q.get('user', [''])[0][:20]
+                try:
+                    body = [seq_info(r) for r in SEQS]
+                except OSError:
+                    return self.send(500, {'error': '저장된 라벨 파일을 읽지 못했습니다.'})
+            return self.send(200, body, extra={'Cache-Control': 'no-store'})
+        if p in ('/api/meta', '/api/annotations'):
             with LOCK:
-                if user:
-                    PRESENCE.setdefault(rel, {})[user] = time.time()
-                return self.send(200, seq_info(rel), extra={'Cache-Control': 'no-store'})
+                rel = self.seq_of(q)
+                if not rel:
+                    return self.send(404, {'error': 'unknown sequence'})
+                try:
+                    if p == '/api/meta':
+                        user = q.get('user', [''])[0][:20]
+                        if user:
+                            PRESENCE.setdefault(rel, {})[user] = time.time()
+                        body = seq_info(rel)
+                    else:
+                        body = annotation_snapshot(rel)
+                except (OSError, ValueError):
+                    return self.send(500, {'error': '저장된 라벨 파일을 읽지 못했습니다.'})
+            return self.send(200, body, extra={'Cache-Control': 'no-store'})
         if p.startswith('/data/'):
             rest = p[len('/data/'):]
-            for rel, s in SEQS.items():
-                if rest.startswith(rel + '/'):
+            payload = None
+            with LOCK:
+                for rel, s in SEQS.items():
+                    if not rest.startswith(rel + '/'):
+                        continue
                     name = rest[len(rel) + 1:]
-                    if name == 'RESULT.json':
-                        return self.send(200, {'frames': s['frames']}, extra={'Cache-Control': 'no-store'})
-                    if IMG_RE.match(name):
-                        fp = os.path.join(s['dir'], 'images', name[7:])
-                        if os.path.isfile(fp):
-                            return self.send(200, open(fp, 'rb').read(), 'image/png', {'Cache-Control': 'private, max-age=86400'})
-                    elif name in READ_NAMES:
-                        fp = os.path.join(s['dir'], name)
-                        if os.path.isfile(fp):
-                            return self.send(200, open(fp, 'rb').read(), 'text/plain; charset=utf-8', {'Cache-Control': 'no-store'})
+                    is_image = IMG_RE.fullmatch(name)
+                    if not is_image and name not in READ_NAMES and name != 'RESULT.json':
+                        continue
+                    try:
+                        recover_transaction(s['dir'], rel)
+                        if name == 'RESULT.json':
+                            return self.send(200, {'frames': s['frames']}, extra={'Cache-Control': 'no-store'})
+                        with open(os.path.join(s['dir'], name), 'rb') as source:
+                            payload = source.read()
+                    except FileNotFoundError:
+                        break
+                    except OSError:
+                        return self.send(500, {'error': '파일을 읽지 못했습니다.'})
                     break
-            return self.send(404, {'error': 'not found'})
+            if payload is None:
+                return self.send(404, {'error': 'not found'})
+            if is_image:
+                return self.send(200, payload, 'image/png', {'Cache-Control': 'private, max-age=86400'})
+            mime = 'application/json' if name == PARTS_FILE else 'text/plain'
+            return self.send(200, payload, mime + '; charset=utf-8', {'Cache-Control': 'no-store'})
         return self.send(404, {'error': 'not found'})
 
     def do_POST(self):

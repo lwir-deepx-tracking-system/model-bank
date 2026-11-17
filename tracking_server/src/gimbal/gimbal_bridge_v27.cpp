@@ -1,19 +1,49 @@
 // gimbal_bridge_v27 = gimbal_bridge_v25 + motion smoothing (see V27_CHANGES.md). Built against v27/ (patched copies of four team control
-// files + smoothing_config.hpp) placed before team/include; team/ itself is unchanged. Without the new options it behaves exactly like v25.
+// files + smoothing_config.hpp) placed before team/include. With no lead suffix, tracking uses the observed box reference.
 //   --deadband-exit <e>         deadband hysteresis: a centred axis moves again only when |error| > e (0 = off)
 //   --stop-rate <SPD/s>         deadband entry decelerates at this rate instead of an immediate STOP (0 = off)
 //   --axis-reversal <0|1>       1: a reversing axis halts alone, the other keeps moving (0 = STOP both, as v25)
 //   --reversal-join-speed <SPD> the halted axis rejoins once the shared SPD is at or below this (default 5)
 //   --reversal-hold-ms <ms>     ... or after this long at the latest (default 500)
+//   --catchup-speed <0..7>      speed for confirmed outward motion (default 0 = off; requires OBS 1)
+//   --predictive-brake <0|1>   near-deadband horizontal braking (default 0; requires OBS 1)
+//   --observation-grace-ms <ms> hold the last output for one validated live detector miss (0 = off, maximum 100)
+//   --aim-screen-y <0.1..0.9>   screen height (fraction from the top) at which the aim point is held (default 0.5 = centre)
+//   --far-gain <1..4>           multiply the speed demand up to this much for a large error (default 1 = off)
+//   --far-start-px / --far-full-px <px>  the error (640-wide picture) where the far gain starts / is complete (64 / 160)
+//   --brake-px-per-spd <px>     cap the speed at (|error| - deadband) / this, to slow down before arriving (default 0 = off)
+//   --search <0|1>              search when the followed ID is lost (default 0 = STOP and wait, as v25). With 1:
+//     --search-grace-ms (300) wait, STOPPED, before searching; --search-follow-ms (1000) / --search-follow-px (320) / --search-follow-speed (10)
+//     keep turning where the person should be (the server VEL of the last 300 ms before the loss, else the last following output); --search-speed (7) SPD of the sweep; --search-sweep-px (320) first half-width,
+//     --search-widen (1.5) growth per turn, --search-max-px (640) widest; --search-tilt-px (0) small tilt; --search-timeout-ms (8000)
+//     from the loss, then STOP and hold. px = picture px of the 640x480 camera, estimated open loop from SPD (V27_CHANGES.md).
+//   stdout: SEARCH_CONTROL 1 at start when on; SEARCH <0 none|1 grace|2 follow-through|3 sweep|4 done> on change.
+//   --coast <0|1>               follow the server's predicted place when the followed ID is missing (default 0 = off). With 1:
+//     --coast-ms (800) at most this long from the loss, only on fresh healthy frames whose PRED suffix names the followed ID;
+//     then as without it (STOP, or --search). stdout: COAST_CONTROL 1 at start (the server sends PRED only then).
+//   --seek <0|1>                look where the server points while the followed ID stays lost (default 0 = off). With 1: a fresh healthy
+//     frame whose SEEK suffix names the followed ID is followed with the normal controller, SPD at most --seek-speed (8), every change
+//     of direction through a full STOP, for at most --seek-ms (4500) from the loss; a coast (PRED) inside --coast-ms goes first.
+//     Not with --search 1. stdout: SEEK_CONTROL 1 at start (the server sends SEEK only then); SEARCH 5 while a SEEK box is followed.
+//   --arrival-control <0|1>     1 (default): the control step runs when a tracking result arrives; the 25 ms period timer stays for
+//     time-outs, ramps, coast, search and the heartbeat. 0: a result waits for the next 25 ms period (0..25 ms, as v25).
+//     Same control law, rates and time limits in real time (SmoothingConfig::arrival_control, V27_CHANGES.md).
+//   --gui-video-always <0|1>    0 (default): the picture goes to the PC GUI link (video encoder + metadata) only while a PC GUI is
+//     connected on the command port; 1, or --gui-command-port 0: always, as before. See GUI_PICTURE below.
 //
-// Connects the tracker to the team's gimbal and PC GUI code (team/, unchanged copy of the runtime repository, see team/SOURCE.txt).
+// Connects the tracker to the team's gimbal and PC GUI code (team/, see team/SOURCE.txt).
 // All control decisions, safety stops and serial output stay in the team's GimbalCommandExecutor; the PC wire format stays in the team's
 // GuiSender / GuiReceiver / TrackingCommandHandler. This program only feeds them and reports their state.
 //
 // stdin, one line per message:
 //   F <frame id> <capture time, CLOCK_MONOTONIC ns> <n> then n times: <id> <x> <y> <w> <h> <confidence>     people in camera image pixels (640x480), x y = top left
 //   G <frame id> <capture time ns> <width> <height> <n> then n times: <id> <x> <y> <w> <h> <confidence>     same, followed (after the newline) by width*height*2 bytes:
-//                  the 16-bit camera frame, row major, native byte order. It goes to the gimbal executor AND to the PC GUI (video + metadata)
+//                  the 16-bit camera frame, row major, native byte order. The people go to the gimbal executor as soon as the header line is read
+//                  (the executor uses only the size of the picture); the picture with the people goes to the PC GUI (video + metadata)
+//   F/G headers may carry optional LEAD <track id> <dx px> <dy px> <control epoch>,
+//   PRED <track id> <x> <y> <w> <h> (--coast 1), SEEK <track id> <x> <y> <w> <h> (--seek 1), VEL <track id> <vx> <vy> (--search 1)
+//   and OBS <0|1> suffixes in either order. OBS 1 indicates a validated live observation.
+//   Malformed suffixes cannot enable observation grace.
 //   P              heartbeat of the web page. The first one opens the session. Without one for --heartbeat-ms the executor stops the gimbal and drops the selection
 //   A <id>         follow this ID
 //   M              stop following, keep an ongoing manual move
@@ -21,17 +51,24 @@
 //   H              stop following and stop moving
 // stdout, one line per message:
 //   READY
+//   LEAD_CONTROL 1   accepts the optional LEAD suffix
+//   OBSERVATION_STATUS 1  accepts the optional OBS suffix
+//   CONTROL_EPOCH n  reset forecast history on a new selection, loss or control session
 //   R <A|M> <OK|INVALID|NOT_READY>            answer to A or M
 //   S <auto> <lost> <moving> <error> <id>     the executor's state, on every change
 //   T <gui client 0|1> <frames given> <frames sent> <frames encoded> <rtp bytes> <send failures>   once a second when --gui-host is set
+//   GUI_PICTURE <0|1>  with --gui-host, at start and on every change: 1 = send G lines (a PC GUI wants the picture), 0 = F lines are
+//                  enough (no PC GUI connected). A picture that still arrives while 0 is read and dropped (no encoding, no UDP).
 // stdin closed, SIGTERM or SIGINT: the executor sends STOP, then the program ends.
 //
 // PC GUI (the team's pc-application, branch feat/gui-video): --gui-host <PC address> turns it on. Video H.264/RTP to UDP --gui-video-port (5000),
 // track metadata to UDP --gui-metadata-port (5001), the PC's commands on TCP --gui-bind:--gui-command-port (5002, 0 = no command listener).
 // The GUI's AUTO/MANUAL/MOVE/HOME reach the same executor as the web page, so both show the same state. A GUI connection or disconnection
 // drops the current selection (team behaviour); the web page re-opens its session with its next heartbeat.
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
 #include <future>
@@ -40,12 +77,14 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <poll.h>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <unistd.h>
 #include <vector>
 
@@ -90,6 +129,7 @@ std::string state_line(const ControlSnapshot& s)
 
 struct GuiOptions {
     bool enabled = false;
+    bool video_always = false;   // --gui-video-always 1: encode and send without a connected PC GUI (the behaviour before 11-15)
     GuiVideoConfig video;
     GuiMetadataConfig metadata;
     GuiCommandConfig command;
@@ -104,15 +144,6 @@ struct Options {
 
 // Aim point: fraction of the box height from its top that the gimbal brings to the image centre (0.5 = the team's box centre).
 static double g_aim_y = 0.5;
-
-// The executor gets boxes moved so that their centre is the aim point; height and width stay, so the team's checks see the same box size.
-static TrackingResultPtr aimed(const TrackingResultPtr& result)
-{
-    if (!result || g_aim_y == 0.5) return result;
-    auto copy = std::make_shared<TrackingResult>(*result);
-    for (auto& t : copy->tracks) t.y += static_cast<float>((g_aim_y - 0.5) * t.height);
-    return copy;
-}
 
 // The team's pipeline boundary for the PC GUI: model list size, model change. The tracker (Python) owns the models: a request goes to it as a line.
 static std::uint32_t g_model_count = 0;
@@ -166,6 +197,7 @@ Options parse(int argc, char** argv)
     ControlConfig& c = o.control;
     GuiOptions& g = o.gui;
     SmoothingConfig& s = o.smoothing;   // v27
+    s.arrival_control = true;               // v27 (11-15): act on a tracking result when it arrives; --arrival-control 0 = wait for the period
     c.enabled = true;
     c.gimbal.speed = 30;                    // the values in the team's board settings before tuning on the real gimbal
     c.automatic.speed_max = 30;
@@ -208,6 +240,11 @@ Options parse(int argc, char** argv)
         else if (name == "--reacquire-ms") c.automatic.reacquire_timeout_ms = std::stoi(value);
         // v27: motion smoothing (defaults = v25 behaviour)
         else if (name == "--deadband-exit") { s.deadband_exit_x = s.deadband_exit_y = std::stod(value); if (!(s.deadband_exit_x >= 0.0)) throw std::invalid_argument("--deadband-exit must be >= 0"); }
+        else if (name == "--far-gain") { s.far_gain = std::stod(value); if (!(s.far_gain >= 1.0 && s.far_gain <= 4.0)) throw std::invalid_argument("--far-gain must be within 1..4"); }
+        else if (name == "--far-start-px") { s.far_start_px = std::stod(value); if (!(s.far_start_px >= 0.0 && s.far_start_px <= 320.0)) throw std::invalid_argument("--far-start-px must be within 0..320"); }
+        else if (name == "--far-full-px") { s.far_full_px = std::stod(value); if (!(s.far_full_px >= 1.0 && s.far_full_px <= 640.0)) throw std::invalid_argument("--far-full-px must be within 1..640"); }
+        else if (name == "--brake-px-per-spd") { s.brake_px_per_spd = std::stod(value); if (!(s.brake_px_per_spd >= 0.0 && s.brake_px_per_spd <= 50.0)) throw std::invalid_argument("--brake-px-per-spd must be within 0..50"); }
+        else if (name == "--aim-screen-y") { s.aim_screen_y = std::stod(value); if (!(s.aim_screen_y >= 0.1 && s.aim_screen_y <= 0.9)) throw std::invalid_argument("--aim-screen-y must be within 0.1..0.9"); }
         else if (name == "--stop-rate") { s.stop_rate = std::stod(value); if (!(s.stop_rate >= 0.0)) throw std::invalid_argument("--stop-rate must be >= 0"); }
         else if (name == "--axis-reversal") {
             if (value == "0") s.axis_reversal = false;
@@ -216,6 +253,58 @@ Options parse(int argc, char** argv)
         }
         else if (name == "--reversal-join-speed") { s.reversal_join_speed = std::stod(value); if (!(s.reversal_join_speed >= 0.0)) throw std::invalid_argument("--reversal-join-speed must be >= 0"); }
         else if (name == "--reversal-hold-ms") { s.reversal_hold_ms = std::stoi(value); if (s.reversal_hold_ms < 0) throw std::invalid_argument("--reversal-hold-ms must be >= 0"); }
+        else if (name == "--observation-grace-ms") {
+            std::size_t used = 0;
+            s.observation_grace_ms = std::stoi(value, &used);
+            if (used != value.size()) throw std::invalid_argument("--observation-grace-ms must be an integer");
+        }
+        else if (name == "--catchup-speed") {
+            if (value.size() != 1 || value[0] < '0' || value[0] > '0' + SmoothingConfig::max_catchup_speed)
+                throw std::invalid_argument("--catchup-speed must be within 0..7");
+            s.catchup_speed = value[0] - '0';
+        }
+        else if (name == "--predictive-brake") {
+            if (value != "0" && value != "1")
+                throw std::invalid_argument("--predictive-brake is 0 or 1");
+            s.predictive_brake = value == "1";
+        }
+        // v27 search when lost (default off = the team rule: STOP and wait for the same ID)
+        else if (name == "--search") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--search is 0 or 1");
+            s.search = value == "1";
+        }
+        else if (name == "--search-grace-ms") s.search_grace_ms = std::stoi(value);
+        else if (name == "--search-follow-ms") s.search_follow_ms = std::stoi(value);
+        else if (name == "--search-follow-px") s.search_follow_px = std::stod(value);
+        else if (name == "--search-follow-speed") s.search_follow_speed = std::stoi(value);
+        else if (name == "--search-speed") s.search_speed = std::stoi(value);
+        else if (name == "--search-sweep-px") s.search_sweep_px = std::stod(value);
+        else if (name == "--search-widen") s.search_widen = std::stod(value);
+        else if (name == "--search-max-px") s.search_max_px = std::stod(value);
+        else if (name == "--search-tilt-px") s.search_tilt_px = std::stod(value);
+        else if (name == "--search-timeout-ms") s.search_timeout_ms = std::stoi(value);
+        // v27 coast when lost (default off)
+        else if (name == "--coast") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--coast is 0 or 1");
+            s.coast = value == "1";
+        }
+        else if (name == "--coast-ms") s.coast_ms = std::stoi(value);
+        // v27 seek when lost (default off)
+        else if (name == "--seek") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--seek is 0 or 1");
+            s.seek = value == "1";
+        }
+        else if (name == "--seek-ms") s.seek_ms = std::stoi(value);
+        else if (name == "--seek-speed") s.seek_speed = std::stoi(value);
+        // v27 arrival control (default on in this program; SmoothingConfig keeps the team default off)
+        else if (name == "--arrival-control") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--arrival-control is 0 or 1");
+            s.arrival_control = value == "1";
+        }
+        else if (name == "--gui-video-always") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--gui-video-always is 0 or 1");
+            g.video_always = value == "1";
+        }
         else if (name == "--gui-host") { g.enabled = true; g.video.host = value; g.metadata.host = value; }
         else if (name == "--gui-bind") g.command.bind_address = value;
         else if (name == "--gui-video-port") g.video.port = static_cast<std::uint16_t>(std::stoi(value));
@@ -242,6 +331,19 @@ Options parse(int argc, char** argv)
         else throw std::invalid_argument("unknown option " + name);
     }
     if (c.gimbal.device.empty()) throw std::invalid_argument("--device is required");
+    if (s.observation_grace_ms < 0 || s.observation_grace_ms > 100 ||
+        (s.observation_grace_ms > 0 && s.observation_grace_ms >= c.automatic.input_timeout_ms))
+        throw std::invalid_argument("--observation-grace-ms must be within 0..100 and below --input-timeout-ms when enabled");
+    if (s.search && (s.search_grace_ms < 0 || s.search_follow_ms < 0 || s.search_timeout_ms <= s.search_grace_ms ||
+        !(s.search_follow_px >= 0) || !(s.search_sweep_px > 0) || !(s.search_widen >= 1.0 && s.search_widen <= 4.0) ||
+        !(s.search_max_px >= s.search_sweep_px) || !(s.search_tilt_px >= 0) ||
+        s.search_speed < c.automatic.speed_min || s.search_speed > c.automatic.speed_max ||
+        s.search_follow_speed < c.automatic.speed_min || s.search_follow_speed > c.automatic.speed_max))
+        throw std::invalid_argument("--search-*: grace/follow >= 0, timeout > grace, sweep > 0, widen 1..4, max >= sweep, tilt >= 0, "
+                                    "speeds within --speed-min..--speed-max");
+    if (s.coast && (s.coast_ms <= 0 || s.coast_ms > 3000)) throw std::invalid_argument("--coast-ms must be within 1..3000");
+    if (s.seek && (s.search || s.seek_ms <= 0 || s.seek_ms > 10000 || s.seek_speed < c.automatic.speed_min || s.seek_speed > c.automatic.speed_max))
+        throw std::invalid_argument("--seek: not with --search 1, --seek-ms within 1..10000, --seek-speed within --speed-min..--speed-max");
     if (c.gimbal.speed < 1 || c.gimbal.speed > c.gimbal.speed_limit || c.automatic.speed_max < c.automatic.speed_min || c.automatic.speed_max > c.gimbal.speed_limit)
         throw std::invalid_argument("speed outside the device range");
     if ((c.gimbal.x_sign != 1 && c.gimbal.x_sign != -1) || (c.gimbal.y_sign != 1 && c.gimbal.y_sign != -1))
@@ -318,38 +420,107 @@ public:
     int poll_timeout_ms() const override { return inner_->poll_timeout_ms(); }
 };
 
+template<class T>
+bool parse_token(const std::string& token, T& field)
+{
+    if constexpr (std::is_unsigned_v<T>) {
+        if (!token.empty() && token.front() == '-') return false;
+    }
+    std::istringstream value(token);
+    return static_cast<bool>(value >> field) && value.eof();
+}
+
 class Bridge {
     GimbalCommandExecutor& executor_;
     GuiLink* gui_;
     const std::atomic<std::uint64_t>& session_changes_;
     cv::Mat image_;              // frames without a picture: the executor reads only the type and the size of the frame
+    cv::Mat shape_;              // the same for a G line whose picture has another size (allocated once per size)
+    const std::atomic<bool>* gui_picture_;   // false: no PC GUI wants the picture now (nullptr = always wanted)
     bool session_ = false;
     std::uint64_t seen_changes_ = 0;
     // a G line waits for its picture
     std::shared_ptr<TrackingResult> waiting_;
+    bool waiting_healthy_ = false;
     int wait_w_ = 0, wait_h_ = 0;
+    const bool validate_observations_;
 public:
-    Bridge(GimbalCommandExecutor& executor, GuiLink* gui, const std::atomic<std::uint64_t>& session_changes)
-        : executor_(executor), gui_(gui), session_changes_(session_changes), image_(cv::Mat::zeros(480, 640, CV_16UC1)) {}
+    Bridge(GimbalCommandExecutor& executor, GuiLink* gui, const std::atomic<std::uint64_t>& session_changes,
+           bool validate_observations, const std::atomic<bool>* gui_picture = nullptr)
+        : executor_(executor), gui_(gui), session_changes_(session_changes),
+          image_(cv::Mat::zeros(480, 640, CV_16UC1)), gui_picture_(gui_picture), validate_observations_(validate_observations) {}
 
     std::size_t picture_bytes() const { return waiting_ ? static_cast<std::size_t>(wait_w_) * wait_h_ * 2 : 0; }
 
-    std::shared_ptr<TrackingResult> tracks(std::istringstream& in, std::uint64_t id, std::uint64_t captured_ns, std::size_t count)
+    std::shared_ptr<TrackingResult> tracks(std::istringstream& in, std::uint64_t id,
+        std::uint64_t captured_ns, std::size_t count, bool& healthy_live)
     {
         auto context = std::make_shared<FrameContext>();
         context->metadata.frame_id = id;
-        context->metadata.captured_at = std::chrono::steady_clock::time_point(std::chrono::nanoseconds(captured_ns));
+        if (captured_ns <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+            context->metadata.captured_at = std::chrono::steady_clock::time_point(std::chrono::nanoseconds(captured_ns));
         context->image = image_;
         auto result = std::make_shared<TrackingResult>();
-        result->tracks.reserve(count);
+        result->tracks.reserve(std::min<std::size_t>(count, 64));
         for (std::size_t i = 0; i < count; ++i) {
             Track t;
-            if (!(in >> t.track_id >> t.x >> t.y >> t.width >> t.height >> t.confidence)) return nullptr;   // a damaged line is dropped; a missing frame stops the gimbal by the input timeout
+            if (!(in >> t.track_id >> t.x >> t.y >> t.width >> t.height >> t.confidence)) {
+                executor_.publish_unsafe_observation();
+                return nullptr; // A damaged G header still consumes its complete picture.
+            }
             t.class_id = 0;
             result->tracks.push_back(t);
         }
+        // Keep the measured rows intact for both target validation and the PC GUI.
+        std::string suffix;
+        TrackLead lead;
+        TrackVelocity velocity;   // v27 search
+        TrackPrediction prediction;   // v27 coast
+        TrackPrediction seek;         // v27 seek
+        bool seen_observation = false, seen_lead = false, seen_velocity = false, seen_prediction = false, seen_seek = false;
+        const int separator = in.peek();
+        bool malformed = separator != std::char_traits<char>::eof() &&
+            !std::isspace(static_cast<unsigned char>(separator));
+        const auto read_token = [&in](auto& field) {
+            std::string token;
+            return static_cast<bool>(in >> token) && parse_token(token, field);
+        };
+        while (!malformed && in >> suffix) {
+            if (suffix == "OBS" && !seen_observation) {
+                seen_observation = true;
+                std::string quality;
+                if (!(in >> quality) || (quality != "0" && quality != "1")) { malformed = true; break; }
+                healthy_live = quality == "1";
+            } else if (suffix == "LEAD" && !seen_lead) {
+                seen_lead = true;
+                if (!read_token(lead.track_id) || !read_token(lead.dx_px) || !read_token(lead.dy_px) ||
+                    !read_token(lead.control_epoch)) { malformed = true; break; }
+            } else if (suffix == "VEL" && !seen_velocity) {   // v27 search: predictive-control velocity of one track
+                seen_velocity = true;
+                if (!read_token(velocity.track_id) || !read_token(velocity.vx) || !read_token(velocity.vy)) { malformed = true; break; }
+            } else if (suffix == "PRED" && !seen_prediction) {   // v27 coast: the server's predicted box of the followed track
+                seen_prediction = true;
+                if (!read_token(prediction.track_id) || !read_token(prediction.x) || !read_token(prediction.y) ||
+                    !read_token(prediction.width) || !read_token(prediction.height)) { malformed = true; break; }
+            } else if (suffix == "SEEK" && !seen_seek) {   // v27 seek: where to look while the followed track stays lost
+                seen_seek = true;
+                if (!read_token(seek.track_id) || !read_token(seek.x) || !read_token(seek.y) ||
+                    !read_token(seek.width) || !read_token(seek.height)) { malformed = true; break; }
+            } else {
+                malformed = true;
+                break;
+            }
+        }
+        if (malformed) healthy_live = false;
+        else {
+            if (lead.matches(lead.track_id)) result->lead = lead;
+            if (velocity.matches(velocity.track_id)) result->velocity = velocity;
+            if (prediction.matches(prediction.track_id)) result->prediction = prediction;
+            if (seek.matches(seek.track_id)) result->seek = seek;
+        }
         result->frame = context;
         result->enqueued_at = std::chrono::steady_clock::now();
+        result->aim_y = g_aim_y;
         return result;
     }
 
@@ -357,8 +528,22 @@ public:
     {
         std::uint64_t id = 0, captured_ns = 0;
         std::size_t count = 0;
-        if (!(in >> id >> captured_ns >> count) || id == 0) return;
-        if (auto result = tracks(in, id, captured_ns, count)) executor_.publish(aimed(result));
+        bool valid = false;
+        if (validate_observations_) {
+            std::string id_text, stamp_text, count_text;
+            in >> id_text >> stamp_text >> count_text;
+            valid = parse_token(id_text, id) && parse_token(stamp_text, captured_ns) &&
+                parse_token(count_text, count);
+        } else {
+            valid = static_cast<bool>(in >> id >> captured_ns >> count);
+        }
+        if (!valid || id == 0) {
+            executor_.publish_unsafe_observation();
+            return;
+        }
+        bool healthy_live = false;
+        if (auto result = tracks(in, id, captured_ns, count, healthy_live))
+            executor_.publish(result, healthy_live);
     }
 
     void frame_with_picture(std::istringstream& in)
@@ -366,23 +551,53 @@ public:
         std::uint64_t id = 0, captured_ns = 0;
         int w = 0, h = 0;
         std::size_t count = 0;
-        if (!(in >> id >> captured_ns >> w >> h >> count) || id == 0 || w <= 0 || h <= 0 || w > 4096 || h > 4096) return;
-        waiting_ = tracks(in, id, captured_ns, count);   // null: the picture bytes are still consumed, nothing is published
+        bool valid = false;
+        if (validate_observations_) {
+            std::string id_text, stamp_text, width_text, height_text, count_text;
+            in >> id_text >> stamp_text >> width_text >> height_text >> count_text;
+            if (!parse_token(width_text, w) || !parse_token(height_text, h) ||
+                w <= 0 || h <= 0 || w > 4096 || h > 4096) {
+                executor_.publish_unsafe_observation();
+                return; // The number of picture bytes is unknown.
+            }
+            valid = parse_token(id_text, id) && parse_token(stamp_text, captured_ns) &&
+                parse_token(count_text, count) && id != 0;
+        } else {
+            valid = static_cast<bool>(in >> id >> captured_ns >> w >> h >> count) &&
+                id != 0 && w > 0 && h > 0 && w <= 4096 && h <= 4096;
+            if (!valid) return;
+        }
         wait_w_ = w; wait_h_ = h;
-        if (!waiting_) { waiting_ = std::make_shared<TrackingResult>(); waiting_->frame = nullptr; }
+        waiting_healthy_ = false;
+        if (valid) waiting_ = tracks(in, id, captured_ns, count, waiting_healthy_);
+        else executor_.publish_unsafe_observation();
+        if (waiting_) {
+            // 11-15 (latency audit finding 3): the people go to the executor now, not after the width*height*2 picture bytes
+            // have come through the pipe (1.5-3 ms for 640x480). The executor reads only the type and the size of the image.
+            if (w != image_.cols || h != image_.rows) {
+                if (w != shape_.cols || h != shape_.rows) shape_ = cv::Mat::zeros(h, w, CV_16UC1);
+                auto context = std::make_shared<FrameContext>(*waiting_->frame);
+                context->image = shape_;
+                waiting_->frame = context;
+            }
+            executor_.publish(waiting_, waiting_healthy_);
+        }
+        else waiting_ = std::make_shared<TrackingResult>(); // Consume the picture without publishing it.
     }
 
     void picture(const char* bytes)
     {
-        auto result = std::move(waiting_);
+        auto observed = std::move(waiting_);
         waiting_.reset();
-        if (!result || !result->frame) return;
-        auto context = std::make_shared<FrameContext>(*result->frame);
+        if (!observed || !observed->frame) return;
+        // The picture is only for the PC GUI. Without a connected PC GUI it is dropped here: no copy, no encoder, no UDP.
+        if (!gui_ || (gui_picture_ && !gui_picture_->load())) return;
+        auto result = std::make_shared<TrackingResult>(*observed);   // the executor holds the header-time result: never change that one
+        auto context = std::make_shared<FrameContext>(*observed->frame);
         context->image = cv::Mat(wait_h_, wait_w_, CV_16UC1);
         std::memcpy(context->image.data, bytes, static_cast<std::size_t>(wait_w_) * wait_h_ * 2);
         result->frame = context;
-        executor_.publish(aimed(result));   // aim point for the gimbal only
-        if (gui_) gui_->publish(result);    // the GUI draws the real boxes
+        gui_->publish(result);    // encodes only the observed rows
     }
 
     void heartbeat()
@@ -414,7 +629,13 @@ public:
             int x = 0, y = 0;
             if (in >> x >> y) executor_.move(x, y);
         }
-        else if (kind == "H") executor_.halt();
+        else if (kind == "H") {
+            executor_.halt();
+            // Optional tracker-boundary ticket: acknowledge only AFTER STOP.
+            // Plain H from existing clients keeps its original behavior.
+            std::uint64_t ticket = 0;
+            if (in >> ticket) say("HALTED " + std::to_string(ticket));
+        }
     }
 };
 }
@@ -449,14 +670,36 @@ int main(int argc, char** argv) try {
             });
         }
     }
-    Bridge bridge(executor, gui.get(), session_changes);
+    // 11-15: the PC GUI gets the picture only while it is connected on the command port (the link has no other way to know
+    // that a PC is there). Without a command listener, or with --gui-video-always 1, always (as before).
+    const bool gui_gated = gui && receiver && !options.gui.video_always;
+    std::atomic<bool> gui_picture{gui && !gui_gated};
+    Bridge bridge(executor, gui.get(), session_changes,
+                  options.smoothing.observation_grace_ms > 0 || options.smoothing.catchup_speed > 0 ||
+                  options.smoothing.predictive_brake || options.smoothing.search || options.smoothing.coast || options.smoothing.seek,
+                  gui ? &gui_picture : nullptr);
     say("READY");
+    say("TRACK_CONTROL 1");
+    say("LEAD_CONTROL 1");
+    say("OBSERVATION_STATUS 1");
+    if (options.smoothing.search) say("SEARCH_CONTROL 1");
+    if (gui) say(std::string("GUI_PICTURE ") + (gui_picture.load() ? "1" : "0"));   // 11-15: the server sends G lines (with the picture) only while 1
+    bool reported_picture = gui_picture.load();
+    if (options.smoothing.seek) say("SEEK_CONTROL 1");   // v27: the server may send SEEK <id> <x> <y> <w> <h>
+    if (options.smoothing.coast) say("COAST_CONTROL 1");   // v27: the server may send PRED <id> <x> <y> <w> <h>   // v27: the tracker may re-select a re-found person (SEARCH lines follow)
+    int reported_search = 0;
     std::string pending, reported;
+    std::uint64_t reported_epoch = std::numeric_limits<std::uint64_t>::max();
     std::vector<char> buffer(262144);
     auto next_status = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     auto next_position = std::chrono::steady_clock::now();
     bool input_open = true;
     while (!stop_signal && input_open) {
+        if (gui_gated) {   // before the input of this round: a picture that is already on its way is used or dropped by the same rule
+            const bool wanted = gui_client.load();
+            gui_picture.store(wanted);
+            if (wanted != reported_picture) { say(std::string("GUI_PICTURE ") + (wanted ? "1" : "0")); reported_picture = wanted; }
+        }
         pollfd input{0, POLLIN, 0};
         const int ready = ::poll(&input, 1, 50);
         if (ready < 0 && errno != EINTR) break;
@@ -480,8 +723,13 @@ int main(int argc, char** argv) try {
             pending.erase(0, end + 1);
         }
         const auto snapshot = executor.snapshot();
+        if (snapshot.command_generation != reported_epoch) {
+            say("CONTROL_EPOCH " + std::to_string(snapshot.command_generation));
+            reported_epoch = snapshot.command_generation;
+        }
         const auto state = state_line(snapshot);
         if (state != reported) { say(state); reported = state; }
+        if (snapshot.search != reported_search) { say("SEARCH " + std::to_string(snapshot.search)); reported_search = snapshot.search; }
         const auto now = std::chrono::steady_clock::now();
         if (!snapshot.error && now >= next_position) {
             say("POSITION_EST " + std::to_string(snapshot.pan_estimate) + " " + std::to_string(snapshot.tilt_estimate));

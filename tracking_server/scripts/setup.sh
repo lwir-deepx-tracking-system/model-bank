@@ -13,6 +13,10 @@ cd "$(dirname "$0")/.."
 g++ -O3 -shared -fPIC -o src/detect/post.so src/detect/post.cpp
 echo "post.so built"
 
+if ! bash scripts/build_native_trackers.sh; then
+  echo "Optional C++ tracker build failed; check the build log. Unsupported presets use Python." >&2
+fi
+
 mkdir -p models/links
 python3 - <<'EOF'
 import hashlib, json, os
@@ -80,7 +84,8 @@ if bad:
 EOF
 
 # 카메라 프로그램. SDK 가 없으면 실시간 서버만 못 쓰고, 파일로 돌리는 실행은 된다.
-# 셔터 설정 파일 cam_shutter.txt 를 쓰는 장치에서는 그 파일을 src/camera/ (cam_pipe 옆) 에 둔다. 파일이 없으면 cam_pipe 는 기본 셔터 설정으로 연다.
+# 셔터 설정 파일 src/camera/cam_shutter.txt (11-15 부터 저장소에 있음: T120) 는 cam_pipe 옆에 있어야 cam_pipe 가 읽는다. 이 스크립트는 그 파일을 만들거나 덮어쓰지 않는다.
+# 파일이 없으면 cam_pipe 는 기본 셔터 설정(d)으로 연다. 11-12 에 cam_pipe 를 이 폴더로 옮기며 파일이 빠져 T120 이 꺼졌던 일이 있다.
 if [ -f /usr/local/include/i3system/i3system_TE.h ]; then
   g++ -O2 src/camera/cam_pipe.cpp -o src/camera/cam_pipe -D_LINUX -I/usr/local/include/i3system $(pkg-config --cflags --libs opencv4) -li3system_te_64 -li3system_usb_64 -li3system_imgproc_impl_64 -lpthread
   echo "cam_pipe built"
@@ -95,7 +100,8 @@ if pkg-config --exists opencv4 gstreamer-1.0 gstreamer-app-1.0; then
   g++ -O2 -std=c++17 -pthread -I$G/team/include $(pkg-config --cflags opencv4 gstreamer-1.0 gstreamer-app-1.0) $G/gimbal_bridge_v25.cpp \
     $G/team/src/control/auto_tracking_controller.cpp $G/team/src/control/gimbal_command_executor.cpp $G/team/src/control/gimbal_device.cpp $G/team/src/control/pid_controller.cpp \
     $G/team/src/control/tracking_command_handler.cpp $G/team/src/gui/gui_protocol.cpp $G/team/src/gui/gui_sender.cpp $G/team/src/gui/gui_receiver.cpp $G/team/src/gui/gui_command_handler.cpp \
-    $G/team/src/common/logger.cpp $(pkg-config --libs gstreamer-1.0 gstreamer-app-1.0) -lopencv_core -lopencv_imgproc -o $G/gimbal_bridge_v25
+    $G/team/src/common/logger.cpp $(pkg-config --libs gstreamer-1.0 gstreamer-app-1.0) -lopencv_core -lopencv_imgproc -o $G/gimbal_bridge_v25.next
+  mv -f "$G/gimbal_bridge_v25.next" "$G/gimbal_bridge_v25"
   echo "gimbal_bridge_v25 built"
 else
   echo "OpenCV (opencv4) or GStreamer not found: gimbal_bridge_v25 not built, --gimbal and --gui-host will not start"

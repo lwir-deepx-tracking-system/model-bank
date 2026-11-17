@@ -29,6 +29,7 @@ C. 공유 메모리로 프레임 넘기기 (기본으로 꺼짐, LWIR_CAM_STAMP=
 """
 import atexit
 import collections
+import math
 import mmap
 import os
 import struct
@@ -40,6 +41,9 @@ import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
 from . import replay_eval   # 11-12: frames of the replay program carry their png number (flags bit 2)
+from . import cam_frozen   # 11-15: a camera frame clears the frozen-camera state
+from . import cam_scene   # 11-15: cam_pipe v2.13 SCENE_LOST / SCENE_BACK lines -> the page notice (read in _tail)
+from . import spawn_keeper   # 11-15: cam_pipe is started by a thread that lives as long as the server
 
 # ---------------------------------------------------------------- A. 지워지지 않는 카메라 기록
 LOG_NAME = 'camera_events.log'
@@ -128,6 +132,7 @@ def _tail():   # cam_pipe 가 쓰는 <결과 폴더>/cam_pipe.log 에 새로 붙
         for ln_ in lines_:
             t_ = ln_.decode('utf-8', 'replace').strip()
             if t_ and not t_.startswith('CAMFPS'): note('cam_pipe', t_)
+            if t_.startswith('SCENE_'): cam_scene.on_line(APP.LIVE, t_)   # 11-15: picture without a scene (cam_pipe v2.13)
     return True
 
 
@@ -295,14 +300,43 @@ class Ring:   # cam_pipe 가 만든 고리를 읽기 전용으로 붙인다. 안
         except Exception: pass
 
 
+REPLAY_QUEUE = 1
+
+
+def replay_queue():
+    """11-15: how many frames of a labelled recording (played without skipping) may wait in the input queue before the
+    reader holds the next one back. It was the whole queue (3). When the frame loop is slower than the chosen speed, the
+    recording plays at the loop's speed either way, but every waiting frame is one more frame period between a frame's
+    arrival and its picture: on the board, a 30 fps recording the loop took at 27.7 fps showed 205 ms instead of 60.
+    One waiting frame is enough to keep the detector fed (the reader already holds the next one). Same frames, same order,
+    same results. LWIR_REPLAY_QUEUE=3 gives the old depth back."""
+    try: n_ = int(os.environ.get('LWIR_REPLAY_QUEUE', '') or REPLAY_QUEUE)
+    except ValueError: n_ = REPLAY_QUEUE
+    return max(1, n_)
+
+
+def install_producer(process):
+    """Swap readers under the queue lock used to accept their frames."""
+    from ..web.preview_worker import set_preview_producer
+
+    live = APP.LIVE
+    with live.cond:
+        set_preview_producer(live, process, before=time.perf_counter())
+        live.proc = process
+        live.proc_replay_src_t = getattr(live, 'replay_src_t', None)
+        live.cam_lost = False
+        live.proc_t0 = time.monotonic()
+        live.cond.notify_all()
+
+
 def spawn():   # lv_spawn 의 시간표 판: cam_pipe 에 같은 설정을 환경 변수로 넘겨 양쪽이 항상 같게 한다
     stamp_ = not _S['stamp_off']; shm_ = stamp_ and os.environ.get('LWIR_CAM_SHM') == '1' and not _S['shm_off']
     env_ = dict(os.environ); env_['LWIR_CAM_STAMP'] = '1' if stamp_ else '0'; env_['LWIR_CAM_SHM'] = '1' if shm_ else '0'
     _ring_once()
     from .replay_link import cam_argv   # 11-12: the same command as lv_spawn (the replay program while a recording is played)
-    p_ = APP.lv_sp.Popen(cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0, env=env_)
+    p_ = spawn_keeper.popen(APP.lv_sp.Popen, cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0, env=env_)   # 11-15: started by a thread that outlives this call (see spawn_keeper.py)
     p_.lwir_stamp = stamp_
-    APP.LIVE.proc = p_; APP.LIVE.cam_lost = False; APP.LIVE.proc_t0 = time.monotonic()
+    install_producer(p_)
     log_start()
     cs_ = APP.LIVE.cam_stamp; cs_['on'] = stamp_; cs_['fallback'] = _S['stamp_off'] or _S['shm_off']
     if not stamp_: cs_['transport'] = 'pipe'
@@ -339,8 +373,9 @@ def _resync(p_, pend_, hb_, limit_):   # 다음 맞는 머리를 찾는다. True
 
 def _end(p_, ring_):   # 읽기 끝: 전 방식의 끝과 같다
     if ring_ is not None: ring_.close()
-    if p_ is APP.LIVE.proc: APP.LIVE.cam_lost = True
-    with APP.LIVE.cond: APP.LIVE.cond.notify_all()
+    with APP.LIVE.cond:
+        if p_ is APP.LIVE.proc: APP.LIVE.cam_lost = True
+        APP.LIVE.cond.notify_all()
 
 
 def _stop_and_drain(p_, ring_):   # cam_pipe 를 끝내고(SIGTERM) 파이프가 닫힐 때까지 읽어 버린다. 그 뒤는 서버가 전처럼 다시 띄운다
@@ -368,9 +403,20 @@ def reader(p_):   # lv_reader 의 시간표 판. 예상하지 못한 오류가 �
 
 
 def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 같다
+    live = APP.LIVE
+    ev_ = getattr(p_, 'lwir_eval', None)
+    lossless_ = replay_eval.lossless(p_)
+    replay_wait_ = min(replay_queue(), live.q.maxlen or 1)   # 11-15: frames of a labelled recording waiting for the detector before this reader holds the next one back
+
+    def current_source(tagged):
+        # Replay switching can retire this source before installing the next process.
+        return (not live.stopped and p_ is live.proc
+                and (not tagged or live.proc_replay_src_t == getattr(live, 'replay_src_t', None)))
+
     n_ = APP.LIVE_W * APP.LIVE_H * 2; buf_ = bytearray(n_); cnt_ = 0; tl_ = time.monotonic()
     mv_ = memoryview(buf_); hb_ = bytearray(HDR_N); hv_ = memoryview(hb_); pend_ = bytearray(); ring_ = None; last_seq_ = 0; good_ = 0
     cs_ = APP.LIVE.cam_stamp; recent_ = APP.LIVE.cam_stamp_recent
+    last_tag_t = None
     while True:
         if not _take(p_, pend_, hv_): return _end(p_, ring_)
         h_ = parse_header(hb_)
@@ -389,7 +435,8 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
         flags_, seq_, tns_, dtus_, slot_, nb_, rid_, w_, hh_ = h_
         if nb_ != n_ or w_ != APP.LIVE_W or hh_ != APP.LIVE_H:
             _S['size_bad'] += 1; wait_ = SIZE_BAD_WAIT[min(_S['size_bad'], len(SIZE_BAD_WAIT)) - 1]
-            if p_ is APP.LIVE.proc: APP.LIVE.cam_next_spawn = time.monotonic() + wait_   # lv_cam_wait 는 이 시각 전에는 다시 띄우지 않는다 (전에는 약 20 초마다 끝없이 다시 띄웠다)
+            with APP.LIVE.cond:
+                if p_ is APP.LIVE.proc: APP.LIVE.cam_next_spawn = time.monotonic() + wait_   # lv_cam_wait 는 이 시각 전에는 다시 띄우지 않는다
             say('LIVE camera: cam_pipe sends %dx%d pictures (%d bytes), the server expects %dx%d: cam_pipe stopped, next start in %d s (%d in a row)' % (w_, hh_, nb_, APP.LIVE_W, APP.LIVE_H, wait_, _S['size_bad']))
             return _stop_and_drain(p_, ring_)
         good_ += 1
@@ -415,17 +462,50 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
         age_ = time.monotonic() - tns_ * 1e-9; gap_ = dtus_ * 1e-6
         raw_ = np.frombuffer(buf_, np.uint16).reshape(APP.LIVE_H, APP.LIVE_W).copy()
         ta_ = time.perf_counter()
-        if flags_ & 2: replay_eval.tag(p_, ta_, rid_, slot_, flags_)   # 11-12: only the replay program sets bit 2 (png number, position and pass for the ground-truth comparison and the seek bar; value 4 = a frame repeated while paused); cam_pipe never does
-        with APP.LIVE.cond:
-            if len(APP.LIVE.q) == APP.LIVE.q.maxlen: APP.LIVE.q_drop += 1
-            APP.LIVE.q.append((ta_, raw_)); APP.LIVE.cond.notify()
+        if flags_ & 2:
+            # Two frames can arrive in one clock tick after backpressure releases.
+            if last_tag_t is not None and ta_ <= last_tag_t:
+                ta_ = math.nextafter(last_tag_t, math.inf)
+            last_tag_t = ta_
+        tagged = bool(flags_ & 2)
+        scored_replay = tagged and lossless_
+        hold_frame = scored_replay and flags_ & 4
+        enqueued = False
+        while True:
+            with live.cond:
+                while current_source(tagged) and scored_replay and not hold_frame and len(live.q) >= replay_wait_:
+                    live.cond.wait(timeout=0.1)
+                if not current_source(tagged):
+                    break
+                # The tag must exist before consumers see the frame. Never wait for scoring here.
+                if not tagged or replay_eval.tag(p_, ta_, rid_, slot_, flags_, blocking=False):
+                    if hold_frame:
+                        # Pause keeps the same displayed frame without advancing tracker state.
+                        live.last_frame_t = time.monotonic()
+                        break
+                    if len(live.q) == live.q.maxlen: live.q_drop += 1
+                    live.q.append((ta_, raw_))
+                    cnt_ += 1; now_ = time.monotonic(); live.last_frame_t = now_; live.cam_fail_n = 0; live.cam_unrec_n = 0; live.frames_in += 1
+                    if not tagged and getattr(live, 'cam_frozen', None) is not None: note('server', cam_frozen.on_frame(live))   # 11-15: a camera frame (not a replay frame): the camera answers again
+                    if now_ - tl_ >= 1.0: live.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
+                    if scored_replay:
+                        live.cond.notify_all()
+                    else:
+                        live.cond.notify()
+                    enqueued = True
+                    break
+            # Wait outside the input condition. Release before retrying to preserve the lock order used by seek.
+            if ev_.lock.acquire(timeout=0.1):
+                ev_.lock.release()
+        if not enqueued:
+            continue
+        pw_ = getattr(APP.LIVE, 'picture_worker', None)   # 11-15: picture first (src/web/picture_first.py): the page picture now, before detection
+        if pw_ is not None and not tagged: pw_.offer(ta_, raw_)
         rc_ = APP.LIVE.rec
         if rc_ is not None:
             with rc_['cond']:
                 if len(rc_['q']) < 240: rc_['q'].append((ta_, raw_)); rc_['cond'].notify()
                 else: rc_['dropped'] += 1
-        cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
-        if now_ - tl_ >= 1.0: APP.LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
         recent_.append((ta_, seq_, tns_ * 1e-9, dtus_))
         cs_['seq'] = seq_; cs_['frames'] += 1; cs_['gap_ms'] = round(gap_ * 1000, 2)
         ok_ = -0.005 <= age_ < 3600.0   # 아니면 두 프로그램의 시계가 다르다 (같은 장치의 리눅스에서는 일어나지 않아야 한다)

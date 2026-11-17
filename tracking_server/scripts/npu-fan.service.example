@@ -1,0 +1,14 @@
+# Fan follows the NPU module temperature (see tracking_server/THERMAL.md).
+# Install: copy to /etc/systemd/system/npu-fan.service, set ExecStart to the real path of scripts/npu_fan.sh,
+# then: sudo systemctl daemon-reload && sudo systemctl enable --now npu-fan
+[Unit]
+Description=Fan follows the NPU module temperature
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/path/to/tracking_server/scripts/npu_fan.sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

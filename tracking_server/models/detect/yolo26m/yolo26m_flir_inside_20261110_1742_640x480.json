@@ -1,5 +1,0 @@
-{
- "display_name": "실내 fine-tuning 이전 판 (11-10 17:42) · YOLO26m_(FLIR) 640x480",
- "sha256": "d29ffca0618aef268ae98050a3def5a1df6d0acfd5dfd6e498be6ceb5bc756ff",
- "note": "2026-11-10 indoor-only fine-tune epoch 2, INT8; outdoor val recall .975->.924: indoor use only"
-}

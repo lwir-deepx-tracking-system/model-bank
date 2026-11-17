@@ -4,6 +4,7 @@ import time
 import numpy as np
 from ..common.state import APP
 from ..common.shared_values import HERE
+from ..detect import auto_det   # 11-15: a model chosen on the PC GUI turns the automatic detector choice off
 
 
 def lead_shift(real_, seen_, id_, t_, w_, h_):
@@ -40,6 +41,7 @@ def lead_shift(real_, seen_, id_, t_, w_, h_):
 
 
 def gb_device():   # v26: the device given on the command line; when it is gone (USB dropped and came back under another ttyUSB name), the gimbal's fixed name under /dev/serial/by-id
+    if APP.lv_os.environ.get('LWIR_VG_GIMBAL_ONLY') == '1': return APP.args.gimbal   # virtual-gimbal test (2026-11-15): only the given device, never the real gimbal's fixed name
     if APP.lv_os.path.exists(APP.args.gimbal): return APP.args.gimbal
     c_ = sorted(APP.lv_glob.glob('/dev/serial/by-id/usb-Silicon_Labs_CP2102N_*'))
     return c_[0] if c_ else APP.args.gimbal
@@ -78,10 +80,49 @@ def gb_cfg():
 class _Gimbal: pass
 
 
+def reset_lead():
+    APP.CTL['lv'] = None
+    APP.CTL['lead_px'] = 0.0
+
+
+def without_lead(frame):
+    if frame is None:
+        return None
+    end = frame.find(b'\n')
+    start = frame.find(b' LEAD ', 0, end)
+    return frame if start < 0 else frame[:start] + frame[end:]
+
+
+def _reset_bridge_lead(gb):
+    gb.lead_control_supported = False
+    gb.lead_pending = 0
+    gb.selection_ack_wait_state = False
+    gb.control_epoch = None
+    gb.observation_status_supported = False
+    gb.observation_barrier = None
+    gb.observation_ns = 0
+    gb.observation_ok = False
+    gb.search_control_supported = False
+    gb.coast_control_supported = False
+    gb.seek_control_supported = False
+    gb.fguard = None
+    gb.fseek = None
+    reset_lead()
+
+
 def gb_send(line_):
     with APP.GB.wcond:
         if not APP.GB.wopen: return False
+        if (line_ == 'H' and getattr(APP.GB, 'track_control_supported', False)
+                and (getattr(APP.GB, 'lead_pending', 0) or getattr(APP.GB, 'selection_ack_wait_state', False))):
+            # A followed by plain H in one batch can leave the bridge idle without an S change.
+            from .live_tracks import stop_with_ack_locked
+            stop_with_ack_locked(APP.GB)
+            return True
         if len(APP.GB.wq) >= 64: APP.GB.skipped += 1; return False
+        if line_.split(' ', 1)[0] in ('H', 'M', 'V'):
+            reset_lead()
+            APP.GB.wframe = without_lead(APP.GB.wframe)
         APP.GB.wq.append((line_ + '\n').encode()); APP.GB.wcond.notify()
     return True
 
@@ -97,16 +138,21 @@ def gb_writer(p_):
     try:
         while True:
             with APP.GB.wcond:
-                APP.GB.wcond.wait_for(lambda: APP.GB.wq or APP.GB.wframe is not None or not APP.GB.wopen or APP.GB.proc is not p_)
+                APP.GB.wcond.wait_for(lambda: APP.GB.wq or APP.GB.wframe is not None or getattr(APP.GB, 'observation_barrier', None) is not None or not APP.GB.wopen or APP.GB.proc is not p_)
                 if APP.GB.proc is not p_: return   # a newer bridge owns the queue now
-                if not APP.GB.wopen and not APP.GB.wq and APP.GB.wframe is None: break
-                chunks_ = list(APP.GB.wq); APP.GB.wq.clear()
+                if not APP.GB.wopen and not APP.GB.wq and APP.GB.wframe is None and getattr(APP.GB, 'observation_barrier', None) is None: break
+                barrier = getattr(APP.GB, 'observation_barrier', None)
+                chunks_ = [barrier] if barrier is not None else []
+                APP.GB.observation_barrier = None
+                chunks_.extend(APP.GB.wq); APP.GB.wq.clear()
                 if APP.GB.wframe is not None: chunks_.append(APP.GB.wframe); APP.GB.wframe = None
             for c_ in chunks_: p_.stdin.write(c_)
             p_.stdin.flush()
     except (OSError, ValueError): pass
     with APP.GB.wcond:
-        if APP.GB.proc is p_: APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None
+        if APP.GB.proc is p_:
+            APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None
+            _reset_bridge_lead(APP.GB)
 
 
 def parse_pose(fields):
@@ -146,10 +192,52 @@ def gb_reader(p_):
         if not f_: continue
         if p_ is not APP.GB.proc: continue   # v26: lines of a bridge that was replaced
         if f_[0] == 'READY': APP.GB.state['ready'] = True; print('GIMBAL ready', APP.GB.dev, flush=True)
-        elif f_[0] == 'R':
-            APP.GB.state['answer'] = {'OK': '', 'INVALID': 'that person is not available', 'NOT_READY': 'the gimbal is not ready'}.get(f_[2], f_[2]); print('GIMBAL', line_.strip(), flush=True)
-        elif f_[0] == 'S':
-            APP.GB.state.update(auto=int(f_[1]), lost=int(f_[2]), moving=int(f_[3]), error=int(f_[4]), id=int(f_[5])); print('GIMBAL', line_.strip(), flush=True)
+        elif f_[0] in ('TRACK_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS', 'SEARCH_CONTROL', 'COAST_CONTROL', 'SEEK_CONTROL') and f_[1:] == ['1']:
+            with APP.GB.wcond:
+                if p_ is APP.GB.proc and APP.GB.wopen:
+                    if f_[0] == 'TRACK_CONTROL': APP.GB.track_control_supported = True
+                    elif f_[0] == 'LEAD_CONTROL': APP.GB.lead_control_supported = True
+                    elif f_[0] == 'SEARCH_CONTROL': APP.GB.search_control_supported = True   # 11-15: bridge started with --search 1
+                    elif f_[0] == 'COAST_CONTROL': APP.GB.coast_control_supported = True   # 11-15: bridge started with --coast 1 (PRED suffix)
+                    elif f_[0] == 'SEEK_CONTROL': APP.GB.seek_control_supported = True   # 11-16: bridge started with --seek 1 (SEEK suffix)
+                    else: APP.GB.observation_status_supported = True
+        elif (f_[0] == 'CONTROL_EPOCH' and len(f_) == 2 and len(f_[1]) <= 20
+              and f_[1].isascii() and f_[1].isdigit()):
+            epoch = int(f_[1])
+            with APP.GB.wcond:
+                if (p_ is APP.GB.proc and epoch <= 0xffffffffffffffff
+                        and getattr(APP.GB, 'control_epoch', None) != epoch):
+                    APP.GB.control_epoch = epoch
+                    reset_lead()
+                    APP.GB.wframe = without_lead(APP.GB.wframe)
+        elif f_[0] == 'SEARCH' and len(f_) == 2 and f_[1].isdigit():   # 11-15: --search 1 bridges: 0 none, 1 grace, 2 follow-through, 3 sweep, 4 done. 11-16: --seek 1 bridges: 5 = following the SEEK box
+            APP.GB.state['search'] = int(f_[1]); print('GIMBAL', line_.strip(), flush=True)
+        elif f_[0] == 'HALTED' and len(f_) == 2:
+            from .live_tracks import halted
+            try: halted(int(f_[1]))
+            except ValueError: pass
+        elif f_[0] == 'R' and len(f_) >= 3:
+            with APP.GB.wcond:
+                if p_ is not APP.GB.proc: continue
+                if f_[1] == 'A':
+                    APP.GB.lead_pending = max(0, getattr(APP.GB, 'lead_pending', 0) - 1)
+                    if f_[2] == 'OK':
+                        APP.GB.selection_ack_wait_state = True
+                    reset_lead()
+                APP.GB.state['answer'] = {'OK': '', 'INVALID': 'that person is not available', 'NOT_READY': 'the gimbal is not ready'}.get(f_[2], f_[2])
+            print('GIMBAL', line_.strip(), flush=True)
+        elif f_[0] == 'S' and len(f_) >= 6:
+            auto, lost, moving, error, track_id = map(int, f_[1:6])
+            with APP.GB.wcond:
+                if p_ is not APP.GB.proc: continue
+                state = APP.GB.state
+                if (auto, lost, error, track_id) != tuple(state.get(key, 0) for key in ('auto', 'lost', 'error', 'id')):
+                    reset_lead()
+                    APP.GB.wframe = without_lead(APP.GB.wframe)
+                state.update(auto=auto, lost=lost, moving=moving, error=error, id=track_id)
+                if auto:
+                    APP.GB.selection_ack_wait_state = False
+            print('GIMBAL', line_.strip(), flush=True)
         elif f_[0] == 'POSE':
             APP.GB.pose_sample = (p_, time.monotonic(), parse_pose(f_[1:]))
         elif f_[0] == 'POSITION_EST':
@@ -159,19 +247,35 @@ def gb_reader(p_):
                 APP.GB.position_sample = (p_, time.monotonic(), percent)
         elif f_[0] == 'M' and len(f_) >= 3:   # v23: the PC GUI asks for a model change: M <req> <id>
             r_ = APP.model_request(int(f_[2]), int(f_[1])); print('MODEL request from the PC GUI: id', f_[2], '->', 'queued' if r_ < 0 else r_, flush=True)
+            if r_ in (-1, 0): auto_det.manual_choice('PC GUI')   # 11-15: a model chosen by hand turns the automatic choice off
             if r_ >= 0: APP.gb_send('N %d %d' % (int(f_[1]), r_))
+        elif f_[0] == 'GUI_PICTURE' and f_[1:] in (['0'], ['1']):   # 11-15: the bridge wants the picture (G lines) only while a PC GUI is connected; else people only (F lines)
+            with APP.GB.wcond:
+                if p_ is not APP.GB.proc: continue
+                APP.GB.gui_picture = f_[1] == '1'; APP.GB.state['gui']['picture'] = int(f_[1])
+            print('GUI picture', 'wanted: sending the camera picture to the bridge' if f_[1] == '1' else 'not wanted (no PC GUI connected): sending people only', flush=True)
         elif f_[0] == 'T' and len(f_) >= 7:   # v20: GUI link status, once a second
             g_ = APP.GB.state['gui']; client_ = int(f_[1])
-            if client_ != g_['client']: print('GUI client', 'connected' if client_ else 'disconnected', flush=True)
+            if client_ != g_['client']:
+                with APP.GB.wcond:
+                    if p_ is not APP.GB.proc: continue
+                    reset_lead()
+                    APP.GB.wframe = without_lead(APP.GB.wframe)
+                print('GUI client', 'connected' if client_ else 'disconnected', flush=True)
             g_.update(client=client_, given=int(f_[2]), sent=int(f_[3]), encoded=int(f_[4]), rtp_bytes=int(f_[5]), failed=int(f_[6]))
     # the bridge ended. After a normal end it has sent STOP itself; after a crash the last move would go on, so this stop is sent in any case
+    with APP.GB.wcond:
+        if p_ is APP.GB.proc:
+            _reset_bridge_lead(APP.GB)
+            APP.GB.wframe = without_lead(APP.GB.wframe)
     try: rc_ = p_.wait(3)
     except Exception: rc_ = None
     print('GIMBAL bridge ended, code', rc_, flush=True)
     with APP.GB.lock:   # the same lock as gb_spawn: never write to the device while a newer bridge is being started on it
         if p_ is not APP.GB.proc: return
         APP.GB.state.update(running=False, ready=False, auto=0, lost=0, moving=0, id=0)
-        with APP.GB.wcond: APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.wcond.notify_all()
+        with APP.GB.wcond:
+            APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.wcond.notify_all()
         try:
             fd_ = APP.lv_os.open(APP.GB.dev, APP.lv_os.O_WRONLY | APP.lv_os.O_NOCTTY | APP.lv_os.O_NONBLOCK); APP.lv_os.write(fd_, b'{"T":135}\n'); APP.lv_os.close(fd_)
         except OSError: pass
@@ -187,8 +291,13 @@ def gb_spawn():   # v26: start (or start again) the bridge. A new bridge sends S
         p_ = APP.lv_sp.Popen([APP.args.gimbal_bridge or str(HERE / 'src' / 'gimbal' / 'gimbal_bridge_v25'), '--device', dev_, '--manual-speed', str(APP.args.gimbal_speed), '--speed-max', str(APP.args.gimbal_speed), '--kp', str(APP.args.gimbal_kp), '--aim-y', str(APP.args.gimbal_aim_y),
                           '--x-sign', str(APP.args.gimbal_x_sign), '--y-sign', str(APP.args.gimbal_y_sign), '--model-count', str(len(APP.MODEL['catalog'])), *APP.shlex.split(APP.args.gimbal_opts), *APP.gui_opts_], stdin=APP.lv_sp.PIPE, stdout=APP.lv_sp.PIPE, stderr=APP.GB.log)
         APP.GB.dev = dev_; APP.GB.dev_sig = sig_; APP.GB.spawn_t = time.monotonic(); APP.GB.restarts += 1
-        APP.GB.state.update(running=True, ready=False, auto=0, lost=0, moving=0, error=0, id=0); APP.GB.state['gui'].update(client=0)
-        with APP.GB.wcond: APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.proc = p_; APP.GB.wopen = True; APP.GB.wcond.notify_all()
+        APP.GB.state.update(running=True, ready=False, auto=0, lost=0, moving=0, error=0, id=0); APP.GB.state['gui'].update(client=0, picture=int(bool(APP.GB.gui)))
+        with APP.GB.wcond:
+            APP.GB.track_control_supported = False
+            APP.GB.people_source = object()  # a replacement bridge needs a fresh STOP acknowledgement
+            APP.GB.gui_picture = None   # 11-15: None = this bridge has not said GUI_PICTURE (an older bridge never does): the picture is always sent, as before
+            _reset_bridge_lead(APP.GB)
+            APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.proc = p_; APP.GB.wopen = True; APP.GB.wcond.notify_all()
         APP.lv_th.Thread(target=APP.gb_writer, args=(p_,), daemon=True).start(); APP.lv_th.Thread(target=APP.gb_reader, args=(p_,), daemon=True).start()
         print('GIMBAL bridge started on %s (start number %d)' % (dev_, APP.GB.restarts + 1), flush=True)
     return True
@@ -197,7 +306,9 @@ def gb_spawn():   # v26: start (or start again) the bridge. A new bridge sends S
 def gb_end(p_, why_):   # ask a bridge to end (on SIGTERM it sends STOP and leaves; its input pipe is not closed from here because the writer thread may be inside a write), kill it if it does not
     print('GIMBAL bridge is being restarted:', why_, flush=True)
     with APP.GB.wcond:
-        if APP.GB.proc is p_: APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.wcond.notify_all()
+        if APP.GB.proc is p_:
+            APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.wcond.notify_all()
+            _reset_bridge_lead(APP.GB)
     p_.terminate()
     try: p_.wait(5)
     except Exception:

@@ -3,6 +3,7 @@
 main() 안에 정의돼 있던 함수와 클래스는 일별 파일로 옮겼다. 원래 정의하던 자리에는 그 이름을 이어 주는 한 줄이 있다
 (예: APP.gb_send = gimbal_link.gb_send). 옮긴 함수들이 함께 쓰는 값은 APP.이름 으로, 실행 중에 바뀌는 설정 네 가지는 settings.이름 으로 읽고 쓴다.
 crop_into, vit_sync, sync_embed, budget_embed 는 옮기지 않고 여기 그대로 있다 (main() 의 지역 변수 vit 를 직접 써야 해서)."""
+import collections
 import os
 import sys
 import json
@@ -11,17 +12,23 @@ import traceback
 import argparse
 from pathlib import Path
 import numpy as np
+from .detect import spec_proposals   # 11-14 research switch prop_fuse
 from .common import settings
 from .common.state import APP
+from .common import frame_records   # 11-13: compact per-frame records (fewer objects for the garbage collector)
 from .common.shared_values import (
     HERE, ROOT, SHAPE, SHAPE_TT, SHAPE_RT480, SHAPE_W480, CORE, DET, PERSON_CLS, TARGET, sha, anchors, LOST, REMOVED)
 from .detect.model_scan import BANK_T
 from .common.device_wait import wait_m1_free
 from .track.kalman import gmc_warp, GKF
-from .track.position_memory import pos_select
+from .track.position_memory import pos_select, POSP
+from .track import e2e_live   # 11-14: live end-to-end FastTrackTr
+from .track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows (startup restore of its saved choice)
 from .track.camera_motion import GMC
 from .track.stabilizer import STAB_M, stab_shift, stab_margins
-from .track.trackers import Tracker, BotSortTracker, LostFirstTracker, crop_requests
+from .track.bytetrack import ByteTrackTracker, CameraByteTrack, crop_requests
+from .track.botsort import BotSortTracker
+from .track.lostfirst import LostFirstTracker
 from .track.gate import GateTracker, NumpyGRUGate
 from .track.confirm_time import ConfirmByTime, apply as confirm_apply
 from .track.warm_p95 import p95 as warm_p95, MODE as WARM_P95_MODE   # 11-12: same number as np.percentile, lighter
@@ -34,11 +41,14 @@ from .detect import model_scan, npu_engine, detect_frame
 from .web import system_buttons, page_handler, page_settings, measure
 from .track import camera_motion
 from .reid import reid_embed
-from .camera import camera_link
+from .camera import camera_link, replay_eval, stall_diag
+from .camera import temp_ring   # 11-14: --cam-temp (camera temperature map for the skin-temperature labels; off by default)
 from .gimbal import gimbal_link
 from .common import result_summary
 from .common import stage_timing   # 2026-11-11: 단계별 시간 재기 (LWIR_STAGE_TIMING=1 일 때만, 기본 꺼짐)
 from .detect import frame_feed     # 2026-11-11: 도착하는 대로 검출기에 넣기 (LWIR_NPU_FEED=arrival 일 때만, 기본 꺼짐)
+from .detect import auto_det       # 2026-11-15: 검출 모델 자동 선택 (근거리 / 먼 거리, 화면이나 /rules/set?auto_det=1 로 켤 때만, 기본 꺼짐)
+from .detect import resident_det   # 2026-11-15: 두 모델 상주·즉시 전환 (LWIR_RESIDENT_DET=1 이나 /rules/set?resident_det=1 로 켤 때만, 기본 꺼짐)
 
 
 # ---------------------------------------------------------------------------------------------------------------- main
@@ -129,10 +139,15 @@ def main():
     ap.add_argument('--live-seconds', type=float, default=600, help='v14: live run length in seconds')
     ap.add_argument('--measure-dir', default='/mnt/lwir_data/results/live_measure', help='v22c: folder for the measurement button files (a YYYYMMDD subfolder per day); the run folder when it cannot be written')
     ap.add_argument('--live-wait', type=float, default=90, help='v21: seconds to wait for the first camera frame; 0 = never give up: the page and the gimbal link stay up with a placeholder picture and the camera is reopened every 180 s until --live-seconds ends')
+    ap.add_argument('--replay-bytetrack-library', default=os.environ.get('LWIR_REPLAY_BYTETRACK_LIBRARY', ''),
+                    help='Optional path override for the C++ ByteTrack library used by camera preview and playback')
+    ap.add_argument('--replay-tracks-root', default=os.environ.get('LWIR_REPLAY_TRACKS_ROOT', ''),
+                    help='11-13: folder of stored tracking results made offline (<root>/<recording name>/<key>.mot.txt + <key>.json); the replay page offers them as extra replay trackers for that recording. Empty or missing folder = off, nothing changes')
     ap.add_argument('--replay-root', default='', help='11-12: folder of the label site recordings (<root>/<name>/images/000001.png ...); the web page can play one of them instead of the camera (GET /replay, POST /replay/start, /replay/stop). Empty or missing folder = replay unavailable')
     ap.add_argument('--live-cam', default='', help='v14: path of the cam_pipe helper (default: src/camera/cam_pipe)')
+    ap.add_argument('--cam-temp', type=int, default=0, help='11-14 research (default 0 = off = unchanged): pass LWIR_CAM_TEMP=N to cam_pipe (v2.11): it puts the camera\'s temperature map of some frames into /dev/shm/lwir_temp_ring_<uid> (src/camera/temp_ring.py) for the skin-temperature labels (/rules/set?temp_show=1). A LWIR_CAM_TEMP in the environment is passed on as well')
     ap.add_argument('--live-map', choices=['fixed', 'pct'], default='pct', help='v14: 16 -> 8 bit mapping: fixed = linear 0..65535 (team runtime), pct = smoothed 1..99 percentile window')
-    ap.add_argument('--live-scale', type=float, default=1.5, help='v14: display scale of the streamed picture')
+    ap.add_argument('--live-scale', type=float, default=float(os.environ.get('LWIR_LIVE_SCALE', '1.0')), help='v14: display scale of the streamed picture. 11-15 (user: 화면 전송 지연): default 1.0 = 640x480 (was 1.5 = 960x720, 2.25x the bytes); LWIR_LIVE_SCALE=1.5 for the old size')
     ap.add_argument('--mamba', default='', help='v18: folder of the Mamba relabeler (replaces --judge); needs --relabel and --gmc')
     ap.add_argument('--mamba-crops', type=int, default=3, help='v18: appearance crops per frame for the Mamba relabeler')
     ap.add_argument('--gimbal', default='', help='v19: serial device of the gimbal (e.g. /dev/ttyUSB0). Live server only: a click on a person on the web page makes the gimbal follow that ID')
@@ -156,16 +171,16 @@ def main():
     ap.add_argument('--confirm-gate', default='', help='v11: path of GATE_GRU32_FROZEN.json = the learned confirmation gate replaces 3FrameConfirm (GateTracker); requires --tracker bytetrack --class-gate --no-vit; default off = unchanged')
     ap.add_argument('--judge-crops', type=int, default=2, help='v10: with --judge, crops per frame on NPU_2 (new IDs first, then refresh); 0 = every eligible crop')
     APP.args = ap.parse_args()
-    ready_prefetch_supported = (
-        APP.args.live_port and APP.args.pipeline and APP.args.no_vit and APP.args.npu_depth == 1
-        and APP.args.live_wait == 0 and not APP.args.zoom
-        and os.environ.get('LWIR_NPU_FEED') != 'arrival'
-    )
-    ready_prefetch_setting = os.environ.get('LWIR_LIVE_READY_PREFETCH', '')
-    if ready_prefetch_setting == '1' and not ready_prefetch_supported:
-        ap.error('LWIR_LIVE_READY_PREFETCH=1 needs --live-port --pipeline --no-vit '
-                 '--npu-depth 1 --live-wait 0 without --zoom or LWIR_NPU_FEED=arrival')
-    ready_prefetch = ready_prefetch_supported and ready_prefetch_setting != '0'
+    APP.FEED_MODE = frame_feed.load_mode()
+    APP.FEED = None
+    APP.FEED_READY = False
+    ready_prefetch_compatible = frame_feed.ready_prefetch_compatible(APP.args)
+    APP.FEED_HOT_SWITCH = ready_prefetch_compatible and os.environ.get('LWIR_NPU_HOT_SWITCH') == '1'
+    try:
+        ready_prefetch = frame_feed.ready_prefetch_enabled(
+            APP.FEED_MODE, os.environ.get('LWIR_LIVE_READY_PREFETCH', ''), ready_prefetch_compatible)
+    except ValueError as exc:
+        ap.error(str(exc))
     settings.WARM_MIN, settings.EDGE_BIRTH, settings.EDGE_PX = int(APP.args.warm_min), float(APP.args.edge_birth), float(APP.args.edge_px)   # v24f
     settings.WARM_MAX = max(0, int(APP.args.warm_max))   # v33
     if APP.args.prepare: return prepare(APP.args)
@@ -268,6 +283,8 @@ def main():
     MODEL_CAT = [('w480', 'NEWMRW480', 'YOLO26m_(FLIR) 640x480'), ('s480', 'S480', 'YOLO26s 640x480'), ('m640', 'M640', 'YOLO26m_(FLIR) 640x640'),
                  ('s6', 'S6', 'YOLO26s 640x640')]   # v34 (11-10): the old own-camera fine-tune entry was taken off the list on the user request (models/FT1.dxnn kept); the new indoor file is listed from dxnn/   # v32 (11-10): the v9 trial entry was taken off the list on the user request (file kept in dxnn/)
     APP.MODEL = dict(lock=md_th.Lock(), req=None, busy=False, last=None, history=[], catalog=[])
+    auto_det.reset()   # 11-15: automatic detector choice starts off; a saved choice comes back with the other rules below
+    resident_det.reset()   # 11-15: off unless LWIR_RESIDENT_DET=1; a saved choice (below) wins over the environment
     if APP.args.det in [c_[0] for c_ in MODEL_CAT]:   # only for the single-engine detectors; the two-tile builds are not in the catalog
         APP.MODEL['catalog'] = [dict(id=0, det=c_[0], key=c_[1], name=c_[2]) for c_ in MODEL_CAT if APP.args.mock or (c_[1] in APP.man and (HERE / 'models' / 'links' / (c_[1] + '.dxnn')).exists())]
         for i_, c_ in enumerate(APP.MODEL['catalog']): c_['id'] = i_ + 1
@@ -280,12 +297,11 @@ def main():
     APP.sel_save = page_settings.sel_save
     APP.RULES = dict(lock=md_th.Lock(), pending=None, tracker='rebind' if APP.args.tracker == 'rebind' else 'confirm3', relabel=bool(APP.args.relabel), last=None, changes=0)   # v24g. v40: the GRU confirmation choice is gone (user 11-10)
     # ---- v40 (user 11-10): tree page. app = BoT-SORT appearance, lead = 예측 제어 (default OFF, not kept over a restart), warm_prev = Filter numbers kept while 온도 Filter is off
-    APP.CTL = dict(app='repvgg', lead=False, lead_ms=150, lv=None, lead_px=0.0, warm_prev=(45000, 0), W=None)
+    APP.CTL = dict(app='repvgg', lead=False, lead_ms=150, lv=None, lead_px=0.0, warm_prev=(45000, 0), lead_motion=None)
     APP.REID = dict(lock=md_th.Lock(), req=None, cur=APP.args.relabel or '', last=None, history=[])   # v41: appearance model picked on the page; req is taken by the frame loop between two frames
     mk_tracker_ = page_settings.mk_tracker_
     APP.ctl_state = page_settings.ctl_state
-    APP.lead_shift = gimbal_link.lead_shift
-    APP.RULES_PRESETS = [('confirm3', 'ByteTrack + 3프레임 확인 (기본: 새 사람이 3프레임 연속 잡히면 표시)'), ('rebind', 'ByteTrack + 위치 재결합 (우리 규칙: 놓친 사람을 가까운 새 상자에 같은 번호로 다시 붙임, 외형 안 봄)'),
+    APP.RULES_PRESETS = [('confirm3', 'ByteTrack'), ('rebind', 'ByteTrack (위치 재결합 켜짐)'),
                      ('ocsort', 'OC-SORT (가려졌다 나온 사람 위치 보정, 시험 안 함)'), ('botsort', 'BoT-SORT (ByteTrack + 카메라 움직임 보정 + RepVGG_(TMOT,CAMEL) 외형 비교, 시험 안 함)'), ('sort', 'SORT (가장 단순: Kalman + 겹침만, 놓치면 바로 새 번호, 시험 안 함)')]   # v31: AltTracker. v36: BoT-SORT and SORT in, C-BIoU off the list (user 11-10)
     APP.rules_state = page_settings.rules_state
     APP.rules_state0_ = APP.rules_state   # stab: stab / stab_px next to the v24g fields
@@ -301,26 +317,38 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'relabel', 'predictor', 'pred_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead_ms', 'reid', 'confirm_ms') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass
         qs_ = [{k_: [str(APP.SEL[k_])] for k_ in ('warm_min', 'warm_max', 'edge_birth', 'edge_px') if k_ in APP.SEL}]
-        if 'tracker' in APP.SEL: qs_.append({'tracker': [str(APP.SEL['tracker'])]})
+        if 'tracker' in APP.SEL: qs_.append(dict({'tracker': [str(APP.SEL['tracker'])]}, **({'engine': ['python']} if APP.SEL.get('engine') == 'python' else {})))   # 11-13: a saved Python engine choice comes back; everything else starts C++ first
         if 'relabel' in APP.SEL: qs_.append({'relabel': ['1' if APP.SEL['relabel'] else '0']})
         if 'predictor' in APP.SEL: qs_.append({'predictor': [str(APP.SEL['predictor'])]})
         if 'pred_show' in APP.SEL: qs_.append({'pred_show': ['1' if APP.SEL['pred_show'] else '0']})
+        if 'prop_show' in APP.SEL: qs_.append({'prop_show': ['1' if APP.SEL['prop_show'] else '0']})   # 11-14
         if 'app' in APP.SEL: qs_.append({'app': [str(APP.SEL['app'])]})   # v40
         if 'lead_ms' in APP.SEL: qs_.append({'lead_ms': [str(APP.SEL['lead_ms'])]})   # v40
+        if 'lead' in APP.SEL: qs_.append({'lead': ['1' if APP.SEL['lead'] else '0']})   # 11-13 (user): prediction on/off comes back after a restart
         if 'confirm_ms' in APP.SEL: qs_.append({'confirm_ms': [str(APP.SEL['confirm_ms'])]})   # 11-11: a value set on the page wins over --confirm-ms, like the other Filter numbers
         if isinstance(sv_, dict) and 'stab' in sv_: APP.SEL['stab'] = bool(sv_['stab']); qs_.append({'stab': ['1' if APP.SEL['stab'] else '0']})   # stab
+        if 'auto_det' in APP.SEL: qs_.append(auto_det.restore_query(bool(APP.SEL['auto_det']), APP.SEL.get('auto_det_p')))   # 11-15: automatic detector choice on / off and the changed numbers
+        if 'resident_det' in APP.SEL: qs_.append({'resident_det': ['1' if APP.SEL['resident_det'] else '0']})   # 11-15: two detector models resident (the other pair is made by the frame loop)
+        qs_ += box_refine.restore_queries(APP.SEL)   # 11-15: box smoothing of the drawn / gimbal rows; one query per key (a refused mode keeps the blend time)
         for q_ in qs_:
             if not q_: continue
+            APP.sel_restoring = True   # 11-15: lets a saved lead=1 through before the gimbal link exists (page_settings)
             try: ok_, tx_ = APP.rules_request(q_)
             except Exception as e_: ok_, tx_ = False, repr(e_)[:120]
+            finally: APP.sel_restoring = False
             if not ok_:
+                if 'auto_det' in q_: APP.SEL.pop('auto_det_p', None)
                 for k_ in q_: APP.SEL.pop(k_, None)
             print('LAST selection %s -> %s (%s)' % (sorted(q_), 'taken' if ok_ else 'dropped', tx_), flush=True)
+        if 'predictor' not in APP.SEL and APP.args.det in model_scan.KPT_DETS:   # 11-15 (user): started on a pose detector with no saved position-memory choice -> the keypoint GRU
+            try: ok_, tx_ = APP.rules_request({'predictor': [page_settings.AUTO_KPT_POS]})
+            except Exception as e_: ok_, tx_ = False, repr(e_)[:120]
+            print('POS predictor %s at start for keypoint detector %s: %s' % (page_settings.AUTO_KPT_POS, APP.args.det, tx_ if not ok_ else 'queued'), flush=True)
         dv_ = APP.SEL.pop('det', None)
         APP.sel_save()   # the model name is written back only after the change worked: a model that breaks the start is not tried again
         if dv_ and dv_ != APP.args.det:
@@ -397,6 +425,7 @@ def main():
         detect = detect_frame.detect
         vit_x = np.zeros((1, vit.H, vit.W, 3), np.uint8) if vit else None
         APP.tracker = None; prev_vid = None; prev_gray = None; tr_seq = 0; rr_ptr = 0; gmc = None; gmc_fail = 0
+        previous_motion_frame = previous_motion_time = None
         def crop_into(g, box):
             x1, y1, x2, y2 = box; a, b_, c, d = int(max(0, x1)), int(max(0, y1)), int(min(640, x2)), int(min(512, y2))
             if c - a < 2 or d - b_ < 2: return False
@@ -428,13 +457,21 @@ def main():
             APP.S640_BUFS = [np.full((1, 640, 640, 3), 114, np.uint8) for _ in range(APP.args.npu_depth + 3)]   # v16: --det s640
             _Live = camera_link._Live
             APP.LIVE = _Live(); APP.LIVE.stopped = False; APP.LIVE.cam_lost = False; APP.LIVE.q = APP.lv_col.deque(maxlen=3); APP.LIVE.cond = APP.lv_th.Condition(); APP.LIVE.arr = APP.lv_col.deque()
+            if stall_diag.wanted(): stall_diag.start(APP.LIVE)   # LWIR_STALL_DIAG=1 only (off by default): stall log in camera_events.log. LIVE.cond is replaced here, before any thread has it, by one that times its holders
+            APP.LIVE.camera_bytetrack = CameraByteTrack(APP.args)
+            APP.LIVE.restart_supported = ready_prefetch_compatible and os.environ.get('LWIR_REAL_GUI_LAUNCH') == '1'
+            APP.LIVE.restart_pending = False
+            APP.LIVE.restart_stop = False
+            APP.LIVE.instance = str(time.monotonic_ns())
             APP.LIVE.jpeg = b''; APP.LIVE.seq = 0; APP.LIVE.viewers = 0; APP.LIVE.pic_t = -1e9; APP.LIVE.pic_n = 0; APP.LIVE.snap_t = -1e9; APP.LIVE.jcond = APP.lv_th.Condition(); APP.LIVE.t0 = time.monotonic(); APP.LIVE.cam_fps = 0.0; APP.LIVE.done_ts = APP.lv_col.deque(maxlen=40)
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
             APP.LIVE.lo = None; APP.LIVE.hi = None; APP.LIVE.last = None; APP.LIVE.log = open(APP.out / 'cam_pipe.log', 'w'); APP.LIVE.raws = APP.lv_col.deque(); APP.LIVE.rawq = APP.lv_col.deque(); APP.LIVE.warm_dropped = 0; APP.LIVE.last_frame_t = time.monotonic(); APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.cam_next_spawn = None; APP.LIVE.cam_hold = False; APP.LIVE.cam_reset = None; APP.LIVE.sys_lock = APP.lv_th.Lock(); APP.LIVE.cam_lock = APP.lv_th.Lock(); APP.LIVE.frames_in = 0; APP.LIVE.q_drop = 0; APP.LIVE.prev_t = None; APP.LIVE.upd_t = None; APP.LIVE.gap_n = 0; APP.LIVE.delays = APP.lv_col.deque(maxlen=2000); APP.LIVE.dlock = APP.lv_th.Lock(); APP.LIVE.perf = APP.lv_col.deque(maxlen=900); APP.LIVE.perf_acc = [time.perf_counter(), 0, 0.0, 0.0, 0.0]   # v26b: q_drop = camera frames thrown away because the tracker was 3 frames behind, gap_n = input gaps over 1 s, delays = (time, capture-to-picture ms) of the last frames. v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)
             APP.LIVE_W, APP.LIVE_H = 640, 480
+            page_handler.init_preview(APP.LIVE)
             APP.LIVE.stabq = APP.lv_col.deque()   # stab: correction (cx, cy) or None of every frame read, paired with LIVE.arr
             APP.lv_reader = camera_link.lv_reader
             APP.lv_spawn = camera_link.lv_spawn
+            temp_ring.apply_cli(APP.args.cam_temp)   # 11-14: --cam-temp N > 0 -> LWIR_CAM_TEMP=N for every cam_pipe start; 0 = environment unchanged
             APP.lv_spawn()
             APP.lv_cam_wait = camera_link.lv_cam_wait
             APP.GB = None
@@ -533,8 +570,15 @@ def main():
         read_frame = detect_frame.read_frame
         submit_tiles = detect_frame.submit_tiles
         APP.TIMING = stage_timing.start()   # None unless LWIR_STAGE_TIMING=1
-        APP.FEED = frame_feed.start()       # None unless LWIR_NPU_FEED=arrival: then a small thread submits every frame to the detector when it arrives (NPU cores 0 and 1) and the loop below takes the results in order
-        if APP.FEED is not None: read_frame, submit_tiles = APP.FEED.read_frame, APP.FEED.submit_time
+        APP.FEED_INCOMPATIBLE = frame_feed.refuse_reason()
+        APP.FEED = frame_feed.start()
+        APP.FEED_READY = True
+        if APP.FEED is not None:
+            ready_prefetch = False
+            read_frame, submit_tiles = APP.FEED.read_frame, APP.FEED.submit_time
+        elif APP.LIVE is not None and APP.LIVE.restart_supported:
+            def read_frame(_):
+                return APP.live_next(fresh_only=True), 0.0
         def sync_embed(idxs, g_cur, arr_cur, frame_no):
             """--vit-sync: embed the candidate detections (arr rows) now, batch 1, one after another; a pending asynchronous job is collected first."""
             nonlocal inflight, delivered, vit_wait_total
@@ -559,35 +603,50 @@ def main():
                 dt_ = (time.perf_counter_ns() - t0_) / 1e6; lf_crop_ms.append(dt_); lf_frame_ms[0] += dt_
                 if not APP.args.mock: lf_npu.append(vit.b.get_npu_inference_time() / 1000)
             return got
+        e2e_prev = False   # 11-14: last frame skipped the detector + tracker (end-to-end model on / stored end-to-end replay)
         g_next = None; t_sub_next = None; t_prev_emit = None; ahead = []     # v7: frames read + submitted ahead [(gray, submit ns)], --npu-depth of them
         if ready_prefetch:
             print('LIVE camera prefetch: only take the next frame before publication if it is queued', flush=True)
         if APP.args.pipeline and APP.images and not ready_prefetch:
             for k_ in range(min(APP.args.npu_depth, len(APP.images))):
-                g_k, _ = read_frame(k_); ahead.append((g_k, submit_tiles(g_k, k_))); gmc_submit(k_, g_k)
+                g_k, _ = read_frame(k_)
+                if g_k is None:
+                    break
+                ahead.append((g_k, submit_tiles(g_k, k_), True)); gmc_submit(k_, g_k)   # 11-14: (gray, submit ns, submitted to the detector?)
         do_model_swap = page_settings.do_model_swap
         for i, im in enumerate(APP.images):
+            if APP.LIVE is not None and APP.LIVE.restart_stop:
+                break
             vid = im['extra_info']['video_id']; reset = vid != prev_vid
             if APP.MODEL['req'] is not None:   # v23: a model change was asked for; taken here, between two frames
                 rq_ = APP.MODEL['req']; APP.MODEL['busy'] = True
-                for _ in ahead: APP.a.wait()   # frames already submitted to the old model: collected and dropped, they go in again below
-                if APP.FEED is not None: APP.FEED.pause()
-                code_ = do_model_swap(rq_['det'])
-                if APP.FEED is not None: APP.FEED.resume(code_)
-                if APP.args.pipeline and code_ != 5: ahead[:] = [(g_, submit_tiles(g_, i + n_)) for n_, (g_, _) in enumerate(ahead)]
+                code_ = resident_det.instant(rq_)   # 11-15: 0 = switched at once to the resident pair of the other model (no engine made or released), None = the old path below
+                if code_ is None and page_settings.swap_refused(rq_['det']): code_ = 3   # 11-15: file missing / sha differs: refused before anything is paused or released (the frames ahead stay valid)
+                if code_ is None:
+                    for a_ in ahead:   # frames already submitted to the old model: collected and dropped, they go in again below
+                        if a_[2]: APP.a.wait()
+                    if APP.FEED is not None: APP.FEED.pause()
+                    resident_det.before_swap(rq_['det'])   # 11-15: the other resident pair (if any) is released first; nothing is on the NPU after pause
+                    code_ = do_model_swap(rq_['det'], checked=True)
+                    if APP.FEED is not None: APP.FEED.resume(code_)
+                    if APP.args.pipeline and code_ != 5: ahead[:] = [(g_, submit_tiles(g_, i + n_) if s_ else t_, s_) for n_, (g_, t_, s_) in enumerate(ahead)]
                 with APP.MODEL['lock']:
                     APP.MODEL['req'] = None; APP.MODEL['busy'] = False
                     APP.MODEL['last'] = dict(id=rq_['id'], result=code_, text=APP.MODEL_TEXT.get(code_, '?'), at=time.strftime('%H:%M:%S'), seconds=round(time.time() - rq_['t'], 1))
                     APP.MODEL['history'].append(dict(APP.MODEL['last'], det=rq_['det'], frame=i))
                 if code_ == 0: APP.sel_save(det=APP.args.det)   # v36
+                if code_ == 0 and APP.LIVE is not None and getattr(APP.LIVE, 'replay', None) is not None:   # 11-13 (user): numbers start again with the new model
+                    from .camera import replay_link as rl_; rl_.restart_after_change('detector model %s' % rq_['det'])
                 if rq_['req'] is not None and APP.GB is not None: APP.gb_send('N %d %d' % (rq_['req'], code_))
                 if code_ == 5: raise RuntimeError('detector model could not be restored')
+            resident_det.frame_step(i)   # 11-15: makes / releases the other resident pair between two frames (only when LWIR_RESIDENT_DET=1 or resident_det=1)
             if APP.RULES['pending'] is not None and APP.tracker is not None:   # v24g: tracker preset / relabel switch between two frames
                 with APP.RULES['lock']: pd_ = APP.RULES['pending']; APP.RULES['pending'] = None
                 if 'relabel' in pd_: APP.RULES['relabel'] = pd_['relabel']
                 if 'predictor' in pd_: pos_select(pd_['predictor'])   # v32
-                if 'tracker' in pd_ and pd_['tracker'] != APP.RULES['tracker']:
+                if 'tracker' in pd_ and (pd_['tracker'] != APP.RULES['tracker'] or pd_.get('engine', APP.RULES.get('engine', 'auto')) != APP.RULES.get('engine', 'auto')):   # 11-13: an engine change (C++ / Python) on the same tracker also makes a new tracker
                     old_ = APP.RULES['tracker']; APP.RULES['tracker'] = pd_['tracker']
+                    if 'engine' in pd_: APP.RULES['engine'] = pd_['engine']
                     for k_, a_ in (('motion', 'rebinds_motion'), ('appearance', 'rebinds_app'), ('cand_frames', 'cand_frames'), ('cand_crops', 'cand_crops'), ('sync_frames', 'sync_frames'), ('sync_crops', 'sync_crops')):
                         reb_tot[k_] += getattr(APP.tracker, a_, 0)
                     if APP.relabeler is not None: APP.relabeler.reset()
@@ -618,7 +677,7 @@ def main():
                     APP.tracker = LostFirstTracker(budget, sim=APP.args.sim, gate=APP.args.gate, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h,
                                                radius=APP.args.radius, n_init=APP.args.n_init); lf_trackers.append(APP.tracker)
                 else:
-                    APP.tracker = Tracker(APP.args.tracker, sim=APP.args.sim, app=use_vit, late_window=APP.args.late_window, app_first=APP.args.app_first, gate=APP.args.gate,
+                    APP.tracker = ByteTrackTracker(APP.args.tracker, sim=APP.args.sim, app=use_vit, late_window=APP.args.late_window, app_first=APP.args.app_first, gate=APP.args.gate,
                                       motion_fallback=not APP.args.no_motion_fallback, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h, hybrid=True, sync_k=APP.args.sync_k,
                                       hybrid_fallback=bool(use_vit and APP.args.app_first and APP.args.hybrid_fallback), radius=APP.args.radius, n_init=APP.args.n_init,
                                       class_gate=APP.args.class_gate)
@@ -626,42 +685,50 @@ def main():
                     elif GATE_FN is not None:   # v11: the learned confirmation gate replaces 3FrameConfirm (GateTracker has its own confirm rule). v40: offline runs only
                         APP.tracker = GateTracker(gate=GATE_FN, thr_out=GATE_FN.thr_out, thr_low=GATE_FN.thr_low, n_init=APP.args.n_init, class_gate=APP.args.class_gate, radius=APP.args.radius); gate_trackers.append(APP.tracker)
                 if APP.args.gmc:   # --gmc: fresh camera-motion state per video
+                    previous_motion_frame = previous_motion_time = None
                     APP.tracker.kf = GKF()
                     if APP.args.gmc_thread: gmc = True
                     else: gmc_fail += gmc.n_fail if gmc is not None else 0; gmc = GMC(APP.args.gmc_ds); gmc.fp = dict(gmc.fp, maxCorners=APP.args.gmc_corners, minDistance=APP.args.gmc_mindist)
             async_vit = vit is not None and not budget                  # --vit-budget: every crop is synchronous inside / right after update()
             if APP.args.pipeline:
-                if ready_prefetch and not ahead:
+                if (ready_prefetch or replay_eval.lossless()) and not ahead:
                     # The last result was already published before we waited here.
                     g = APP.live_next(fresh_only=True)
                     if g is None:
                         break
-                    t0 = submit_tiles(g, i)
+                    sub_ = not e2e_live.skip_detector(); t0 = submit_tiles(g, i) if sub_ else time.perf_counter_ns()   # 11-14: no detector while the end-to-end model is on
                     gmc_submit(i, g)
                 else:
-                    g, t0 = ahead.pop(0)
-                ra = APP.a.wait(); rb = APP.b.wait() if APP.b is not None else None; t1 = time.perf_counter_ns()
+                    g, t0, sub_ = ahead.pop(0)
+                ra = APP.a.wait() if sub_ else None; rb = (APP.b.wait() if APP.b is not None else None) if sub_ else None; t1 = time.perf_counter_ns()
                 read_ms = 0.0
                 next_i = i + APP.args.npu_depth
                 if next_i < len(APP.images):
-                    if ready_prefetch:
+                    if ready_prefetch or replay_eval.lossless():
                         # An empty queue must never delay this result, including during replay transitions.
                         g_n = APP.live_next(wait=False, fresh_only=True)
                     else:
                         g_n, read_ms = read_frame(next_i)
                     if g_n is not None:
-                        ahead.append((g_n, submit_tiles(g_n, next_i)))
+                        sn_ = not e2e_live.skip_detector(); ahead.append((g_n, submit_tiles(g_n, next_i) if sn_ else time.perf_counter_ns(), sn_))
+                        if not sn_: e2e_live.prefetch(g_n)   # 11-15: the end-to-end AE of the read-ahead frame starts now
                         gmc_submit(next_i, g_n)
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                       # one sync per frame; the ViT job overlaps detection of i+1
-                t_nms0 = time.perf_counter_ns(); p = detect(ra, rb); t2 = time.perf_counter_ns(); t3 = t2
+                t_nms0 = time.perf_counter_ns(); p = detect(ra, rb) if sub_ else np.zeros((0, 6), np.float32); t2 = time.perf_counter_ns(); t3 = t2
             else:
                 g, _ = read_frame(i); read_ms = 0.0
-                t0 = submit_tiles(g, i)
+                if g is None:
+                    break
+                fd_ = APP.FEED is not None and not APP.FEED.direct   # 11-14: with the arrival feed the feeding thread decided (and already submitted or not)
+                sub_ = APP.FEED.cur_submitted() if fd_ else not e2e_live.skip_detector(); t0 = submit_tiles(g, i) if (sub_ or fd_) else time.perf_counter_ns()
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                          # sync point 1
-                ra = APP.a.wait(); rb = APP.b.wait() if APP.b is not None else None; t1 = time.perf_counter_ns(); t_nms0 = t1
-                p = detect(ra, rb); t2 = time.perf_counter_ns()
+                ra = APP.a.wait() if sub_ else None; rb = (APP.b.wait() if APP.b is not None else None) if sub_ else None; t1 = time.perf_counter_ns(); t_nms0 = t1
+                if fd_ and not sub_: APP.FEED.cur = None
+                p = detect(ra, rb) if sub_ else np.zeros((0, 6), np.float32); t2 = time.perf_counter_ns()
                 if async_vit: vw += vit_sync(g, prev_gray, i)                                                   # sync point 2
                 t3 = time.perf_counter_ns()
+            if APP.LIVE is not None and APP.LIVE.restart_stop:
+                break
             arr = p[np.isin(p[:, 5].astype(int), list(TARGET))].astype(np.float32)                        # frame coords
             zoom_flags = None; z_ms = (0.0, 0.0); n_zacc = 0
             if zoom_inflight is not None:   # v9: collect + merge THIS frame's zoom canvas (submitted at the end of the previous iteration) before the tracker
@@ -685,17 +752,38 @@ def main():
                     synth_st['frames_applied'] += 1; synth_st['hidden_dets'] += n_hid; synth_st['planned_boxes_without_det'] += n_miss
                 synth_ms = (time.perf_counter_ns() - ts_) / 1e6
             bench_ms = vit_bench(g, arr, i) if APP.bench_eng is not None else 0.0   # --vit-bench-n: after NMS, before tracker.update (excluded from tracker_ms)
+            frame_time = APP.LIVE.arr[0] if APP.LIVE is not None and APP.LIVE.arr else None
+            eval_pos = replay_eval.first_pass_position(frame_time) if frame_time is not None else None
+            if eval_pos == 0:
+                if APP.relabeler is not None:
+                    APP.relabeler.reset()
+                APP.tracker = mk_tracker_(APP.RULES['tracker'])
+                if e2e_live.E2E['eng'] is not None: e2e_live.E2E['eng'].reset()   # 11-14: a new recording pass: the end-to-end model forgets the last frame and its people too
+                if APP.args.gmc:
+                    previous_motion_frame = previous_motion_time = None
+                    APP.tracker.kf = GKF()
             gmc_ms = 0.0
+            APP.CTL['lead_motion'] = None
             if gmc is not None:   # --gmc: warp prev -> current, consumed by the next multi_predict (pool) and applied to unconfirmed tracks now
                 tg_ = time.perf_counter_ns()
-                if APP.args.gmc_thread: W_, c_ms_ = APP.gmc_futs.pop(i).result(); gmc_comp_ms.append(c_ms_)
-                else: W_ = gmc.apply(g)
-                APP.tracker.kf.warp = W_; APP.CTL['W'] = W_   # v40: prev -> current warp, read by lead_shift
+                if APP.args.gmc_thread: motion, c_ms_ = APP.gmc_futs.pop(i).result(); gmc_comp_ms.append(c_ms_)
+                else:
+                    if eval_pos == 0:
+                        gmc.prev = None
+                    motion = gmc.estimate(g)
+                W_ = motion.warp
+                APP.tracker.kf.warp = W_
+                if frame_time is not None:
+                    APP.CTL['lead_motion'] = motion.paired(previous_motion_frame, g, previous_motion_time, frame_time)
+                    if APP.CTL['lead_motion'] is not None:   # 11-15: the last frame pairs, for the gimbal search re-catch (live_tracks._motion)
+                        APP.CTL.setdefault("motion_hist", collections.deque(maxlen=32)).append(APP.CTL['lead_motion'])
+                previous_motion_frame, previous_motion_time = (g, frame_time) if frame_time is not None else (None, None)
                 for t_ in APP.tracker.tracked:
                     if not t_.is_activated and t_.mean is not None:
                         m_, c_ = gmc_warp(t_.mean[None].copy(), t_.cov[None], W_); t_.mean, t_.cov = m_[0], c_[0]
                 gmc_ms = (time.perf_counter_ns() - tg_) / 1e6
             stab_c_ = APP.LIVE.stabq[0] if APP.LIVE is not None and APP.LIVE.stabq else None; STAB_M[0] = stab_margins(stab_c_)   # stab: correction of frame i (same pairing as LIVE.rawq[0])
+            arr = detect_frame.drop_giant(arr, PERSON_CLS)   # 11-15 (device): person boxes over 3 picture heights are not people (far pose model on a blank picture)
             if APP.LIVE is not None and (settings.WARM_MIN > 0 or settings.WARM_MAX > 0) and len(arr) and APP.LIVE.rawq:   # v24f warmth veto: a person box must contain pixels as warm as a person (raw p95 >= WARM_MIN)
                 raw_i_ = APP.LIVE.rawq[0]; keep_ = np.ones(len(arr), bool)
                 if stab_c_ is not None: raw_i_ = stab_shift(raw_i_, stab_c_)   # stab: a box in stabilized coordinates reads the 16-bit pixels under it
@@ -706,18 +794,32 @@ def main():
                     p95_ = warm_p95(raw_i_[b_:d_:2, a_:c_:2])   # 11-12: was float(np.percentile(..., 95)); same value (src/track/warm_p95.py)
                     if p95_ < settings.WARM_MIN or (settings.WARM_MAX > 0 and p95_ > settings.WARM_MAX): keep_[k_] = False   # v33: range
                 if not keep_.all(): APP.LIVE.warm_dropped += int((~keep_).sum()); arr = arr[keep_]
+            if APP.LIVE is not None and spec_proposals.FUSE['on'] and len(arr) and APP.LIVE.rawq:   # 11-14 research (prop_fuse): weak person boxes the spatial spectrum calls a person get the new-track score
+                raw_s_ = APP.LIVE.rawq[0]
+                if stab_c_ is not None: raw_s_ = stab_shift(raw_s_, stab_c_)
+                try: arr = spec_proposals.fuse(arr, raw_s_, PERSON_CLS, 16.0)
+                except Exception as e_: print('FUSE failed', repr(e_)[:120], flush=True)
             if APP.LIVE is not None and APP.LIVE.arr and APP.tracker is not None:   # v26b: first frame after an input gap of over 1 s: no track is continued by position alone (the tracker counts frames, not seconds, so it would not notice the gap).
                 ta_ = APP.LIVE.arr[0]                                         # every track ends here; people get new tracks through the normal confirmation, and KeepID may give a returning person the old number by appearance only.
-                if APP.LIVE.upd_t is not None and ta_ - APP.LIVE.upd_t > 1.0:
+                if eval_pos is None and APP.LIVE.upd_t is not None and ta_ - APP.LIVE.upd_t > 1.0:
                     for t_ in APP.tracker.tracked + APP.tracker.lost: t_.state = REMOVED
                     print('LIVE input gap: %d tracks ended at frame %d' % (len(APP.tracker.tracked) + len(APP.tracker.lost), i), flush=True); APP.tracker.tracked = []; APP.tracker.lost = []
                 APP.LIVE.upd_t = ta_
                 if APP.CONFIRM is not None:   # 11-11 --confirm-ms: the tracker's confirmation count follows the measured frame rate (arrival times of the frames the tracker gets)
-                    ch_ = confirm_apply(APP.CONFIRM, APP.tracker, ta_)
+                    ch_ = confirm_apply(APP.CONFIRM, APP.tracker, ta_, fps=replay_eval.initial_fps() if eval_pos is not None else None)
                     if ch_: print('CONFIRM %g ms at %.1f fps: %d -> %d frames (frame %d)' % (APP.CONFIRM.ms, APP.CONFIRM.fps or 0.0, ch_[0], ch_[1], i), flush=True)
             if APP.TIMING is not None: APP.TIMING.mark()
             n_sync0 = len(sync_lat)
-            if budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association
+            if getattr(APP, 'dx', None) is not None and not APP.args.mock and resident_det.e2e_ready(): e2e_live.apply(APP.dx)   # 11-14: switch first, so this frame already follows the page. 11-15: made only once the other resident pair is gone (off is never held back)
+            own_ = e2e_live.skip_detector()
+            if own_ != e2e_prev:   # 11-14: empty tracker both ways: no ghost tracks / predicted boxes while it is on, a clean start after
+                e2e_prev = own_; POSP['boxes'] = []
+                if APP.relabeler is not None: APP.relabeler.reset()
+                if APP.tracker is not None and APP.LIVE is not None: APP.tracker = mk_tracker_(APP.RULES['tracker'])
+                print('E2E: server detector + tracker %s at frame %d' % ('skipped' if own_ else 'back on', i), flush=True)
+            if own_:   # 11-14: the end-to-end model (or the stored result) makes the rows; the server tracker is not run
+                tr_rows = []; t4 = time.perf_counter_ns(); vs = 0.0; POSP['boxes'] = []
+            elif budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association
                 lf_frame_ms[0] = 0.0
                 feat_fn = lambda idxs, g_=g, arr_=arr, f_=i: budget_embed(idxs, g_, arr_, f_)
                 feat_fn_prev = (lambda idxs, g_=prev_gray, arr_=prev_arr, f_=i: budget_embed(idxs, g_, arr_, f_)) if prev_gray is not None else None
@@ -727,7 +829,8 @@ def main():
                 feat_fn = (lambda idxs, g_=g, arr_=arr, f_=i: sync_embed(idxs, g_, arr_, f_)) if (vit is not None and APP.args.vit_sync and APP.args.app_first) else None
                 if GATE_FN is not None: APP.tracker.gray = g   # v11: the gate's local-contrast / texture features read the current gray frame
                 bs_feats = None   # v38: BoT-SORT appearance = RepVGG_(TMOT,CAMEL) (KeepID engine, NPU core 2) on the 4 highest-score people >= 32 px. v40: app = off | repvgg
-                if isinstance(APP.tracker, BotSortTracker) and APP.rl_eng is not None and len(arr) and APP.CTL['app'] == 'repvgg':
+                is_botsort = isinstance(APP.tracker, BotSortTracker) or (APP.LIVE is not None and APP.RULES['tracker'] == 'botsort')
+                if is_botsort and APP.rl_eng is not None and len(arr) and APP.CTL['app'] == 'repvgg':
                     bk_ = [int(j) for j in np.argsort(-arr[:, 4]) if int(arr[j, 5]) == PERSON_CLS and arr[j, 4] >= 0.25 and arr[j, 3] - arr[j, 1] >= 32.0][:4]
                     try:
                         if bk_: bs_feats = APP.rl_embed(bk_, g, {j: arr[j, :4].tolist() for j in bk_})
@@ -735,14 +838,25 @@ def main():
                         bs_feats = None; print('BOTSORT embed failed', repr(e_)[:120], flush=True)
                 tr_rows = APP.tracker.update(arr, bs_feats, feat_fn); t4 = time.perf_counter_ns()
                 vs = sync_lat[-1] if len(sync_lat) > n_sync0 else 0.0
+            if getattr(APP, 'dx', None) is not None and not APP.args.mock:   # 11-14 (user): live end-to-end FastTrackTr replaces the tracker rows when chosen on the page
+                er_ = e2e_live.step(g)
+                if er_ is not None: tr_rows = er_
             base_rows = tr_rows; rl_ms = 0.0
-            if APP.relabeler is not None and APP.RULES['relabel']:   # --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
+            click_relabel_namespace = None
+            click_raw_to_public = None
+            click_raw_ids = (tuple(int(r[4]) for r in base_rows if int(r[6]) == PERSON_CLS)
+                             if APP.LIVE is not None else ())
+            if APP.relabeler is not None and APP.RULES['relabel'] and not e2e_live.skip_detector():   # 11-14: not with the end-to-end model (its own numbers). --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
                 mamba_kw_ = dict(warp=W_, ts_ns=None if APP.args.live_port else (i + 1) * 33333333) if APP.args.mamba else {}
                 tr_rows = APP.relabeler.step(tr_rows, P_, lambda ks, g_=g, b_=P_: APP.rl_embed(ks, g_, b_), frame=Path(im['file_name']).name,
                                          embed_async=(lambda ks, g_=g, b_=P_: APP.rl_async.submit(ks, g_, b_)) if APP.rl_async is not None else None, **mamba_kw_)
                 rl_ms = (time.perf_counter_ns() - tr0_) / 1e6
+                if APP.LIVE is not None:
+                    click_relabel_namespace = getattr(APP.relabeler, 'id_map', None)
+                    click_raw_to_public = ({raw: click_relabel_namespace.get(raw) for raw in click_raw_ids}
+                                           if click_relabel_namespace is not None else {})
             zc_ms = 0.0; n_zc = 0; n_zw = 0
             if zoom_eng is not None and ahead and i + 1 < len(APP.images) and APP.images[i + 1]['extra_info']['video_id'] == vid:
                 # v9: candidates of THIS frame (jo480 = its decoded pre-NMS tiles, still intact until detect(i+1)) -> windows cut from the NEXT frame's gray
@@ -786,40 +900,55 @@ def main():
                 t_prev_emit = t5
             APP.rows.append(row)
             pc = p.copy(); pc[:, 1] += 64.0 - APP.FRAME_DY[0]; pc[:, 3] += 64.0 - APP.FRAME_DY[0]
-            APP.preds.append(dict(image_id=row['image_id'], xyxy=np.round(pc[:, :4], 2).tolist(), conf=np.round(pc[:, 4], 5).tolist(), cls=pc[:, 5].astype(int).tolist()))
+            xyxy_, conf_, cls_ = frame_records.pred_arrays(pc)   # 11-13: arrays, turned into the old lists only when the file is written
+            APP.preds.append(dict(image_id=row['image_id'], xyxy=xyxy_, conf=conf_, cls=cls_))
             if zoom_eng is not None: APP.preds[-1]['zoom'] = zoom_flags if zoom_flags is not None else [0] * len(p)   # v9: 1 = zoom re-detection (appended rows)
             APP.tracks_out.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
-                                   tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (APP.FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in tr_rows]))
+                                   tracks_xyxy_id_conf_class_detectionindex=frame_records.track_array(tr_rows, APP.FRAME_DY[0])))
             if APP.relabeler is not None:
                 APP.tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
-                                        tracks_xyxy_id_conf_class_detectionindex=[[round(float(v) - (APP.FRAME_DY[0] if j_ in (1, 3) else 0.0), 2) for j_, v in enumerate(r[:4])] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in base_rows]))
-            if APP.LIVE is not None: live_publish(g, tr_rows, row)
+                                        tracks_xyxy_id_conf_class_detectionindex=frame_records.track_array(base_rows, APP.FRAME_DY[0])))
+            if APP.LIVE is not None:
+                live_publish(g, tr_rows, row, detections=p, tracker_detections=arr,
+                             click_raw_ids=click_raw_ids, click_raw_to_public=click_raw_to_public,
+                             click_namespace=click_relabel_namespace)
             if APP.TIMING is not None: APP.TIMING.frame(i, t0, t1, t2, t4, rl_ms, t5)
             prev_gray = g
             if budget: prev_arr = arr
             if i % 50 == 0 and not APP.args.mock:
+                td_ = stall_diag.mark()   # None unless LWIR_STALL_DIAG=1
                 s_ = APP.dx.DeviceStatus.get_current_status(0); util.append(dict(frame=i, core_util=[s_.get_core_utilization(k) for k in range(3)], mem=s_.get_memory_used()))
+                frame_feed.feed_auto.npu_note(s_)   # 11-16: NPU clock and temperature from the same answer, for /rules npu_feed.auto.npu (never raises)
+                stall_diag.span(td_, 'NPU status query (DeviceStatus, every 50 frames)')
+            if stall_diag.ON: stall_diag.loop_frame(row, t5)
             if (i + 1) % 500 == 0: print('FRAMES', i + 1, round(time.monotonic() - t_start, 1), 'vit delivered', delivered, flush=True)
+        if APP.LIVE is not None and APP.LIVE.restart_pending:
+            for a_ in ahead:
+                if not a_[2]: continue
+                APP.a.wait()
+                if APP.b is not None:
+                    APP.b.wait()
         if APP.FEED is not None: APP.FEED.close()
+        resident_det.close()   # 11-15: the other resident pair (after the feed has taken its last frames)
         if APP.TIMING is not None: APP.TIMING.close()
         if APP.LIVE is not None: live_close()
         if vit is not None and inflight is not None: vit_sync(None, None, len(APP.images))
         if APP.relabeler is not None: APP.relabeler.reset()          # v7: drains an asynchronous refresh still in flight
         if APP.gmc_pool is not None: APP.gmc_pool.shutdown(wait=True)
         with (APP.out / 'TRACKS.jsonl').open('w', encoding='utf-8', newline='\n') as fh:
-            for r in APP.tracks_out: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
+            for r in APP.tracks_out: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
         with (APP.out / ({'rt480': 'PRED_NEWMRT480.jsonl', 'w480': 'PRED_NEWMRW480.jsonl', 's640': 'PRED_S640.jsonl', 'm640': 'PRED_M640.jsonl', 's6': 'PRED_S6.jsonl', 's480': 'PRED_S480.jsonl', 'ft1': 'PRED_FT1.jsonl', 'ft9': 'PRED_FT9.jsonl'}.get(APP.args.det, 'PRED_DRT512.jsonl'))).open('w', encoding='utf-8', newline='\n') as fh:
-            for r in APP.preds: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
+            for r in APP.preds: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
         (APP.out / 'RAW_TIMINGS.json').write_text(json.dumps(APP.rows)); (APP.out / 'UTIL_SAMPLES.json').write_text(json.dumps(util)); (APP.out / 'REBIND_LOG.json').write_text(json.dumps(rebind_log))
         if APP.relabeler is not None:
             with (APP.out / 'TRACKS_BASE.jsonl').open('w', encoding='utf-8', newline='\n') as fh:
-                for r in APP.tracks_base: fh.write(json.dumps(r, separators=(',', ':')) + '\n')
+                for r in APP.tracks_base: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
             (APP.out / 'RELABEL_LOG.json').write_text(json.dumps(APP.relabeler.events))
         summ = result_summary.summ
         secs = time.monotonic() - t_start
         if APP.tracker is not None:
             for k_, a_ in (('motion', 'rebinds_motion'), ('appearance', 'rebinds_app'), ('cand_frames', 'cand_frames'), ('cand_crops', 'cand_crops'), ('sync_frames', 'sync_frames'), ('sync_crops', 'sync_crops')):
-                reb_tot[k_] += getattr(APP.tracker, a_)
+                reb_tot[k_] += getattr(APP.tracker, a_, 0)   # 11-15: the native OC-SORT tracker has no cand_frames; without the default every exit (also a page restart) ended with status 1
         res = dict(status='DONE', mode=tag, det=APP.args.det, det_models=APP.det_names, pipeline=APP.args.pipeline, tracker=APP.args.tracker, vit_model=(APP.args.vit if use_vit else None), vit_every=APP.args.vit_every, k=APP.args.k, sim=APP.args.sim,
                    app_first=APP.args.app_first, vit_sync=APP.args.vit_sync, sync_k=APP.args.sync_k, hybrid_fallback=APP.args.hybrid_fallback, frames=len(APP.rows), mock=APP.args.mock,
                    period_ms=summ('period_ms'), latency_ms=summ('latency_ms'), det_wait_ms=summ('pre_model_ms'), nms_ms=summ('nms_ms'), read_ms=summ('read_ms'),
@@ -942,6 +1071,14 @@ def main():
         if zoom_eng is not None: print(json.dumps({'zoom': {k: res['zoom'][k] for k in ('candidates', 'windows', 'windows_skipped', 'canvases', 'raw_canvas_boxes', 'accepted', 'fates', 'canvas_ms', 'wait_ms', 'merge_ms', 'npu_ms_per_canvas')}}), flush=True)
     except BaseException:
         failed = True
+        if APP.FEED is not None:
+            try:
+                APP.FEED.close()
+            except Exception as exc:
+                print('FEED cleanup failed: %r' % exc, flush=True)
+            resident_det.close()   # 11-15
+        worker_ = getattr(APP.LIVE, 'preview_worker', None)
+        if worker_ is not None: worker_.close()
         for e_ in list(APP.eng.values()):
             while getattr(e_, 'q', None):
                 try: e_.b.wait(e_.q.pop(0)[0])
@@ -953,3 +1090,6 @@ def main():
     finally:
         if not failed and not APP.pending:
             for e in list(APP.eng.values()) + ([vit] if (use_vit and 'vit' in dir()) and vit is not None else []) + ([APP.bench_eng] if APP.bench_eng is not None else []) + ([APP.rl_eng] if APP.rl_eng is not None else []) + ([APP.rl_async] if APP.rl_async is not None else []) + ([zoom_eng] if zoom_eng is not None else []): e.b.dispose()
+
+    if APP.LIVE is not None and APP.LIVE.restart_pending:
+        return system_buttons.RESTART_REQUESTED

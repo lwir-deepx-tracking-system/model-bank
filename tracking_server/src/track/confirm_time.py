@@ -9,7 +9,7 @@
 - 경계에서 3 장과 4 장 사이를 오가지 않도록 여유(MARGIN)를 둔다: 장 수는 x = ms x fps / 1000 이 지금 값에서 0.5 + MARGIN 넘게 벗어나야 바뀐다.
 - 추적기마다 원래 장 수(--n-init 로 받은 값)보다 작아지지는 않는다(frames_for). 느려졌다고 확인을 느슨하게 하지 않기 위해서다.
 - 시작할 때는 NOMINAL_FPS(카메라 25 fps 모드) 기준의 장 수로 시작한다.
-- ms = 0 은 끔: 추적기는 원래 장 수(--n-init)로 돌아간다. 실행 중에 set_ms 로 바꿀 수 있다(화면의 Filter 값, /rules/set?confirm_ms=).
+- ms = 0 은 끔: 추적기는 원래 장 수(--n-init)로 돌아간다. 실행 중에 set_ms 로 바꿀 수 있다(화면의 새 ID 확인 시간, /rules/set?confirm_ms=).
 """
 import statistics
 from collections import deque
@@ -56,10 +56,10 @@ class ConfirmByTime:
         return dict(ms=self.ms, frames=(self.frames_for(base) if base is not None else (self.n or None)), fps=(round(self.fps, 1) if self.fps else None), changes=self.changes)
 
 
-def apply(rule, tracker, t):
+def apply(rule, tracker, t, *, fps=None):
     """매 프레임, 추적기 update 전에 부른다. 추적기의 n_init 을 지금 장 수로 맞추고, 바뀌었으면 (이전, 새 값) 을 돌려준다(아니면 None).
     이미 화면에 나온 궤적은 그대로다. 아직 확인 전인 궤적만 새 장 수를 따른다."""
-    n = rule.tick(t)
+    n = rule.tick(t) if fps is None else int(rule.ms * fps / 1000.0 + 0.5)
     if not hasattr(tracker, 'n_init_base'): tracker.n_init_base = int(tracker.n_init)
     want = max(tracker.n_init_base, n)
     if want == tracker.n_init: return None

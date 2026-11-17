@@ -1,6 +1,7 @@
 // v27 copy of team/include/control/gimbal_command_executor.hpp: changed only where marked "v27" (motion smoothing, gimbal_bridge_v27). See ../../../V27_CHANGES.md.
 #pragma once
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <future>
@@ -18,6 +19,7 @@ struct ControlSnapshot {
     bool moving = false;
     bool error = false;
     std::uint32_t selected_id = 0;
+    int search = 0; // v27: 0 none, 1 grace, 2 follow-through, 3 sweep, 4 done (holding); 5 = following the server's SEEK box (--seek 1)
     std::uint64_t command_generation = 0;
     double pan_estimate = 50.0;
     double tilt_estimate = 50.0;
@@ -35,7 +37,18 @@ class GimbalCommandExecutor {
     std::mutex mutex_;
     std::condition_variable wake_;
     std::deque<std::packaged_task<void()>> requests_;
-    TrackingResultPtr pending_;
+    struct Observation {
+        TrackingResultPtr result;
+        Clock::time_point received{};
+        bool healthy_live = false;
+    };
+    Observation pending_;
+    bool pending_unsafe_ = false, pending_brake_reset_ = false;
+    // The publisher must preserve explicit target loss through latest-slot replacement.
+    std::atomic<std::uint32_t> published_brake_target_{0};
+    // Publication order is checked before the latest-only slot can discard a sample.
+    std::uint64_t published_model_ = 0, published_tracker_ = 0, published_frame_ = 0;
+    Clock::time_point published_capture_{};
     bool closing_ = false;
     std::thread worker_;
 
@@ -43,23 +56,58 @@ class GimbalCommandExecutor {
     ControlSnapshot state_;
     GimbalPositionEstimate position_estimate_;
     TrackingResultPtr latest_;
+    bool latest_healthy_ = false;
+    Clock::time_point last_observed_capture_{}, grace_deadline_{};
+    Clock::duration observation_cadence_{};
     std::uint64_t model_generation_ = 0, last_frame_id_ = 0;
+    std::uint64_t lead_after_frame_ = 0; // A fresh selection cannot reuse the previous selection's forecast.
     std::uint64_t tracker_epoch_ = 0;
     bool connected_ = false;
     bool stopped_ = false;
     Clock::time_point ping_{}, lost_since_{}, last_output_{}, next_auto_{};
     int x_ = 0, y_ = 0, sent_speed_ = 0;
     double limited_speed_ = 0;
+    bool arrived_ = false;   // v27 arrival control: ingest() took in a new frame during this worker wake
     bool hold_x_ = false, hold_y_ = false;   // v27: axis halted by a per-axis reversal, waiting to rejoin
     Clock::time_point hold_x_since_{}, hold_y_since_{};
+    struct PredictiveBrake {
+        FrameMetadata previous{};
+        int width = 0;
+        double position = 0;
+        double closing_speed = 0;
+        int used_direction = 0;
+        Clock::time_point hold_since{};
+    } brake_;
+    // v27 search when lost (SmoothingConfig::search). Worker-owned.
+    struct Search {
+        enum Phase { None, Grace, Follow, Sweep, Done } phase = None;
+        Clock::time_point lost_at{}, last_step{}, follow_since{};
+        int dir_x = 0, follow_speed = 0, side = 1, leg = 0, tilt_dir = 1;
+        double pan = 0, tilt = 0;      // estimated picture px from the pose at the loss (+ right, + up)
+        bool blind = false;
+    } search_;
+    int follow_x_ = 0, follow_speed_ = 0;   // last following output while the target was seen
+    double follow_error_x_ = 0;            // last observed horizontal error (+ right)
+    double follow_vx_ = 0;                 // last predictive-control velocity of the target (VEL), picture px/s
+    Clock::time_point follow_v_at_{};
+    // v27 coast (SmoothingConfig::coast). Worker-owned.
+    Track coast_track_{};
+    bool coasting_ = false, coasted_ = false;   // following the PRED box now / during this loss
+    const Track* coast_target(Clock::time_point now);
+    bool seeking_ = false;   // v27 seek (SmoothingConfig::seek): coast_track_ is the server's SEEK box now
+    const Track* seek_target(Clock::time_point now);
 
     void run();
-    void ingest(TrackingResultPtr);
-    void tick();
+    void search_step(Clock::time_point now);
+    bool searching() const { return search_.phase == Search::Follow || search_.phase == Search::Sweep; }
+    bool ingest(Observation);
+    void mark_lost(Clock::time_point now);
+    void tick(bool arrival = false);   // v27: arrival = called for a newly taken-in frame (SmoothingConfig::arrival_control)
+    bool apply_predictive_brake(const Track&, const GimbalDemand&, const TrackLead&);
     bool alive() const;
     bool ready() const;
     bool fresh() const;
-    const Track* target(std::uint32_t) const;
+    const Track* target(std::uint32_t, bool* present = nullptr) const;
     void invalidate(const char* reason);
     void stop(const char* reason);
     void failure(const std::exception&);
@@ -82,7 +130,8 @@ public:
     ~GimbalCommandExecutor();
     GimbalCommandExecutor(const GimbalCommandExecutor&) = delete;
     GimbalCommandExecutor& operator=(const GimbalCommandExecutor&) = delete;
-    void publish(TrackingResultPtr); // bounded latest-result mailbox
+    void publish(TrackingResultPtr, bool healthy_live = false); // bounded latest-result mailbox
+    void publish_unsafe_observation(); // malformed input without a usable frame
     void connected();
     void disconnected();
     void ping();

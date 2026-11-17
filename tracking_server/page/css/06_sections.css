@@ -14,6 +14,7 @@ select,input,textarea{width:100%;background:var(--field);color:var(--ink);border
 select:focus,input:focus,textarea:focus{outline:none;border-color:var(--acc)}
 textarea{resize:vertical;min-height:34px}
 .stack{display:flex;flex-direction:column;gap:7px}
+#bt-confirm[hidden]{display:none}
 .chk{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink);white-space:nowrap;cursor:pointer}
 .chk input{width:auto;margin:0;accent-color:var(--acc)}
 .minfo{margin:8px 0 0;font-size:12.5px;color:var(--mut);min-height:18px}
@@ -50,13 +51,14 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .rpev{margin-top:2px;border-top:1px solid var(--line);padding-top:8px}.rpev table{margin:4px 0 8px}.rpev th{text-align:right}.rpev tr.fp td{color:var(--warn);font-weight:700;font-size:14px}.rpev td.sub{padding-left:14px;color:var(--mut)}.rpev .rtitle{margin:0}
 /* 11-12: seek bar and comparison numbers under the picture (chips that wrap, no table) */
 .rpbar[hidden],.rpseek[hidden],.rpnum[hidden]{display:none}
-.rpbar{margin-top:6px;display:flex;flex-direction:column;gap:6px}
-.rpseek{border:1px solid var(--line);border-radius:var(--r);background:var(--pan);padding:6px 8px;display:flex;flex-direction:column;gap:5px}
+.rpbar{margin-top:8px;display:flex;flex-direction:column;gap:8px}
+.rpseek{margin-top:6px;border:1px solid var(--line);border-radius:var(--r);background:var(--pan);padding:6px 8px;display:flex;flex-direction:column;gap:5px}
 .rpr{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
 .rpr .btn.small{padding:5px 9px}
 .rpr input[type=range]{flex:1 1 140px;min-width:0;width:auto;padding:0;height:26px;accent-color:var(--acc);background:transparent;border:0}
 .rpt{justify-content:space-between;font-size:12.5px;color:var(--ink2)}
 .rpj{display:flex;align-items:center;gap:6px;color:var(--mut);font-size:12px}.rpj input{width:84px}
+.rpreturn-row{color:var(--mut);font-size:12px}
 .rpcm{margin:0;min-height:0;font-size:12px}.rpcm:empty{display:none}
 .rpnum{border:1px solid var(--line);border-radius:var(--r);background:var(--pan);padding:6px 8px}
 .rphd{display:flex;justify-content:space-between;align-items:center;gap:8px;font-size:12.5px;color:var(--ink2)}.rphd b{font-weight:700;color:var(--ink)}.rphd .btn.small{padding:3px 8px;font-size:12px}
@@ -66,4 +68,37 @@ kbd{border:1px solid var(--line2);border-bottom-width:2px;border-radius:var(--r)
 .rpc.fp{border-color:var(--warn);font-size:15px;padding:3px 9px}.rpc.fp b{color:var(--warn);font-size:19px}.rpc.fp.zero b{color:var(--ink)}.rpc.fp.zero{border-color:var(--line2)}
 .rpold{margin-top:6px;font-size:11.5px;color:var(--mut)}.rpold b{color:var(--ink2);font-weight:600}
 .rpfoot{margin-top:4px;font-size:11.5px;color:var(--mut)}
+.rpids{margin-top:5px;padding-top:5px;border-top:1px solid var(--line);font-size:12px;line-height:1.55;color:var(--ink2);overflow-wrap:anywhere}
+.rpids:empty{display:none}.rpids b{color:var(--ink);font-weight:700}
 @media(max-width:560px){.rpc{font-size:12px;padding:2px 6px}.rpc.fp b{font-size:17px}.rpj input{width:70px}}
+/* 11-13 (design review): picture chip instead of the burned-in text bar */
+.vchip{position:absolute;left:8px;top:8px;z-index:2;pointer-events:none;background:rgba(10,10,10,.62);color:#eee;font-size:12.5px;line-height:1.3;padding:3px 10px;border-radius:999px;max-width:calc(100% - 16px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.vchip[hidden]{display:none}.vchip.replay{box-shadow:inset 3px 0 0 var(--acc)}
+.vchip.vage{top:36px;font-size:12px}
+.vdraw{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:1}   /* 11-15: boxes drawn by the page for '사진 먼저' (picture_first.js) */   /* 11-15: this screen's delay and fps, under the picture chip (picture_stream.js) */
+/* 11-13 (design review): replay score = three big numbers, the rest behind 'more' */
+.rpbig{display:inline-flex;flex-direction:column;gap:1px;min-width:118px;padding:6px 12px;border:1px solid var(--line2);border-radius:6px;background:var(--field)}
+.rpbig small{font-size:12px;color:var(--ink2)}.rpbig b{font-size:22px;line-height:1.15;color:var(--ink);font-variant-numeric:tabular-nums}.rpbig i{font-style:normal;font-size:12px;color:var(--mut)}.rpbig.fp b{color:var(--warn)}.rpbig.fp.zero b{color:var(--ink)}
+.rpmorebtn{align-self:center;background:none;border:1px solid var(--line2);border-radius:999px;color:var(--ink2);font-size:12px;padding:3px 10px;cursor:pointer}
+.rpmain .rpx{display:none;align-self:center}.rpmain.more .rpx{display:inline-flex}
+/* 11-13 (design review, pass 2) */
+body:not(.adv) .adv-only{display:none!important}
+.advsec>summary{color:var(--ink2)}.advbody>details.sec{margin:0 -2px;border-radius:var(--r)}.advfeed{margin:0}
+.cardt{font-size:12px;color:var(--ink2);margin-bottom:4px;display:block}
+.quick{display:flex;flex-direction:column;gap:8px}.qrow{display:flex;flex-direction:column;gap:2px}.qrow select{width:100%}
+.vfol{position:absolute;left:10px;right:10px;bottom:16px;z-index:2;display:flex;align-items:center;gap:8px;pointer-events:none}
+.vfol>*{pointer-events:auto}.vhint{background:rgba(10,10,10,.62);color:#eee;font-size:12.5px;padding:4px 10px;border-radius:999px}
+.vhint[hidden]{display:none}.vstop{margin-left:auto;background:var(--stop);border-color:var(--stop);color:#fff;font-weight:700;padding:7px 14px}
+.vstop kbd{margin-left:4px;font-size:11px;opacity:.85}body.replay-mode .vfol{display:none}
+.chip[hidden]{display:none}.vstop.btn{flex:none;width:auto}
+/* 11-13 (pass 4): camera-not-answering note and follow notes over the picture */
+.vdead{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;max-width:86%;text-align:center;background:rgba(20,20,20,.86);border:1px solid var(--bad);border-radius:10px;padding:14px 18px;pointer-events:none}
+.vdead[hidden]{display:none}.vdead b{font-size:19px;color:#fff}.vdead span{font-size:13.5px;color:#ddd;line-height:1.5}.vdead.wait{border-color:var(--warn)}
+.vtoast{position:absolute;left:50%;top:10px;transform:translateX(-50%);z-index:3;background:rgba(20,20,20,.82);color:#fff;font-size:14px;font-weight:700;padding:6px 14px;border-radius:999px;border:1px solid var(--acc);pointer-events:none;white-space:nowrap}
+.vtoast[hidden]{display:none}.vtoast.lost{border-color:var(--warn)}body.replay-mode .vtoast,body.replay-mode .vdead{display:none}
+/* 11-13 (design review 3): the picture chip at the top right (top left covered box numbers); replay status line below the section titles */
+.vchip{left:auto;right:16px;max-width:calc(100% - 32px)}.vchip.replay{box-shadow:inset -3px 0 0 var(--acc)}
+#rpstatus{font-size:13px;font-weight:600;color:var(--ink2)}
+/* 11-16 (design review 14): the ID-change list under the replay picture is folded; replay buttons big enough for a finger on phones */
+.rpidsbtn{font:inherit;font-size:12.5px;font-weight:700;color:var(--ink);background:none;border:0;padding:2px 0;cursor:pointer}
+@media(max-width:900px){.rpr .btn.small,.rpidsbtn,.rpmorebtn{min-height:44px}.rpidsbtn{display:block;width:100%;text-align:left}}

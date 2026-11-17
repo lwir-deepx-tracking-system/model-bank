@@ -3,10 +3,13 @@
   python3 analyze_v27.py stage1 <folder>   speed map of the gimbal            -> STAGE1_TABLE_KO.md, STAGE1_RESULT.json   (input of make_plan_v27.py stage2)
   python3 analyze_v27.py stage2 <folder>   PD candidates at speed cap 100     -> STAGE2_TABLE_KO.md, STAGE2_CHOICE.json   (input of make_plan_v27.py stage3)
   python3 analyze_v27.py stage3 <folder>   gimbal_bridge_v25 against v27      -> STAGE3_TABLE_KO.md, STAGE3_ANALYSIS.json
-Every rule is fixed before any run in PLAN_V27_HILS_20261111_KO.md. Values per tracking block (phase 'run', first seconds left out, blocks that ran to the end):
+Base rules are from PLAN_V27_HILS_20261111_KO.md. The 2026-11-12 correction adds full-run loss-time guards;
+reanalysis must be stored separately and must not be described as the original preregistered score.
+Values per tracking block (phase 'run', first seconds left out for observed errors):
   A  mean |dx|: the real (not shifted) virtual person's distance from the picture centre, left-right, px
   B  shake: standard deviation of dx after its 1 s moving average is removed, px (the measure of analyze_hil2_extra.py, 2026-11-11)
-  C  lost ratio: share of samples in which the bridge reports the person as lost or the person is outside the picture; a block that ended as "person lost" counts as 1
+  C  lost sample ratio: includes missing coordinates, invisible observations and bridge loss after the stage's warm-up
+  Lost time: over the whole recorded run, between the first and last frame timestamps, excluding neither warm-up nor missing coordinates
   starts / stops / reversals per minute: from the commands that reached the gimbal line (serial.jsonl), reference only"""
 import csv, json, math, os, sys
 import numpy as np
@@ -38,13 +41,100 @@ def load(D):
     return rows, blocks, cmds, es, plan
 
 
+def finite_number(value):
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def observed_error(row):
+    x, y = finite_number(row.get('ximg')), finite_number(row.get('yimg'))
+    visible = finite_number(row.get('vis'))
+    if x is None or y is None or visible is None or visible <= 0:
+        return None
+    return x - 320.0, y - 240.0
+
+
+def loss_intervals(ns, lost):
+    """Assign each measured interval to its first sample; never extend the endpoints."""
+    total = longest = current = 0
+    for a, b, missing in zip(ns, ns[1:], lost):
+        current = current + b - a if missing else 0
+        if missing:
+            total += b - a
+            longest = max(longest, current)
+    return total, longest
+
+
+def observed_shake(errors, ns):
+    """Use the existing one-second filter only on uninterrupted observations."""
+    k = max(3, int(round(1e9 / np.median(np.diff(ns))))) | 1
+    residuals = []
+    start = 0
+    for i, error in enumerate([*errors, None]):
+        if error is not None:
+            continue
+        if i - start >= k:
+            x = np.array([e[0] for e in errors[start:i]])
+            residuals.extend(x - smooth(x, k))
+        start = i + 1
+    return (round(float(np.std(residuals)), 2) if len(residuals) >= 10 else None, len(residuals))
+
+
 def block_values(name, rows, cmds, skip):
-    rr = [r for r in rows if r['name'] == name and r['phase'] == 'run' and float(r['t']) >= skip and r['ximg'] != '']
-    if len(rr) < 10: return None
-    t = np.array([float(r['t']) for r in rr]); dx = np.array([float(r['ximg']) - 320.0 for r in rr]); ns = [int(r['ns']) for r in rr]
-    sx = np.array([float(r['sx']) for r in rr]); dur = float(t[-1] - t[0])
-    k = max(3, int(round(1.0 / np.median(np.diff(t))))) | 1
-    with np.errstate(all='ignore'): vx = np.nan_to_num(np.gradient(smooth(sx, 5), t), nan=0.0, posinf=0.0, neginf=0.0)   # equal time stamps (PC dry run) must not break the reference value
+    run = [r for r in rows if r['name'] == name and r['phase'] == 'run']
+    errors = [observed_error(r) for r in run]
+    lost = [error is None or r.get('lost', '') not in ('0', '', '0.0') for r, error in zip(run, errors)]
+    values = dict(n_run=len(run), n_observed=sum(e is not None for e in errors), n_lost=sum(lost),
+                  run_start_ns=None, run_end_ns=None, attempt_time_s=None, lost_time_s=None,
+                  lost_time_ratio=None, longest_lost_s=None, n=0, n_scored=0, n_lost_scored=0,
+                  n_shake=0, C_lost=None, A_mean_abs_dx=None, B_shake=None,
+                  median_abs_dx=None, median_abs_dy=None, p95_abs_dx=None, p95_abs_dy=None,
+                  max_abs_dx=None, invalid_reason=None)
+    try:
+        ns = [int(r.get('ns')) for r in run]
+    except (TypeError, ValueError):
+        ns = []
+    if len(ns) < 2 or ns[0] < 0 or any(a >= b for a, b in zip(ns, ns[1:])):
+        return dict(values, invalid_reason='타임스탬프가 없거나 순서가 맞지 않음')
+    total_ns = ns[-1] - ns[0]
+    missing_ns, longest_ns = loss_intervals(ns, lost)
+    values.update(run_start_ns=ns[0], run_end_ns=ns[-1], attempt_time_s=total_ns / 1e9,
+                  lost_time_s=missing_ns / 1e9, lost_time_ratio=missing_ns / total_ns,
+                  longest_lost_s=longest_ns / 1e9)
+
+    relative_times = [finite_number(r.get('t')) for r in run]
+    if any(t is None for t in relative_times) or any(a > b for a, b in zip(relative_times, relative_times[1:])):
+        return dict(values, invalid_reason='채점 구간의 상대 시간이 없거나 순서가 맞지 않음')
+    first = next((i for i, t in enumerate(relative_times) if t >= skip), len(run))
+    rr, ns, errors, lost = run[first:], ns[first:], errors[first:], lost[first:]
+    coordinates = [error for error in errors if error is not None]
+    values.update(n=len(coordinates), n_scored=len(rr), n_lost_scored=sum(lost),
+                  C_lost=sum(lost) / len(rr) if rr else None)
+    if len(coordinates) >= 2:
+        dx, dy = np.abs(np.array(coordinates)).T
+        values.update(A_mean_abs_dx=round(float(dx.mean()), 2),
+                      median_abs_dx=round(float(np.median(dx)), 2),
+                      median_abs_dy=round(float(np.median(dy)), 2),
+                      p95_abs_dx=round(float(np.percentile(dx, 95)), 2),
+                      p95_abs_dy=round(float(np.percentile(dy, 95)), 2),
+                      max_abs_dx=round(float(dx.max()), 2))
+    if len(rr) < 2 or len(coordinates) < 10:
+        return dict(values, invalid_reason='채점 구간의 관측 표본 부족')
+    values['B_shake'], values['n_shake'] = observed_shake(errors, ns)
+    if values['B_shake'] is None:
+        return dict(values, invalid_reason='흔들림을 계산할 연속 관측 부족')
+    t = np.array([(stamp - ns[0]) / 1e9 for stamp in ns])
+    dur = float(t[-1])
+    sx = [finite_number(r.get('sx')) for r in rr]
+    if len(rr) >= 5 and all(v is not None for v in sx):
+        k = max(3, int(round(1 / np.median(np.diff(t))))) | 1
+        vx = np.gradient(smooth(np.array(sx), 5), t)
+        cam_judder = round(float(np.std(vx - smooth(vx, k))), 2) if k <= len(vx) else None
+    else:
+        cam_judder = None
     # commands that reached the gimbal line inside the block; state at the block start = last such command before it
     before = [c for n, c in cmds if n < ns[0]]; seq = [(ns[0], before[-1] if before else {'T': 135})] + [(n, c) for n, c in cmds if ns[0] <= n <= ns[-1]]
     starts = stops = rev_x = rev_y = moves = 0; on_prev = None; dir_x = dir_y = 0; move_s = 0.0; spd_max = 0
@@ -62,14 +152,13 @@ def block_values(name, rows, cmds, skip):
         if i > 0 and on and on_prev is False: starts += 1
         if i > 0 and not on and on_prev is True: stops += 1
         on_prev = on
-    lost = [(r['lost'] not in ('0', '', '0.0')) or r['vis'] in ('0', '') for r in rr]
-    return dict(n=len(rr), dur=round(dur, 2), fps=round(len(rr) / max(dur, 1e-6), 1), A_mean_abs_dx=round(float(np.abs(dx).mean()), 2),
-                B_shake=round(float(np.std(dx - smooth(dx, k))), 2), C_lost=round(float(np.mean(lost)), 4),
-                p95_abs_dx=round(float(np.percentile(np.abs(dx), 95)), 1), max_abs_dx=round(float(np.abs(dx).max()), 1),
+    responses = [v for r in rr if (v := finite_number(r.get('resp'))) is not None]
+    sy = [v for r in rr if (v := finite_number(r.get('sy'))) is not None]
+    return dict(values, dur=round(dur, 2), fps=round((len(rr) - 1) / dur, 1),
                 starts_per_min=round(60 * starts / dur, 1), stops_per_min=round(60 * stops / dur, 1), reversals_per_min=round(60 * rev_x / dur, 1),
                 reversals_y_per_min=round(60 * rev_y / dur, 1), move_cmds=moves, moving_time_ratio=round(move_s / dur, 3), spd_max=spd_max,
-                cam_speed_judder_px_s=round(float(np.std(vx - smooth(vx, k))), 2), resp_min=round(min(float(r['resp']) for r in rr), 2),
-                sy_range=[round(min(float(r['sy']) for r in rr), 1), round(max(float(r['sy']) for r in rr), 1)])
+                cam_speed_judder_px_s=cam_judder, resp_min=round(min(responses), 2) if responses else None,
+                sy_range=[round(min(sy), 1), round(max(sy), 1)] if sy else None)
 
 
 def blocks_of(D, skip):
@@ -77,12 +166,32 @@ def blocks_of(D, skip):
     for b in blocks:
         base = b['name'].split('_try')[0]; f = base.split('_')          # <walk>_<tag>_<k>
         e = dict(name=b['name'], base=base, walk=f[0], tag=f[1], k=int(f[2]), status=b['status'], lead=int(b['lead']), bridge=b.get('bridge', ''))
-        if b['status'] == 'ok':
+        if b['status'] != 'skipped':
             v = block_values(b['name'], rows, cmds, skip)
-            if v is None: e['status'] = 'too short'
-            else: e.update(v)
+            e.update(v)
+            if b['status'] == 'ok' and v['invalid_reason']:
+                e['status'] = 'invalid'
         res.append(e)
     return res, es, plan
+
+
+def block_metrics_columns(e):
+    def number(key):
+        value = e.get(key)
+        return '–' if value is None else f'{value:.2f}'
+
+    def percent(key):
+        value = e.get(key)
+        return '–' if value is None else f'{value:.1%}'
+
+    samples = f"{e['n_run']} / {e['n_observed']} / {e['n_lost']}" if 'n_run' in e else '–'
+    return (samples, f"{number('median_abs_dx')} / {number('p95_abs_dx')}",
+            f"{number('median_abs_dy')} / {number('p95_abs_dy')}", percent('C_lost'),
+            percent('lost_time_ratio'), number('attempt_time_s'), number('longest_lost_s'))
+
+
+BLOCK_COLUMNS = '전체 / 관측 / 놓침 표본 | 가로 오차 중앙값 / p95 px | 세로 오차 중앙값 / p95 px | 채점 구간 놓친 표본 % | 전체 기록 놓친 시간 % | 전체 기록 초 | 최장 놓침 초'
+BLOCK_NOTE = '전체 기록 시간은 각 시도의 첫·마지막 프레임 시각 사이입니다. 프레임 간격은 앞 프레임의 상태로 셉니다. 중앙값·p95는 앞부분 제외 후 좌표가 있고 보이는 표본만 씁니다. 관측 좌표가 있어도 브리지가 사람을 놓쳤으면 놓침으로도 셉니다.'
 
 
 def end_lines(es):
@@ -184,17 +293,23 @@ def choose(cands, per):
         v = per.get(tag, []); return bool(v) and all(any(e['status'] == 'ok' and e['walk'] == w and e['round'] == r and e['n'] >= S2_MIN_N for e in v) for w in walks for r in (0, 1))
     reg = lambda tag: sum(e['status'] == 'lost' for e in per.get(tag, []))   # v27c (second review): attempts of this candidate that were thrown away because the picture matching was lost
     for tag, label, g in cands:
-        v = per.get(tag, []); lostb = sum(e['status'] == 'personlost' for e in v); cmax = max([e['C_lost'] for e in v if e['status'] == 'ok'] or [0.0])
+        v = per.get(tag, []); lostb = sum(e['status'] == 'personlost' for e in v)
+        scored = [e for e in v if e['status'] == 'ok']
+        cmax = max((e['C_lost'] for e in scored), default=None)
+        time_max = max((e['lost_time_ratio'] for e in scored), default=None)
         ra = [mean(tag, 'A_mean_abs_dx', w) / mean(cur, 'A_mean_abs_dx', w) for w in walks if mean(tag, 'A_mean_abs_dx', w) is not None and mean(cur, 'A_mean_abs_dx', w)]
         rb = [mean(tag, 'B_shake', w) / mean(cur, 'B_shake', w) for w in walks if mean(tag, 'B_shake', w) is not None and mean(cur, 'B_shake', w)]
-        e = dict(tag=tag, label=label, gains=g, blocks=len([x for x in v if x['status'] == 'ok']), lost_blocks=lostb, c_max=cmax, A=mean(tag, 'A_mean_abs_dx'), B=mean(tag, 'B_shake'),
+        e = dict(tag=tag, label=label, gains=g, blocks=len(scored), lost_blocks=lostb, c_max=cmax,
+                 lost_time_max=time_max, A=mean(tag, 'A_mean_abs_dx'), B=mean(tag, 'B_shake'),
                  A_ratio=float(np.mean(ra)) if len(ra) == len(walks) and ra else None, A_ratio_max=max(ra) if ra else None, B_ratio=float(np.mean(rb)) if len(rb) == len(walks) and rb else None,
                  B_round=[mean(tag, 'B_shake', None, 0), mean(tag, 'B_shake', None, 1)], complete=complete(tag), reg_lost=reg(tag), skipped=sum(x['status'] == 'skipped' for x in v))   # v27c: + reg_lost, skipped
         why = []
         if not e['complete']: why.append('끝까지 돈 구간이 모자람')
+        if any(x['status'] in ('invalid', 'too short') for x in v): why.append('판정할 수 없는 시도가 있음')
         if lostb: why.append('사람을 놓쳐 끝난 구간 %d개' % lostb)
         if tag != cur and e['reg_lost'] >= reg(cur) + S2_REG_LOST: why.append('화면 맞추기가 끊겨 버린 시도 %d번 (현재 값 %d번보다 %d번 이상 많음)' % (e['reg_lost'], reg(cur), S2_REG_LOST))   # v27c (second review; plan section 2, rule 1 (마))
-        if cmax > S2_C_MAX: why.append('놓친 비율 %.1f %%' % (100 * cmax))
+        if cmax is not None and cmax > S2_C_MAX: why.append('놓친 표본 비율 %.1f %%' % (100 * cmax))
+        if time_max is not None and time_max > S2_C_MAX: why.append('놓친 시간 비율 %.1f %%' % (100 * time_max))
         if e['A_ratio'] is not None and (e['A_ratio'] > S2_A_MEAN or e['A_ratio_max'] > S2_A_ONE): why.append('가운데 오차가 뚜렷이 나쁨 (평균 비 %.2f, 가장 나쁜 속도 %.2f)' % (e['A_ratio'], e['A_ratio_max']))
         e['out'] = '; '.join(why); rows[tag] = e
     c = rows.get(cur)
@@ -213,7 +328,7 @@ def stage2(D):
     seen = {}; per = {}
     for e in res:
         tag = e['tag'][1:]; key = (e['walk'], tag); e['round'] = seen.get(key, 0)
-        if e['status'] in ('ok', 'personlost', 'too short'): seen[key] = e['round'] + 1
+        if e['status'] in ('ok', 'personlost', 'invalid', 'too short'): seen[key] = e['round'] + 1
         per.setdefault(tag, []).append(e)
     tag, reason, rows = choose(cands, per) if cands else ('A', 'plan_used.json 에 후보 목록이 없다: 현재 값을 그대로 쓴다 (판정 불가)', {})
     gains = dict(next((g for t, _, g in cands if t == tag), dict(kp=30.0, ki=0.0, kd=6.0, il=3.0, db=0.06)))
@@ -222,14 +337,19 @@ def stage2(D):
     g = lambda d: 'Kp %g · Ki %g (한계 %g) · Kd %g · 불감대 %g' % (d['kp'], d['ki'], d['il'], d['kd'], d['db']); n = lambda v, p='%.2f': '' if v is None else p % v
     L = ['# 2단계 — 속도 상한 100 에서 PD 값 고르기 (analyze_v27.py stage2 가 만든 파일)', '', '- 기록 폴더: %s' % choice['folder'], '- 구간 기록 %d줄 (끝까지 %d, 화면 맞추기가 끊겨 버린 시도 %d, 사람을 놓쳐 끝난 구간 %d, 빠른 걸음에서 두 번 끊겨 건너뛴 구간 %d)' % (len(res), sum(e['status'] == 'ok' for e in res), sum(e['status'] == 'lost' for e in res), sum(e['status'] == 'personlost' for e in res), sum(e['status'] == 'skipped' for e in res)),   # v27c: + skipped
          '- 값: 각 구간 앞 %g초 제외. 비 = 같은 걷는 속도에서 (후보 ÷ 현재 값) 을 속도별로 구해 평균한 것.' % S2_SKIP, *dry_note(es), *(['- **이 계획의 후보는 가정한 숫자로 만든 것이다 (확인용).**', ''] if meta.get('assumed') else []),
-         '| 후보 | 값 | 끝까지 돈 구간 | 평균 중심 오차 px | 오차 비 (평균 / 가장 나쁜 속도) | 흔들림 px | 흔들림 비 | 흔들림 1바퀴 / 2바퀴 px | 놓친 비율 최고 | 사람을 놓쳐 끝난 구간 | 화면 맞추기 끊김 (버린 시도) | 건너뛴 구간 | 탈락 이유 |', '|---|---|---|---|---|---|---|---|---|---|---|---|---|']   # v27c: + three count columns
+          '| 후보 | 값 | 끝까지 돈 구간 | 평균 중심 오차 px | 오차 비 (평균 / 가장 나쁜 속도) | 흔들림 px | 흔들림 비 | 흔들림 1바퀴 / 2바퀴 px | 놓친 표본 / 시간 비율 최고 | 사람을 놓쳐 끝난 구간 | 화면 맞추기 끊김 (버린 시도) | 건너뛴 구간 | 탈락 이유 |', '|---|---|---|---|---|---|---|---|---|---|---|---|---|']
     for t, label, gg in cands:
-        e = rows[t]; L.append('| %s%s (%s) | %s | %d | %s | %s / %s | %s | %s | %s / %s | %.1f %% | %d | %d | %d | %s |' % (t, ' **(고름)**' if t == tag else '', label, g(gg), e['blocks'], n(e['A']), n(e['A_ratio']), n(e['A_ratio_max']), n(e['B']), n(e['B_ratio']), n(e['B_round'][0]), n(e['B_round'][1]), 100 * e['c_max'], e['lost_blocks'], e['reg_lost'], e['skipped'], e['out'] or '-'))   # v27c: + the counts
-    L += ['', '- **판정 (미리 적은 규칙): %s**' % reason, '- **3단계에 쓸 값: %s**' % g(gains), '- 후보마다 걷는 속도별로 2구간씩뿐이다 (한 번의 실행). "뚜렷이 낫다"의 문턱(흔들림 비 %.2f 이하 + 두 바퀴 모두)을 못 넘으면 현재 값을 그대로 쓴다.' % S2_B_NEED, '',
-          '## 구간별', '', '| 구간 | 상태 | 표본 | 평균 중심 오차 px | 흔들림 px | 놓친 비율 | 방향 뒤집힘 /분 | 최고 속도 명령 |', '|---|---|---|---|---|---|---|---|']
+        e = rows[t]
+        rates = ' / '.join(f'{r:.1%}' if r is not None else '–' for r in (e['c_max'], e['lost_time_max']))
+        L.append('| %s%s (%s) | %s | %d | %s | %s / %s | %s | %s | %s / %s | %s | %d | %d | %d | %s |' % (t, ' **(고름)**' if t == tag else '', label, g(gg), e['blocks'], n(e['A']), n(e['A_ratio']), n(e['A_ratio_max']), n(e['B']), n(e['B_ratio']), n(e['B_round'][0]), n(e['B_round'][1]), rates, e['lost_blocks'], e['reg_lost'], e['skipped'], e['out'] or '-'))
+    L += ['', '- **판정 (11-12 놓침 집계 보정 포함): %s**' % reason, '- **3단계에 쓸 값: %s**' % g(gains), '- 후보마다 걷는 속도별로 2구간씩뿐이다 (한 번의 실행). "뚜렷이 낫다"의 문턱(흔들림 비 %.2f 이하 + 두 바퀴 모두)을 못 넘으면 현재 값을 그대로 쓴다.' % S2_B_NEED, '',
+          '## 구간별', '', BLOCK_NOTE, '', f'| 구간 | 상태 | {BLOCK_COLUMNS} | 평균 중심 오차 px | 흔들림 px | 방향 뒤집힘 /분 | 최고 속도 명령 |', '|---|' + '---|' * 12]
     for e in res:
-        if e['status'] == 'ok': L.append('| %s | 끝까지 | %d | %.2f | %.2f | %.1f %% | %.1f | %d |' % (e['name'], e['n'], e['A_mean_abs_dx'], e['B_shake'], 100 * e['C_lost'], e['reversals_per_min'], e['spd_max']))
-        else: L.append('| %s | %s | | | | | | |' % (e['name'], {'lost': '화면 맞추기 끊김 (버림)', 'personlost': '사람을 놓쳐 끝남 (세로 지킴이로 끝난 것 포함)', 'too short': '너무 짧음', 'skipped': '건너뜀 (빠른 걸음에서 두 번 끊김, 돌지 않음)'}.get(e['status'], e['status'])))   # v27c: + skipped
+        status = {'ok': '끝까지', 'lost': '화면 맞추기 끊김', 'personlost': '사람을 놓쳐 끝남',
+                  'invalid': e.get('invalid_reason'), 'skipped': '건너뜀'}.get(e['status'], e['status'])
+        fields = (e['name'], status, *block_metrics_columns(e), n(e.get('A_mean_abs_dx')),
+                  n(e.get('B_shake')), n(e.get('reversals_per_min'), '%.1f'), n(e.get('spd_max'), '%d'))
+        L.append('| ' + ' | '.join(fields) + ' |')
     out(D, 'STAGE2_TABLE_KO.md', L + end_lines(es)); return choice
 
 
@@ -246,17 +366,25 @@ def verdict(pairs, need, walks=None):
     """the stage 3 rule of the plan, on a list of (v25 block, v27 block). A block that ended as "person lost" has status personlost and counts as lost ratio 1."""
     full = [(a, b) for a, b in pairs if a['status'] == 'ok' and b['status'] == 'ok']
     if len(full) < need or any(a['n'] < S3_MIN_N or b['n'] < S3_MIN_N for a, b in full) or (walks is not None and any(not any(a['walk'] == w for a, _ in full) for w in walks)): return dict(verdict='표본 부족', pairs=len(full))
+    if any(e['status'] not in ('ok', 'personlost') or e.get('lost_time_ratio') is None
+           or (e['status'] == 'ok' and e.get('C_lost') is None) for pair in pairs for e in pair):
+        return dict(verdict='놓친 시간 또는 표본을 판정할 수 없음', pairs=len(full))
     o = dict(pairs=len(full)); cl = lambda e: 1.0 if e['status'] == 'personlost' else e['C_lost']
     for key in ('A_mean_abs_dx', 'B_shake'):
         o[key] = dict(v25=round(float(np.mean([a[key] for a, _ in full])), 3), v27=round(float(np.mean([b[key] for _, b in full])), 3), **log_interval([max(b[key], 1e-6) / max(a[key], 1e-6) for a, b in full]))
     for key in ('starts_per_min', 'stops_per_min', 'reversals_per_min'): o[key] = dict(v25=round(float(np.mean([a[key] for a, _ in full])), 2), v27=round(float(np.mean([b[key] for _, b in full])), 2))
     c25 = float(np.mean([cl(a) for a, _ in pairs])); c27 = float(np.mean([cl(b) for _, b in pairs])); dC = c27 - c25; o['C_lost'] = dict(v25=round(c25, 4), v27=round(c27, 4), diff=round(dC, 4))
+    t25 = float(np.mean([a['lost_time_ratio'] for a, _ in pairs]))
+    t27 = float(np.mean([b['lost_time_ratio'] for _, b in pairs]))
+    dT = t27 - t25
+    o['lost_time_ratio'] = dict(v25=round(t25, 4), v27=round(t27, 4), diff=round(dT, 4))
+    loss_increase = max(dC, dT)
     A, B = o['A_mean_abs_dx'], o['B_shake']
     shake_less = B['ratio'] <= R_GOOD and B['hi'] is not None and B['hi'] < 1; shake_more = B['ratio'] >= R_BAD and B['lo'] is not None and B['lo'] > 1; err_worse = A['ratio'] >= R_BAD and A['lo'] is not None and A['lo'] > 1
-    if shake_more or dC > C_BAD: v = '나빠짐'
-    elif shake_less and err_worse and dC <= C_GOOD: v = '맞바꿈 (덜 흔들리지만 가운데에서 더 벗어남)'
+    if shake_more or loss_increase > C_BAD: v = '나빠짐'
+    elif shake_less and err_worse and loss_increase <= C_GOOD: v = '맞바꿈 (덜 흔들리지만 가운데에서 더 벗어남)'
     elif err_worse: v = '나빠짐'
-    elif shake_less and dC <= C_GOOD: v = '덜 흔들림'
+    elif shake_less and loss_increase <= C_GOOD: v = '덜 흔들림'
     else: v = '차이 없음'
     o.update(verdict=v, lost_diff=round(dC, 4)); return o
 
@@ -265,7 +393,7 @@ def stage3(D):
     res, es, plan = blocks_of(D, S3_SKIP); meta = next((s for s in plan if s.get('type') == 'meta'), {})
     final = {}
     for e in res:
-        if e['status'] in ('ok', 'personlost', 'too short'): final[e['k']] = e
+        if e['status'] in ('ok', 'personlost', 'invalid', 'too short'): final[e['k']] = e
     pairs = []
     for k in sorted(final):
         if k % 2 == 0 and k + 1 in final and final[k]['walk'] == final[k + 1]['walk'] and {final[k]['tag'], final[k + 1]['tag']} == {'v25', 'v27'}:
@@ -283,23 +411,32 @@ def stage3(D):
          '- 걸음 %d가지: %s. 판정에 필요한 끝까지 돈 짝: %d개 이상 (계획에 미리 적음: 5가지면 8, 6가지면 10)' % (len(walks), ', '.join(walks), need),   # v27c
          '- 값: 각 구간 앞 %g초 제외, 끝까지 돈 구간만. 흔들림 = 가운데 오차에서 1초 이동 평균을 뺀 나머지의 표준편차. 비 = 짝마다 (v27 ÷ v25) 를 구해 곱 평균한 것.' % S3_SKIP, *dry_note(es), *(['- **이 계획은 가정한 값으로 만든 것이다 (확인용).**', ''] if meta.get('assumed') else []),
          '| 걸음 | 짝 | 값 | v25 | v27 | 비 v27 ÷ v25 (95 % 구간) | 판정 |', '|---|---|---|---|---|---|---|']
-    names = (('B_shake', '흔들림 px (주 지표)'), ('A_mean_abs_dx', '평균 중심 오차 px'), ('C_lost', '놓친 비율'), ('reversals_per_min', '방향 뒤집힘 /분 (참고)'), ('starts_per_min', '출발 /분 (참고)'))
+    names = (('B_shake', '흔들림 px (주 지표)'), ('A_mean_abs_dx', '평균 중심 오차 px'),
+             ('C_lost', '놓친 표본 비율'), ('lost_time_ratio', '전체 기록 놓친 시간 비율'),
+             ('reversals_per_min', '방향 뒤집힘 /분 (참고)'), ('starts_per_min', '출발 /분 (참고)'))
     for label, v in [('**전체**', o['all'])] + [(w, o['per_walk'][w]) for w in walks]:
         lrow = '| | | 화면 맞추기 끊김 (버린 시도, 번 · 참고) | %d | %d | | |' % (regl('v25', None if label == '**전체**' else label), regl('v27', None if label == '**전체**' else label))   # v27c (second review): the count per program, always shown
         if 'B_shake' not in v: L.append('| %s | %d | | | | | **%s** |' % (label, v['pairs'], v['verdict'])); L.append(lrow); continue   # v27c: + lrow
         for i, (key, kn) in enumerate(names):
             x = v[key]
-            if key == 'C_lost': mid = '%.1f %% → %.1f %% (차이 %+.1f %%p)' % (100 * x['v25'], 100 * x['v27'], 100 * x['diff']); a, b = '%.1f %%' % (100 * x['v25']), '%.1f %%' % (100 * x['v27'])
+            if key in ('C_lost', 'lost_time_ratio'): mid = '%.1f %% → %.1f %% (차이 %+.1f %%p)' % (100 * x['v25'], 100 * x['v27'], 100 * x['diff']); a, b = '%.1f %%' % (100 * x['v25']), '%.1f %%' % (100 * x['v27'])
             elif 'ratio' in x: mid = '%.2f (%s)' % (x['ratio'], '구간 없음' if x['lo'] is None else '%.2f ~ %.2f' % (x['lo'], x['hi'])); a, b = '%.2f' % x['v25'], '%.2f' % x['v27']
             else: mid = ''; a, b = '%.1f' % x['v25'], '%.1f' % x['v27']
             L.append('| %s | %s | %s | %s | %s | %s | %s |' % (label if i == 0 else '', v['pairs'] if i == 0 else '', kn, a, b, mid, ('**%s**' % v['verdict'] if label == '**전체**' else '(참고) %s' % v['verdict']) if i == 0 else ''))
         L.append(lrow)                                 # v27c
     L += ['', '- **공식 판정은 "전체" 줄 하나다: %s.** 걸음별 줄은 짝이 2개뿐이라 참고로만 읽는다 (구간이 나오지 않는다).' % o['all']['verdict'],
-          '- 판정 규칙: PLAN_V27_HILS_20261111_KO.md 3단계 (실행 전에 적음). 출발·방향 뒤집힘·화면 맞추기 끊김 횟수는 판정에 쓰지 않는다. 한 번의 실행, 한 장소, 가상의 사람이다.', '',
-          '## 구간별', '', '| 구간 | 프로그램 | 상태 | 표본 | 평균 중심 오차 px | 흔들림 px | 놓친 비율 | 출발 /분 | 방향 뒤집힘 /분 | 최고 속도 명령 |', '|---|---|---|---|---|---|---|---|---|---|']
+          '- 판정 규칙: PLAN_V27_HILS_20261111_KO.md 3단계에 11-12 놓침 집계 보정을 추가했다. 과거 원본 채점과 구분해 저장한다. 출발·방향 뒤집힘·화면 맞추기 끊김 횟수는 참고값이다. 한 번의 실행, 한 장소, 가상의 사람이다.', '',
+          '## 구간별', '', BLOCK_NOTE, '', f'| 구간 | 프로그램 | 상태 | {BLOCK_COLUMNS} | 평균 중심 오차 px | 흔들림 px | 출발 /분 | 방향 뒤집힘 /분 | 최고 속도 명령 |', '|---|' + '---|' * 14]
+    number = lambda value, form: '' if value is None else form % value
     for e in res:
-        if e['status'] == 'ok': L.append('| %s | %s | 끝까지 | %d | %.2f | %.2f | %.1f %% | %.1f | %.1f | %d |' % (e['name'], e['tag'], e['n'], e['A_mean_abs_dx'], e['B_shake'], 100 * e['C_lost'], e['starts_per_min'], e['reversals_per_min'], e['spd_max']))
-        else: L.append('| %s | %s | %s | | | | | | | |' % (e['name'], e['tag'], {'lost': '화면 맞추기 끊김 (버림)', 'personlost': '사람을 놓쳐 끝남 (세로 지킴이로 끝난 것 포함. 놓친 비율 100 %로 셈)', 'too short': '너무 짧음', 'skipped': '건너뜀 (빠른 걸음에서 두 번 끊김, 돌지 않음)'}.get(e['status'], e['status'])))   # v27c: + skipped
+        status = {'ok': '끝까지', 'lost': '화면 맞추기 끊김',
+                  'personlost': '사람을 놓쳐 끝남 (기존 판정에서 놓친 표본 100 %)',
+                  'invalid': e.get('invalid_reason'), 'skipped': '건너뜀'}.get(e['status'], e['status'])
+        fields = (e['name'], e['tag'], status, *block_metrics_columns(e),
+                  number(e.get('A_mean_abs_dx'), '%.2f'), number(e.get('B_shake'), '%.2f'),
+                  number(e.get('starts_per_min'), '%.1f'), number(e.get('reversals_per_min'), '%.1f'),
+                  number(e.get('spd_max'), '%d'))
+        L.append('| ' + ' | '.join(fields) + ' |')
     out(D, 'STAGE3_TABLE_KO.md', L + end_lines(es)); return o
 
 
