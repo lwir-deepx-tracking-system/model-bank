@@ -169,12 +169,9 @@ body:not(.adv) .adv-only{display:none!important}
 /* Performance graphs below the video and replay controls. */
 :root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--c5:#ffc46b;--c6:#ff8f8f;--pf-grid:#465363;--pf-label:#e1e8f2}
 :root{--pf-in:#9dcfff;--pf-det:#66e0cc;--pf-track:#c9b4ff}
-.pfo{margin-top:12px;width:min(920px,100%);font-size:13px;line-height:1.4;color:var(--pf-label)}
-.pfpipe-head,.pfpipe-time>div:first-child,.pfstep>div{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-.pfpipe-head{margin-bottom:8px;flex-wrap:wrap}
-.pfpipe-head h2{font-size:19px;margin:0;color:#f3f6fc}
-.pfpipe-head>span,.pfstep p,.pfstep-value>span{color:#aebccd}
-.pfpipe-steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+.pfpipe-time>div:first-child,.pfstep>div{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.pfstep p,.pfstep-value>span{color:#aebccd}
+.pfpipe-steps{display:grid;margin-top:9px;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
 .pfstep{position:relative;padding:11px 12px;background:#19222f;border:1px solid #334359;border-radius:9px;min-width:0}
 .pfstep:not(:last-child)::after{content:'→';position:absolute;left:100%;width:16px;top:13px;color:#8a9cb3;text-align:center}
 .pfstep-input{--pf-accent:var(--pf-in)}.pfstep-detect{--pf-accent:var(--pf-det)}.pfstep-track{--pf-accent:var(--pf-track)}
@@ -230,7 +227,6 @@ body:not(.adv) .adv-only{display:none!important}
 }
 @media (max-width:900px){
   .pfpipe-time{margin-inline:8px}
-  .pfo{width:auto;font-size:13px}   /* 11-16: was 100% plus the side margins = 8 px wider than the screen */
   .pfo .pfb button{height:36px;padding:0 12px}
   .pfo .pfx{padding:5px 6px}
   .pfo .pfh{column-gap:12px}
@@ -238,7 +234,7 @@ body:not(.adv) .adv-only{display:none!important}
 }
 @media (max-width:520px){
   .pfpipe-steps{gap:7px}
-  .pfstep{padding:7px}
+  .pfstep{padding:7px;word-break:keep-all}
   .pfstep h3{font-size:13px}
   .pfstep p{min-height:2.8em}
   .pfstep:not(:last-child)::after{display:none}
@@ -477,8 +473,8 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         </div>
         <div class="joy" id="joyb" aria-hidden="true"><i id="joyk"></i></div>
       </div>
-      <section class="pfpipe-time" aria-label="영상 처리 지연">
-        <div><b>카메라 입력 → 최종 추적 <small>p95</small></b><span id="pf-goal-status" title="서버가 프레임을 받은 때부터 최종 추적까지">목표 33 ms</span></div>
+      <section class="pfpipe-time pfo" id="pfo" aria-labelledby="pfpipe-title">
+        <div><b id="pfpipe-title">카메라 입력 → 최종 추적 <small>p95</small></b><span id="pf-goal-status" title="서버가 프레임을 받은 때부터 최종 추적까지">목표 33 ms</span></div>
         <div class="pfpipe-rail" aria-hidden="true"><i id="pf-rail-camera" hidden></i><i id="pf-rail-server"></i><i id="pf-rail-goal"></i><i id="pf-rail-detect" hidden></i><i id="pf-rail-track" hidden></i></div>
         <div class="pfpipe-key" id="pf-pipe-key">
           <span id="pf-rail-camera-label" title="카메라 캡처 프로그램에서 프레임을 받은 때부터 서버 수신까지" hidden>카메라 입력 <b class="num" id="pf-rail-camera-value">–</b></span>
@@ -490,6 +486,26 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
           <dt>입력 간격</dt><dd>30 FPS = 33.3 ms마다 한 장</dd>
           <dt>지연 목표</dt><dd>서버 수신 → 추적 완료 <strong id="pf-goal-budget">33 ms</strong> 이내</dd>
         </dl>
+        <div class="pfpipe-steps">
+          <div class="pfstep pfstep-input"><div><h3>카메라 입력</h3><span class="num" id="pf-input-fps">–</span></div><p>열화상 원본 수신</p><div class="pfstep-value"><span>카메라 → 서버</span><b class="num" id="pf-input-latency">–</b></div></div>
+          <div class="pfstep pfstep-detect"><div><h3>사람 탐지</h3><span class="num" id="pf-detect-fps">–</span></div><p>사람 박스와 관절</p><div class="pfstep-value"><span>서버 → 탐지 완료</span><b class="num" id="pf-detect-latency">–</b></div></div>
+          <div class="pfstep pfstep-track"><div><h3>최종 추적</h3><span class="num" id="pf-track-fps">–</span></div><p>사람 박스에 추적 ID 연결</p><div class="pfstep-value"><span>서버 → 추적 발행</span><b class="num" id="pf-track-latency">–</b></div></div>
+        </div>
+        <details class="pfdetail" id="pfdetail"><summary>상세 그래프</summary>
+        <div class="pfb"><span id="pf-pipe-samples">프레임 집계 중</span><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
+        <div class="pfx">
+          <div class="pft">속도 (FPS) <span>1초 동안 처리한 영상 수 · 높을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="서버로 영상이 들어오는 초당 장 수. 녹화 재생 중에는 재생 속도"><i style="background:var(--c2)"></i>카메라 입력 <b class="num" id="pfv1">–</b></span><span class="pfl" title="추적 결과(박스와 ID)가 나오는 초당 장 수. 들어온 영상보다 낮으면 처리가 밀리는 중"><i style="background:var(--c1)"></i>추적 출력 <b class="num" id="pfv0">–</b></span></div>
+          <canvas id="pfc0"></canvas>
+          <div class="pft">지연 (ms) <span>영상이 들어와서 추적이 끝날 때까지 · 낮을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 그 장의 추적 결과가 나올 때까지. 기다린 시간 + 검출 + 추적. 1초 평균"><i style="background:var(--c1)"></i>평균 <b class="num" id="pfv2">–</b></span><span class="pfl" title="같은 1초 안에서 가장 오래 걸린 장"><i class="dash" style="color:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 장을 계산하는 데만 든 시간(검출 준비부터 추적·ID 유지까지). 기다린 시간은 빠짐. 1초 평균"><i style="background:var(--c4)"></i>계산 시간 <b class="num" id="pfv4">–</b></span></div>
+          <canvas id="pfc1"></canvas>
+          <div class="pft">내 화면 지연 (ms) <span>카메라 영상이 서버에 들어와서 이 화면에 오기까지 · 낮을수록 좋음</span></div>
+          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 화면에 보낼 사진(JPEG)이 준비될 때까지. 서버에서 잰 1초 평균. '사진 먼저'가 켜져 있으면 검출을 기다리지 않아 몇 ms"><i style="background:var(--c5)"></i>서버 <b class="num" id="pfv5">–</b></span><span class="pfl" id="pfl6" title="영상 한 장이 서버에 도착한 뒤 이 화면에 올 때까지 (서버 + 전송). 사진의 시각을 읽을 수 있는 브라우저는 이 기기에서 직접 잰 값(그려진 때까지). 아이폰처럼 못 읽는 브라우저는 '(추정)': 서버가 이 기기의 수신 확인으로 잰 도착 시각까지이고, 브라우저가 그리는 시간은 빠져 있음. 카메라 자체의 지연은 어느 쪽에도 없음"><i style="background:var(--c6)"></i><span id="pft6">내 화면</span> <b class="num" id="pfv6">–</b></span></div>
+          <canvas id="pfc2"></canvas>
+          <div class="pfaxis"><span id="pfago">1분 전</span><span>지금</span></div>
+          <p class="pfnote">속도·지연과 "서버"(사진 준비)는 오렌지파이 서버 안에서 잰 값입니다. "내 화면"은 서버에 들어온 영상이 이 화면에 올 때까지이고, 지금 보는 기기에서 잽니다(아이폰은 서버가 잰 추정). "계산 시간"은 지연 중 기다린 시간을 뺀 순수 계산입니다. 카메라가 찍어서 서버에 보내는 시간, 브라우저가 화면에 그리는 시간, 짐벌이 움직이는 시간은 어디에도 들어 있지 않습니다.</p>
+        </div></details>
       </section>
       <label class="hint camera-only" style="display:block;margin:6px 0"><input id="overlay-center-switch" type="checkbox"> 박스 떨림 보정 (JPEG 화면 표시만 · 상자 중앙 클릭)</label>
       <div class="rpseek" id="rpseek" hidden>
@@ -513,29 +529,6 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         </div>
       </div>
       <div class="hint camera-only">실시간 카메라에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하면 멈춥니다 · Space는 원점(0°, 0°)으로 돌아갑니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
-      <section class="pfo" id="pfo" aria-labelledby="pfpipe-title">
-        <div class="pfpipe-head"><h2 id="pfpipe-title">카메라 → 탐지 → 추적</h2><span>최근 1분 지연 p95</span></div>
-        <div class="pfpipe-steps">
-          <div class="pfstep pfstep-input"><div><h3>카메라 입력</h3><span class="num" id="pf-input-fps">–</span></div><p>열화상 원본 수신</p><div class="pfstep-value"><span>카메라 → 서버</span><b class="num" id="pf-input-latency">–</b></div></div>
-          <div class="pfstep pfstep-detect"><div><h3>사람 탐지</h3><span class="num" id="pf-detect-fps">–</span></div><p>사람 박스와 관절</p><div class="pfstep-value"><span>서버 → 탐지 완료</span><b class="num" id="pf-detect-latency">–</b></div></div>
-          <div class="pfstep pfstep-track"><div><h3>최종 추적</h3><span class="num" id="pf-track-fps">–</span></div><p>사람 박스에 추적 ID 연결</p><div class="pfstep-value"><span>서버 → 추적 발행</span><b class="num" id="pf-track-latency">–</b></div></div>
-        </div>
-        <details class="pfdetail" id="pfdetail"><summary>상세 지표</summary>
-        <div class="pfb"><span id="pf-pipe-samples">프레임 집계 중</span><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
-        <div class="pfx">
-          <div class="pft">속도 (FPS) <span>1초 동안 처리한 영상 수 · 높을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="서버로 영상이 들어오는 초당 장 수. 녹화 재생 중에는 재생 속도"><i style="background:var(--c2)"></i>카메라 입력 <b class="num" id="pfv1">–</b></span><span class="pfl" title="추적 결과(박스와 ID)가 나오는 초당 장 수. 들어온 영상보다 낮으면 처리가 밀리는 중"><i style="background:var(--c1)"></i>추적 출력 <b class="num" id="pfv0">–</b></span></div>
-          <canvas id="pfc0"></canvas>
-          <div class="pft">지연 (ms) <span>영상이 들어와서 추적이 끝날 때까지 · 낮을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 그 장의 추적 결과가 나올 때까지. 기다린 시간 + 검출 + 추적. 1초 평균"><i style="background:var(--c1)"></i>평균 <b class="num" id="pfv2">–</b></span><span class="pfl" title="같은 1초 안에서 가장 오래 걸린 장"><i class="dash" style="color:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 장을 계산하는 데만 든 시간(검출 준비부터 추적·ID 유지까지). 기다린 시간은 빠짐. 1초 평균"><i style="background:var(--c4)"></i>계산 시간 <b class="num" id="pfv4">–</b></span></div>
-          <canvas id="pfc1"></canvas>
-          <div class="pft">내 화면 지연 (ms) <span>카메라 영상이 서버에 들어와서 이 화면에 오기까지 · 낮을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 화면에 보낼 사진(JPEG)이 준비될 때까지. 서버에서 잰 1초 평균. '사진 먼저'가 켜져 있으면 검출을 기다리지 않아 몇 ms"><i style="background:var(--c5)"></i>서버 <b class="num" id="pfv5">–</b></span><span class="pfl" id="pfl6" title="영상 한 장이 서버에 도착한 뒤 이 화면에 올 때까지 (서버 + 전송). 사진의 시각을 읽을 수 있는 브라우저는 이 기기에서 직접 잰 값(그려진 때까지). 아이폰처럼 못 읽는 브라우저는 '(추정)': 서버가 이 기기의 수신 확인으로 잰 도착 시각까지이고, 브라우저가 그리는 시간은 빠져 있음. 카메라 자체의 지연은 어느 쪽에도 없음"><i style="background:var(--c6)"></i><span id="pft6">내 화면</span> <b class="num" id="pfv6">–</b></span></div>
-          <canvas id="pfc2"></canvas>
-          <div class="pfaxis"><span id="pfago">1분 전</span><span>지금</span></div>
-          <p class="pfnote">속도·지연과 "서버"(사진 준비)는 오렌지파이 서버 안에서 잰 값입니다. "내 화면"은 서버에 들어온 영상이 이 화면에 올 때까지이고, 지금 보는 기기에서 잽니다(아이폰은 서버가 잰 추정). "계산 시간"은 지연 중 기다린 시간을 뺀 순수 계산입니다. 카메라가 찍어서 서버에 보내는 시간, 브라우저가 화면에 그리는 시간, 짐벌이 움직이는 시간은 어디에도 들어 있지 않습니다.</p>
-        </div></details>
-      </section>
     </div>
   </section>
   <aside class="panel">
