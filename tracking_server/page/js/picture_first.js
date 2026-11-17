@@ -103,9 +103,9 @@ function ovDraw(){const cv=OV.cv;if(!cv)return;
     if(style==='active'){x.strokeStyle='rgb(255,220,0)';x.lineWidth=4;x.strokeRect(L,T,R-L,B-T);
       const lab='FOLLOW '+id,tw=x.measureText(lab).width,ty=Math.max(T,18);
       x.fillStyle='rgb(255,220,0)';x.fillRect(L-2,ty-18,tw+10,18);x.fillStyle='#141414';x.fillText(lab,L+3,ty-3);}
-    else if(style==='held'){
+    else if(style==='held'||style==='searching'){
       x.strokeStyle=x.fillStyle='rgb(255,174,105)';x.lineWidth=2;x.setLineDash([5,3]);x.strokeRect(L,T,R-L,B-T);x.setLineDash([]);
-      x.fillText('검출 '+id+' · 제어 보류',L,Math.max(T-3,14));}
+      x.fillText(id+' · '+(style==='searching'?'탐색 중':'탐색 대기'),L,Math.max(T-3,14));}
     else{const c=ovColor(id);x.strokeStyle=c;x.lineWidth=2;x.strokeRect(L,T,R-L,B-T);x.fillStyle=c;x.fillText(String(id),L,Math.max(T-3,14));}}
   x.font='12px sans-serif';
   for(const [x1,y1,x2,y2,id,lab,last,pts,rad,col,al] of d.p||[]){const X=v=>ox+v*k,Y=v=>oy+v*k;   // predicted boxes of lost people (pred_show), as the server drew them
