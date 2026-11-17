@@ -36,6 +36,30 @@
 .pfpipe-guide dt{font-weight:600;color:var(--ink)}
 .pfpipe-guide dd{margin:0;word-break:keep-all}
 .pfpipe-guide strong{color:inherit;white-space:nowrap}
+.pf-schedule{margin-top:9px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--field)}
+.pf-schedule h3{margin:0;font-size:14px;color:var(--ink)}
+.pf-schedule p{margin:4px 0 0;color:var(--ink2);font-size:12px}
+.pf-schedule [hidden]{display:none}
+.pf-schedule-axis,.pf-schedule-frame{display:grid;grid-template-columns:38px minmax(0,1fr);gap:8px}
+.pf-schedule-axis{margin-top:7px;color:var(--mut);font-size:11px}
+.pf-schedule-axis div{grid-column:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding-inline:5px}
+.pf-schedule-axis span:nth-child(2){text-align:center}
+.pf-schedule-axis span:last-child{text-align:right}
+.pf-schedule-frames{list-style:none;margin:0;padding:0}
+.pf-schedule-frame{align-items:start;padding:5px 0}
+.pf-schedule-frame+.pf-schedule-frame{border-top:1px solid var(--line)}
+.pf-schedule-frame>span{margin-top:1px;color:var(--ink2);font-size:12px}
+.pf-schedule-lane{position:relative;height:18px;margin-inline:5px;background:linear-gradient(var(--line),var(--line)) center/100% 1px no-repeat}
+.pf-schedule-lane::before{content:'';position:absolute;left:50%;height:100%;border-left:1px dashed var(--line2)}
+.pf-schedule-bar,.pf-schedule-mark{position:absolute;top:50%;background:var(--stage)}
+.pf-schedule-bar{height:4px;transform:translateY(-50%)}
+.pf-schedule-mark{width:8px;height:8px;border-radius:50%;transform:translate(-50%,-50%)}
+.pf-schedule-detect.pf-schedule-mark{border-radius:1px;transform:translate(-50%,-50%) rotate(45deg)}
+.pf-schedule-received{--stage:var(--pf-in)}
+.pf-schedule-detect{--stage:var(--pf-det)}
+.pf-schedule-track{--stage:var(--pf-track)}
+.pf-schedule-times{display:flex;justify-content:space-between;gap:4px;font-size:11px;flex-wrap:wrap}
+.pf-schedule-times span{color:var(--stage);white-space:nowrap}
 .pfdetail{margin-top:9px;border:1px solid var(--line);border-radius:8px;background:var(--pan)}
 .pfdetail>summary{cursor:pointer;padding:8px 11px;color:var(--ink2);font-weight:700}
 .pfdetail[open]>summary{border-bottom:1px solid var(--line)}

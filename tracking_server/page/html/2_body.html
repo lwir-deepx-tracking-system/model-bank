@@ -46,6 +46,15 @@
           <div class="pfstep pfstep-detect"><div><h3>사람 탐지</h3><span class="num" id="pf-detect-fps">–</span></div><p>사람 박스와 관절</p><div class="pfstep-value"><span>서버 → 탐지 완료</span><b class="num" id="pf-detect-latency">–</b></div></div>
           <div class="pfstep pfstep-track"><div><h3>최종 추적</h3><span class="num" id="pf-track-fps">–</span></div><p>사람 박스에 추적 ID 연결</p><div class="pfstep-value"><span>서버 → 추적 발행</span><b class="num" id="pf-track-latency">–</b></div></div>
         </div>
+        <section class="pf-schedule" aria-labelledby="pf-schedule-title">
+          <h3 id="pf-schedule-title">최근 3장 처리 시간표</h3>
+          <p id="pf-schedule-status">실시간 프레임 측정 대기 중</p>
+          <div id="pf-schedule-data" hidden>
+            <p class="pf-schedule-caption">첫 프레임의 서버 수신이 0 ms입니다.</p>
+            <div class="pf-schedule-axis num" id="pf-schedule-axis" aria-hidden="true"></div>
+            <ol class="pf-schedule-frames" id="pf-schedule-frames"></ol>
+          </div>
+        </section>
         <details class="pfdetail" id="pfdetail"><summary>상세 그래프</summary>
           <div class="pfb"><span id="pf-pipe-samples">최근 1분 추적 집계 중</span><button id="pfspan" title="그래프 시간 범위 1분, 5분, 15분">1분</button></div>
           <div class="pfx">

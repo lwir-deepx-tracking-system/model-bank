@@ -204,6 +204,30 @@ body:not(.adv) .adv-only{display:none!important}
 .pfpipe-guide dt{font-weight:600;color:var(--ink)}
 .pfpipe-guide dd{margin:0;word-break:keep-all}
 .pfpipe-guide strong{color:inherit;white-space:nowrap}
+.pf-schedule{margin-top:9px;padding:9px 11px;border:1px solid var(--line);border-radius:8px;background:var(--field)}
+.pf-schedule h3{margin:0;font-size:14px;color:var(--ink)}
+.pf-schedule p{margin:4px 0 0;color:var(--ink2);font-size:12px}
+.pf-schedule [hidden]{display:none}
+.pf-schedule-axis,.pf-schedule-frame{display:grid;grid-template-columns:38px minmax(0,1fr);gap:8px}
+.pf-schedule-axis{margin-top:7px;color:var(--mut);font-size:11px}
+.pf-schedule-axis div{grid-column:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));padding-inline:5px}
+.pf-schedule-axis span:nth-child(2){text-align:center}
+.pf-schedule-axis span:last-child{text-align:right}
+.pf-schedule-frames{list-style:none;margin:0;padding:0}
+.pf-schedule-frame{align-items:start;padding:5px 0}
+.pf-schedule-frame+.pf-schedule-frame{border-top:1px solid var(--line)}
+.pf-schedule-frame>span{margin-top:1px;color:var(--ink2);font-size:12px}
+.pf-schedule-lane{position:relative;height:18px;margin-inline:5px;background:linear-gradient(var(--line),var(--line)) center/100% 1px no-repeat}
+.pf-schedule-lane::before{content:'';position:absolute;left:50%;height:100%;border-left:1px dashed var(--line2)}
+.pf-schedule-bar,.pf-schedule-mark{position:absolute;top:50%;background:var(--stage)}
+.pf-schedule-bar{height:4px;transform:translateY(-50%)}
+.pf-schedule-mark{width:8px;height:8px;border-radius:50%;transform:translate(-50%,-50%)}
+.pf-schedule-detect.pf-schedule-mark{border-radius:1px;transform:translate(-50%,-50%) rotate(45deg)}
+.pf-schedule-received{--stage:var(--pf-in)}
+.pf-schedule-detect{--stage:var(--pf-det)}
+.pf-schedule-track{--stage:var(--pf-track)}
+.pf-schedule-times{display:flex;justify-content:space-between;gap:4px;font-size:11px;flex-wrap:wrap}
+.pf-schedule-times span{color:var(--stage);white-space:nowrap}
 .pfdetail{margin-top:9px;border:1px solid var(--line);border-radius:8px;background:var(--pan)}
 .pfdetail>summary{cursor:pointer;padding:8px 11px;color:var(--ink2);font-weight:700}
 .pfdetail[open]>summary{border-bottom:1px solid var(--line)}
@@ -495,6 +519,15 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
           <div class="pfstep pfstep-detect"><div><h3>사람 탐지</h3><span class="num" id="pf-detect-fps">–</span></div><p>사람 박스와 관절</p><div class="pfstep-value"><span>서버 → 탐지 완료</span><b class="num" id="pf-detect-latency">–</b></div></div>
           <div class="pfstep pfstep-track"><div><h3>최종 추적</h3><span class="num" id="pf-track-fps">–</span></div><p>사람 박스에 추적 ID 연결</p><div class="pfstep-value"><span>서버 → 추적 발행</span><b class="num" id="pf-track-latency">–</b></div></div>
         </div>
+        <section class="pf-schedule" aria-labelledby="pf-schedule-title">
+          <h3 id="pf-schedule-title">최근 3장 처리 시간표</h3>
+          <p id="pf-schedule-status">실시간 프레임 측정 대기 중</p>
+          <div id="pf-schedule-data" hidden>
+            <p class="pf-schedule-caption">첫 프레임의 서버 수신이 0 ms입니다.</p>
+            <div class="pf-schedule-axis num" id="pf-schedule-axis" aria-hidden="true"></div>
+            <ol class="pf-schedule-frames" id="pf-schedule-frames"></ol>
+          </div>
+        </section>
         <details class="pfdetail" id="pfdetail"><summary>상세 그래프</summary>
           <div class="pfb"><span id="pf-pipe-samples">최근 1분 추적 집계 중</span><button id="pfspan" title="그래프 시간 범위 1분, 5분, 15분">1분</button></div>
           <div class="pfx">
@@ -1929,6 +1962,43 @@ function pfplaceLabels(markers){
   }
   key.style.height=(rows.length*(height+3)-3)+'px';
 }
+function pfSchedule(pipeline){
+  const status=$('pf-schedule-status'), chart=$('pf-schedule-data');
+  const data=pipeline.frame_schedule_ms;
+  const replay=document.body.classList.contains('replay-mode');
+  const frames=Array.isArray(data) ? data.slice(0,3) : [];
+  const valid=frames.length>0 && frames.every((frame,i)=>{
+    if(!Array.isArray(frame)||frame.length!==3||!frame.every(Number.isFinite))return false;
+    const [receive, detect, track]=frame;
+    const arrivalOrdered=i===0 ? receive===0 : receive>=frames[i-1][0];
+    return arrivalOrdered && receive<=detect && detect<=track;
+  });
+  chart.hidden=replay||!valid;
+  status.hidden=!chart.hidden;
+  if(chart.hidden){
+    status.textContent=replay ? '녹화 재생 중에는 실시간 시간표를 표시하지 않습니다.'
+      : Array.isArray(data) ? '실시간 프레임 측정 대기 중' : '프레임별 실측 데이터 없음';
+    return;
+  }
+  const last=Math.max(...frames.map(row=>row[2]));
+  const limit=Math.max(20,Math.ceil(last/20)*20);
+  const pct=value=>String(value/limit*100)+'%';
+  $('pf-schedule-axis').innerHTML='<div><span>0</span><span>'+limit/2+'</span><span>'+limit+' ms</span></div>';
+  const stages=[['received','수신'],['detect','탐지'],['track','추적']];
+  $('pf-schedule-frames').innerHTML=frames.map((frame,i)=>{
+    const [receive, detect, track]=frame;
+    const segment=(stage,start,end)=>'<i class="pf-schedule-bar pf-schedule-'+stage
+      +'" style="left:'+pct(start)+';width:'+pct(end-start)+'"></i>';
+    const dots=stages.map(([stage],j)=>'<i class="pf-schedule-mark pf-schedule-'+stage
+      +'" style="left:'+pct(frame[j])+'"></i>').join('');
+    const values=stages.map(([stage,label],j)=>'<span class="pf-schedule-'+stage+'">'
+      +label+' <b>'+frame[j].toFixed(1)+'</b> ms</span>').join('');
+    return '<li class="pf-schedule-frame"><span>'+(i+1)+'번째</span><div>'
+      +'<div class="pf-schedule-lane" aria-hidden="true">'+segment('detect',receive,detect)
+      +segment('track',detect,track)+dots+'</div><div class="pf-schedule-times num">'
+      +values+'</div></div></li>';
+  }).join('');
+}
 function pfpipe(){
   const p=Date.now()-PF.receivedAt<5000&&PF.pipeline?PF.pipeline:{};
   const fmt=(value,unit)=>Number.isFinite(value)?value.toFixed(1)+' '+unit:'–';
@@ -1969,6 +2039,7 @@ function pfpipe(){
     label.dataset.clipped=value<PF_RAIL_MIN_MS?'left':value>PF_RAIL_MAX_MS?'right':'';
   }
   pfplaceLabels(markers);
+  pfSchedule(p);
 }
 function pfdraw(){
   pfpipe();

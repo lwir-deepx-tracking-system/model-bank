@@ -112,6 +112,43 @@ function pfplaceLabels(markers){
   }
   key.style.height=(rows.length*(height+3)-3)+'px';
 }
+function pfSchedule(pipeline){
+  const status=$('pf-schedule-status'), chart=$('pf-schedule-data');
+  const data=pipeline.frame_schedule_ms;
+  const replay=document.body.classList.contains('replay-mode');
+  const frames=Array.isArray(data) ? data.slice(0,3) : [];
+  const valid=frames.length>0 && frames.every((frame,i)=>{
+    if(!Array.isArray(frame)||frame.length!==3||!frame.every(Number.isFinite))return false;
+    const [receive, detect, track]=frame;
+    const arrivalOrdered=i===0 ? receive===0 : receive>=frames[i-1][0];
+    return arrivalOrdered && receive<=detect && detect<=track;
+  });
+  chart.hidden=replay||!valid;
+  status.hidden=!chart.hidden;
+  if(chart.hidden){
+    status.textContent=replay ? '녹화 재생 중에는 실시간 시간표를 표시하지 않습니다.'
+      : Array.isArray(data) ? '실시간 프레임 측정 대기 중' : '프레임별 실측 데이터 없음';
+    return;
+  }
+  const last=Math.max(...frames.map(row=>row[2]));
+  const limit=Math.max(20,Math.ceil(last/20)*20);
+  const pct=value=>String(value/limit*100)+'%';
+  $('pf-schedule-axis').innerHTML='<div><span>0</span><span>'+limit/2+'</span><span>'+limit+' ms</span></div>';
+  const stages=[['received','수신'],['detect','탐지'],['track','추적']];
+  $('pf-schedule-frames').innerHTML=frames.map((frame,i)=>{
+    const [receive, detect, track]=frame;
+    const segment=(stage,start,end)=>'<i class="pf-schedule-bar pf-schedule-'+stage
+      +'" style="left:'+pct(start)+';width:'+pct(end-start)+'"></i>';
+    const dots=stages.map(([stage],j)=>'<i class="pf-schedule-mark pf-schedule-'+stage
+      +'" style="left:'+pct(frame[j])+'"></i>').join('');
+    const values=stages.map(([stage,label],j)=>'<span class="pf-schedule-'+stage+'">'
+      +label+' <b>'+frame[j].toFixed(1)+'</b> ms</span>').join('');
+    return '<li class="pf-schedule-frame"><span>'+(i+1)+'번째</span><div>'
+      +'<div class="pf-schedule-lane" aria-hidden="true">'+segment('detect',receive,detect)
+      +segment('track',detect,track)+dots+'</div><div class="pf-schedule-times num">'
+      +values+'</div></div></li>';
+  }).join('');
+}
 function pfpipe(){
   const p=Date.now()-PF.receivedAt<5000&&PF.pipeline?PF.pipeline:{};
   const fmt=(value,unit)=>Number.isFinite(value)?value.toFixed(1)+' '+unit:'–';
@@ -152,6 +189,7 @@ function pfpipe(){
     label.dataset.clipped=value<PF_RAIL_MIN_MS?'left':value>PF_RAIL_MAX_MS?'right':'';
   }
   pfplaceLabels(markers);
+  pfSchedule(p);
 }
 function pfdraw(){
   pfpipe();
