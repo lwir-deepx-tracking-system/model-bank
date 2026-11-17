@@ -125,22 +125,40 @@ function pfSchedule(pipeline){
   });
   chart.hidden=replay||!valid;
   status.hidden=!chart.hidden;
+  $('pf-output-summary').hidden=$('pf-output-label').hidden=true;
   if(chart.hidden){
     status.textContent=replay ? '녹화 재생 중에는 실시간 시간표를 표시하지 않습니다.'
       : Array.isArray(data) ? '실시간 프레임 측정 대기 중' : '프레임별 실측 데이터 없음';
     return;
   }
-  $('pf-schedule-gaps').hidden=frames.length<2;
-  $('pf-schedule-gap-rows').innerHTML=frames.slice(1).map((frame,i)=>{
-    const received=frame[0]-frames[i][0], published=frame[2]-frames[i][2];
-    const output=published<0?'순서 역전':published.toFixed(1)+' ms';
-    return '<tr><th scope="row">'+(i+1)+' → '+(i+2)+'</th><td>'+received.toFixed(1)
-      +' ms</td><td>'+output+'</td></tr>';
-  }).join('');
+  const intervals=frames.slice(1).map((frame,i)=>{
+    const prev=frames[i], start=prev[2], duration=frame[2]-start;
+    return {pair:(i+1)+' → '+(i+2), received:frame[0]-prev[0], start, duration,
+            output:duration<0?'순서 역전':duration.toFixed(1)+' ms'};
+  });
+  $('pf-schedule-gaps').hidden=$('pf-schedule-output').hidden=intervals.length===0;
+  $('pf-schedule-gap-rows').innerHTML=intervals.map(({pair,received,output})=>
+    '<tr><th scope="row">'+pair+'</th><td>'+received.toFixed(1)+' ms</td><td>'+output+'</td></tr>'
+  ).join('');
   const cores=Array.isArray(pipeline.frame_schedule_npu) ? pipeline.frame_schedule_npu : [];
+  if(intervals.length && intervals.every(({duration})=>duration>=0)){
+    const alternating=intervals.every((_,i)=>{
+      const a=cores[i],b=cores[i+1];
+      return a?.length===1&&b?.length===1&&[0,1].includes(a[0])&&[0,1].includes(b[0])&&a[0]!==b[0];
+    });
+    $('pf-output-values').textContent=intervals.map(({duration})=>duration.toFixed(1)).join(' / ')+' ms';
+    $('pf-output-mode').textContent=alternating?'· 교대 실측':'· 최근 '+frames.length+'장';
+    $('pf-output-summary').hidden=$('pf-output-label').hidden=false;
+  }
   const last=Math.max(...frames.map(row=>row[2]));
   const limit=Math.max(20,Math.ceil(last/20)*20);
   const pct=value=>String(value/limit*100)+'%';
+  $('pf-schedule-output-rows').innerHTML=intervals.map(({pair,start,duration,output})=>{
+    const bar=duration>=0 ? '<i class="pf-schedule-output-bar" style="left:'+pct(start)
+      +';width:'+pct(duration)+'"></i>' : '';
+    return '<li class="pf-schedule-frame pf-schedule-output-row"><span>'+pair+'<b>'+output
+      +'</b></span><div class="pf-schedule-lane" aria-hidden="true">'+bar+'</div></li>';
+  }).join('');
   $('pf-schedule-axis').innerHTML='<div><span>0</span><span>'+limit/2+'</span><span>'+limit+' ms</span></div>';
   const stages=[['received','수신'],['detect','탐지'],['track','추적']];
   $('pf-schedule-frames').innerHTML=frames.map((frame,i)=>{

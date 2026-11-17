@@ -29,7 +29,7 @@
         <div class="joy" id="joyb" aria-hidden="true"><i id="joyk"></i></div>
       </div>
       <section class="pfpipe-time pfo" id="pfo" aria-labelledby="pfpipe-title">
-        <div><b id="pfpipe-title">카메라 입력 → 최종 추적 <small>p95</small></b><span id="pf-goal-status" title="서버가 프레임을 받은 때부터 최종 추적까지">목표 33 ms</span></div>
+        <div><b id="pfpipe-title">서버 수신 → 추적 완료 <small>지연 p95</small></b><span id="pf-goal-status" title="서버가 프레임을 받은 때부터 최종 추적까지">목표 33 ms</span></div>
         <div class="pfpipe-rail" aria-hidden="true"><i id="pf-rail-camera" hidden></i><i id="pf-rail-server"></i><i id="pf-rail-goal"></i><i id="pf-rail-detect" hidden></i><i id="pf-rail-track" hidden></i></div>
         <div class="pfpipe-key" id="pf-pipe-key">
           <span id="pf-rail-camera-label" title="카메라 캡처 프로그램에서 프레임을 받은 때부터 서버 수신까지" hidden>카메라 입력 <b class="num" id="pf-rail-camera-value">–</b></span>
@@ -41,6 +41,7 @@
           <dt>입력 간격</dt><dd>30 FPS = 33.3 ms마다 한 장</dd>
           <dt>지연 목표</dt><dd>서버 수신 → 추적 완료 <strong id="pf-goal-budget">33 ms</strong> 이내</dd>
           <dt id="pf-feed-label" hidden>현재 탐지 모드</dt><dd id="pf-feed-mode" title="p95는 최근 1분 값을 집계하므로 전환 전 프레임이 포함될 수 있습니다." hidden></dd>
+          <dt id="pf-output-label" hidden>추적 출력 간격</dt><dd id="pf-output-summary" hidden><strong class="num" id="pf-output-values"></strong> <span id="pf-output-mode"></span></dd>
         </dl>
         <div class="pfpipe-steps">
           <div class="pfstep pfstep-input"><div><h3>카메라 입력</h3><span class="num" id="pf-input-fps">–</span></div><p>열화상 원본 수신</p><div class="pfstep-value"><span>카메라 → 서버</span><b class="num" id="pf-input-latency">–</b></div></div>
@@ -58,6 +59,10 @@
             <p class="pf-schedule-caption">아래 시각은 첫 장이 서버에 도착한 때부터 잰 값입니다.</p>
             <div class="pf-schedule-axis num" id="pf-schedule-axis" aria-hidden="true"></div>
             <ol class="pf-schedule-frames" id="pf-schedule-frames"></ol>
+            <div class="pf-schedule-output" id="pf-schedule-output" hidden>
+              <h4>추적 출력 간격</h4>
+              <ol class="pf-schedule-frames num" id="pf-schedule-output-rows"></ol>
+            </div>
           </div>
         </section>
         <details class="pfdetail" id="pfdetail"><summary>상세 그래프</summary>
