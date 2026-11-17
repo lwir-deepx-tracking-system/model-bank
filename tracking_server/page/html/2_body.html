@@ -1,6 +1,10 @@
 </style></head><body>
 <header>
   <h1>LWIR 추적</h1>
+  <label class="chip">화면 <select id="jpeg-quality" aria-label="JPEG 전송 품질">
+    <option value="mjpeg">JPEG (지연 우선)</option>
+    <option value="mjpeg-high">JPEG (화질 우선)</option>
+  </select></label>
   <span class="chip"><span class="dot" id="cdot"></span><span id="ctext">연결 확인 중</span></span>
   <span class="chip desk num"><span id="fps">–</span></span>
   <span class="chip desk camera-only"><span class="dot" id="gdot"></span><span id="gtext">짐벌</span></span>

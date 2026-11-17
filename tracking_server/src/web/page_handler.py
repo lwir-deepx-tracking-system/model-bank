@@ -398,12 +398,14 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
         if async_live_ or async_replay_:
             worker_.submit(token_, frame_, requested_at=now_)
         else:
+            drawn_ = []
             try:
-                jpeg_ = preview_worker.render_preview(APP.cv2, frame_)
+                jpeg_ = preview_worker.render_preview(APP.cv2, frame_, drawn_)
             except Exception:
                 jpeg_ = None
             if worker_ is not None:
-                worker_.commit_inline(token_, t_in, jpeg_, requested_at=now_, replay=replay_ is not None)
+                worker_.commit_inline(token_, t_in, jpeg_, requested_at=now_, replay=replay_ is not None,
+                                      drawn=drawn_[0] if drawn_ else None)
             else:
                 with APP.LIVE.jcond:
                     source_ok_ = (replay_ is None or (
@@ -411,7 +413,8 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
                     if source_ok_:
                         APP.LIVE.pic_t = now_
                         if jpeg_:
-                            preview_worker.publish_jpeg_locked(APP.LIVE, jpeg_, t_in, paired=paired_stamp_)
+                            preview_worker.publish_jpeg_locked(APP.LIVE, jpeg_, t_in, paired=paired_stamp_,
+                                                               high_drawn=drawn_[0] if drawn_ else None)
                         else:
                             APP.LIVE.preview_errors = getattr(APP.LIVE, 'preview_errors', 0) + 1
     if time.monotonic() - APP.LIVE.t0 > APP.args.live_seconds or (APP.LIVE.cam_lost and APP.args.live_wait):
@@ -628,7 +631,8 @@ def make_lv_Handler():
                     # page (/stream?p=<page id>&n=<count>) replaces the older one, a viewer whose picture takes more than 50 ms
                     # to get through gets a lighter picture (320x240, LWIR_STREAM_LIGHT). src/web/stream_sender.py
                     stream_sender.serve(APP.LIVE, self.connection, self.wfile.write, urlsplit(self.path).query, self.client_address[0],
-                                        light=stream_sender.light_maker(APP.cv2))
+                                        light=stream_sender.light_maker(APP.cv2),
+                                        high=stream_sender.high_maker(APP.cv2))
                 elif self.path.startswith('/overlay'):   # 11-15: boxes for 'picture first' as server-sent events (src/web/picture_first.py)
                     self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Connection', 'close'); self.end_headers()
                     try: self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.settimeout(30)

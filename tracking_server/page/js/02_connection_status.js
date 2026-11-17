@@ -5,7 +5,13 @@ let lastOk=Date.now(),grace=Date.now(),camIdle=0,camFail=0,wasDown=false,sN=0;
 // ran two streams over a slow link. A hidden page (background tab, phone screen off) takes no pictures; wake() reopens.
 // The stream itself is read in picture_stream.js (streamStart / streamStop), which also opens the first one.
 const pageId=Math.random().toString(36).slice(2,10)||'page';
-function openStream(){if(document.hidden){stopStream();return;}streamStart('/stream?p='+pageId+'&n='+(++sN));}
+const jpegQuality=$('jpeg-quality');
+function openStream(){
+  if(document.hidden){stopStream();return;}
+  const quality=jpegQuality?.value==='mjpeg-high'?'&quality=high':'';
+  streamStart('/stream?p='+pageId+'&n='+(++sN)+quality);
+}
+jpegQuality?.addEventListener('change',openStream);
 function stopStream(){streamStop();}
 function netChip(){
   const idle=Date.now()-Math.max(lastOk,grace);
