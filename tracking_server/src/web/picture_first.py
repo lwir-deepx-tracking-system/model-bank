@@ -20,6 +20,7 @@ import time
 import numpy as np
 
 from ..track.stabilizer import STAB
+from ..common.state import APP
 from ..detect import spec_proposals, skin_temp
 from . import preview_worker, stream_sender
 
@@ -28,7 +29,9 @@ PF = dict(on=os.environ.get('LWIR_PICTURE_FIRST') == '1', pictures=0, overlays=0
 
 def active(live):
     """True when the page picture comes from this module (and the boxes from the overlay)."""
-    return bool(PF['on'] and live is not None and getattr(live, 'replay', None) is None and not STAB['on']
+    mapper = vars(APP).get('THERMAL')
+    detector_map = mapper.status()['mode'] if mapper is not None else 'pct'
+    return bool(PF['on'] and detector_map in ('pct', 'fixed') and live is not None and getattr(live, 'replay', None) is None and not STAB['on']
                 and not spec_proposals.PROP['show'] and not skin_temp.TEMP['show'])
 
 

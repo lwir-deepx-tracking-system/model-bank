@@ -224,6 +224,8 @@ def cam_argv():   # 카메라 자리에 띄울 명령. 재생이 없으면 전�
     r_ = getattr(APP.LIVE, 'replay', None)
     if r_ is None: return [APP.args.live_cam or str(HERE / 'src' / 'camera' / 'cam_pipe')]
     argv = [sys.executable, '-B', str(HERE / 'src' / 'camera' / 'replay_cam.py'), '--dir', r_['dir'], '--fps', '%g' % r_['fps'], '--loops', '0' if r_['loop'] else '1', '--tag', '--control', '--total', str(r_['frames'] or 0)]
+    if vars(APP).get('THERMAL') is not None and APP.THERMAL.status()['mode'] == 'fieldscale2-video':
+        argv.append('--raw16-only')
     if replay_eval.lossless():
         argv.append('--no-skip')
     if 'pacing' in r_:
@@ -384,6 +386,14 @@ def start_request(q_):   # -> (http 코드, 글)
         return 409, 'C++ ByteTrack 라이브러리가 설정되지 않았습니다'
     it_, d_ = find(q_.get('seq', [''])[0])
     if it_ is None: return (409 if not on() else 400), d_
+    if vars(APP).get('THERMAL') is not None and APP.THERMAL.status()['mode'] == 'fieldscale2-video' and it_['bits'] != 16:
+        return 409, 'FieldScale 2.0은 원본 RAW16 녹화에서만 시험할 수 있습니다'
+    if vars(APP).get('THERMAL') is not None and APP.THERMAL.status()['mode'] == 'fieldscale2-video' and os.path.isdir(d_):
+        try:
+            if any((_png_head(entry.path) or (None,))[0] == 8 for entry in os.scandir(d_) if entry.name.lower().endswith('.png')):
+                return 409, 'FieldScale 2.0 재생 폴더에 8비트 PNG가 섞여 있습니다'
+        except OSError:
+            return 409, 'FieldScale 2.0 재생 폴더를 읽을 수 없습니다'
     tracks_ = None
     if stored_key is not None:
         tracks_, why_ = _stored_target(it_, d_, stored_key)

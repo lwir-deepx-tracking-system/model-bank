@@ -22,6 +22,7 @@ from ..track.confirm_time import ConfirmByTime, MS_MAX
 from ..reid.reid_models import reid_catalog
 from ..gimbal.gimbal_link import gb_cfg
 from .system_buttons import npu_feed_state
+from ..camera import thermal_mapping
 from ..camera import cam_frozen   # 11-15: the frozen-camera notice for the page (/rules key cam_frozen)
 from ..camera import cam_scene   # 11-15: frames without a scene (cam_pipe v2.13): /rules key cam_scene
 
@@ -115,7 +116,7 @@ def rules_state():
 
 def rules_state_2():
     return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg(), auto_det=auto_det.state(), resident_det=resident_det.state(),
-                box_refine=box_refine.state())   # 11-15: 상자 다듬기 (src/track/box_refine.py): mode, blend_s, ms per frame, tracks   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). resident_det (11-15): 두 모델 상주·즉시 전환 (src/detect/resident_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
+                box_refine=box_refine.state(), thermal_map=APP.THERMAL.status() if 'THERMAL' in vars(APP) else None)
 
 
 def prefer_cpp_bytetrack(q_, tracker_key, cam_tracker):
@@ -265,6 +266,36 @@ def rules_request(q_):
 
 
 def rules_request_2(q_):
+    if 'thermal_map' in q_:
+        values = q_['thermal_map']
+        if len(values) != 1 or values[0] not in thermal_mapping.MODES:
+            return False, '없는 영상 전처리 방식'
+        mode = values[0]
+        if mode == thermal_mapping.FIELD and not APP.args.live_port:
+            return False, 'FieldScale은 RAW16 실시간 입력에서만 선택할 수 있습니다'
+        live = vars(APP).get('LIVE')
+        if live is not None and getattr(live, 'replay', None) is not None and mode != APP.THERMAL.status()['mode']:
+            return False, '녹화 재생을 마친 뒤 전처리를 바꾸세요 (비교 지표를 처음부터 다시 계산해야 합니다)'
+        if mode == thermal_mapping.FIELD and live is not None and getattr(live, 'replay', None) is not None and live.replay.get('bits') != 16:
+            return False, 'FieldScale은 원본 RAW16 녹화에서만 선택할 수 있습니다'
+        rest = {key: value for key, value in q_.items() if key != 'thermal_map'}
+        ok, message = rules_request_2(rest) if rest else (True, '다음 프레임에 적용')
+        if not ok: return ok, message
+        try:
+            APP.THERMAL.set_mode(mode)
+        except (ImportError, RuntimeError, OSError, ValueError) as exc:
+            return False, '전처리를 준비하지 못했습니다: ' + str(exc)[:150]
+        if live is not None:
+            with live.cond:
+                live.q_drop += len(live.q)
+                live.q.clear()
+                live.lo = live.hi = None
+                live.cond.notify_all()
+            picture_worker = getattr(live, 'picture_worker', None)
+            if picture_worker is not None:
+                picture_worker.fixed = mode == 'fixed'
+        APP.sel_save(thermal_map=mode)
+        return True, '다음 프레임부터 적용'
     if 'box_refine' in q_ or 'box_blend' in q_ or 'lost_same' in q_:   # 11-15: box smoothing (src/track/box_refine.py); checked first, changed only when the rest of the query was taken too. 11-16: lost_same (lost box = seen box)
         br_ = {k_: x_ for k_, x_ in q_.items() if k_ in ('box_refine', 'box_blend', 'lost_same')}
         ok_, tx_, apply_ = box_refine.parse_request(br_)

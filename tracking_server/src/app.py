@@ -41,7 +41,7 @@ from .detect import model_scan, npu_engine, detect_frame
 from .web import system_buttons, page_handler, page_settings, measure
 from .track import camera_motion
 from .reid import reid_embed
-from .camera import camera_link, replay_eval, stall_diag
+from .camera import camera_link, replay_eval, stall_diag, thermal_mapping
 from .camera import temp_ring   # 11-14: --cam-temp (camera temperature map for the skin-temperature labels; off by default)
 from .gimbal import gimbal_link
 from .common import result_summary
@@ -146,7 +146,7 @@ def main():
     ap.add_argument('--replay-root', default='', help='11-12: folder of the label site recordings (<root>/<name>/images/000001.png ...); the web page can play one of them instead of the camera (GET /replay, POST /replay/start, /replay/stop). Empty or missing folder = replay unavailable')
     ap.add_argument('--live-cam', default='', help='v14: path of the cam_pipe helper (default: src/camera/cam_pipe)')
     ap.add_argument('--cam-temp', type=int, default=0, help='11-14 research (default 0 = off = unchanged): pass LWIR_CAM_TEMP=N to cam_pipe (v2.11): it puts the camera\'s temperature map of some frames into /dev/shm/lwir_temp_ring_<uid> (src/camera/temp_ring.py) for the skin-temperature labels (/rules/set?temp_show=1). A LWIR_CAM_TEMP in the environment is passed on as well')
-    ap.add_argument('--live-map', choices=['fixed', 'pct'], default='pct', help='v14: 16 -> 8 bit mapping: fixed = linear 0..65535 (team runtime), pct = smoothed 1..99 percentile window')
+    ap.add_argument('--live-map', choices=thermal_mapping.MODES, default='pct', help='RAW16 detector mapping: pct (default), fixed, CLAHE after pct, or FieldScale 2.0 video')
     ap.add_argument('--live-scale', type=float, default=float(os.environ.get('LWIR_LIVE_SCALE', '1.0')), help='v14: display scale of the streamed picture. 11-15 (user: 화면 전송 지연): default 1.0 = 640x480 (was 1.5 = 960x720, 2.25x the bytes); LWIR_LIVE_SCALE=1.5 for the old size')
     ap.add_argument('--mamba', default='', help='v18: folder of the Mamba relabeler (replaces --judge); needs --relabel and --gmc')
     ap.add_argument('--mamba-crops', type=int, default=3, help='v18: appearance crops per frame for the Mamba relabeler')
@@ -171,6 +171,12 @@ def main():
     ap.add_argument('--confirm-gate', default='', help='v11: path of GATE_GRU32_FROZEN.json = the learned confirmation gate replaces 3FrameConfirm (GateTracker); requires --tracker bytetrack --class-gate --no-vit; default off = unchanged')
     ap.add_argument('--judge-crops', type=int, default=2, help='v10: with --judge, crops per frame on NPU_2 (new IDs first, then refresh); 0 = every eligible crop')
     APP.args = ap.parse_args()
+    if APP.args.live_map == thermal_mapping.FIELD and not APP.args.live_port:
+        ap.error('FieldScale 2.0 requires --live-port and RAW16 camera or replay input')
+    try:
+        APP.THERMAL = thermal_mapping.ThermalMapping(APP.args.live_map)
+    except (ImportError, RuntimeError, OSError, ValueError) as exc:
+        ap.error('thermal mapping unavailable: %s' % exc)
     APP.FEED_MODE = frame_feed.load_mode()
     APP.FEED = None
     APP.FEED_READY = False
@@ -317,11 +323,12 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det', 'box_refine', 'box_blend', 'lost_same', 'thermal_map') if k_ in sv_})
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass
         qs_ = [{k_: [str(APP.SEL[k_])] for k_ in ('warm_min', 'warm_max', 'edge_birth', 'edge_px') if k_ in APP.SEL}]
+        if 'thermal_map' in APP.SEL: qs_.append({'thermal_map': [str(APP.SEL['thermal_map'])]})
         if 'tracker' in APP.SEL: qs_.append(dict({'tracker': [str(APP.SEL['tracker'])]}, **({'engine': ['python']} if APP.SEL.get('engine') == 'python' else {})))   # 11-13: a saved Python engine choice comes back; everything else starts C++ first
         if 'relabel' in APP.SEL: qs_.append({'relabel': ['1' if APP.SEL['relabel'] else '0']})
         if 'predictor' in APP.SEL: qs_.append({'predictor': [str(APP.SEL['predictor'])]})

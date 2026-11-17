@@ -2,8 +2,14 @@
 function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const Q=q=>'/rules/set?'+q,trk=pend(r,'tracker'),rel=!!pend(r,'relabel'),prd=pend(r,'predictor')||'kalman',bot=trk==='botsort';
   const warm=r.warm_on!=null?!!r.warm_on:(r.warm_min>0||(r.warm_max||0)>0);
-  T.push({lab:'전처리',sub:'여러 개 켜기',multi:1,n:[
-    {name:'흔들림 보정',note:'optical flow · 화면+검출 · 시험 안 함',sel:!!r.stab,lock:r.stab==null?OLDSRV:'',u:Q('stab='+(r.stab?0:1))}]});
+  const tm=r.thermal_map,tmMode=tm?.mode||'pct',tmCost=tm?.last_ms!=null?' · 직전 변환 '+tm.last_ms.toFixed(1)+' ms':'',tmLock=!tm?OLDSRV:rpLast?.state?.on?'녹화 재생을 마친 뒤 전처리를 바꾸세요':'';
+  T.push({lab:'전처리',sub:'RAW16 → 검출 입력'+tmCost,n:[
+    {name:'기본 · 백분위',pick:1,note:'현재 방식 · 1~99% 밝기 범위와 EMA',sel:tmMode==='pct',lock:tmLock,u:Q('thermal_map=pct')},
+    {name:'CLAHE',pick:1,note:'기본 변환 뒤 국소 대비 향상 · 검출 효과 시험 중',sel:tmMode==='clahe',lock:tmLock,u:Q('thermal_map=clahe')},
+    {name:'FieldScale 2.0',pick:1,note:'RAW16 공간·시간 변환 · CPU 지연과 미탐 시험 중',sel:tmMode==='fieldscale2-video',lock:tmLock,u:Q('thermal_map=fieldscale2-video'),ask:tmMode==='fieldscale2-video'?'':'FieldScale 2.0은 장치 속도와 검출 개선 효과를 아직 확인하지 않았습니다. 선택할까요?'},
+    {name:'고정 선형',pick:1,note:'RAW16 전체 범위를 8비트로 변환 · 비교용',sel:tmMode==='fixed',lock:tmLock,u:Q('thermal_map=fixed')} ]});
+  T.push({lab:'흔들림 보정',sub:'optical flow · 화면+검출 · 시험 안 함',multi:1,n:[
+    {name:'흔들림 보정',sel:!!r.stab,lock:r.stab==null?OLDSRV:'',u:Q('stab='+(r.stab?0:1))}]});
   const cat=(m&&m.catalog)||[];
   const dk=c=>String(c.det)+' '+String(c.name)+' '+(DN[c.det]||''),ADVON=document.body.classList.contains('adv'),HIDEF=['기본 (공개 데이터)','다른 구조 (비교용)'],curm=m?(m.busy?m.pending:m.current):null;
   const catv=cat,dfs=DSTR.filter(f=>catv.some(c=>dfold(dk(c))===f));   // 11-13 (user): every detector folder always shows (hiding the comparison models was a problem)   // 11-13: folders by use, only the ones that have models

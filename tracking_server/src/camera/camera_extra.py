@@ -44,6 +44,7 @@ from . import replay_eval   # 11-12: frames of the replay program carry their pn
 from . import cam_frozen   # 11-15: a camera frame clears the frozen-camera state
 from . import cam_scene   # 11-15: cam_pipe v2.13 SCENE_LOST / SCENE_BACK lines -> the page notice (read in _tail)
 from . import spawn_keeper   # 11-15: cam_pipe is started by a thread that lives as long as the server
+from . import thermal_mapping
 
 # ---------------------------------------------------------------- A. 지워지지 않는 카메라 기록
 LOG_NAME = 'camera_events.log'
@@ -484,7 +485,9 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
                         live.last_frame_t = time.monotonic()
                         break
                     if len(live.q) == live.q.maxlen: live.q_drop += 1
-                    live.q.append((ta_, raw_))
+                    live.q.append(thermal_mapping.queued_frame(
+                        vars(APP).get('THERMAL'), ta_, raw_, p_, replay_pass=rid_ >> 20 if tagged else None,
+                        position=slot_ if tagged else None, repeat=bool(flags_ & 4)))
                     cnt_ += 1; now_ = time.monotonic(); live.last_frame_t = now_; live.cam_fail_n = 0; live.cam_unrec_n = 0; live.frames_in += 1
                     if not tagged and getattr(live, 'cam_frozen', None) is not None: note('server', cam_frozen.on_frame(live))   # 11-15: a camera frame (not a replay frame): the camera answers again
                     if now_ - tl_ >= 1.0: live.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_

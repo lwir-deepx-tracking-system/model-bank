@@ -57,7 +57,7 @@ from ..common.state import APP
 from ..common.shared_values import HERE
 from ..track.stabilizer import STAB, stab_live, stab_off
 from ..track import camera_motion
-from ..camera import camera_extra
+from ..camera import camera_extra, thermal_mapping
 from . import detect_frame
 from . import feed_auto        # 11-16: the automatic choice between core 0 only and cores 0 and 1
 from ..track import e2e_live   # 11-14: no detector while the end-to-end model is on
@@ -366,7 +366,8 @@ class Feed:
                     if r_ is None:
                         if getattr(APP, 'FEED_MODE', None) == 'auto' and not camera_extra.replay_eval.lossless():
                             while len(L_.q) > 1: self._drop(L_.q.popleft()[0], False)   # 11-16 auto: never an older frame while a newer one waits (frames that queued up during a switch)
-                        t_, raw_ = L_.q.popleft()
+                        queued = L_.q.popleft()
+                        t_, raw_ = queued[:2]
                         if self.mon is not None: self.mon.arrive(t_)
                         if camera_extra.replay_eval.lossless():
                             L_.cond.notify_all()
@@ -377,7 +378,7 @@ class Feed:
                 self._job = None
                 if r_ is None:
                     restart = camera_extra.replay_eval.reset_first_input(t_)
-                    g8_ = APP.lv_to8(raw_); gg_ = np.empty((512, 640), np.uint8); gg_[16:496] = g8_; gg_[:16] = g8_[0]; gg_[496:] = g8_[-1]   # live_next 와 같은 순서, 같은 계산
+                    g8_ = thermal_mapping.detector_gray(vars(APP).get('THERMAL'), APP.lv_to8, queued, vars(L_).get('proc')); gg_ = np.empty((512, 640), np.uint8); gg_[16:496] = g8_; gg_[:16] = g8_[0]; gg_[496:] = g8_[-1]   # live_next 와 같은 순서, 같은 계산
                     sc_ = stab_live(g8_, t_, gg_) if STAB['on'] else stab_off()
                     r_ = _Rec(); r_.seq = self.seq; self.seq += 1; r_.t = t_; r_.raw = raw_; r_.g8 = g8_; r_.gg = gg_; r_.stab = sc_
                     r_.gmc = self._gmc(gg_, restart) if APP.args.gmc_thread else None

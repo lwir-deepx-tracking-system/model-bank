@@ -128,14 +128,14 @@ def png_head(path):
 
 class PngSource:
     """PNG 폴더. read(i) = i 번째 파일을 풀어 614,400 바이트로 (못 풀면 None). 시작할 때 머리만 보고 쓸 수 있는 파일 목록을 만든다."""
-    def __init__(self, folder):
+    def __init__(self, folder, raw16_only=False):
         self.folder = folder
         self.paths, self.nums, self.bad = [], [], 0
         kinds = set()
         for n in sorted(x for x in os.listdir(folder) if x.lower().endswith('.png')):
             p = os.path.join(folder, n)
             h = png_head(p)
-            if h is None or h[0] not in (8, 16) or (h[1], h[2]) != (W, H):
+            if h is None or h[0] not in ((16,) if raw16_only else (8, 16)) or (h[1], h[2]) != (W, H):
                 self.bad += 1
                 continue
             kinds.add('8-bit x257' if h[0] == 8 else '16-bit')
@@ -352,6 +352,7 @@ def main():
     ap.add_argument('--control', action='store_true', default=os.environ.get('LWIR_REPLAY_CONTROL') == '1')
     ap.add_argument('--tag', action='store_true', default=os.environ.get('LWIR_REPLAY_TAG') == '1')
     ap.add_argument('--no-skip', action='store_true', help='preserve sequential frames under backpressure')
+    ap.add_argument('--raw16-only', action='store_true', help='use only 16-bit PNG frames for raw thermal mapping')
     ap.add_argument('--pacing', choices=['legacy', 'deadline'],
                     default=os.environ.get('LWIR_REPLAY_PACING', 'legacy'),
                     help='lossless replay timing; deadline includes read/write work in the frame period')
@@ -393,14 +394,14 @@ def main():
         if os.path.isfile(a.dir) and a.dir.lower().endswith(('.raw', '.raw.gz')):
             src = RawSource(a.dir, a.total)
         elif os.path.isdir(a.dir):
-            src = PngSource(a.dir)
+            src = PngSource(a.dir, raw16_only=a.raw16_only)
         else:
             raise SystemExit('replay_cam: no such folder or .raw/.raw.gz file: %s' % os.path.basename(a.dir))
         if ctl is not None:
             ctl.start()
         total = src.total
         if total <= 0:
-            say('REPLAY no usable frame (640x480 png, 8-bit or 16-bit) in the given folder; %d files skipped' % src.bad)
+            say('REPLAY no usable frame (640x480 png, %s) in the given folder; %d files skipped' % ('16-bit only' if a.raw16_only else '8-bit or 16-bit', src.bad))
             return 2
         say('CAMERA %d %d' % (W, H))
         tag = stamp and a.tag

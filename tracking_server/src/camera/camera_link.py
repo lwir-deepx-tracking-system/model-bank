@@ -12,6 +12,7 @@ from . import stall_diag   # 2026-11-13: 서버가 잠깐 멈춘 까닭을 찾�
 from . import cam_frozen   # 11-15: the camera's USB chip froze (cam_pipe exit 8): wait for a replug, no usbreset, 5 V step only behind the switchable hub
 from . import cam_scene   # 11-15: frames without a scene (cam_pipe v2.13 SCENE_LOST): page notice
 from . import spawn_keeper   # 11-15: cam_pipe is started by a thread that lives as long as the server
+from . import thermal_mapping
 
 
 class LiveImages:   # endless list of camera frames; it ends (IndexError) when the live time is over
@@ -46,7 +47,7 @@ def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a ne
             if APP.LIVE.stopped or p_ is not APP.LIVE.proc:
                 continue
             if len(APP.LIVE.q) == APP.LIVE.q.maxlen: APP.LIVE.q_drop += 1   # v26b: the oldest waiting frame is thrown away (the tracker is 3 frames behind)
-            APP.LIVE.q.append((ta_, raw_)); APP.LIVE.cond.notify()
+            APP.LIVE.q.append(thermal_mapping.queued_frame(vars(APP).get('THERMAL'), ta_, raw_, p_)); APP.LIVE.cond.notify()
             cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
             if getattr(APP.LIVE, 'cam_frozen', None) is not None: camera_extra.note('server', cam_frozen.on_frame(APP.LIVE))   # 11-15: the camera answers again
             if now_ - tl_ >= 1.0: APP.LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
@@ -146,8 +147,8 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
                 publish_jpeg_locked(APP.LIVE, jpeg_, None)
 
 
-def lv_to8(raw_):
-    if APP.args.live_map == 'fixed': return APP.cv2.convertScaleAbs(raw_, alpha=255.0 / 65535.0)
+def lv_to8(raw_, mode=None):
+    if (mode or APP.args.live_map) == 'fixed': return APP.cv2.convertScaleAbs(raw_, alpha=255.0 / 65535.0)
     hist_ = np.bincount((raw_ >> 4).ravel(), minlength=4096).cumsum(); tot_ = hist_[-1]
     lo_ = float(np.searchsorted(hist_, tot_ * 0.01)) * 16; hi_ = float(np.searchsorted(hist_, tot_ * 0.99)) * 16 + 16
     if hi_ - lo_ < 200: hi_ = lo_ + 200
@@ -177,7 +178,8 @@ def live_next(*, wait=True, fresh_only=False):
                 preserve = camera_extra.replay_eval.lossless()
                 if not APP.args.pipeline and not preserve:
                     while len(APP.LIVE.q) > 1: APP.LIVE.q.popleft()
-                t_, raw_ = APP.LIVE.q.popleft()
+                queued = APP.LIVE.q.popleft()
+                t_, raw_ = queued[:2]
                 if preserve:
                     APP.LIVE.cond.notify_all()
                 if APP.LIVE.prev_t is not None and t_ - APP.LIVE.prev_t > 1.0:   # v26b: the camera gave no frame for over 1 s (repair, restart). The person at the old place may be someone else now:
@@ -192,7 +194,7 @@ def live_next(*, wait=True, fresh_only=False):
                 return APP.LIVE.last
         with APP.LIVE.cam_lock: APP.lv_cam_wait()   # v33: cam_lock. v21: outside the lock: may reopen the camera process
     camera_extra.replay_eval.reset_first_input(t_)
-    APP.FRAME_DY[0] = 16.0; g8_ = APP.lv_to8(raw_); gg_ = np.empty((512, 640), np.uint8); gg_[16:496] = g8_; gg_[:16] = g8_[0]; gg_[496:] = g8_[-1]
+    APP.FRAME_DY[0] = 16.0; g8_ = thermal_mapping.detector_gray(vars(APP).get('THERMAL'), APP.lv_to8, queued, vars(APP.LIVE).get('proc')); gg_ = np.empty((512, 640), np.uint8); gg_[16:496] = g8_; gg_[:16] = g8_[0]; gg_[496:] = g8_[-1]
     APP.LIVE.stabq.append(stab_live(g8_, t_, gg_) if STAB['on'] else stab_off())   # stab: LIVE.raws / LIVE.rawq below keep the unmoved frames
     APP.LIVE.arr.append(t_); APP.LIVE.last = gg_
     if APP.GB is not None and APP.GB.gui: APP.LIVE.raws.append(raw_ if APP.args.gui_map == 'team' else (g8_.astype(np.uint16) * 257))   # v20: the picture for the GUI, paired with LIVE.arr
