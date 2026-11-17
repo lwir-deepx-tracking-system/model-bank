@@ -577,6 +577,14 @@ def make_lv_Handler():
                     shown_key_ = int(frame_)
                     shown_id_ = None if shown_ == 'none' else int(shown_)
                 cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
+                if u_.path == '/gimbal/home':
+                    reason_ = ('녹화 재생 중에는 원점으로 이동하지 않습니다' if replay_link.blocking() else
+                               '서버 재시작 중에는 원점으로 이동하지 않습니다' if getattr(APP.LIVE, 'restart_pending', False) else
+                               'USB 복구 중에는 원점으로 이동하지 않습니다' if getattr(APP.GB, 'usb_hold', False) else
+                               '원점 복귀를 지원하는 새 짐벌 브리지가 필요합니다' if not getattr(APP.GB, 'home_control_supported', False) else '')
+                    if reason_:
+                        b_ = json.dumps(dict(APP.GB.state, answer=reason_, refused=True), ensure_ascii=False).encode()
+                        self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
                 if u_.path == '/gimbal/click' and cam_tracker is not None and cam_tracker.blocks_selection():
                     self.send_error(409, 'Tracker switch is pending'); return
                 if getattr(APP.LIVE, 'restart_pending', False) and (
@@ -596,7 +604,7 @@ def make_lv_Handler():
                     b_ = json.dumps(dict(APP.GB.state, cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n, refused=True), ensure_ascii=False).encode()
                     self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
                 if not strict_ and getattr(APP.GB, 'usb_hold', False) and u_.path in ('/gimbal/click', '/gimbal/move'): u_ = u_._replace(path='/gimbal/stop')   # v35: USB power is being cycled, no new move
-                if not strict_ and u_.path in ('/gimbal/click', '/gimbal/stop'): APP.GB.mover = None
+                if not strict_ and u_.path in ('/gimbal/click', '/gimbal/stop', '/gimbal/home'): APP.GB.mover = None
                 elif u_.path == '/gimbal/move': APP.GB.mover = ip_ if (int(q_['x'][0]) or int(q_['y'][0])) else None
                 if u_.path == '/gimbal/click':
                     x_, y_ = float(q_['x'][0]) * APP.LIVE_W, float(q_['y'][0]) * APP.LIVE_H
@@ -610,6 +618,9 @@ def make_lv_Handler():
                         b_ = json.dumps(dict(APP.GB.state, refused=True), ensure_ascii=False).encode()
                         self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
                 elif u_.path == '/gimbal/stop': APP.GB.state['answer'] = ''; APP.gb_send('H')
+                elif u_.path == '/gimbal/home':
+                    APP.GB.state['answer'] = '원점 이동 요청: pan 0°, tilt 0°'
+                    if not APP.gb_send('C'): self.send_error(503, 'Gimbal command unavailable'); return
                 elif u_.path == '/gimbal/move': APP.GB.state['answer'] = ''; APP.gb_send('V %d %d' % (int(q_['x'][0]), int(q_['y'][0])))
                 elif u_.path != '/gimbal/ping': self.send_error(404); return
             except (KeyError, ValueError, IndexError): self.send_error(400); return

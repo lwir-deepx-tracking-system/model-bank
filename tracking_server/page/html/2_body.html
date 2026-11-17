@@ -20,7 +20,7 @@
         <div class="vchip vage num" id="vage" title="카메라 프레임이 서버에 들어온 때부터 이 화면까지 (서버 처리 + 전송). '그중 서버' = 그 가운데 서버 안에서 걸린 시간. 내 화면 fps 는 추적보다 느릴 때만 나옴. '약 …' = 이 브라우저(아이폰 등)는 사진 시각을 못 읽어 서버가 잰 값: 서버 처리 + 사진이 이 기기에 도착할 때까지(이 기기의 수신 확인으로 잼). 브라우저가 그리는 시간(화면 한 번 갱신쯤)은 빠져 있음. 중간·작은 사진 = 회선이 느려 480x360·320x240 사진을 받는 중" hidden></div>
         <div class="vdead" id="vdead" role="alert" hidden><b id="vdeadt"></b><span id="vdeads"></span></div>
         <div class="vtoast" id="vtoast" role="status" hidden></div>
-        <div class="vfol camera-only" id="vfol"><span class="vhint" id="vhint">사람을 누르면 따라갑니다</span><button class="btn vstop" id="vstop" type="button" title="따라가기·이동 멈춤 (Space)">■ 멈춤 <kbd>Space</kbd></button></div>
+        <div class="vfol camera-only" id="vfol"><span class="vhint" id="vhint">사람을 누르면 따라갑니다</span><button class="btn vstop" id="vstop" type="button" title="따라가기를 해제하고 pan 0°, tilt 0°로 이동 (Space)">원점 복귀 <kbd>Space</kbd></button></div>
         <div id="camera-center" class="camera-center" aria-hidden="true" hidden></div>
         <div class="pose" id="gimbal-position">
           <div class="pose-axis pose-pan" id="pose-pan" role="img" hidden><i data-marker></i></div>
@@ -49,7 +49,7 @@
           <div class="rpids" id="rpids"></div>
         </div>
       </div>
-      <div class="hint camera-only">실시간 카메라에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하거나 Space를 누르면 멈춥니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
+      <div class="hint camera-only">실시간 카메라에서 사람을 클릭하면 따라갑니다 · 빈 곳을 클릭하면 멈춥니다 · Space는 원점(0°, 0°)으로 돌아갑니다 · 방향키 또는 W A S D로 움직입니다 · 이 페이지를 닫으면 짐벌이 멈춥니다</div>
       <div class="pfo" id="pfo"><div class="pfb"><button id="pfbtn" title="속도 · 지연 그래프 켜기 / 끄기" aria-pressed="true">그래프</button><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
         <div class="pfx">
           <div class="pft">속도 (FPS) <span>1초 동안 처리한 영상 수 · 높을수록 좋음</span></div>
@@ -247,8 +247,8 @@
       <details class="sec camera-only" data-k="keys">
         <summary>단축키</summary>
         <div class="body keys">
-          <kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> 짐벌 이동 (누르는 동안) &nbsp;·&nbsp; <kbd>Space</kbd> 정지<br>
-          영상 위 사람 클릭: 그 사람 따라가기 &nbsp;·&nbsp; 영상의 빈 곳 클릭 또는 Space: 정지 &nbsp;·&nbsp; 방향키 또는 W A S D: 짐벌 이동 &nbsp;·&nbsp; 입력칸에 글을 쓰는 동안에는 짐벌을 움직이지 않습니다
+          <kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> 짐벌 이동 (누르는 동안) &nbsp;·&nbsp; <kbd>Space</kbd> 원점 복귀 (0°, 0°)<br>
+          영상 위 사람 클릭: 그 사람 따라가기 &nbsp;·&nbsp; 영상의 빈 곳 클릭: 정지 · Space: 원점 복귀 (0°, 0°) &nbsp;·&nbsp; 방향키 또는 W A S D: 짐벌 이동 &nbsp;·&nbsp; 입력칸에 글을 쓰는 동안에는 짐벌을 움직이지 않습니다
         </div>
       </details>
         </div>
