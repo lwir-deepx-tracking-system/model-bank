@@ -484,12 +484,13 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
                         # Pause keeps the same displayed frame without advancing tracker state.
                         live.last_frame_t = time.monotonic()
                         break
-                    if len(live.q) == live.q.maxlen: live.q_drop += 1
+                    dropped = len(live.q) == live.q.maxlen
+                    if dropped: live.q_drop += 1
                     pipeline_ = getattr(live, 'pipeline_perf', None)
                     if pipeline_ is not None:
                         # Only the real camera supplies CLOCK_MONOTONIC time for RecvImage.
                         transport_ms = transport_s * 1000 if transport_s is not None and 0 <= transport_s < 3600 else None
-                        pipeline_.camera(ta_, transport_ms)
+                        pipeline_.camera(ta_, transport_ms, dropped=dropped)
                     live.q.append((ta_, raw_))
                     cnt_ += 1; now_ = time.monotonic(); live.last_frame_t = now_; live.cam_fail_n = 0; live.cam_unrec_n = 0; live.frames_in += 1
                     if not tagged and getattr(live, 'cam_frozen', None) is not None: note('server', cam_frozen.on_frame(live))   # 11-15: a camera frame (not a replay frame): the camera answers again

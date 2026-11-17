@@ -397,6 +397,9 @@ class Feed:
 
     def _drop(self, t_, busy_):   # under the lock: one waiting frame thrown away. busy_ = because no core was free (not because the frame loop is behind)
         APP.LIVE.q_drop += 1; self.st['drop_wait'] += 1
+        pipeline = getattr(APP.LIVE, 'pipeline_perf', None)
+        if pipeline is not None:
+            pipeline.dropped_input()
         if self.mon is not None: self.mon.drop(t_, busy_)
 
     def _gmc(self, gg_, restart=False):   # camera_motion.gmc_submit 과 같은 일 (첫 프레임에서 계산 객체를 만들고, 작업 스레드에 순서대로 맡긴다). 프레임 번호는 받아 갈 때 붙는다

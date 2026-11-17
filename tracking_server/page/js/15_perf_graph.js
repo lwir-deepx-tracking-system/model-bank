@@ -89,29 +89,6 @@ function pfmark(){
   }
   PF.seen=now;
 }
-// Fixed scale relative to server receipt, with room for camera transport before zero.
-const PF_RAIL_MIN_MS=-10,PF_RAIL_MAX_MS=70;
-const pfRailPosition=value=>(Math.min(PF_RAIL_MAX_MS,Math.max(PF_RAIL_MIN_MS,value))-PF_RAIL_MIN_MS)/(PF_RAIL_MAX_MS-PF_RAIL_MIN_MS);
-function pfplaceLabels(markers){
-  const key=$('pf-pipe-key'),width=key.clientWidth,gap=6;
-  if(!width)return;
-  const labels=markers.filter(([,value])=>Number.isFinite(value)).map(([stage,value])=>{
-    const node=$('pf-rail-'+stage+'-label'),w=node.offsetWidth;
-    const left=Math.max(0,Math.min(width-w,pfRailPosition(value)*width-w/2));
-    return {node,left,right:left+w};
-  });
-  const height=Math.max(...labels.map(({node})=>node.offsetHeight));
-  const rows=[];
-  for(const label of labels){
-    const {node,left,right}=label;
-    let row=rows.findIndex(placed=>placed.every(other=>right+gap<=other.left||left>=other.right+gap));
-    if(row<0)row=rows.push([])-1;
-    rows[row].push(label);
-    node.style.left=left+'px';
-    node.style.top=row*(height+3)+'px';
-  }
-  key.style.height=(rows.length*(height+3)-3)+'px';
-}
 function pfSchedule(pipeline){
   const status=$('pf-schedule-status'), chart=$('pf-schedule-data');
   const data=pipeline.frame_schedule_ms;
@@ -125,7 +102,6 @@ function pfSchedule(pipeline){
   });
   chart.hidden=replay||!valid;
   status.hidden=!chart.hidden;
-  $('pf-output-summary').hidden=$('pf-output-label').hidden=true;
   if(chart.hidden){
     status.textContent=replay ? '녹화 재생 중에는 실시간 시간표를 표시하지 않습니다.'
       : Array.isArray(data) ? '실시간 프레임 측정 대기 중' : '프레임별 실측 데이터 없음';
@@ -133,28 +109,11 @@ function pfSchedule(pipeline){
   }
   const intervals=frames.slice(1).map((frame,i)=>{
     const prev=frames[i], start=prev[2], duration=frame[2]-start;
-    return {pair:(i+1)+' → '+(i+2), received:frame[0]-prev[0], start, duration,
+    return {pair:(i+1)+' → '+(i+2), start, duration,
             output:duration<0?'순서 역전':duration.toFixed(1)+' ms'};
   });
-  $('pf-schedule-gaps').hidden=$('pf-schedule-output').hidden=intervals.length===0;
-  $('pf-schedule-gap-rows').innerHTML=intervals.map(({pair,received,output})=>
-    '<tr><th scope="row">'+pair+'</th><td>'+received.toFixed(1)+' ms</td><td>'+output+'</td></tr>'
-  ).join('');
+  $('pf-schedule-output').hidden=intervals.length===0;
   const cores=Array.isArray(pipeline.frame_schedule_npu) ? pipeline.frame_schedule_npu : [];
-  if(intervals.length && intervals.every(({duration})=>duration>=0)){
-    const alternating=intervals.every((_,i)=>{
-      const a=cores[i],b=cores[i+1];
-      return a?.length===1&&b?.length===1&&[0,1].includes(a[0])&&[0,1].includes(b[0])&&a[0]!==b[0];
-    });
-    $('pf-output-values').textContent=intervals.map(({duration})=>duration.toFixed(1)).join(' / ')+' ms';
-    const fps=pipeline.track_fps;
-    let outputNote='· 최근 '+frames.length+'장';
-    if(alternating){
-      outputNote=fps>=29&&fps<=31?'· NPU 교대로 약 30 FPS 출력 유지':'· NPU 교대 실측';
-    }
-    $('pf-output-mode').textContent=outputNote;
-    $('pf-output-summary').hidden=$('pf-output-label').hidden=false;
-  }
   const last=Math.max(...frames.map(row=>row[2]));
   const limit=Math.max(20,Math.ceil(last/20)*20);
   const pct=value=>String(value/limit*100)+'%';
@@ -185,56 +144,39 @@ function pfSchedule(pipeline){
 function pfpipe(){
   const p=Date.now()-PF.receivedAt<5000&&PF.pipeline?PF.pipeline:{};
   const fmt=(value,unit)=>Number.isFinite(value)?value.toFixed(1)+' '+unit:'–';
-  const stages=[['input',p.camera_fps,p.camera_p95_ms],['detect',p.det_fps,p.det_p95_ms],['track',p.track_fps,p.track_p95_ms]];
-  for(const [key,fps,latency] of stages){
-    $('pf-'+key+'-fps').textContent=fmt(fps,'FPS');
-    $('pf-'+key+'-latency').textContent=fmt(latency,'ms');
-  }
-  const liveCamera=!document.body.classList.contains('replay-mode')&&p.camera_p95_ms>0;
-  const cameraMs=liveCamera?p.camera_p95_ms:0;
-  $('pf-rail-camera-value').textContent=fmt(liveCamera?cameraMs:null,'ms');
-  $('pf-rail-detect-value').textContent=fmt(p.det_p95_ms,'ms');
-  $('pf-rail-track-value').textContent=fmt(p.track_p95_ms,'ms');
+  const replay=document.body.classList.contains('replay-mode');
+  const liveData=!replay&&Date.now()-PF.receivedAt<5000;
   const goal=Number.isFinite(p.goal_ms)?p.goal_ms:33;
-  $('pf-goal-budget').textContent=goal+' ms';
-  const tracked=Number.isFinite(p.track_p95_ms),detected=Number.isFinite(p.det_p95_ms);
+  const tracked=liveData&&Number.isFinite(p.track_p95_ms);
   const target=$('pf-goal-status');
-  target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms';
+  $('pf-track-p95').textContent=tracked?fmt(p.track_p95_ms,'ms'):'–';
+  target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms · 집계 대기 중';
   target.dataset.met=String(tracked&&p.track_p95_ms<=goal);
   const samples=Number.isFinite(p.sample_count)?p.sample_count:0;
-  $('pf-pipe-samples').textContent=samples?'최근 1분 추적 '+samples.toLocaleString()+'장':'최근 1분 추적 집계 중';
-  const detEnd=detected?p.det_p95_ms:0;
-  const trackEnd=tracked?Math.max(p.track_p95_ms,detEnd):detEnd;
-  const pos=value=>(pfRailPosition(value)*100)+'%';
-  const rail=$('pf-rail-goal').parentNode;
-  rail.style.setProperty('--pf-camera',pos(-cameraMs));
-  rail.style.setProperty('--pf-server',pos(0));
-  rail.style.setProperty('--pf-detect-end',pos(detEnd));
-  rail.style.setProperty('--pf-track-end',pos(trackEnd));
-  $('pf-rail-goal').style.left=pos(goal);
-  const markers=[['camera',liveCamera?-cameraMs:null],['server',0],
-    ['detect',detected?p.det_p95_ms:null],['track',tracked?p.track_p95_ms:null]];
-  for(const [key,value] of markers){
-    const mark=$('pf-rail-'+key),label=$('pf-rail-'+key+'-label');
-    const valid=Number.isFinite(value);
-    mark.hidden=label.hidden=!valid;
-    if(valid)mark.style.left=pos(value);
-    label.dataset.clipped=value<PF_RAIL_MIN_MS?'left':value>PF_RAIL_MAX_MS?'right':'';
-  }
-  pfplaceLabels(markers);
+  $('pf-pipe-samples').textContent=samples?'p95 표본 '+samples.toLocaleString()+'장':'p95 표본 집계 중';
+  $('pf-p95-samples').textContent=tracked?'추적 완료 '+samples.toLocaleString()+'장 표본':'표본 집계 중';
+  $('pf-input-label').textContent=replay?'재생 입력':'카메라 입력';
+  $('pf-input-fps').textContent=liveData?fmt(p.camera_fps_5s,'FPS'):'–';
+  $('pf-track-fps').textContent=liveData?fmt(p.track_fps_5s,'FPS'):'–';
+  $('pf-output-interval').textContent=liveData?fmt(p.output_interval_p95_ms,'ms'):'–';
+  $('pf-queue-stat').hidden=replay;
+  $('pf-queue-drops').textContent=liveData&&Number.isInteger(p.queue_drops_5s)?p.queue_drops_5s.toLocaleString()+' 장':'–';
+  $('pf-input-latency').textContent=liveData?fmt(p.camera_p95_ms,'ms'):'–';
+  $('pf-detect-latency').textContent=liveData?fmt(p.det_p95_ms,'ms'):'–';
+  $('pf-detect-fps').textContent=liveData?fmt(p.det_fps_5s,'FPS'):'–';
   const feed=typeof rlast==='undefined' ? null : rlast?.npu_feed;
   const modeLabel=$('pf-feed-mode');
-  modeLabel.hidden=$('pf-feed-label').hidden=!feed?.submitted||document.body.classList.contains('replay-mode');
-  if(!modeLabel.hidden){
+  if(replay)modeLabel.textContent='녹화 재생';
+  else if(feed?.submitted){
     const mode=feed.active?'NPU 0·1 교대':'NPU 0 단독';
     modeLabel.textContent=(feed.requested==='auto'?'자동 · ':'')+mode;
-  }
+  }else modeLabel.textContent='NPU 모드 확인 중';
   pfSchedule(p);
 }
 function pfdraw(){
   pfpipe();
   if(!$('pfdetail').open)return;
-  const span=(PF.span/60)+'분',goal=Number($('pf-goal-budget').textContent.split(' ')[0]);
+  const span=(PF.span/60)+'분',goal=Number.isFinite(PF.pipeline?.goal_ms)?PF.pipeline.goal_ms:33;
   $('pfspan').textContent=span;
   $('pf-graph-goal').textContent=goal+' ms';
   for(const label of document.querySelectorAll('[data-pf-ago]'))label.textContent=span+' 전';

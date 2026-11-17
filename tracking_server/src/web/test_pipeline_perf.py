@@ -26,6 +26,37 @@ class PipelinePerfTests(unittest.TestCase):
         self.now = 103.1
         self.assertEqual(self.fps(), (0, 0, 0))
 
+    def test_five_completed_seconds_report_throughput_gaps_and_queue_drops(self):
+        self.perf.camera(100.5, dropped=True)
+        self.perf.tracked(100.5, 100.6)
+        self.now = 101.2
+        self.perf.dropped_input()
+        self.perf.camera(102.9)
+        self.perf.detected(102.9, 102.92)
+        self.perf.tracked(102.9, 102.95)
+        self.perf.camera(102.96, dropped=True)
+        self.perf.tracked(102.96, 103.0)
+        self.perf.camera(103.03)
+        self.perf.tracked(103.03, 103.1)
+        self.perf.camera(104.99)
+        self.perf.tracked(104.99, 105.05)
+        self.now = 104.99
+        early = self.perf.snapshot()
+        self.assertIsNone(early['track_fps_5s'])
+        self.assertIsNone(early['queue_drops_5s'])
+
+        self.now = 106.2
+        data = self.perf.snapshot()
+        self.assertEqual([data[k] for k in ('camera_fps_5s', 'det_fps_5s', 'track_fps_5s')], [.8, .2, .8])
+        self.assertEqual(data['queue_drops_5s'], 2)
+        self.assertEqual(data['output_interval_p95_ms'], 1765.0)
+
+        self.now = 112.2
+        idle = self.perf.snapshot()
+        self.assertEqual(idle['queue_drops_5s'], 0)
+        self.assertEqual(idle['track_fps_5s'], 0)
+        self.assertIsNone(idle['output_interval_p95_ms'])
+
     def test_p95_uses_frame_samples_and_expires_without_new_frames(self):
         self.perf.camera(100.05, 1)
         self.perf.camera(100.10)  # no camera clock for this frame
