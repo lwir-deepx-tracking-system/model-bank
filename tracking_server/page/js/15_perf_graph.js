@@ -84,12 +84,15 @@ function pfmark(){
   }
   PF.seen=now;
 }
-function pfplaceLabels(markers,limit){
+// Fixed scale relative to server receipt, with room for camera transport before zero.
+const PF_RAIL_MIN_MS=-10,PF_RAIL_MAX_MS=70;
+const pfRailPosition=value=>(Math.min(PF_RAIL_MAX_MS,Math.max(PF_RAIL_MIN_MS,value))-PF_RAIL_MIN_MS)/(PF_RAIL_MAX_MS-PF_RAIL_MIN_MS);
+function pfplaceLabels(markers){
   const key=$('pf-pipe-key'),width=key.clientWidth,gap=6;
   if(!width)return;
   const labels=markers.filter(([,value])=>Number.isFinite(value)).map(([stage,value])=>{
     const node=$('pf-rail-'+stage+'-label'),w=node.offsetWidth;
-    const left=Math.max(0,Math.min(width-w,value/limit*width-w/2));
+    const left=Math.max(0,Math.min(width-w,pfRailPosition(value)*width-w/2));
     return {node,left,right:left+w};
   });
   const height=Math.max(...labels.map(({node})=>node.offsetHeight));
@@ -127,22 +130,23 @@ function pfpipe(){
   $('pf-pipe-samples').textContent=samples?'최근 1분 · 추적 '+samples.toLocaleString()+'장':'프레임 집계 중';
   const detEnd=detected?p.det_p95_ms:0;
   const trackEnd=tracked?Math.max(p.track_p95_ms,detEnd):detEnd;
-  const limit=cameraMs+Math.max(goal,trackEnd)*1.12;
-  const pos=value=>(value/limit*100)+'%';
+  const pos=value=>(pfRailPosition(value)*100)+'%';
   const rail=$('pf-rail-goal').parentNode;
-  rail.style.setProperty('--pf-server',pos(cameraMs));
-  rail.style.setProperty('--pf-detect-end',pos(cameraMs+detEnd));
-  rail.style.setProperty('--pf-track-end',pos(cameraMs+trackEnd));
-  $('pf-rail-goal').style.left=pos(cameraMs+goal);
-  const markers=[['camera',liveCamera?0:null],['server',cameraMs],
-    ['detect',detected?cameraMs+p.det_p95_ms:null],['track',tracked?cameraMs+p.track_p95_ms:null]];
+  rail.style.setProperty('--pf-camera',pos(-cameraMs));
+  rail.style.setProperty('--pf-server',pos(0));
+  rail.style.setProperty('--pf-detect-end',pos(detEnd));
+  rail.style.setProperty('--pf-track-end',pos(trackEnd));
+  $('pf-rail-goal').style.left=pos(goal);
+  const markers=[['camera',liveCamera?-cameraMs:null],['server',0],
+    ['detect',detected?p.det_p95_ms:null],['track',tracked?p.track_p95_ms:null]];
   for(const [key,value] of markers){
     const mark=$('pf-rail-'+key),label=$('pf-rail-'+key+'-label');
     const valid=Number.isFinite(value);
     mark.hidden=label.hidden=!valid;
     if(valid)mark.style.left=pos(value);
+    label.dataset.clipped=value<PF_RAIL_MIN_MS?'left':value>PF_RAIL_MAX_MS?'right':'';
   }
-  pfplaceLabels(markers,limit);
+  pfplaceLabels(markers);
 }
 function pfdraw(){
   pfpipe();

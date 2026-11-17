@@ -185,7 +185,7 @@ body:not(.adv) .adv-only{display:none!important}
 .pfpipe-time small{margin-left:4px;color:#aebccd;font-weight:400}
 #pf-goal-status{color:#ffd08c;white-space:nowrap}
 #pf-goal-status[data-met=true]{color:#a3e6ad}
-.pfpipe-rail{margin:13px 5px 9px;height:3px;position:relative;border-radius:3px;background:linear-gradient(to right,var(--pf-in) 0 var(--pf-server,0%),var(--pf-det) var(--pf-server,0%) var(--pf-detect-end,0%),var(--pf-track) var(--pf-detect-end,0%) var(--pf-track-end,0%),#405168 var(--pf-track-end,0%) 100%)}
+.pfpipe-rail{margin:13px 5px 9px;height:3px;position:relative;border-radius:3px;background:linear-gradient(to right,#405168 0 var(--pf-camera,0%),var(--pf-in) var(--pf-camera,0%) var(--pf-server,0%),var(--pf-det) var(--pf-server,0%) var(--pf-detect-end,0%),var(--pf-track) var(--pf-detect-end,0%) var(--pf-track-end,0%),#405168 var(--pf-track-end,0%) 100%)}
 .pfpipe-rail i{position:absolute;top:50%;transform:translate(-50%,-50%);width:8px;height:8px;border-radius:50%;background:var(--pf-det)}
 .pfpipe-rail #pf-rail-camera{background:var(--pf-in)}
 .pfpipe-rail #pf-rail-server{background:#d3dfec}
@@ -194,6 +194,8 @@ body:not(.adv) .adv-only{display:none!important}
 .pfpipe-key{position:relative;margin-inline:5px;min-height:1.4em}
 .pfpipe-key>span{position:absolute;top:0;left:0;display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;color:#d3dfec}
 .pfpipe-key>span::before{content:'';align-self:center;width:6px;height:6px;border-radius:50%;background:currentColor}
+.pfpipe-key>span[data-clipped=left]::after{content:'←'}
+.pfpipe-key>span[data-clipped=right]::after{content:'→'}
 .pfpipe-key>span[hidden]{display:none}
 #pf-rail-camera-label{color:var(--pf-in)}
 #pf-rail-detect-label{color:var(--pf-det)}
@@ -1883,12 +1885,15 @@ function pfmark(){
   }
   PF.seen=now;
 }
-function pfplaceLabels(markers,limit){
+// Fixed scale relative to server receipt, with room for camera transport before zero.
+const PF_RAIL_MIN_MS=-10,PF_RAIL_MAX_MS=70;
+const pfRailPosition=value=>(Math.min(PF_RAIL_MAX_MS,Math.max(PF_RAIL_MIN_MS,value))-PF_RAIL_MIN_MS)/(PF_RAIL_MAX_MS-PF_RAIL_MIN_MS);
+function pfplaceLabels(markers){
   const key=$('pf-pipe-key'),width=key.clientWidth,gap=6;
   if(!width)return;
   const labels=markers.filter(([,value])=>Number.isFinite(value)).map(([stage,value])=>{
     const node=$('pf-rail-'+stage+'-label'),w=node.offsetWidth;
-    const left=Math.max(0,Math.min(width-w,value/limit*width-w/2));
+    const left=Math.max(0,Math.min(width-w,pfRailPosition(value)*width-w/2));
     return {node,left,right:left+w};
   });
   const height=Math.max(...labels.map(({node})=>node.offsetHeight));
@@ -1926,22 +1931,23 @@ function pfpipe(){
   $('pf-pipe-samples').textContent=samples?'최근 1분 · 추적 '+samples.toLocaleString()+'장':'프레임 집계 중';
   const detEnd=detected?p.det_p95_ms:0;
   const trackEnd=tracked?Math.max(p.track_p95_ms,detEnd):detEnd;
-  const limit=cameraMs+Math.max(goal,trackEnd)*1.12;
-  const pos=value=>(value/limit*100)+'%';
+  const pos=value=>(pfRailPosition(value)*100)+'%';
   const rail=$('pf-rail-goal').parentNode;
-  rail.style.setProperty('--pf-server',pos(cameraMs));
-  rail.style.setProperty('--pf-detect-end',pos(cameraMs+detEnd));
-  rail.style.setProperty('--pf-track-end',pos(cameraMs+trackEnd));
-  $('pf-rail-goal').style.left=pos(cameraMs+goal);
-  const markers=[['camera',liveCamera?0:null],['server',cameraMs],
-    ['detect',detected?cameraMs+p.det_p95_ms:null],['track',tracked?cameraMs+p.track_p95_ms:null]];
+  rail.style.setProperty('--pf-camera',pos(-cameraMs));
+  rail.style.setProperty('--pf-server',pos(0));
+  rail.style.setProperty('--pf-detect-end',pos(detEnd));
+  rail.style.setProperty('--pf-track-end',pos(trackEnd));
+  $('pf-rail-goal').style.left=pos(goal);
+  const markers=[['camera',liveCamera?-cameraMs:null],['server',0],
+    ['detect',detected?p.det_p95_ms:null],['track',tracked?p.track_p95_ms:null]];
   for(const [key,value] of markers){
     const mark=$('pf-rail-'+key),label=$('pf-rail-'+key+'-label');
     const valid=Number.isFinite(value);
     mark.hidden=label.hidden=!valid;
     if(valid)mark.style.left=pos(value);
+    label.dataset.clipped=value<PF_RAIL_MIN_MS?'left':value>PF_RAIL_MAX_MS?'right':'';
   }
-  pfplaceLabels(markers,limit);
+  pfplaceLabels(markers);
 }
 function pfdraw(){
   pfpipe();

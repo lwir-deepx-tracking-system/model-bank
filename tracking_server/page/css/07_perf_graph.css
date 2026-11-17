@@ -17,7 +17,7 @@
 .pfpipe-time small{margin-left:4px;color:#aebccd;font-weight:400}
 #pf-goal-status{color:#ffd08c;white-space:nowrap}
 #pf-goal-status[data-met=true]{color:#a3e6ad}
-.pfpipe-rail{margin:13px 5px 9px;height:3px;position:relative;border-radius:3px;background:linear-gradient(to right,var(--pf-in) 0 var(--pf-server,0%),var(--pf-det) var(--pf-server,0%) var(--pf-detect-end,0%),var(--pf-track) var(--pf-detect-end,0%) var(--pf-track-end,0%),#405168 var(--pf-track-end,0%) 100%)}
+.pfpipe-rail{margin:13px 5px 9px;height:3px;position:relative;border-radius:3px;background:linear-gradient(to right,#405168 0 var(--pf-camera,0%),var(--pf-in) var(--pf-camera,0%) var(--pf-server,0%),var(--pf-det) var(--pf-server,0%) var(--pf-detect-end,0%),var(--pf-track) var(--pf-detect-end,0%) var(--pf-track-end,0%),#405168 var(--pf-track-end,0%) 100%)}
 .pfpipe-rail i{position:absolute;top:50%;transform:translate(-50%,-50%);width:8px;height:8px;border-radius:50%;background:var(--pf-det)}
 .pfpipe-rail #pf-rail-camera{background:var(--pf-in)}
 .pfpipe-rail #pf-rail-server{background:#d3dfec}
@@ -26,6 +26,8 @@
 .pfpipe-key{position:relative;margin-inline:5px;min-height:1.4em}
 .pfpipe-key>span{position:absolute;top:0;left:0;display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;color:#d3dfec}
 .pfpipe-key>span::before{content:'';align-self:center;width:6px;height:6px;border-radius:50%;background:currentColor}
+.pfpipe-key>span[data-clipped=left]::after{content:'←'}
+.pfpipe-key>span[data-clipped=right]::after{content:'→'}
 .pfpipe-key>span[hidden]{display:none}
 #pf-rail-camera-label{color:var(--pf-in)}
 #pf-rail-detect-label{color:var(--pf-det)}
