@@ -3,8 +3,8 @@ const PF={rows:[],span:60,off:0,busy:false,marks:[],seen:null,pipeline:null,rece
 try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if([60,300,900].includes(s_.span))PF.span=s_.span;if(s_.detail===true)$('pfdetail').open=true;}catch(_){}
 const PF_LATENCY_LIMIT=100;
 const PFC=[
-  {cv:$('pfc0'),series:[[2,'--c2',1.8],[1,'--c1',2.5]],min:30,labels:true},
-  {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c4',2],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT},
+  {cv:$('pfc0'),series:[[1,'--c1',2.5],[2,'--c2',1.7,[4,4]]],min:45,labels:true},
+  {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c4',2],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT,goal:true},
   {cv:$('pfc2'),series:[[8,'--c5',2.2],[9,'--c6',2.2]],min:50},   // 8 = frame in -> picture ready (server), 9 = frame in -> this screen (the stream's own delay)
 ];
 // 11-15 (user: the graph showed 100 ms): the line was one /snap.jpg download every 2 s (a full picture on a new connection, there and
@@ -14,9 +14,9 @@ function pfdelay(){const st=typeof streamStats==='function'?streamStats('mjpeg')
   return st.measured?[st.age_ms,false]:[st.est_ms,true];}
 const pfOverflow=document.createElement('p');
 pfOverflow.className='pf-overflow';pfOverflow.hidden=true;
-$('pfago').parentNode.after(pfOverflow);
+$('pf-track-axis').after(pfOverflow);
 const nice=m=>{const p=Math.pow(10,Math.floor(Math.log10(m)));for(const k of [1,2,3,5,10])if(m<=k*p)return k*p;return 10*p;};
-function pfplot(chart,rows,t0,style){
+function pfplot(chart,rows,t0,style,goal){
   const cv=chart.cv,w=cv.clientWidth,h=cv.clientHeight;
   const L=30,R=5,T=chart.labels?14:7,B=7,pw=w-L-R,ph=h-T-B;
   if(pw<=0||ph<=0)return;
@@ -29,18 +29,23 @@ function pfplot(chart,rows,t0,style){
   if(!max){
     max=chart.min;
     for(const row of rows)for(const [col] of chart.series)if(row[col]>max)max=row[col];
-    max=nice(max);
+    max=chart.labels&&max<=45?45:nice(max);
   }
   const xFor=t=>L+(t-t0)/PF.span*pw;
   const yFor=v=>T+ph*(1-Math.min(v,max)/max);
   g.font='600 11px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='middle';g.textAlign='right';
   g.lineWidth=1;g.strokeStyle=color('--pf-grid');g.fillStyle=color('--pf-label');
-  for(const value of [0,max/2,max]){
+  const ticks=chart.labels&&max===45?[0,15,30,45]:[0,max/2,max];
+  for(const value of ticks){
     const y=Math.round(yFor(value))+.5;
     g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();
     g.fillText(String(value),L-4,y);
   }
   g.save();g.beginPath();g.rect(L,T-4,pw,ph+8);g.clip();g.lineJoin='round';
+  if(chart.goal&&goal<=max){
+    g.strokeStyle=color('--warn');g.lineWidth=1;g.setLineDash([2,4]);g.beginPath();
+    const y=yFor(goal);g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();
+  }
   for(const [col,ink,weight,dash=[]] of chart.series){
     g.strokeStyle=color(ink);g.lineWidth=weight;g.setLineDash(dash);g.beginPath();
     let lastT=null;
@@ -60,7 +65,7 @@ function pfplot(chart,rows,t0,style){
   }
   g.restore();
   /* 11-13: a dashed vertical line where NPU alternation or the tracker changed, so before and after can be compared */
-  g.save();g.setLineDash([3,3]);g.lineWidth=1.2;g.strokeStyle='#ffd166';g.fillStyle='#ffd166';g.font='600 10px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='top';
+  g.save();g.setLineDash([3,3]);g.lineWidth=1.2;g.strokeStyle=color('--warn');g.fillStyle=color('--warn');g.font='600 10px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='top';
   let labelEnd=-1e9;
   for(const mark of PF.marks){
     if(mark.t<t0)continue;
@@ -127,7 +132,7 @@ function pfpipe(){
   target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms';
   target.dataset.met=String(tracked&&p.track_p95_ms<=goal);
   const samples=Number.isFinite(p.sample_count)?p.sample_count:0;
-  $('pf-pipe-samples').textContent=samples?'최근 1분 · 추적 '+samples.toLocaleString()+'장':'프레임 집계 중';
+  $('pf-pipe-samples').textContent=samples?'최근 1분 추적 '+samples.toLocaleString()+'장':'최근 1분 추적 집계 중';
   const detEnd=detected?p.det_p95_ms:0;
   const trackEnd=tracked?Math.max(p.track_p95_ms,detEnd):detEnd;
   const pos=value=>(pfRailPosition(value)*100)+'%';
@@ -151,10 +156,13 @@ function pfpipe(){
 function pfdraw(){
   pfpipe();
   if(!$('pfdetail').open)return;
-  $('pfspan').textContent=(PF.span/60)+'분';$('pfago').textContent=(PF.span/60)+'분 전';
+  const span=(PF.span/60)+'분',goal=Number($('pf-goal-budget').textContent.split(' ')[0]);
+  $('pfspan').textContent=span;
+  $('pf-graph-goal').textContent=goal+' ms';
+  for(const label of document.querySelectorAll('[data-pf-ago]'))label.textContent=span+' 전';
   const now=Date.now()/1000+PF.off,t0=now-PF.span,vis=PF.rows.filter(r=>r[0]>=t0-2);
-  const style=getComputedStyle(document.documentElement);
-  for(const chart of PFC)pfplot(chart,vis,t0,style);
+  const style=getComputedStyle($('pfo'));
+  for(const chart of PFC)pfplot(chart,vis,t0,style,goal);
   let peak=0;
   for(const row of vis)if(row[0]>=t0&&row[4]>peak)peak=row[4];
   pfOverflow.hidden=peak<=PF_LATENCY_LIMIT;
@@ -165,7 +173,7 @@ function pftick(){pfmark();if(document.hidden||PF.busy)return;PF.busy=true;const
   fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.receivedAt=lastOk;PF.pipeline=p.pipeline||null;PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
     for(const r of p.rows){   // r[7] = arrival -> picture ready (server, mean of the second)
-      const [age,guess]=pfdelay();$('pft6').textContent=guess?'내 화면 (추정)':'내 화면';
+      const [age,guess]=pfdelay();$('pft6').textContent=guess?'기기 도착(추정)':'내 화면';$('pf-screen-note').hidden=!guess;
       r[8]=Number.isFinite(r[7])?r[7]:null;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&Number.isFinite(age)?age:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
 const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({detail:$('pfdetail').open,span:PF.span}));}catch(_){}};
 $('pfdetail').addEventListener('toggle',()=>{pfsave();pfdraw();});

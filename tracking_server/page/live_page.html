@@ -167,32 +167,32 @@ body:not(.adv) .adv-only{display:none!important}
 .rpidsbtn{font:inherit;font-size:12.5px;font-weight:700;color:var(--ink);background:none;border:0;padding:2px 0;cursor:pointer}
 @media(max-width:900px){.rpr .btn.small,.rpidsbtn,.rpmorebtn{min-height:44px}.rpidsbtn{display:block;width:100%;text-align:left}}
 /* Performance graphs below the video and replay controls. */
-:root{--c1:#69c4ff;--c2:#e1e8f2;--c3:#e5a8ff;--c4:#8fe0a8;--c5:#ffc46b;--c6:#ff8f8f;--pf-grid:#465363;--pf-label:#e1e8f2}
-:root{--pf-in:#9dcfff;--pf-det:#66e0cc;--pf-track:#c9b4ff}
+:root{--pf-in:#a4b5c1;--pf-det:#a3b9a6;--pf-track:var(--acc);--pf-grid:var(--line2);--pf-label:var(--ink2)}
+.pfo{--c1:var(--pf-track);--c2:var(--pf-in);--c3:#d4c6b9;--c4:var(--pf-det);--c5:var(--pf-in);--c6:#dbab91}
 .pfpipe-time>div:first-child,.pfstep>div{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-.pfstep p,.pfstep-value>span{color:#aebccd}
+.pfstep p,.pfstep-value>span{color:var(--ink2)}
 .pfpipe-steps{display:grid;margin-top:9px;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-.pfstep{position:relative;padding:11px 12px;background:#19222f;border:1px solid #334359;border-radius:9px;min-width:0}
-.pfstep:not(:last-child)::after{content:'→';position:absolute;left:100%;width:16px;top:13px;color:#8a9cb3;text-align:center}
+.pfstep{position:relative;padding:11px 12px;background:var(--field);border:1px solid var(--line);border-radius:9px;min-width:0}
+.pfstep:not(:last-child)::after{content:'→';position:absolute;left:100%;width:16px;top:13px;color:var(--mut);text-align:center}
 .pfstep-input{--pf-accent:var(--pf-in)}.pfstep-detect{--pf-accent:var(--pf-det)}.pfstep-track{--pf-accent:var(--pf-track)}
-.pfstep h3{font-size:15px;margin:0;color:#f3f6fc}
+.pfstep h3{font-size:15px;margin:0;color:var(--ink)}
 .pfstep>div{flex-wrap:wrap}
 .pfstep>div:first-child>span,.pfstep-value b{color:var(--pf-accent);white-space:nowrap;font-weight:700}
 .pfstep p{margin:7px 0 9px}
-.pfstep-value{border-top:1px solid #344258;padding-top:7px}
-.pfpipe-time{margin-top:8px;padding:8px 12px;background:#151e2a;border:1px solid #334359;border-radius:8px;color:var(--pf-label);font-size:13px;line-height:1.4}
+.pfstep-value{border-top:1px solid var(--line);padding-top:7px}
+.pfpipe-time{margin-top:8px;padding:8px 12px;background:var(--pan);border:1px solid var(--line);border-radius:8px;color:var(--ink);font-size:13px;line-height:1.4}
 .pfpipe-time>div:first-child{flex-wrap:wrap;gap:2px 8px}
-.pfpipe-time small{margin-left:4px;color:#aebccd;font-weight:400}
-#pf-goal-status{color:#ffd08c;white-space:nowrap}
-#pf-goal-status[data-met=true]{color:#a3e6ad}
-.pfpipe-rail{margin:13px 5px 9px;height:3px;position:relative;border-radius:3px;background:linear-gradient(to right,#405168 0 var(--pf-camera,0%),var(--pf-in) var(--pf-camera,0%) var(--pf-server,0%),var(--pf-det) var(--pf-server,0%) var(--pf-detect-end,0%),var(--pf-track) var(--pf-detect-end,0%) var(--pf-track-end,0%),#405168 var(--pf-track-end,0%) 100%)}
+.pfpipe-time small{margin-left:4px;color:var(--mut);font-weight:400}
+#pf-goal-status{color:var(--warn);white-space:nowrap}
+#pf-goal-status[data-met=true]{color:var(--pf-det)}
+.pfpipe-rail{margin:13px 5px 9px;height:3px;position:relative;border-radius:3px;background:linear-gradient(to right,var(--line2) 0 var(--pf-camera,0%),var(--pf-in) var(--pf-camera,0%) var(--pf-server,0%),var(--pf-det) var(--pf-server,0%) var(--pf-detect-end,0%),var(--pf-track) var(--pf-detect-end,0%) var(--pf-track-end,0%),var(--line2) var(--pf-track-end,0%) 100%)}
 .pfpipe-rail i{position:absolute;top:50%;transform:translate(-50%,-50%);width:8px;height:8px;border-radius:50%;background:var(--pf-det)}
 .pfpipe-rail #pf-rail-camera{background:var(--pf-in)}
-.pfpipe-rail #pf-rail-server{background:#d3dfec}
+.pfpipe-rail #pf-rail-server{background:var(--ink)}
 .pfpipe-rail #pf-rail-track{background:var(--pf-track)}
-.pfpipe-rail #pf-rail-goal{width:0;height:16px;border-left:2px dashed #ffd08c;border-radius:0;left:50%;background:none}
+.pfpipe-rail #pf-rail-goal{width:0;height:16px;border-left:2px dashed var(--warn);border-radius:0;left:50%;background:none}
 .pfpipe-key{position:relative;margin-inline:5px;min-height:1.4em}
-.pfpipe-key>span{position:absolute;top:0;left:0;display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;color:#d3dfec}
+.pfpipe-key>span{position:absolute;top:0;left:0;display:inline-flex;align-items:baseline;gap:4px;white-space:nowrap;color:var(--ink)}
 .pfpipe-key>span::before{content:'';align-self:center;width:6px;height:6px;border-radius:50%;background:currentColor}
 .pfpipe-key>span[data-clipped=left]::after{content:'←'}
 .pfpipe-key>span[data-clipped=right]::after{content:'→'}
@@ -200,29 +200,33 @@ body:not(.adv) .adv-only{display:none!important}
 #pf-rail-camera-label{color:var(--pf-in)}
 #pf-rail-detect-label{color:var(--pf-det)}
 #pf-rail-track-label{color:var(--pf-track)}
-.pfpipe-guide{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 8px;margin:7px 5px 0;padding-top:6px;border-top:1px solid #334359;font-size:12px;color:#b7c5d6}
-.pfpipe-guide dt{font-weight:600;color:var(--pf-label)}
+.pfpipe-guide{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:2px 8px;margin:7px 5px 0;padding-top:6px;border-top:1px solid var(--line);font-size:12px;color:var(--ink2)}
+.pfpipe-guide dt{font-weight:600;color:var(--ink)}
 .pfpipe-guide dd{margin:0;word-break:keep-all}
 .pfpipe-guide strong{color:inherit;white-space:nowrap}
-.pfdetail{margin-top:9px;border:1px solid #40506a;border-radius:8px;background:#131c28}
-.pfdetail>summary{cursor:pointer;padding:8px 11px;color:#e9f0fb;font-weight:700}
-.pfdetail[open]>summary{border-bottom:1px solid #334359}
-.pfo .pfb{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 10px 2px}
-.pfo .pfb button{font:inherit;font-weight:600;height:24px;padding:0 8px;border:1px solid #667385;border-radius:var(--r);background:#161b23;color:var(--pf-label);cursor:pointer}
-.pfo .pfb button.on{color:#fff;border-color:var(--c1)}
-.pfo .pfx{padding:6px 10px}
-.pfo .pfh{display:flex;flex-wrap:wrap;gap:2px 14px;align-items:center}
+.pfdetail{margin-top:9px;border:1px solid var(--line);border-radius:8px;background:var(--pan)}
+.pfdetail>summary{cursor:pointer;padding:8px 11px;color:var(--ink2);font-weight:700}
+.pfdetail[open]>summary{border-bottom:1px solid var(--line)}
+.pfo .pfb{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px 1px;color:var(--ink2)}
+.pfo .pfb button{font:inherit;font-weight:600;height:28px;padding:0 10px;border:1px solid var(--line2);border-radius:var(--r);background:var(--field);color:var(--ink);cursor:pointer}
+.pfo .pfx{padding:6px 10px 10px}
+.pfgraph-note,.pfdesc{margin:0;color:var(--ink2);font-size:12px;word-break:keep-all}
+.pfgraph-note{margin:0 0 8px}
+.pfchart{padding:8px 9px;border:1px solid var(--line);border-radius:6px;background:var(--field)}
+.pfchart+.pfchart{margin-top:7px}
+.pft{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:2px}
+.pft>span{color:var(--ink2);font-size:11px}
+.pfdesc{margin-top:3px}
+.pfh{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;margin-top:6px}
 .pfl{display:inline-flex;align-items:center;gap:4px;white-space:nowrap}
-.pfl i{width:14px;height:4px;border-radius:2px;display:inline-block}
-.pfl b{color:#fff;font-weight:700}
-.pfo .pfx canvas{display:block;width:100%;height:76px;margin:3px 0 8px}
-.pfo .pft{font-weight:700;color:#fff;margin-bottom:2px}
-.pfo .pft span{display:block;font-weight:400;font-size:11px;color:#9fb0c3}
-.pfl i.dash{height:0;border-top:3px dashed currentColor;background:none}
-.pfo .pfaxis{display:flex;justify-content:space-between;padding-left:30px;color:#9fb0c3;font-size:11px}
-.pfo .pfnote{margin:6px 0 0;color:#9fb0c3;font-size:11px;line-height:1.4}
-.pfo .pfx #pfc2{margin-bottom:0}
-.pfo .pf-overflow{margin:3px 0 0;color:var(--c3);font-weight:600;overflow-wrap:anywhere}
+.pfl::before{content:'';width:11px;height:3px;border-radius:2px;background:var(--series)}
+.pfl.pf-dash::before{height:0;border-top:2px dashed var(--series);background:none}
+.pfl b{color:var(--ink);font-weight:700;font-variant-numeric:tabular-nums}
+.pfo .pfx canvas{display:block;width:100%;height:76px;margin:4px 0 0}
+.pfaxis{display:flex;justify-content:space-between;padding-left:30px;color:var(--ink2);font-size:11px}
+.pfchart-goal{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline}
+.pfchart-goal .pfl::before{border-top-style:dotted}
+.pf-overflow{margin:3px 0 0;color:var(--warn);font-size:11px;font-weight:600;overflow-wrap:anywhere}
 @media (min-width:901px){
   .vbox{--video-below:100px}
   .replay-mode .vbox{--video-below:calc(var(--replay-controls-height,110px) + 94px)}
@@ -231,7 +235,6 @@ body:not(.adv) .adv-only{display:none!important}
   .pfpipe-time{margin-inline:8px}
   .pfo .pfb button{height:36px;padding:0 12px}
   .pfo .pfx{padding:5px 6px}
-  .pfo .pfh{column-gap:12px}
   .pfo .pfx canvas{height:68px}
 }
 @media (max-width:520px){
@@ -244,7 +247,6 @@ body:not(.adv) .adv-only{display:none!important}
 }
 @media (max-width:900px) and (max-height:400px) and (orientation:landscape){
   .pfo .pfx canvas{height:40px}
-  .pfo .pfnote{display:none}
 }
 /* phone, portrait */
 @media (max-width:900px){
@@ -494,20 +496,34 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
           <div class="pfstep pfstep-track"><div><h3>최종 추적</h3><span class="num" id="pf-track-fps">–</span></div><p>사람 박스에 추적 ID 연결</p><div class="pfstep-value"><span>서버 → 추적 발행</span><b class="num" id="pf-track-latency">–</b></div></div>
         </div>
         <details class="pfdetail" id="pfdetail"><summary>상세 그래프</summary>
-        <div class="pfb"><span id="pf-pipe-samples">프레임 집계 중</span><button id="pfspan" title="그래프 시간 범위 (누르면 1분 → 5분 → 15분)">1분</button></div>
-        <div class="pfx">
-          <div class="pft">속도 (FPS) <span>1초 동안 처리한 영상 수 · 높을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="서버로 영상이 들어오는 초당 장 수. 녹화 재생 중에는 재생 속도"><i style="background:var(--c2)"></i>카메라 입력 <b class="num" id="pfv1">–</b></span><span class="pfl" title="추적 결과(박스와 ID)가 나오는 초당 장 수. 들어온 영상보다 낮으면 처리가 밀리는 중"><i style="background:var(--c1)"></i>추적 출력 <b class="num" id="pfv0">–</b></span></div>
-          <canvas id="pfc0"></canvas>
-          <div class="pft">지연 (ms) <span>영상이 들어와서 추적이 끝날 때까지 · 낮을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 그 장의 추적 결과가 나올 때까지. 기다린 시간 + 검출 + 추적. 1초 평균"><i style="background:var(--c1)"></i>평균 <b class="num" id="pfv2">–</b></span><span class="pfl" title="같은 1초 안에서 가장 오래 걸린 장"><i class="dash" style="color:var(--c3)"></i>최대 <b class="num" id="pfv3">–</b></span><span class="pfl" title="한 장을 계산하는 데만 든 시간(검출 준비부터 추적·ID 유지까지). 기다린 시간은 빠짐. 1초 평균"><i style="background:var(--c4)"></i>계산 시간 <b class="num" id="pfv4">–</b></span></div>
-          <canvas id="pfc1"></canvas>
-          <div class="pft">내 화면 지연 (ms) <span>카메라 영상이 서버에 들어와서 이 화면에 오기까지 · 낮을수록 좋음</span></div>
-          <div class="pfh"><span class="pfl" title="영상 한 장이 서버에 도착한 뒤 화면에 보낼 사진(JPEG)이 준비될 때까지. 서버에서 잰 1초 평균. '사진 먼저'가 켜져 있으면 검출을 기다리지 않아 몇 ms"><i style="background:var(--c5)"></i>서버 <b class="num" id="pfv5">–</b></span><span class="pfl" id="pfl6" title="영상 한 장이 서버에 도착한 뒤 이 화면에 올 때까지 (서버 + 전송). 사진의 시각을 읽을 수 있는 브라우저는 이 기기에서 직접 잰 값(그려진 때까지). 아이폰처럼 못 읽는 브라우저는 '(추정)': 서버가 이 기기의 수신 확인으로 잰 도착 시각까지이고, 브라우저가 그리는 시간은 빠져 있음. 카메라 자체의 지연은 어느 쪽에도 없음"><i style="background:var(--c6)"></i><span id="pft6">내 화면</span> <b class="num" id="pfv6">–</b></span></div>
-          <canvas id="pfc2"></canvas>
-          <div class="pfaxis"><span id="pfago">1분 전</span><span>지금</span></div>
-          <p class="pfnote">속도·지연과 "서버"(사진 준비)는 오렌지파이 서버 안에서 잰 값입니다. "내 화면"은 서버에 들어온 영상이 이 화면에 올 때까지이고, 지금 보는 기기에서 잽니다(아이폰은 서버가 잰 추정). "계산 시간"은 지연 중 기다린 시간을 뺀 순수 계산입니다. 카메라가 찍어서 서버에 보내는 시간, 브라우저가 화면에 그리는 시간, 짐벌이 움직이는 시간은 어디에도 들어 있지 않습니다.</p>
-        </div></details>
+          <div class="pfb"><span id="pf-pipe-samples">최근 1분 추적 집계 중</span><button id="pfspan" title="그래프 시간 범위 1분, 5분, 15분">1분</button></div>
+          <div class="pfx">
+            <p class="pfgraph-note">가로축은 시간, 범례 숫자는 최근 값이에요. 위 카드의 p95는 최근 1분에 들어온 프레임의 95%가 끝난 시간이에요.</p>
+            <section class="pfchart" aria-labelledby="pf-rate-title">
+              <div class="pft"><b id="pf-rate-title">초당 프레임</b><span>FPS</span></div>
+              <p class="pfdesc">1초 동안 서버에 들어온 장 수와 추적을 마친 장 수</p>
+              <div class="pfh"><span class="pfl pf-dash" style="--series:var(--c2)">카메라 입력 <b id="pfv1">–</b></span><span class="pfl" style="--series:var(--c1)">추적 완료 <b id="pfv0">–</b></span></div>
+              <canvas id="pfc0" aria-label="시간대별 카메라 입력 FPS와 추적 완료 FPS"></canvas>
+              <div class="pfaxis"><span data-pf-ago>1분 전</span><span>지금</span></div>
+            </section>
+            <section class="pfchart" aria-labelledby="pf-latency-title">
+              <div class="pft"><b id="pf-latency-title">추적 지연</b><span>ms</span></div>
+              <p class="pfdesc">서버 수신부터 추적 완료까지. 최대는 그 1초에 가장 늦었던 한 장이에요.</p>
+              <div class="pfh"><span class="pfl" style="--series:var(--c1)">대기 포함 평균 <b id="pfv2">–</b></span><span class="pfl pf-dash" style="--series:var(--c3)">최대 <b id="pfv3">–</b></span><span class="pfl" style="--series:var(--c4)">계산만 평균 <b id="pfv4">–</b></span></div>
+              <canvas id="pfc1" aria-label="시간대별 추적 지연 평균, 최대, 계산 시간 및 목표선"></canvas>
+              <div class="pfaxis" id="pf-track-axis"><span data-pf-ago>1분 전</span><span>지금</span></div>
+              <p class="pfdesc pfchart-goal"><span class="pfl pf-dash" style="--series:var(--warn)">목표 <b id="pf-graph-goal">33 ms</b></span> <span>달성 여부는 위 p95로 판단해요.</span></p>
+            </section>
+            <section class="pfchart" aria-labelledby="pf-screen-title">
+              <div class="pft"><b id="pf-screen-title">화면 지연</b><span>ms</span></div>
+              <p class="pfdesc">서버 수신부터 JPEG 준비까지와 지금 보는 기기에 표시되기까지예요.</p>
+              <div class="pfh"><span class="pfl" style="--series:var(--c5)">JPEG 준비 <b id="pfv5">–</b></span><span class="pfl" style="--series:var(--c6)"><span id="pft6">내 화면</span> <b id="pfv6">–</b></span></div>
+              <canvas id="pfc2" aria-label="시간대별 서버 JPEG 준비와 이 기기 화면 지연"></canvas>
+              <div class="pfaxis"><span data-pf-ago>1분 전</span><span>지금</span></div>
+              <p class="pfdesc" id="pf-screen-note" hidden>‘기기 도착(추정)’은 화면에 그리기 전, 영상이 기기에 도착할 때까지의 서버 추정값이에요.</p>
+            </section>
+          </div>
+        </details>
       </section>
       <label class="hint camera-only" style="display:block;margin:6px 0"><input id="overlay-center-switch" type="checkbox"> 박스 떨림 보정 (JPEG 화면 표시만 · 상자 중앙 클릭)</label>
       <div class="rpseek" id="rpseek" hidden>
@@ -1804,8 +1820,8 @@ const PF={rows:[],span:60,off:0,busy:false,marks:[],seen:null,pipeline:null,rece
 try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if([60,300,900].includes(s_.span))PF.span=s_.span;if(s_.detail===true)$('pfdetail').open=true;}catch(_){}
 const PF_LATENCY_LIMIT=100;
 const PFC=[
-  {cv:$('pfc0'),series:[[2,'--c2',1.8],[1,'--c1',2.5]],min:30,labels:true},
-  {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c4',2],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT},
+  {cv:$('pfc0'),series:[[1,'--c1',2.5],[2,'--c2',1.7,[4,4]]],min:45,labels:true},
+  {cv:$('pfc1'),series:[[4,'--c3',1.9,[4,3]],[5,'--c4',2],[3,'--c1',2.5]],limit:PF_LATENCY_LIMIT,goal:true},
   {cv:$('pfc2'),series:[[8,'--c5',2.2],[9,'--c6',2.2]],min:50},   // 8 = frame in -> picture ready (server), 9 = frame in -> this screen (the stream's own delay)
 ];
 // 11-15 (user: the graph showed 100 ms): the line was one /snap.jpg download every 2 s (a full picture on a new connection, there and
@@ -1815,9 +1831,9 @@ function pfdelay(){const st=typeof streamStats==='function'?streamStats('mjpeg')
   return st.measured?[st.age_ms,false]:[st.est_ms,true];}
 const pfOverflow=document.createElement('p');
 pfOverflow.className='pf-overflow';pfOverflow.hidden=true;
-$('pfago').parentNode.after(pfOverflow);
+$('pf-track-axis').after(pfOverflow);
 const nice=m=>{const p=Math.pow(10,Math.floor(Math.log10(m)));for(const k of [1,2,3,5,10])if(m<=k*p)return k*p;return 10*p;};
-function pfplot(chart,rows,t0,style){
+function pfplot(chart,rows,t0,style,goal){
   const cv=chart.cv,w=cv.clientWidth,h=cv.clientHeight;
   const L=30,R=5,T=chart.labels?14:7,B=7,pw=w-L-R,ph=h-T-B;
   if(pw<=0||ph<=0)return;
@@ -1830,18 +1846,23 @@ function pfplot(chart,rows,t0,style){
   if(!max){
     max=chart.min;
     for(const row of rows)for(const [col] of chart.series)if(row[col]>max)max=row[col];
-    max=nice(max);
+    max=chart.labels&&max<=45?45:nice(max);
   }
   const xFor=t=>L+(t-t0)/PF.span*pw;
   const yFor=v=>T+ph*(1-Math.min(v,max)/max);
   g.font='600 11px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='middle';g.textAlign='right';
   g.lineWidth=1;g.strokeStyle=color('--pf-grid');g.fillStyle=color('--pf-label');
-  for(const value of [0,max/2,max]){
+  const ticks=chart.labels&&max===45?[0,15,30,45]:[0,max/2,max];
+  for(const value of ticks){
     const y=Math.round(yFor(value))+.5;
     g.beginPath();g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();
     g.fillText(String(value),L-4,y);
   }
   g.save();g.beginPath();g.rect(L,T-4,pw,ph+8);g.clip();g.lineJoin='round';
+  if(chart.goal&&goal<=max){
+    g.strokeStyle=color('--warn');g.lineWidth=1;g.setLineDash([2,4]);g.beginPath();
+    const y=yFor(goal);g.moveTo(L,y);g.lineTo(w-R,y);g.stroke();
+  }
   for(const [col,ink,weight,dash=[]] of chart.series){
     g.strokeStyle=color(ink);g.lineWidth=weight;g.setLineDash(dash);g.beginPath();
     let lastT=null;
@@ -1861,7 +1882,7 @@ function pfplot(chart,rows,t0,style){
   }
   g.restore();
   /* 11-13: a dashed vertical line where NPU alternation or the tracker changed, so before and after can be compared */
-  g.save();g.setLineDash([3,3]);g.lineWidth=1.2;g.strokeStyle='#ffd166';g.fillStyle='#ffd166';g.font='600 10px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='top';
+  g.save();g.setLineDash([3,3]);g.lineWidth=1.2;g.strokeStyle=color('--warn');g.fillStyle=color('--warn');g.font='600 10px "Segoe UI","Malgun Gothic",sans-serif';g.textBaseline='top';
   let labelEnd=-1e9;
   for(const mark of PF.marks){
     if(mark.t<t0)continue;
@@ -1928,7 +1949,7 @@ function pfpipe(){
   target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms';
   target.dataset.met=String(tracked&&p.track_p95_ms<=goal);
   const samples=Number.isFinite(p.sample_count)?p.sample_count:0;
-  $('pf-pipe-samples').textContent=samples?'최근 1분 · 추적 '+samples.toLocaleString()+'장':'프레임 집계 중';
+  $('pf-pipe-samples').textContent=samples?'최근 1분 추적 '+samples.toLocaleString()+'장':'최근 1분 추적 집계 중';
   const detEnd=detected?p.det_p95_ms:0;
   const trackEnd=tracked?Math.max(p.track_p95_ms,detEnd):detEnd;
   const pos=value=>(pfRailPosition(value)*100)+'%';
@@ -1952,10 +1973,13 @@ function pfpipe(){
 function pfdraw(){
   pfpipe();
   if(!$('pfdetail').open)return;
-  $('pfspan').textContent=(PF.span/60)+'분';$('pfago').textContent=(PF.span/60)+'분 전';
+  const span=(PF.span/60)+'분',goal=Number($('pf-goal-budget').textContent.split(' ')[0]);
+  $('pfspan').textContent=span;
+  $('pf-graph-goal').textContent=goal+' ms';
+  for(const label of document.querySelectorAll('[data-pf-ago]'))label.textContent=span+' 전';
   const now=Date.now()/1000+PF.off,t0=now-PF.span,vis=PF.rows.filter(r=>r[0]>=t0-2);
-  const style=getComputedStyle(document.documentElement);
-  for(const chart of PFC)pfplot(chart,vis,t0,style);
+  const style=getComputedStyle($('pfo'));
+  for(const chart of PFC)pfplot(chart,vis,t0,style,goal);
   let peak=0;
   for(const row of vis)if(row[0]>=t0&&row[4]>peak)peak=row[4];
   pfOverflow.hidden=peak<=PF_LATENCY_LIMIT;
@@ -1966,7 +1990,7 @@ function pftick(){pfmark();if(document.hidden||PF.busy)return;PF.busy=true;const
   fetch('/perf?since='+since,{cache:'no-store'}).then(r=>r.json()).then(p=>{lastOk=Date.now();PF.receivedAt=lastOk;PF.pipeline=p.pipeline||null;PF.off=p.now-Date.now()/1000;   // the board clock differs from this device's: its "now" is used for the time axis
     if(p.rows.length&&PF.rows.length&&p.rows[0][0]<=PF.rows[PF.rows.length-1][0])PF.rows=[];   // server restarted or its clock stepped back: start again
     for(const r of p.rows){   // r[7] = arrival -> picture ready (server, mean of the second)
-      const [age,guess]=pfdelay();$('pft6').textContent=guess?'내 화면 (추정)':'내 화면';
+      const [age,guess]=pfdelay();$('pft6').textContent=guess?'기기 도착(추정)':'내 화면';$('pf-screen-note').hidden=!guess;
       r[8]=Number.isFinite(r[7])?r[7]:null;r[9]=(p.rows.length<=3||r===p.rows[p.rows.length-1])&&Number.isFinite(age)?age:null;PF.rows.push(r);}   /* history loaded in one go has no transfer samples of its own */ if(PF.rows.length>900)PF.rows.splice(0,PF.rows.length-900);}).catch(()=>{}).finally(()=>{PF.busy=false;pfdraw();});}
 const pfsave=()=>{try{localStorage.setItem('lwir_live_pf',JSON.stringify({detail:$('pfdetail').open,span:PF.span}));}catch(_){}};
 $('pfdetail').addEventListener('toggle',()=>{pfsave();pfdraw();});
