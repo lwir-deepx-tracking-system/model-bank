@@ -803,7 +803,24 @@ void GimbalCommandExecutor::move(int x, int y)
         send(x, y, config_.gimbal.speed, false);
     });
 }
-void GimbalCommandExecutor::halt() { invoke([this] { invalidate("halt/HOME"); }, true); }
+ControlResult GimbalCommandExecutor::home()
+{
+    return invoke([this] {
+        invalidate("home"); // cancel following/search and stop prior motion first
+        if (!ready()) return ControlResult::NotReady;
+        try {
+            device_->home();
+            // Keep STOP/disconnect/heartbeat protection active during the absolute move.
+            // Without angle feedback, neither arrival nor an estimated zero is reported.
+            state_.moving = true;
+        } catch (const std::exception& e) {
+            failure(e);
+            return ControlResult::NotReady;
+        }
+        return ControlResult::Ok;
+    });
+}
+void GimbalCommandExecutor::halt() { invoke([this] { invalidate("halt"); }, true); }
 void GimbalCommandExecutor::suspend() { invoke([this] { invalidate("model switch"); latest_.reset(); last_frame_id_ = 0; }, true); }
 void GimbalCommandExecutor::shutdown() { invoke([this] { stopped_ = true; connected_ = false; invalidate("shutdown"); }, true); }
 ControlSnapshot GimbalCommandExecutor::snapshot()

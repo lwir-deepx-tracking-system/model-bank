@@ -137,6 +137,7 @@ public:
     void ping();
     ControlResult select(std::uint32_t id);
     ControlResult manual();
+    ControlResult home(); // submit absolute home angles; no physical-arrival acknowledgement
     void halt(); // cancel AUTO and stop manual motion (unsupported HOME, etc.)
     void move(int x, int y);
     void suspend(); // model switch: cancel authority but keep the TCP session alive
