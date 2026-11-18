@@ -9,12 +9,15 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from direct_lan_pc.app import App
 from tracking_server.scripts import direct_lan_session as session
 
 
 class SessionTests(unittest.TestCase):
     def test_pc_window_close_calls_session_restore_after_gimbal_stop(self):
+        try:
+            from direct_lan_pc.app import App
+        except ImportError as exc:
+            self.skipTest('PC Tk/Pillow image support is unavailable here: ' + str(exc))
         app = object.__new__(App)
         app.stop = threading.Event()
         app.controls = Mock()
