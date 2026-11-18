@@ -45,7 +45,11 @@ def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a ne
         with APP.LIVE.cond:
             if APP.LIVE.stopped or p_ is not APP.LIVE.proc:
                 continue
-            if len(APP.LIVE.q) == APP.LIVE.q.maxlen: APP.LIVE.q_drop += 1   # v26b: the oldest waiting frame is thrown away (the tracker is 3 frames behind)
+            dropped = len(APP.LIVE.q) == APP.LIVE.q.maxlen
+            if dropped: APP.LIVE.q_drop += 1   # the oldest waiting frame is thrown away
+            pipeline_ = getattr(APP.LIVE, 'pipeline_perf', None)
+            if pipeline_ is not None:
+                pipeline_.camera(ta_, dropped=dropped)
             APP.LIVE.q.append((ta_, raw_)); APP.LIVE.cond.notify()
             cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
             if getattr(APP.LIVE, 'cam_frozen', None) is not None: camera_extra.note('server', cam_frozen.on_frame(APP.LIVE))   # 11-15: the camera answers again

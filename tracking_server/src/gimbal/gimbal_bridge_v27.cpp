@@ -49,6 +49,7 @@
 //   M              stop following, keep an ongoing manual move
 //   V <x> <y>      manual move, each -1, 0 or 1 (+x right, +y up). V 0 0 = key released
 //   H              stop following and stop moving
+//   C              cancel following and request home angles (0, 0)
 // stdout, one line per message:
 //   READY
 //   LEAD_CONTROL 1   accepts the optional LEAD suffix
@@ -629,6 +630,7 @@ public:
             int x = 0, y = 0;
             if (in >> x >> y) executor_.move(x, y);
         }
+        else if (kind == "C") say(std::string("R C ") + answer(executor_.home()));
         else if (kind == "H") {
             executor_.halt();
             // Optional tracker-boundary ticket: acknowledge only AFTER STOP.
@@ -680,6 +682,7 @@ int main(int argc, char** argv) try {
                   gui ? &gui_picture : nullptr);
     say("READY");
     say("TRACK_CONTROL 1");
+    say("HOME_CONTROL 1");
     say("LEAD_CONTROL 1");
     say("OBSERVATION_STATUS 1");
     if (options.smoothing.search) say("SEARCH_CONTROL 1");

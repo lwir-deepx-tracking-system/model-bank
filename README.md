@@ -15,6 +15,8 @@
 
 > 이어서 일하는 사람이나 AI 작업자는 [HANDOFF.md](HANDOFF.md)(지금 상태, 다음 할 일, 규칙)를 먼저 읽으세요.
 
+> 발표 자료를 만드는 분은 [LWIR 사람 검출·추적 발표 인계](tracking_server/research/LWIR_PRESENTATION_KO.md)에서 학습 대조, 가림 전후 수치, DX-M1 실측과 남은 검증을 확인할 수 있습니다.
+
 ## 1. 추적 서버 (`tracking_server/`)
 
 열화상 영상에서 사람을 찾고, 같은 사람에게 같은 번호를 유지하고, 웹 화면에서 고른 사람을 짐벌로 따라갑니다.

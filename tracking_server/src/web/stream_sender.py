@@ -121,6 +121,9 @@ SAMPLE_GIVE_UP_S = 1.0
 POLL_S = 0.002
 _LIGHT_CACHE = {'of': None, 'by': {}}
 _LIGHT_LOCK = threading.Lock()
+_HIGH_LOCK = threading.Lock()
+_HIGH_CACHE = (None, None)
+HIGH_JPEG_QUALITY = 95
 _JPEG_OPTIMIZE = 3   # cv2.IMWRITE_JPEG_OPTIMIZE: Huffman tables for this picture, about 12 % fewer bytes for under 1 ms
 
 
@@ -152,6 +155,30 @@ def light_maker(cv2):
         return light_jpeg(cv2, jpeg, drawn, level)
     make.levels = len(LIGHT)
     make.guess = tuple(scale * scale * 0.65 + 0.03 for scale, _q in LIGHT)   # share of the full picture's bytes, until one was made
+    return make
+
+
+def high_maker(cv2):
+    """Encode the uncompressed published image once per frame for quality-priority viewers."""
+    if cv2 is None:
+        return None
+
+    def make(jpeg, drawn):
+        global _HIGH_CACHE
+        with _HIGH_LOCK:
+            if _HIGH_CACHE[0] is jpeg:
+                return _HIGH_CACHE[1]
+            quality_jpeg = None
+            try:
+                ok, buf = cv2.imencode('.jpg', drawn, [cv2.IMWRITE_JPEG_QUALITY, HIGH_JPEG_QUALITY,
+                                                      _JPEG_OPTIMIZE, 1])
+                if ok and buf is not None:
+                    quality_jpeg = buf.tobytes()
+            except Exception:
+                pass  # Send the same frame at default quality if the optional encode fails.
+            _HIGH_CACHE = (jpeg, quality_jpeg)
+            return quality_jpeg
+
     return make
 
 
@@ -314,11 +341,16 @@ def with_comment(jpeg, text):
     return jpeg[:pos] + b'\xff\xfe' + (len(text) + 2).to_bytes(2, 'big') + text + jpeg[pos:]
 
 
+def frame_key(frame_t):
+    """Camera arrival time in integer microseconds in the server's monotonic clock."""
+    return round(frame_t * 1_000_000)
+
+
 def picture_comment(seq, frame_t, now_perf, now_unix, level=0):
     """'LWIR n=<seq> t=<frame arrival> s=<now>' in unix seconds (+ ' l=<level>' on a lighter picture); frame_t is a
     time.perf_counter() value or None."""
     text = b'LWIR n=%d s=%.3f' % (seq, now_unix) if frame_t is None else \
-        b'LWIR n=%d t=%.3f s=%.3f' % (seq, now_unix - (now_perf - frame_t), now_unix)
+        b'LWIR n=%d t=%.3f s=%.3f k=%d' % (seq, now_unix - (now_perf - frame_t), now_unix, frame_key(frame_t))
     return text + b' l=%d' % level if level else text
 
 
@@ -340,7 +372,7 @@ def read_comment(jpeg):
 STALL_S = 30.0   # a viewer that takes nothing of its picture for this long is closed (the page opens the stream again)
 
 
-def serve(live, conn, write, query='', peer='?', *, limit=..., state=link_state, acks=link_acks, light=None,
+def serve(live, conn, write, query='', peer='?', *, limit=..., state=link_state, acks=link_acks, light=None, high=None,
           inflight=..., clock=time.monotonic, sleep=time.sleep, perf=time.perf_counter, unix=time.time, log=print):
     """Send pictures to one viewer until it goes away, the server stops or a newer stream of the same page opens.
     live: APP.LIVE (jcond, seq, jpeg, jpeg_frame_t, jpeg_drawn, stopped, viewers). write: the connection's blocking write.
@@ -352,6 +384,7 @@ def serve(live, conn, write, query='', peer='?', *, limit=..., state=link_state,
     limit = OUTQ_LIMIT if limit is ... else limit
     inflight = INFLIGHT_MAX if inflight is ... else inflight
     page, n = page_of(query)
+    quality_first = parse_qs(query).get('quality') == ['high']
     me = Viewer(page, n, peer)
     stats = me.stats
     t0 = clock()
@@ -361,7 +394,7 @@ def serve(live, conn, write, query='', peer='?', *, limit=..., state=link_state,
     first = acks(conn) if limit is not None else None
     written = first[0] + state(conn)[0] if first is not None else None   # bytes written on this connection so far
     quality = None
-    if light is not None and written is not None:
+    if not quality_first and light is not None and written is not None:
         quality = Quality(lambda text: log('STREAM %s page %s stream %d: %s' % (peer, page or '-', n, text), flush=True),
                           getattr(light, 'levels', 1), getattr(light, 'guess', (0.25,)))
     with live.jcond:
@@ -377,6 +410,8 @@ def serve(live, conn, write, query='', peer='?', *, limit=..., state=link_state,
 
     def newest_locked():
         drawn = getattr(live, 'jpeg_drawn', None)
+        if quality_first and drawn is None:
+            drawn = getattr(live, 'jpeg_high_drawn', None)
         return (live.seq, live.jpeg, getattr(live, 'jpeg_frame_t', None),
                 drawn[1] if drawn is not None and drawn[0] is live.jpeg else None)
 
@@ -453,7 +488,9 @@ def serve(live, conn, write, query='', peer='?', *, limit=..., state=link_state,
                     if live.jpeg:
                         last, jb, frame_t, drawn = newest_locked()
             payload, level = jb, 0
-            if quality is not None:
+            if quality_first and high is not None and drawn is not None:
+                payload = high(jb, drawn) or jb
+            elif quality is not None:
                 quality.size(0, len(jb))
                 level = quality.pick(clock())
                 if level:

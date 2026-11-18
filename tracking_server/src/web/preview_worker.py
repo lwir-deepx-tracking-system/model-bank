@@ -144,12 +144,13 @@ def render_preview(cv2, frame, keep=None):
 
 
 def publish_jpeg_locked(live, jpeg, frame_t, *, paired=True, click_people=None, click_ticket=None,
-                        replay_position=None, drawn=None, click=True):
+                        replay_position=None, drawn=None, click=True, high_drawn=None):
     """Commit one JPEG under jcond. Placeholders have no frame latency sample.
     drawn: the picture before encoding (render_preview keep=), for /stream's lighter picture; None = none for this JPEG.
     click=False: a picture without boxes (picture_first.py) leaves the click people and ticket of the boxes alone."""
     live.jpeg = jpeg
     live.jpeg_drawn = (jpeg, drawn) if drawn is not None else None
+    live.jpeg_high_drawn = (jpeg, high_drawn) if high_drawn is not None else None
     live.jpeg_frame_t = frame_t
     if click:
         live.jpeg_people = click_people
@@ -270,7 +271,7 @@ class PreviewWorker:
                 and position[:2] == self._seek[:2] and position[3] >= self._seek[2]
                 and position[2] > self._seek[3])
 
-    def commit_inline(self, token, frame_t, jpeg, *, requested_at, replay):
+    def commit_inline(self, token, frame_t, jpeg, *, requested_at, replay, drawn=None):
         """Commit an inline render only while its source generation is current."""
         with self._cond:
             if token != self._generation or not self._can_publish(frame_t, replay=replay):
@@ -280,7 +281,7 @@ class PreviewWorker:
             if not jpeg:
                 self._errors += 1
                 return False
-            publish_jpeg_locked(self._live, jpeg, frame_t)
+            publish_jpeg_locked(self._live, jpeg, frame_t, high_drawn=drawn)
             return True
 
     def _invalidate_locked(self, before, *, keep_jpeg=False):
@@ -309,6 +310,7 @@ class PreviewWorker:
             self._closed = True
             self._live.jpeg = self._transition_jpeg
             self._live.jpeg_drawn = None
+            self._live.jpeg_high_drawn = None
             self._live.jpeg_frame_t = None
             self._live.jpeg_people = None
             self._live.jpeg_tracks_ticket = None

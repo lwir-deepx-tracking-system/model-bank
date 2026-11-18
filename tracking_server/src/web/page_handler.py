@@ -146,13 +146,33 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
                                              if seek and overlay_rows is None and camera_rows is None else None))
 
 
-def _click_live(x, y):
+def _click_live(x, y, *, shown_key=None, shown_id=None, viewer_ip=None):
     live = APP.LIVE
     worker = getattr(live, 'preview_worker', None)
     pf_ = picture_first.active(live)   # 11-15: the people of the newest boxes sent to the page (the boxes the viewer sees)
-    if not pf_ and (worker is None or not worker.async_live):
+    if shown_key is None and not pf_ and (worker is None or not worker.async_live):
         return live_tracks.click(x, y)
     with live.jcond:
+        if shown_key is not None:
+            snapshot = next((record for record in reversed(getattr(live, 'overlay_clicks', ()))
+                             if record[0] == shown_key), None)
+            if not pf_ or snapshot is None:
+                return False, '표시된 화면에 해당하는 추적 결과를 기다려 주세요'
+            _, frame_t, people, ticket, owners = snapshot
+            if (not 0 <= time.perf_counter() - frame_t < 0.5
+                    or live.stopped or getattr(live, 'cam_hold', False)
+                    or getattr(live, 'cam_lost', False) or replay_link.frame_blocked(frame_t)):
+                return False, '표시된 화면이 지연되었습니다. 최신 화면에서 다시 누르세요'
+            target = live_tracks.unique_hit_id(people, x, y)
+            if target is live_tracks.AMBIGUOUS_CLICK:
+                return False, '상자가 겹치거나 같은 추적 ID가 여러 곳에 있습니다. 최신 화면에서 다시 누르세요'
+            if target != shown_id:
+                return False, '화면의 사람과 같은 프레임의 추적 결과가 다릅니다. 다시 누르세요'
+            owner = owners.get(target)
+            if target is not None and owner is None:
+                return False, '해당 추적 ID의 사람이 하나로 확인되는 최신 화면을 기다려 주세요'
+            return live_tracks.click(x, y, expected_id=target, expected_ticket=ticket,
+                                     shown_frame_t=frame_t, expected_owner=owner, viewer_ip=viewer_ip)
         frame_t = getattr(live, 'click_frame_t' if pf_ else 'jpeg_frame_t', None)
         people = getattr(live, 'click_people' if pf_ else 'jpeg_people', None)
         ticket = getattr(live, 'click_ticket' if pf_ else 'jpeg_tracks_ticket', None)
@@ -219,7 +239,23 @@ def track_color(track_id):
     return int(b * 255), int(g * 255), int(r * 255)
 
 
-def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
+def _raw_click_owners(raw_ids, raw_to_public=None):
+    """Find an unambiguous raw owner for each public ID in this frame."""
+    owners, duplicate = {}, set()
+    for raw in raw_ids:
+        public = raw if raw_to_public is None else raw_to_public.get(raw)
+        if public is None:
+            continue
+        if public in owners:
+            duplicate.add(public)
+        owners[public] = raw
+    for public in duplicate:
+        del owners[public]
+    return owners
+
+
+def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
+                 click_raw_ids=(), click_raw_to_public=None, click_namespace=None):
     paired_stamp_ = bool(APP.LIVE.arr)
     now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if paired_stamp_ else now_
     if not isinstance(t_in, (int, float)) or not math.isfinite(t_in) or not 0 < t_in <= now_:
@@ -286,8 +322,19 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         healthy_ = (paired_stamp_ and tracker_detections is not None and raw_valid_
                     and not rep_ and not frozen_ and not replay_link.frame_blocked(t_in)
                     and not any(getattr(APP.LIVE, flag, False) for flag in ('cam_lost', 'cam_hold', 'stopped', 'restart_stop', 'restart_pending')))
+        click_owners_ = {}
+        if healthy_ and source_ is not None:
+            if source_[0] == 'cpp' and camera_rows is not None:
+                click_owners_ = _raw_click_owners(int(r[4]) for r in camera_rows if int(r[6]) == 0)
+                click_namespace = None
+            elif source_[0] == 'python' and camera_rows is None:
+                click_owners_ = _raw_click_owners(click_raw_ids, click_raw_to_public)
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
-                                    frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_)
+                                    frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_,
+                                    click_owners=click_owners_, click_namespace=click_namespace)
+    pipeline_ = getattr(APP.LIVE, 'pipeline_perf', None)
+    if pipeline_ is not None and paired_stamp_:
+        pipeline_.tracked(t_in, time.perf_counter())
     frame_feed.sent(t_in)   # 11-16 period monitor (feed_auto): this frame's result is out (gimbal); its deadline is arrival + one camera period
     marks_ = _lost_marks(t_in, display_rows, gb_id_, fps_, own_pool=camera_rows is None)   # 11-16: every frame, so the kept marks follow the camera motion
     seek_ = APP.GB.state.get('seek') if has_gimbal_ and gb_id_ else None   # 11-16: the gimbal's search while the followed person is lost (bridge --seek 1)
@@ -317,8 +364,10 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
                                       if has_gimbal_ and healthy_ else (None, None))
         msg_ = picture_first.overlay_message(t_in, boxes_, gb_id_, time.perf_counter(), time.time(),
                                              predictions=_predictions(1.0, marks_, gb_id_), seek=seek_)
+        click_owners_ = live_tracks.preview_click_owners(t_in) if click_ticket is not None else None
         with APP.LIVE.jcond:
-            picture_first.publish_overlay_locked(APP.LIVE, msg_, people=click_people, ticket=click_ticket, frame_t=t_in)
+            picture_first.publish_overlay_locked(APP.LIVE, msg_, people=click_people, ticket=click_ticket,
+                                                 frame_t=t_in, owners=click_owners_)
     if not pf_ and preview_allowed_ and (required or APP.LIVE.viewers > 0
             or now_ - APP.LIVE.pic_t >= 1.0 or now_ - APP.LIVE.snap_t < 3.0):
         # Replay overlays use their own rows and colors. Live boxes use the ID returned by publish.
@@ -352,12 +401,14 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
         if async_live_ or async_replay_:
             worker_.submit(token_, frame_, requested_at=now_)
         else:
+            drawn_ = []
             try:
-                jpeg_ = preview_worker.render_preview(APP.cv2, frame_)
+                jpeg_ = preview_worker.render_preview(APP.cv2, frame_, drawn_)
             except Exception:
                 jpeg_ = None
             if worker_ is not None:
-                worker_.commit_inline(token_, t_in, jpeg_, requested_at=now_, replay=replay_ is not None)
+                worker_.commit_inline(token_, t_in, jpeg_, requested_at=now_, replay=replay_ is not None,
+                                      drawn=drawn_[0] if drawn_ else None)
             else:
                 with APP.LIVE.jcond:
                     source_ok_ = (replay_ is None or (
@@ -365,7 +416,8 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None):
                     if source_ok_:
                         APP.LIVE.pic_t = now_
                         if jpeg_:
-                            preview_worker.publish_jpeg_locked(APP.LIVE, jpeg_, t_in, paired=paired_stamp_)
+                            preview_worker.publish_jpeg_locked(APP.LIVE, jpeg_, t_in, paired=paired_stamp_,
+                                                               high_drawn=drawn_[0] if drawn_ else None)
                         else:
                             APP.LIVE.preview_errors = getattr(APP.LIVE, 'preview_errors', 0) + 1
     if time.monotonic() - APP.LIVE.t0 > APP.args.live_seconds or (APP.LIVE.cam_lost and APP.args.live_wait):
@@ -423,11 +475,11 @@ def make_lv_Handler():
                 bad_mode = False
                 if system_path == '/system/npu-feed':
                     modes = parse_qs(query, keep_blank_values=True).get('mode', [])
-                    bad_mode = len(modes) != 1 or modes[0] not in ('arrival', 'normal', 'auto')   # 11-16: auto (src/detect/feed_auto.py)
+                    bad_mode = len(modes) != 1 or modes[0] not in ('arrival', 'normal', 'auto', 'tile')
                     if not bad_mode:
                         mode = modes[0]
                 if bad_mode:
-                    ok, message = False, 'NPU 검출 모드는 arrival, normal, auto 가운데 하나여야 합니다'
+                    ok, message = False, 'NPU 검출 모드는 arrival, normal, auto, tile 가운데 하나여야 합니다'
                 elif mode is not None:
                     ok, message = system_buttons.request_npu_feed(mode)
                 else:
@@ -518,9 +570,24 @@ def make_lv_Handler():
                 except (BrokenPipeError, ConnectionResetError, OSError): pass
                 return
             if APP.GB is None or self.headers.get('X-Gimbal') != '1': self.send_error(403); return
-            u_ = urlsplit(self.path); q_ = parse_qs(u_.query)
+            u_ = urlsplit(self.path); q_ = parse_qs(u_.query, keep_blank_values=True)
+            strict_ = u_.path == '/gimbal/click-frame'
             try:
+                if strict_:
+                    u_ = u_._replace(path='/gimbal/click')
+                    frame_, = q_['frame']
+                    shown_, = q_['shown']
+                    shown_key_ = int(frame_)
+                    shown_id_ = None if shown_ == 'none' else int(shown_)
                 cam_tracker = getattr(APP.LIVE, 'camera_bytetrack', None)
+                if u_.path == '/gimbal/home':
+                    reason_ = ('녹화 재생 중에는 원점으로 이동하지 않습니다' if replay_link.blocking() else
+                               '서버 재시작 중에는 원점으로 이동하지 않습니다' if getattr(APP.LIVE, 'restart_pending', False) else
+                               'USB 복구 중에는 원점으로 이동하지 않습니다' if getattr(APP.GB, 'usb_hold', False) else
+                               '원점 복귀를 지원하는 새 짐벌 브리지가 필요합니다' if not getattr(APP.GB, 'home_control_supported', False) else '')
+                    if reason_:
+                        b_ = json.dumps(dict(APP.GB.state, answer=reason_, refused=True), ensure_ascii=False).encode()
+                        self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
                 if u_.path == '/gimbal/click' and cam_tracker is not None and cam_tracker.blocks_selection():
                     self.send_error(409, 'Tracker switch is pending'); return
                 if getattr(APP.LIVE, 'restart_pending', False) and (
@@ -529,23 +596,34 @@ def make_lv_Handler():
                 ):
                     self.send_error(409)
                     return
-                ip_ = self.client_address[0]; APP.GB.mover_t[ip_] = time.monotonic()
-                APP.gb_send('P')
+                ip_ = self.client_address[0]
+                if not strict_:
+                    APP.GB.mover_t[ip_] = time.monotonic()
+                    APP.gb_send('P')
                 if u_.path in ('/gimbal/click', '/gimbal/move') and replay_link.blocking() and (u_.path == '/gimbal/click' or int(q_['x'][0]) or int(q_['y'][0])):   # 11-12: no gimbal move while a recording is played (a move of 0 0 = stop is let through)
-                    APP.GB.mover = None; APP.GB.state['answer'] = '녹화 재생 중에는 짐벌을 움직이지 않습니다. 재생을 멈춘 뒤 사람을 다시 누르세요'
+                    if not strict_:
+                        APP.GB.mover = None
+                    APP.GB.state['answer'] = '녹화 재생 중에는 짐벌을 움직이지 않습니다. 재생을 멈춘 뒤 사람을 다시 누르세요'
                     b_ = json.dumps(dict(APP.GB.state, cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n, refused=True), ensure_ascii=False).encode()
                     self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
-                if getattr(APP.GB, 'usb_hold', False) and u_.path in ('/gimbal/click', '/gimbal/move'): u_ = u_._replace(path='/gimbal/stop')   # v35: USB power is being cycled, no new move
-                if u_.path in ('/gimbal/click', '/gimbal/stop'): APP.GB.mover = None
+                if not strict_ and getattr(APP.GB, 'usb_hold', False) and u_.path in ('/gimbal/click', '/gimbal/move'): u_ = u_._replace(path='/gimbal/stop')   # v35: USB power is being cycled, no new move
+                if not strict_ and u_.path in ('/gimbal/click', '/gimbal/stop', '/gimbal/home'): APP.GB.mover = None
                 elif u_.path == '/gimbal/move': APP.GB.mover = ip_ if (int(q_['x'][0]) or int(q_['y'][0])) else None
                 if u_.path == '/gimbal/click':
                     x_, y_ = float(q_['x'][0]) * APP.LIVE_W, float(q_['y'][0]) * APP.LIVE_H
-                    ok_, answer_ = _click_live(x_, y_)
+                    if strict_:
+                        ok_, answer_ = _click_live(x_, y_, shown_key=shown_key_, shown_id=shown_id_,
+                                                  viewer_ip=ip_)
+                    else:
+                        ok_, answer_ = _click_live(x_, y_)
                     APP.GB.state['answer'] = answer_
                     if not ok_:
                         b_ = json.dumps(dict(APP.GB.state, refused=True), ensure_ascii=False).encode()
                         self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
                 elif u_.path == '/gimbal/stop': APP.GB.state['answer'] = ''; APP.gb_send('H')
+                elif u_.path == '/gimbal/home':
+                    APP.GB.state['answer'] = '원점 이동 요청: pan 0°, tilt 0°'
+                    if not APP.gb_send('C'): self.send_error(503, 'Gimbal command unavailable'); return
                 elif u_.path == '/gimbal/move': APP.GB.state['answer'] = ''; APP.gb_send('V %d %d' % (int(q_['x'][0]), int(q_['y'][0])))
                 elif u_.path != '/gimbal/ping': self.send_error(404); return
             except (KeyError, ValueError, IndexError): self.send_error(400); return
@@ -567,7 +645,8 @@ def make_lv_Handler():
                     # page (/stream?p=<page id>&n=<count>) replaces the older one, a viewer whose picture takes more than 50 ms
                     # to get through gets a lighter picture (320x240, LWIR_STREAM_LIGHT). src/web/stream_sender.py
                     stream_sender.serve(APP.LIVE, self.connection, self.wfile.write, urlsplit(self.path).query, self.client_address[0],
-                                        light=stream_sender.light_maker(APP.cv2))
+                                        light=stream_sender.light_maker(APP.cv2),
+                                        high=stream_sender.high_maker(APP.cv2))
                 elif self.path.startswith('/overlay'):   # 11-15: boxes for 'picture first' as server-sent events (src/web/picture_first.py)
                     self.send_response(200); self.send_header('Content-Type', 'text/event-stream'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Connection', 'close'); self.end_headers()
                     try: self.connection.setsockopt(APP.lv_sock.IPPROTO_TCP, APP.lv_sock.TCP_NODELAY, 1); self.connection.settimeout(30)
@@ -587,7 +666,7 @@ def make_lv_Handler():
                     try: since_ = float(pq3_(us3_(self.path).query).get('since', ['0'])[0])   # the page asks only for the samples after the last one it has
                     except ValueError: since_ = 0.0
                     with APP.LIVE.dlock: pr_ = [r_ for r_ in APP.LIVE.perf if r_[0] > since_]
-                    b_ = json.dumps(dict(now=round(time.time(), 1), delay_kind='tracker_output', cols=['t', 'track_fps', 'cam_fps', 'delay_ms', 'delay_max_ms', 'compute_ms', 'paired_n', 'picture_delay_ms'], rows=pr_)).encode()
+                    b_ = json.dumps(dict(now=round(time.time(), 1), delay_kind='tracker_output', cols=['t', 'track_fps', 'cam_fps', 'delay_ms', 'delay_max_ms', 'compute_ms', 'paired_n', 'picture_delay_ms'], rows=pr_, pipeline=APP.LIVE.pipeline_perf.snapshot())).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/healthz'):   # v24d: read-only liveness for the keep-alive supervisor (never POST /gimbal/ping from a script: that is the page's safety heartbeat). 11-15: cam_frozen = the camera's USB chip froze (cam_pipe exit 8, no camera frame since): keepalive.sh does not reboot then
                     now_ = time.monotonic(); last_out_ = APP.LIVE.done_ts[-1] if APP.LIVE.done_ts else None

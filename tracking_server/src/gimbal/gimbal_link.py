@@ -94,8 +94,10 @@ def without_lead(frame):
 
 
 def _reset_bridge_lead(gb):
+    gb.home_control_supported = False
     gb.lead_control_supported = False
     gb.lead_pending = 0
+    gb.selection_ack_wait_state = False
     gb.control_epoch = None
     gb.observation_status_supported = False
     gb.observation_barrier = None
@@ -112,8 +114,14 @@ def _reset_bridge_lead(gb):
 def gb_send(line_):
     with APP.GB.wcond:
         if not APP.GB.wopen: return False
+        if (line_ == 'H' and getattr(APP.GB, 'track_control_supported', False)
+                and (getattr(APP.GB, 'lead_pending', 0) or getattr(APP.GB, 'selection_ack_wait_state', False))):
+            # A followed by plain H in one batch can leave the bridge idle without an S change.
+            from .live_tracks import stop_with_ack_locked
+            stop_with_ack_locked(APP.GB)
+            return True
         if len(APP.GB.wq) >= 64: APP.GB.skipped += 1; return False
-        if line_.split(' ', 1)[0] in ('H', 'M', 'V'):
+        if line_.split(' ', 1)[0] in ('H', 'M', 'V', 'C'):
             reset_lead()
             APP.GB.wframe = without_lead(APP.GB.wframe)
         APP.GB.wq.append((line_ + '\n').encode()); APP.GB.wcond.notify()
@@ -185,10 +193,11 @@ def gb_reader(p_):
         if not f_: continue
         if p_ is not APP.GB.proc: continue   # v26: lines of a bridge that was replaced
         if f_[0] == 'READY': APP.GB.state['ready'] = True; print('GIMBAL ready', APP.GB.dev, flush=True)
-        elif f_[0] in ('TRACK_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS', 'SEARCH_CONTROL', 'COAST_CONTROL', 'SEEK_CONTROL') and f_[1:] == ['1']:
+        elif f_[0] in ('TRACK_CONTROL', 'HOME_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS', 'SEARCH_CONTROL', 'COAST_CONTROL', 'SEEK_CONTROL') and f_[1:] == ['1']:
             with APP.GB.wcond:
                 if p_ is APP.GB.proc and APP.GB.wopen:
                     if f_[0] == 'TRACK_CONTROL': APP.GB.track_control_supported = True
+                    elif f_[0] == 'HOME_CONTROL': APP.GB.home_control_supported = True
                     elif f_[0] == 'LEAD_CONTROL': APP.GB.lead_control_supported = True
                     elif f_[0] == 'SEARCH_CONTROL': APP.GB.search_control_supported = True   # 11-15: bridge started with --search 1
                     elif f_[0] == 'COAST_CONTROL': APP.GB.coast_control_supported = True   # 11-15: bridge started with --coast 1 (PRED suffix)
@@ -214,6 +223,12 @@ def gb_reader(p_):
                 if p_ is not APP.GB.proc: continue
                 if f_[1] == 'A':
                     APP.GB.lead_pending = max(0, getattr(APP.GB, 'lead_pending', 0) - 1)
+                    if f_[2] == 'OK':
+                        APP.GB.selection_ack_wait_state = True
+                    reset_lead()
+                elif f_[1] == 'C':
+                    APP.GB.lead_pending = 0
+                    APP.GB.selection_ack_wait_state = False
                     reset_lead()
                 APP.GB.state['answer'] = {'OK': '', 'INVALID': 'that person is not available', 'NOT_READY': 'the gimbal is not ready'}.get(f_[2], f_[2])
             print('GIMBAL', line_.strip(), flush=True)
@@ -226,6 +241,8 @@ def gb_reader(p_):
                     reset_lead()
                     APP.GB.wframe = without_lead(APP.GB.wframe)
                 state.update(auto=auto, lost=lost, moving=moving, error=error, id=track_id)
+                if auto:
+                    APP.GB.selection_ack_wait_state = False
             print('GIMBAL', line_.strip(), flush=True)
         elif f_[0] == 'POSE':
             APP.GB.pose_sample = (p_, time.monotonic(), parse_pose(f_[1:]))

@@ -39,6 +39,7 @@ from .common.pc_dry_run import make_mock_dx
 from .common.research_prepare import prepare
 from .detect import model_scan, npu_engine, detect_frame
 from .web import system_buttons, page_handler, page_settings, measure
+from .web.pipeline_perf import PipelinePerf
 from .track import camera_motion
 from .reid import reid_embed
 from .camera import camera_link, replay_eval, stall_diag
@@ -463,6 +464,7 @@ def main():
             APP.LIVE.restart_pending = False
             APP.LIVE.restart_stop = False
             APP.LIVE.instance = str(time.monotonic_ns())
+            APP.LIVE.pipeline_perf = PipelinePerf()
             APP.LIVE.jpeg = b''; APP.LIVE.seq = 0; APP.LIVE.viewers = 0; APP.LIVE.pic_t = -1e9; APP.LIVE.pic_n = 0; APP.LIVE.snap_t = -1e9; APP.LIVE.jcond = APP.lv_th.Condition(); APP.LIVE.t0 = time.monotonic(); APP.LIVE.cam_fps = 0.0; APP.LIVE.done_ts = APP.lv_col.deque(maxlen=40)
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
             APP.LIVE.lo = None; APP.LIVE.hi = None; APP.LIVE.last = None; APP.LIVE.log = open(APP.out / 'cam_pipe.log', 'w'); APP.LIVE.raws = APP.lv_col.deque(); APP.LIVE.rawq = APP.lv_col.deque(); APP.LIVE.warm_dropped = 0; APP.LIVE.last_frame_t = time.monotonic(); APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.cam_next_spawn = None; APP.LIVE.cam_hold = False; APP.LIVE.cam_reset = None; APP.LIVE.sys_lock = APP.lv_th.Lock(); APP.LIVE.cam_lock = APP.lv_th.Lock(); APP.LIVE.frames_in = 0; APP.LIVE.q_drop = 0; APP.LIVE.prev_t = None; APP.LIVE.upd_t = None; APP.LIVE.gap_n = 0; APP.LIVE.delays = APP.lv_col.deque(maxlen=2000); APP.LIVE.dlock = APP.lv_th.Lock(); APP.LIVE.perf = APP.lv_col.deque(maxlen=900); APP.LIVE.perf_acc = [time.perf_counter(), 0, 0.0, 0.0, 0.0]   # v26b: q_drop = camera frames thrown away because the tracker was 3 frames behind, gap_n = input gaps over 1 s, delays = (time, capture-to-picture ms) of the last frames. v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)
@@ -690,6 +692,7 @@ def main():
                     if APP.args.gmc_thread: gmc = True
                     else: gmc_fail += gmc.n_fail if gmc is not None else 0; gmc = GMC(APP.args.gmc_ds); gmc.fp = dict(gmc.fp, maxCorners=APP.args.gmc_corners, minDistance=APP.args.gmc_mindist)
             async_vit = vit is not None and not budget                  # --vit-budget: every crop is synchronous inside / right after update()
+            feed_core = None
             if APP.args.pipeline:
                 if (ready_prefetch or replay_eval.lossless()) and not ahead:
                     # The last result was already published before we waited here.
@@ -721,6 +724,11 @@ def main():
                     break
                 fd_ = APP.FEED is not None and not APP.FEED.direct   # 11-14: with the arrival feed the feeding thread decided (and already submitted or not)
                 sub_ = APP.FEED.cur_submitted() if fd_ else not e2e_live.skip_detector(); t0 = submit_tiles(g, i) if (sub_ or fd_) else time.perf_counter_ns()
+                if fd_ and sub_ and not APP.args.mock:
+                    rec = APP.FEED.cur
+                    if rec is not None and rec.e >= 0:
+                        engine_ = rec.grp[0][rec.e]
+                        feed_core = tuple(getattr(engine_, 'cores', (engine_.core,)))
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                          # sync point 1
                 ra = APP.a.wait() if sub_ else None; rb = (APP.b.wait() if APP.b is not None else None) if sub_ else None; t1 = time.perf_counter_ns(); t_nms0 = t1
                 if fd_ and not sub_: APP.FEED.cur = None
@@ -744,7 +752,19 @@ def main():
                 zlog_['raw_canvas_boxes'] = int(len(pz_)); zlog_['accepted'] = [[round(float(v_), 2) for v_ in r_[:4]] + [round(float(r_[4]), 5), int(r_[6])] for r_ in zacc_]
                 if n_zacc:   # appended AFTER the normal rows (their indices are unchanged); PRED gets a 'zoom' 0/1 flag per row
                     zoom_flags = [0] * len(p) + [1] * n_zacc; p = np.concatenate([p, zacc_[:, :6]]).astype(np.float32); arr = np.concatenate([arr, zacc_[:, :6]]).astype(np.float32)
-                z_ms = ((tz1_ - tz0_) / 1e6, (time.perf_counter_ns() - tz1_) / 1e6)
+                det_done_ns = time.perf_counter_ns()
+                z_ms = ((tz1_ - tz0_) / 1e6, (det_done_ns - tz1_) / 1e6)
+            else:
+                det_done_ns = t2
+            if APP.LIVE is not None and sub_ and APP.LIVE.arr:
+                cores = ()
+                if not APP.args.mock:
+                    cores = (APP.a.core,) if feed_core is None else feed_core
+                    if APP.b is not None:
+                        cores += (APP.b.core,)
+                    if z_ms != (0.0, 0.0):
+                        cores += (zoom_eng.core,)
+                APP.LIVE.pipeline_perf.detected(APP.LIVE.arr[0], det_done_ns / 1e9, cores)
             if synth_hide is not None:     # --synth-plan: hide the planned person BEFORE the tracker and the ViT (its time is excluded from tracker_ms)
                 ts_ = time.perf_counter_ns(); hb_ = synth_hide.get(Path(im['file_name']).name); n_hid = 0
                 if hb_ is not None:
@@ -842,6 +862,10 @@ def main():
                 er_ = e2e_live.step(g)
                 if er_ is not None: tr_rows = er_
             base_rows = tr_rows; rl_ms = 0.0
+            click_relabel_namespace = None
+            click_raw_to_public = None
+            click_raw_ids = (tuple(int(r[4]) for r in base_rows if int(r[6]) == PERSON_CLS)
+                             if APP.LIVE is not None else ())
             if APP.relabeler is not None and APP.RULES['relabel'] and not e2e_live.skip_detector():   # 11-14: not with the end-to-end model (its own numbers). --relabel: P and crop boxes in the saved-PRED form (v24g: live on/off) (canvas y + 64 rounded to 0.01, minus 64; conf rounded to 1e-5)
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
@@ -849,6 +873,10 @@ def main():
                 tr_rows = APP.relabeler.step(tr_rows, P_, lambda ks, g_=g, b_=P_: APP.rl_embed(ks, g_, b_), frame=Path(im['file_name']).name,
                                          embed_async=(lambda ks, g_=g, b_=P_: APP.rl_async.submit(ks, g_, b_)) if APP.rl_async is not None else None, **mamba_kw_)
                 rl_ms = (time.perf_counter_ns() - tr0_) / 1e6
+                if APP.LIVE is not None:
+                    click_relabel_namespace = getattr(APP.relabeler, 'id_map', None)
+                    click_raw_to_public = ({raw: click_relabel_namespace.get(raw) for raw in click_raw_ids}
+                                           if click_relabel_namespace is not None else {})
             zc_ms = 0.0; n_zc = 0; n_zw = 0
             if zoom_eng is not None and ahead and i + 1 < len(APP.images) and APP.images[i + 1]['extra_info']['video_id'] == vid:
                 # v9: candidates of THIS frame (jo480 = its decoded pre-NMS tiles, still intact until detect(i+1)) -> windows cut from the NEXT frame's gray
@@ -900,7 +928,10 @@ def main():
             if APP.relabeler is not None:
                 APP.tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
                                         tracks_xyxy_id_conf_class_detectionindex=frame_records.track_array(base_rows, APP.FRAME_DY[0])))
-            if APP.LIVE is not None: live_publish(g, tr_rows, row, detections=p, tracker_detections=arr)
+            if APP.LIVE is not None:
+                live_publish(g, tr_rows, row, detections=p, tracker_detections=arr,
+                             click_raw_ids=click_raw_ids, click_raw_to_public=click_raw_to_public,
+                             click_namespace=click_relabel_namespace)
             if APP.TIMING is not None: APP.TIMING.frame(i, t0, t1, t2, t4, rl_ms, t5)
             prev_gray = g
             if budget: prev_arr = arr

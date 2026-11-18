@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 
 from ..common.state import APP
 from ..web import page_handler, system_buttons
-from . import frame_feed
+from . import frame_feed, dual_tile
 
 
 class ModeTests(unittest.TestCase):
@@ -166,6 +166,61 @@ class FeedControlTests(unittest.TestCase):
         self.assertEqual(feed.mode, 'normal')
         self.assertEqual(feed._free(), 0)
         self.assertEqual(len(feed.eng), 2)
+
+    def test_tile_mode_drains_old_frame_and_restores_regular_engines(self):
+        feed = self.make_feed()
+        original = list(feed.eng)
+        tile = object()
+        feed.tile_engine, feed.tile_tone = tile, object()
+        with patch.object(dual_tile, 'selected', return_value=True), \
+             patch.object(frame_feed, '_resident', return_value=None), \
+             patch.object(frame_feed, 'save_mode') as save, \
+             patch.object(frame_feed.camera_extra, 'say'):
+            self.assertTrue(feed.request_mode('tile')[0])
+            feed.out.append(object())
+            feed.busy[0] = True
+            with self.live.cond:
+                feed._apply_mode()
+                self.assertEqual(feed.eng, original)
+                feed.out.popleft()
+                feed._apply_mode()
+                self.assertEqual(feed.eng, original)
+                feed.busy[0] = False
+                feed._apply_mode()
+            self.assertEqual((feed.mode, feed.eng), ('tile', [tile]))
+            state = system_buttons.npu_feed_state()
+            self.assertTrue(state['tile_active'])
+            self.assertFalse(state['active'])
+            self.assertTrue(state['tile_available'])
+            self.assertTrue(feed.request_mode('arrival')[0])
+            with self.live.cond:
+                feed._apply_mode()
+            self.assertEqual((feed.mode, feed.eng), ('arrival', original))
+            self.assertEqual([call.args[0] for call in save.call_args_list], ['tile', 'arrival'])
+
+    def test_tile_requires_matching_model_assets_and_free_cores(self):
+        feed = self.make_feed()
+        feed.tile_engine, feed.tile_tone = object(), object()
+        with patch.object(dual_tile, 'selected', return_value=False):
+            self.assertFalse(feed.request_mode('tile')[0])
+        with patch.object(dual_tile, 'selected', return_value=True):
+            feed.tile_tone = None
+            self.assertFalse(feed.request_mode('tile')[0])
+            feed.tile_tone = object()
+            resident = SimpleNamespace(RES=SimpleNamespace(pairs={'in_use': object()}))
+            with patch.object(frame_feed, '_resident', return_value=resident):
+                self.assertFalse(feed.request_mode('tile')[0])
+        self.assertIsNone(feed.pending)
+        self.assertEqual(feed.mode, 'normal')
+
+    def test_tile_second_job_is_drained_when_first_job_fails(self):
+        pair = object.__new__(dual_tile.PairBackend)
+        first = SimpleNamespace(wait=Mock(side_effect=RuntimeError('first failed')))
+        second = SimpleNamespace(wait=Mock(return_value=[]))
+        pair.engines = [first, second]
+        with self.assertRaisesRegex(RuntimeError, 'first failed'):
+            pair.wait(['first-job', 'second-job'])
+        second.wait.assert_called_once_with('second-job')
 
     def test_route_requires_same_origin_and_valid_mode(self):
         self.make_feed()

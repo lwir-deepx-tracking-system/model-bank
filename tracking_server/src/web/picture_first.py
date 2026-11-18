@@ -11,6 +11,7 @@ Used only for the live camera: during a replay, with image stabilisation, or whi
 are shown, the server draws the picture as before. Predicted boxes of lost people (pred_show) go in the overlay too.
 Switch: LWIR_PICTURE_FIRST=1 at start, POST /rules/set?picture_first=1|0 live (not kept over a restart).
 """
+from collections import deque
 import json
 import os
 import threading
@@ -20,7 +21,7 @@ import numpy as np
 
 from ..track.stabilizer import STAB
 from ..detect import spec_proposals, skin_temp
-from . import preview_worker
+from . import preview_worker, stream_sender
 
 PF = dict(on=os.environ.get('LWIR_PICTURE_FIRST') == '1', pictures=0, overlays=0, errors=0, encode_ms=None)
 
@@ -123,7 +124,7 @@ def overlay_message(frame_t, boxes, follow, now_perf, now_unix, width=640, heigh
     from the centre, target offset or null] (gimbal/search_follow.PHASES: 2 = sweeping, 3 = turning back)."""
     p = [[q[0][0], q[0][1], q[1][0], q[1][1], int(q[3]), str(q[4]), list(q[5]) if q[5] else None, [list(v) for v in q[6]], int(q[7]),
           'rgb(%d,%d,%d)' % (q[2][2], q[2][1], q[2][0]), float(q[8]) if len(q) > 8 else 1.0] for q in predictions]
-    msg = dict(pf=1, t=round(now_unix - (now_perf - frame_t), 4), w=width, h=height, f=int(follow),
+    msg = dict(pf=1, k=stream_sender.frame_key(frame_t), t=round(now_unix - (now_perf - frame_t), 4), w=width, h=height, f=int(follow),
                b=[[int(round(x1)), int(round(y1)), int(round(x2)), int(round(y2)), int(tid), int(fol)]
                   for x1, y1, x2, y2, tid, fol in boxes], p=p)
     if seek:
@@ -131,13 +132,20 @@ def overlay_message(frame_t, boxes, follow, now_perf, now_unix, width=640, heigh
     return json.dumps(msg, separators=(',', ':')).encode()
 
 
-def publish_overlay_locked(live, message, *, people=None, ticket=None, frame_t=None):
+def publish_overlay_locked(live, message, *, people=None, ticket=None, frame_t=None, owners=None):
     """Under live.jcond. message None = no boxes from this module (the page clears its drawing)."""
     live.overlay = message if message is not None else b'{"pf":0}'
     live.overlay_seq = getattr(live, 'overlay_seq', 0) + 1
     live.click_people, live.click_ticket, live.click_frame_t = people, ticket, frame_t
     if message is not None:
         PF['overlays'] += 1
+    if message is None or ticket is None or people is None or frame_t is None:
+        if getattr(live, 'overlay_clicks', None):
+            live.overlay_clicks.clear()
+    else:
+        if not hasattr(live, 'overlay_clicks'):
+            live.overlay_clicks = deque(maxlen=48)
+        live.overlay_clicks.append((stream_sender.frame_key(frame_t), frame_t, people, ticket, owners or {}))
     live.jcond.notify_all()
 
 

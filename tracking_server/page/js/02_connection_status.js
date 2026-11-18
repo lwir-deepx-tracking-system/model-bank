@@ -5,7 +5,13 @@ let lastOk=Date.now(),grace=Date.now(),camIdle=0,camFail=0,wasDown=false,sN=0;
 // ran two streams over a slow link. A hidden page (background tab, phone screen off) takes no pictures; wake() reopens.
 // The stream itself is read in picture_stream.js (streamStart / streamStop), which also opens the first one.
 const pageId=Math.random().toString(36).slice(2,10)||'page';
-function openStream(){if(document.hidden){stopStream();return;}streamStart('/stream?p='+pageId+'&n='+(++sN));}
+const jpegQuality=$('jpeg-quality');
+function openStream(){
+  if(document.hidden){stopStream();return;}
+  const quality=jpegQuality?.value==='mjpeg-high'?'&quality=high':'';
+  streamStart('/stream?p='+pageId+'&n='+(++sN)+quality);
+}
+jpegQuality?.addEventListener('change',openStream);
 function stopStream(){streamStop();}
 function netChip(){
   const idle=Date.now()-Math.max(lastOk,grace);
@@ -25,7 +31,29 @@ let reopenT=0;   // 11-15: one pending reopen at a time; none for a stream the p
 v.addEventListener('error',()=>{if(streamFetch||reopenT||!v.hasAttribute('src'))return;reopenT=setTimeout(()=>{reopenT=0;openStream();},2000);});
 // v25: the bridge answers in English; shown in Korean
 const ANS={'no person there':'그 자리에 사람이 없습니다','that person is not available':'그 사람은 지금 고를 수 없습니다','the gimbal is not ready':'짐벌이 아직 준비되지 않았습니다'};
-let lostSince=null,autoNow=false,hzPrev=null;
+let lostSince=null,lostId=null,autoNow=false,hzPrev=null;
+let followFrame={id:0,held:false,searching:false};
+function followHeld(t){return !!(t.auto&&(t.lost||t.guard?.[1]===1));}
+function followSearchMoving(t){
+  return !!(t.moving&&([2,3,5].includes(t.search)||t.guard?.[3]===1));
+}
+function followWaitText(t,cfg,searching=followSearchMoving(t)){
+  const seekPhase=t.seek?.[0];
+  if(searching){
+    if(t.search===5&&seekPhase===3)return '탐색 중 · 예측 자리로 돌아가는 중';
+    if(t.search===2)return '탐색 중 · 마지막으로 본 방향으로 이동';
+    if(t.search===5||t.search===3)return '탐색 중 · 주변을 찾는 중';
+    return '탐색 중 · 예측 위치로 이동';
+  }
+  if(seekPhase===5)return '탐색 대기 · 주변에 다른 사람이 있음';
+  if(!t.lost)return '탐색 대기 · 선택 대상 확인 중';
+  const timeout=Number(cfg?.reacquire_ms);
+  const limit=Number.isFinite(timeout)&&timeout>0?' (최대 '+timeout/1000+'초)':'';
+  return '탐색 대기 · 같은 대상 재검출'+limit;
+}
+function followBoxStyle(id){
+  return followFrame.id===id ? (followFrame.searching ? 'searching' : followFrame.held ? 'held' : 'active') : '';
+}
 function cameraClickBlock(){
   const replay=rpLast?.state;
   if(rpBusy||replay?.busy)return '영상 전환 중입니다';
@@ -37,18 +65,25 @@ function cameraClickBlock(){
 }
 function show(t){lastOk=Date.now();camIdle=t.cam_idle||0;camFail=t.cam_fail||0;netChip();
   renderGimbalPose(t.pose, t.position_estimate);
+  const followId=t.running&&!t.error&&t.auto?t.id:0;
+  const held=!!followId&&followHeld(t);
+  const searching=held&&followSearchMoving(t);
+  const holdText=held?t.id+'번'+(t.lost?' 놓침':'')+' · '+followWaitText(t,rlast?.gimbal_cfg,searching):'';
   let txt,cls='good',sq='';
   if(!t.running){txt='짐벌 프로그램이 꺼져 있습니다';cls='bad';sq='bad';}
   else if(t.error){txt='짐벌 오류: 서버를 다시 켜야 합니다';cls='bad';sq='bad';}
-  else if(t.lost){const sp=t.seek?t.seek[0]:0;txt=t.id+'번 놓침, '+(sp===2?'짐벌이 주변을 찾는 중':sp===3?'예측 자리로 돌아가는 중':sp===5?'주변에 다른 사람이 있어 훑지 않고 기다립니다':'잠시 기다립니다');cls='warn';sq='lost';}   // 11-16: t.seek = the gimbal's search (bridge --seek 1)
+  else if(held){txt=holdText;cls='warn';sq='lost';}
   else if(t.auto){txt=t.id+'번을 따라가는 중';sq='auto';}
   else if(t.moving){txt='수동으로 움직이는 중';sq='man';}
   else if(t.ready===false){txt='짐벌 준비 중';cls='';}
   else{txt='대기 중 · '+(cameraClickBlock()||'영상에서 사람을 클릭하세요');cls='';}
   S.textContent=txt;$('sq').className='sq '+sq;$('ans').textContent=t.answer?(ANS[t.answer]||t.answer):'';
-  chip('gdot','gtext',cls,t.running?(t.auto?'추종 '+t.id+'번':t.moving?'수동 이동':'짐벌 대기'):'짐벌 꺼짐');
-  if(t.lost){if(lostSince==null)lostSince=Date.now();$('lt').textContent=((Date.now()-lostSince)/1000).toFixed(1)+' 초';}
-  else{lostSince=null;$('lt').textContent='–';}
-  autoNow=!!(t.running&&t.auto&&!t.lost);$('camera-center').hidden=!autoNow||document.body.classList.contains('replay-mode');if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
-  if(typeof followNote==='function')followNote(t);   // 11-13: notes over the picture
+  chip('gdot','gtext',cls,t.running?(held?t.id+'번 '+(searching?'탐색 중':'탐색 대기'):t.auto?'추종 '+t.id+'번':t.moving?'수동 이동':'짐벌 대기'):'짐벌 꺼짐');
+  if(held&&t.lost){
+    if(lostId!==t.id){lostId=t.id;lostSince=Date.now();}
+    $('lt').textContent=((Date.now()-lostSince)/1000).toFixed(1)+' 초';
+  }else{lostId=null;lostSince=null;$('lt').textContent='–';}
+  autoNow=!!followId&&!held;$('camera-center').hidden=!autoNow||document.body.classList.contains('replay-mode');if(!autoNow){$('ex').textContent='–';$('ey').textContent='–';}
+  if(followFrame.id!==followId||followFrame.held!==held||followFrame.searching!==searching){followFrame={id:followId,held,searching};ovDraw();}
+  followNote(t,holdText);
 }
