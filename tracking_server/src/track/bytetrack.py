@@ -33,7 +33,8 @@ class ByteTrackTracker:
         # appearance-first re-association of LOST tracks (wide spatial gate, size ratio, lost age); leftovers -> motion fallback
         self.app_first, self.gate, self.size_ratio, self.lost_max_age, self.motion_fallback = app_first, gate, size_ratio, lost_max_age, motion_fallback
         self.vit_conf, self.vit_min_h = vit_conf, vit_min_h
-        self.high, self.low, self.new, self.match = 0.25, 0.10, 0.25, 0.8
+        self.high, self.low, self.new, self.match = 0.25, 0.10, 0.50, 0.9
+        self.unconfirmed = 0.7
         self.buffer = buffer if buffer is not None else (30 if mode == 'bytetrack' else 60)
         self.kf = KF(); self.frame_id = 0; self.tracked = []; self.lost = []; self.next_id = 0
         self.rebinds_motion = 0; self.rebinds_app = 0; self.rebinds_fallback = 0; self.new_this_frame = []; self.lost_this_frame = []
@@ -161,7 +162,7 @@ class ByteTrackTracker:
             if rt[i].state != LOST: rt[i].state = LOST; lost.append(rt[i]); self.lost_this_frame.append(rt[i])
         dets = [dets[j] for j in ud]
         if unconfirmed:
-            m3, uu, ud3 = linear_assignment(self._cg(self._dists(unconfirmed, dets), unconfirmed, dets), 0.7)
+            m3, uu, ud3 = linear_assignment(self._cg(self._dists(unconfirmed, dets), unconfirmed, dets), self.unconfirmed)
             for i, j in m3:
                 unconfirmed[i].update(dets[j], self.frame_id); act.append(unconfirmed[i])
                 if self.n_init > 2: self._tentative(unconfirmed[i])

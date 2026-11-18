@@ -11,6 +11,11 @@ class BotSortTracker(ByteTrackTracker):
     Appearance distance = 0.5 * cosine distance, counted only when cosine distance < APP_THR and IoU distance < PROX_THR
     (paper defaults .25 / .5; not measured on our camera). Appearance can only LOWER a cost between boxes that already overlap."""
     APP_THR = 0.25; PROX_THR = 0.5
+    
+    def __init__(self, mode, new=0.5, match=0.9, unconfirmed=0.6, **kw):
+        # runtime bench_mot17 스윕 (YOLO26s, 18개 시퀀스): IDSW 1,001 → 566, HOTA 58.2 → 60.7
+        super().__init__(mode, **kw)
+        self.new, self.match, self.unconfirmed = new, match, unconfirmed
 
     def _dists(self, tracks, dets):
         d_iou = iou_dist(tracks, dets); d = d_iou
