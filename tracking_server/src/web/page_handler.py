@@ -112,7 +112,7 @@ def _predictions(sc_, marks_, gb_id_):
 
 def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
                       rows_, row_, npers_, now_, fps_, gb_id_, *, owned, click_people=None,
-                      click_ticket=None, replay_position=None, marks=(), seek=None):
+                      click_ticket=None, click_owners=None, replay_position=None, marks=(), seek=None):
     gt_boxes = ()
     if gtd_ is not None and replay_eval.DRAW[0]:
         gt_boxes = tuple(tuple(b) for b in replay_eval.draw_boxes(t_in, gtd_, sC_))
@@ -142,6 +142,7 @@ def _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows
     return preview_worker.PreviewFrame(t_in, gray_, sc_, tuple(draw_), gt_boxes,
                                        tuple(predictions), txt_, rp_ is not None, gtxt_, gc_,
                                        click_people, click_ticket, replay_position, proposals_, temps=temps_,
+                                       click_owners=click_owners,
                                        seek=((int(seek[0]), seek[1] * sc_, seek[2] * sc_, seek[4] * sc_, None if seek[6] is None else seek[6] * sc_)
                                              if seek and overlay_rows is None and camera_rows is None else None))
 
@@ -391,12 +392,15 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
                           (int(x2_ * sc_), int((y2_ - 16) * sc_)), col_, tid_))
         if overlay_rows is not None:
             npers_ = len(draw_)
-        click_people, click_ticket = None, None
-        if async_live_ and healthy_ and overlay_rows is None:
+        click_people, click_ticket, click_owners = None, None, None
+        if (async_live_ or vars(APP).get('direct_live', False)) and healthy_ and overlay_rows is None:
             click_people, click_ticket = live_tracks.preview_people(t_in, {d[3] for d in draw_})
+            if vars(APP).get('direct_live', False):
+                click_owners = live_tracks.preview_click_owners(t_in)
         frame_ = _preview_snapshot(g_, t_in, sc_, draw_, gtd_, sC_, overlay_rows, camera_rows,
                                    rows_, row_, npers_, now_, fps_, gb_id_, owned=async_live_ or async_replay_,
-                                   click_people=click_people, click_ticket=click_ticket, replay_position=position,
+                                   click_people=click_people, click_ticket=click_ticket,
+                                   click_owners=click_owners, replay_position=position,
                                    marks=marks_, seek=seek_)
         if async_live_ or async_replay_:
             worker_.submit(token_, frame_, requested_at=now_)
@@ -408,7 +412,8 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
                 jpeg_ = None
             if worker_ is not None:
                 worker_.commit_inline(token_, t_in, jpeg_, requested_at=now_, replay=replay_ is not None,
-                                      drawn=drawn_[0] if drawn_ else None)
+                                      drawn=drawn_[0] if drawn_ else None, click_people=click_people,
+                                      click_ticket=click_ticket, click_owners=click_owners)
             else:
                 with APP.LIVE.jcond:
                     source_ok_ = (replay_ is None or (
@@ -417,7 +422,9 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
                         APP.LIVE.pic_t = now_
                         if jpeg_:
                             preview_worker.publish_jpeg_locked(APP.LIVE, jpeg_, t_in, paired=paired_stamp_,
-                                                               high_drawn=drawn_[0] if drawn_ else None)
+                                                               high_drawn=drawn_[0] if drawn_ else None,
+                                                               click_people=click_people, click_ticket=click_ticket,
+                                                               click_owners=click_owners)
                         else:
                             APP.LIVE.preview_errors = getattr(APP.LIVE, 'preview_errors', 0) + 1
     if time.monotonic() - APP.LIVE.t0 > APP.args.live_seconds or (APP.LIVE.cam_lost and APP.args.live_wait):
@@ -739,7 +746,8 @@ def live_close():
     try: replay_eval.finish('server stopped')   # 11-12: a replay still running: its comparison is written
     except Exception as e_: print('REPLAY EVAL save failed', e_, flush=True)
     with APP.LIVE.jcond: APP.LIVE.jcond.notify_all()
-    APP.lv_srv.shutdown()
+    if vars(APP).get('direct_link') is not None: APP.direct_link.close()
+    if APP.lv_srv is not None: APP.lv_srv.shutdown()
     if APP.lv_srv_local is not None: APP.lv_srv_local.shutdown()
     if APP.GB is not None:
         with APP.GB.lock: APP.GB.closing = True; gp_ = APP.GB.proc   # v26: no new bridge after this

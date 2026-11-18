@@ -25,9 +25,9 @@
 # 기본 시간은 scripts/live.env 의 LWIR_CONFIRM_MS 로 바꾼다.
 T="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$T" || exit 9
+MODE="${LWIR_GUI_MODE:-web}"
 [ -f scripts/live.env ] && . scripts/live.env
 PORT="${LWIR_LIVE_PORT:-8090}"
-BIND="${LWIR_LIVE_BIND:-$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)}"
 GUI_HOST="${LWIR_GUI_HOST:-192.168.50.1}"
 GIMBAL_DEV="${LWIR_GIMBAL_DEV:-}"
 [ -n "$GIMBAL_DEV" ] || GIMBAL_DEV="$(ls /dev/serial/by-id/usb-Silicon_Labs_CP2102N_* 2>/dev/null | head -1)"   # 고정 이름 먼저: ttyUSB 번호는 USB 가 끊겼다 붙으면 바뀐다
@@ -39,7 +39,21 @@ AIM_Y="${LWIR_GIMBAL_AIM_Y:-0.08}"   # 사람 상자의 어느 높이를 화면 
 BRIDGE="${LWIR_GIMBAL_BRIDGE:-src/gimbal/gimbal_bridge_v25}"   # 짐벌 프로그램. v27(움직임 부드럽게, 시험용)을 쓰려면 scripts/live.env 에 LWIR_GIMBAL_BRIDGE=src/gimbal/gimbal_bridge_v27
 REPLAY_ROOT="${LWIR_REPLAY_ROOT:-/mnt/lwir_data/label_web/LWIR_labels}"   # 녹화 재생(웹 화면 "녹화 재생")에 쓰는 라벨 사이트 녹화 폴더. 폴더가 없으면 서버가 재생을 끈다
 EXTRA_OPTS="${LWIR_GIMBAL_EXTRA_OPTS:-}"                     # 짐벌 프로그램에 더 줄 옵션 (예: --deadband-exit 0.10 --axis-reversal 1)
-[ -n "$BIND" ] || { echo "no page address: tailscale0 has no IPv4 address; set LWIR_LIVE_BIND in scripts/live.env"; exit 8; }
+if [ "$MODE" = direct ]; then
+  LAN_BIND="${LWIR_DIRECT_LAN_BIND:-192.168.77.2}"
+  LAN_PEER="${LWIR_DIRECT_LAN_PEER:-192.168.77.1}"
+  LAN_PORT="${LWIR_DIRECT_LAN_PORT:-8765}"
+  live_args=(--direct-lan-bind "$LAN_BIND" --direct-lan-peer "$LAN_PEER" --direct-lan-port "$LAN_PORT")
+  gui_args=()
+  mode_label="direct=$LAN_BIND:$LAN_PORT pc=$LAN_PEER"
+else
+  [ "$MODE" = web ] || { echo "LWIR_GUI_MODE must be web or direct"; exit 8; }
+  BIND="${LWIR_LIVE_BIND:-$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)}"
+  [ -n "$BIND" ] || { echo "no page address: tailscale0 has no IPv4 address; set LWIR_LIVE_BIND in scripts/live.env"; exit 8; }
+  live_args=(--live-port "$PORT" --live-bind "$BIND")
+  gui_args=(--gui-host "$GUI_HOST" --gui-bind 0.0.0.0)
+  mode_label="page=$BIND:$PORT gui=$GUI_HOST"
+fi
 [ -x "$BRIDGE" ] || { echo "$BRIDGE missing: run scripts/setup.sh (needs OpenCV and GStreamer)"; exit 7; }
 # 한 번에 한 실행만 시작한다. Python이 재시작할 때도 같은 파일 잠금을 유지한다.
 exec 9>real_gui_launch.lock
@@ -47,16 +61,16 @@ flock -n 9 || { echo "tracker launcher busy"; exit 4; }
 # 서버가 이미 떠 있으면 시작하지 않는다. 옛 이름(lwir_tracker_m1.py)으로 떠 있는 서버도 같은 NPU·카메라·짐벌을 쓰므로 함께 본다.
 pgrep -f 'python3 -B ([s]tart_tracking_server|[l]wir_tracker_m1)\.py' > /dev/null && { echo "NPU busy"; exit 4; }
 fuser "$GIMBAL_DEV" > /dev/null 2>&1 && { echo "gimbal busy"; exit 5; }
-echo "START $(date +%T) page=$BIND:$PORT gui=$GUI_HOST gimbal=$GIMBAL_DEV speed_max=$SPEED_MAX reacquire_ms=$REACQUIRE_MS confirm_ms=$CONFIRM_MS"
+echo "START $(date +%T) $mode_label gimbal=$GIMBAL_DEV speed_max=$SPEED_MAX reacquire_ms=$REACQUIRE_MS confirm_ms=$CONFIRM_MS"
 export LWIR_REAL_GUI_LAUNCH=1
 tracker_args=(
   --tracker bytetrack --no-vit --det w480 --pipeline --class-gate --gmc --gmc-corners 300 --gmc-mindist 5 --n-init 2 --confirm-ms "$CONFIRM_MS" --warm-min 45000 --edge-birth 0.5
   --relabel RVGGA0_REID2C256 --rl-async --gmc-thread --npu-depth 1 --confirm-gate models/track/gate_gru32_frozen.json --judge models/track/relink_judge_frozen.json --judge-crops 2
-  --live-port "$PORT" --live-bind "$BIND" --live-seconds 604800 --live-wait 0 --out real_gui_1 --replay-root "$REPLAY_ROOT"
+  "${live_args[@]}" --live-seconds 604800 --live-wait 0 --out real_gui_1 --replay-root "$REPLAY_ROOT"
   --replay-bytetrack-library "${LWIR_REPLAY_BYTETRACK_LIBRARY:-}"
   --replay-tracks-root "${LWIR_REPLAY_TRACKS_ROOT:-}"
   --gimbal "$GIMBAL_DEV" --gimbal-speed 10 --gimbal-aim-y "$AIM_Y" --gimbal-bridge "$BRIDGE" --gimbal-opts "--controller pid --ki 0 --kd 6 --integral-limit 3 --deadband 0.06 --manual-speed 20 --speed-max $SPEED_MAX --reacquire-ms $REACQUIRE_MS $EXTRA_OPTS"
-  --gui-host "$GUI_HOST" --gui-bind 0.0.0.0
+  "${gui_args[@]}"
 )
 
 # A fresh process releases all of the previous DXRT client's resources.

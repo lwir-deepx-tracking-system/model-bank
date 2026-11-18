@@ -43,6 +43,7 @@ class PreviewFrame:
     proposals: tuple = ()   # 11-14: ((x1, y1), (x2, y2), score, covered) people proposals from the spatial spectrum
     temps: tuple = ()   # 11-14: ((x1, y1), (x2, y2), text, colour) skin-temperature labels of person boxes (src/detect/skin_temp.py)
     seek: tuple | None = None   # 11-16: (phase, cx, cy, sweep half-width, target offset or None) of the gimbal's search, picture px x scale (gimbal/search_follow.py)
+    click_owners: dict | None = None   # direct PC app: owner tokens from this exact displayed frame
 
 
 def transition_jpeg(cv2):
@@ -144,7 +145,8 @@ def render_preview(cv2, frame, keep=None):
 
 
 def publish_jpeg_locked(live, jpeg, frame_t, *, paired=True, click_people=None, click_ticket=None,
-                        replay_position=None, drawn=None, click=True, high_drawn=None):
+                        replay_position=None, drawn=None, click=True, high_drawn=None,
+                        click_owners=None):
     """Commit one JPEG under jcond. Placeholders have no frame latency sample.
     drawn: the picture before encoding (render_preview keep=), for /stream's lighter picture; None = none for this JPEG.
     click=False: a picture without boxes (picture_first.py) leaves the click people and ticket of the boxes alone."""
@@ -155,6 +157,7 @@ def publish_jpeg_locked(live, jpeg, frame_t, *, paired=True, click_people=None, 
     if click:
         live.jpeg_people = click_people
         live.jpeg_tracks_ticket = click_ticket
+        live.jpeg_click_owners = click_owners
         live.jpeg_replay_position = replay_position
     live.seq += 1
     if frame_t is not None:
@@ -271,7 +274,8 @@ class PreviewWorker:
                 and position[:2] == self._seek[:2] and position[3] >= self._seek[2]
                 and position[2] > self._seek[3])
 
-    def commit_inline(self, token, frame_t, jpeg, *, requested_at, replay, drawn=None):
+    def commit_inline(self, token, frame_t, jpeg, *, requested_at, replay, drawn=None,
+                      click_people=None, click_ticket=None, click_owners=None):
         """Commit an inline render only while its source generation is current."""
         with self._cond:
             if token != self._generation or not self._can_publish(frame_t, replay=replay):
@@ -281,7 +285,9 @@ class PreviewWorker:
             if not jpeg:
                 self._errors += 1
                 return False
-            publish_jpeg_locked(self._live, jpeg, frame_t, high_drawn=drawn)
+            publish_jpeg_locked(self._live, jpeg, frame_t, high_drawn=drawn,
+                                click_people=click_people, click_ticket=click_ticket,
+                                click_owners=click_owners)
             return True
 
     def _invalidate_locked(self, before, *, keep_jpeg=False):
@@ -371,6 +377,7 @@ class PreviewWorker:
                         self._seek_queued = False
                     publish_jpeg_locked(self._live, jpeg, frame.frame_t,
                                         click_people=frame.click_people, click_ticket=frame.click_ticket,
+                                        click_owners=frame.click_owners,
                                         replay_position=frame.replay_position, drawn=drawn[0] if drawn else None)
             # Release the completed image while waiting on the next request.
             del frame, jpeg, drawn

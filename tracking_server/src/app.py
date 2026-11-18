@@ -136,6 +136,9 @@ def main():
     ap.add_argument('--no-bank-auto', action='store_true', help='v28: do not list new dxnn/ files by themselves')
     ap.add_argument('--min-person-h', type=float, default=0.0, help='v27: drop person detections under this height in px before tracking (user 11-10: 32 = smallest hand-labelled person 33 px); 0 = off = unchanged')
     ap.add_argument('--live-port', type=int, default=0, help='v14: live camera mode, serve the annotated MJPEG stream on this port (0 = off = normal file run)')
+    ap.add_argument('--direct-lan-bind', default='', help='direct PC app mode: bind the board Ethernet IPv4 here; no HTTP listener (empty = off)')
+    ap.add_argument('--direct-lan-port', type=int, default=8765, help='direct PC app TCP port')
+    ap.add_argument('--direct-lan-peer', default='', help='only accept this PC IPv4 on the direct link')
     ap.add_argument('--live-bind', default='127.0.0.1', help='address of the web page. The page has no password; the default is this device only, give the address of a trusted network to view it from another computer')
     ap.add_argument('--live-seconds', type=float, default=600, help='v14: live run length in seconds')
     ap.add_argument('--measure-dir', default='/mnt/lwir_data/results/live_measure', help='v22c: folder for the measurement button files (a YYYYMMDD subfolder per day); the run folder when it cannot be written')
@@ -172,6 +175,21 @@ def main():
     ap.add_argument('--confirm-gate', default='', help='v11: path of GATE_GRU32_FROZEN.json = the learned confirmation gate replaces 3FrameConfirm (GateTracker); requires --tracker bytetrack --class-gate --no-vit; default off = unchanged')
     ap.add_argument('--judge-crops', type=int, default=2, help='v10: with --judge, crops per frame on NPU_2 (new IDs first, then refresh); 0 = every eligible crop')
     APP.args = ap.parse_args()
+    if APP.args.direct_lan_bind and APP.args.live_port:
+        ap.error('--direct-lan-bind and --live-port cannot be used together')
+    if APP.args.direct_lan_bind and not APP.args.direct_lan_peer:
+        ap.error('--direct-lan-peer is required with --direct-lan-bind')
+    if APP.args.direct_lan_bind:
+        import ipaddress
+        try:
+            ipaddress.IPv4Address(APP.args.direct_lan_bind)
+            ipaddress.IPv4Address(APP.args.direct_lan_peer)
+        except ipaddress.AddressValueError:
+            ap.error('--direct-lan-bind and --direct-lan-peer need IPv4 addresses')
+        if not 1 <= APP.args.direct_lan_port <= 65535:
+            ap.error('--direct-lan-port must be between 1 and 65535')
+    APP.direct_live = bool(APP.args.direct_lan_bind)
+    APP.args.live_port = APP.args.live_port or (APP.args.direct_lan_port if APP.direct_live else 0)
     APP.FEED_MODE = frame_feed.load_mode()
     APP.FEED = None
     APP.FEED_READY = False
@@ -530,6 +548,7 @@ def main():
                        "setInterval(()=>post('/gimbal/ping'),400);post('/gimbal/ping');const MI=document.getElementById('mi'),MR=document.getElementById('mr');function f1(x){return x==null?'-':x.toFixed(1);}function mshow(m){if(m.on){MI.textContent='측정 중: '+m.frames+'프레임, '+m.seconds.toFixed(0)+'초';}else MI.textContent=m.last?'측정 '+m.last.n+'회차 끝, 저장: '+m.last.file:'측정 대기';const r=m.last;if(!r||!r.frames){MR.textContent=r?'프레임이 없습니다':'';return;}let t='측정 '+r.n+'회차: '+r.frames+'프레임, '+r.seconds.toFixed(1)+'초, 출력 '+f1(r.out_fps)+' fps, 카메라 '+f1(r.cam_fps)+' fps\n';t+='항목                    p50     p95     p99     최대   33ms 초과\n';for(const [k,lab] of [['delay','입력→출력 지연 (ms)'],['interval','출력 간격 (ms)'],['compute','처리 시간 (ms)'],['npu_wait','NPU 대기 (ms)'],['tracker','트래커 (ms)']]){const s=r[k];if(!s)continue;t+=(lab+'                        ').slice(0,22)+[s.p50,s.p95,s.p99,s.max].map(v=>f1(v).padStart(8)).join('')+(f1(s.over33)+'%').padStart(10)+'\n';}MR.textContent=t;}function mpost(u){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json()).then(mshow).catch(()=>{MI.textContent='서버 연결 끊김';});}document.getElementById('mst').addEventListener('click',()=>mpost('/measure/start'));document.getElementById('msp').addEventListener('click',()=>mpost('/measure/stop'));setInterval(()=>fetch('/measure').then(r=>r.json()).then(mshow).catch(()=>{}),1000);"
                        "</script></body></html>").encode()
             if (HERE / 'page' / 'live_page.html').exists(): APP.GB_PAGE = (HERE / 'page' / 'live_page.html').read_bytes()   # v22: the designed page (gimbal pad + measurement button) next to this script; the inline page above is the fallback
+            if APP.direct_live: APP.GB_PAGE = b''   # the direct PC app does not serve a web page
             APP.meas_stats = measure.meas_stats
             APP.meas_dir = measure.meas_dir
             APP.meas_clean = measure.meas_clean
@@ -554,18 +573,26 @@ def main():
             APP.cam_reset_work = camera_link.cam_reset_work
             APP.cam_reset_request = camera_link.cam_reset_request
             APP.sys_reboot = system_buttons.sys_reboot
-            lv_Handler = page_handler.make_lv_Handler()
-            lv_Server = page_handler.make_lv_Server()
-            APP.lv_srv = lv_Server((APP.args.live_bind, APP.args.live_port), lv_Handler); APP.lv_srv.daemon_threads = True
-            APP.lv_th.Thread(target=APP.lv_srv.serve_forever, daemon=True).start()
             APP.lv_srv_local = None
-            if APP.args.live_bind not in ('', '0.0.0.0', '127.0.0.1', 'localhost'):   # v26b: the same pages on 127.0.0.1, so the keep-alive on the board can read /healthz while the page address (Tailscale) is away
-                try:
-                    APP.lv_srv_local = lv_Server(('127.0.0.1', APP.args.live_port), lv_Handler); APP.lv_srv_local.daemon_threads = True
-                    APP.lv_th.Thread(target=APP.lv_srv_local.serve_forever, daemon=True).start()
-                except OSError as e_: APP.lv_srv_local = None; print('LIVE no listener on 127.0.0.1:%d (%s)' % (APP.args.live_port, e_), flush=True)
+            APP.lv_srv = None
+            APP.direct_link = None
+            if APP.direct_live:
+                from .direct_lan import DirectLink
+                APP.direct_link = DirectLink(APP.args.direct_lan_bind, APP.args.direct_lan_port, APP.args.direct_lan_peer)
+                APP.direct_link.start()
+                print('DIRECT LAN %s:%d PC=%s for %d s' % (APP.args.direct_lan_bind, APP.args.direct_lan_port, APP.args.direct_lan_peer, APP.args.live_seconds), flush=True)
+            else:
+                lv_Handler = page_handler.make_lv_Handler()
+                lv_Server = page_handler.make_lv_Server()
+                APP.lv_srv = lv_Server((APP.args.live_bind, APP.args.live_port), lv_Handler); APP.lv_srv.daemon_threads = True
+                APP.lv_th.Thread(target=APP.lv_srv.serve_forever, daemon=True).start()
+                if APP.args.live_bind not in ('', '0.0.0.0', '127.0.0.1', 'localhost'):   # v26b: the same pages on 127.0.0.1, so the keep-alive on the board can read /healthz while the page address (Tailscale) is away
+                    try:
+                        APP.lv_srv_local = lv_Server(('127.0.0.1', APP.args.live_port), lv_Handler); APP.lv_srv_local.daemon_threads = True
+                        APP.lv_th.Thread(target=APP.lv_srv_local.serve_forever, daemon=True).start()
+                    except OSError as e_: APP.lv_srv_local = None; print('LIVE no listener on 127.0.0.1:%d (%s)' % (APP.args.live_port, e_), flush=True)
+                print('LIVE http://%s:%d/ for %d s' % (APP.args.live_bind, APP.args.live_port, APP.args.live_seconds), flush=True)
             live_close = page_handler.live_close
-            print('LIVE http://%s:%d/ for %d s' % (APP.args.live_bind, APP.args.live_port, APP.args.live_seconds), flush=True)
         if APP.args.preload:         # --preload: decode once, outside every timed interval
             t_pl = time.perf_counter(); APP.mem = [APP.to_canvas(APP.cv2.imread(str(APP.DATA / im_['file_name']), APP.cv2.IMREAD_GRAYSCALE | APP.cv2.IMREAD_ANYDEPTH), im_['file_name']) for im_ in APP.images]
             print('PRELOAD %d frames %.1f s' % (len(APP.mem), time.perf_counter() - t_pl), flush=True)
