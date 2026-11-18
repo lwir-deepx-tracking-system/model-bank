@@ -20,6 +20,10 @@ class PasswordRequired(StartupError):
     pass
 
 
+class SwitchRequired(StartupError):
+    """The existing model-bank web run needs the user's consent to stop."""
+
+
 def ready(board, port, timeout=0.8):
     try:
         link = Link(board, port, timeout=timeout)
@@ -85,18 +89,67 @@ def find_root(client, preferred=''):
     return paths[0][:-len('/tracking_server/scripts/run_direct_lan.sh')]
 
 
+def web_process(client):
+    """Identify only a model-bank web launcher and its live Python child."""
+    inspect = '''from pathlib import Path
+found=[]
+for item in Path('/proc').iterdir():
+    if not item.name.isdigit(): continue
+    try:
+        argv=(item/'cmdline').read_bytes().split(b'\\0')
+        if b'start_tracking_server.py' not in argv or b'--live-port' not in argv or b'--direct-lan-bind' in argv: continue
+        parent=int(next(s.split(':',1)[1].strip() for s in (item/'status').read_text().splitlines() if s.startswith('PPid:')))
+        par=Path('/proc')/str(parent)
+        pargv=(par/'cmdline').read_bytes().split(b'\\0')
+        cwd=par/'cwd'
+        if not any(x.endswith(b'run_real_gui.sh') for x in pargv): continue
+        if not (cwd/'scripts/run_real_gui.sh').is_file(): continue
+        found.append((int(item.name),parent))
+    except (OSError, StopIteration, ValueError): continue
+print(*('%s %s'%pair for pair in found), sep='\\n')'''
+    code, out, err = remote_command(client, 'python3 -c ' + shlex.quote(inspect))
+    if code:
+        raise StartupError('기존 model-bank 실행을 확인하지 못했습니다: ' + err)
+    rows = [line.split() for line in out.splitlines() if line.strip()]
+    if len(rows) > 1:
+        raise StartupError('Orange Pi에 기존 웹 실행이 여러 개 있어 자동 전환할 수 없습니다')
+    if not rows:
+        return None
+    if len(rows[0]) != 2 or not all(part.isdigit() for part in rows[0]):
+        raise StartupError('기존 model-bank 실행 정보가 올바르지 않습니다')
+    return tuple(map(int, rows[0]))
+
+
+def pause_keepalive(client):
+    code, marker, error = remote_command(client,
+        'if test -e "$HOME/lwir_keepalive.pause"; then echo existing; '
+        'else touch "$HOME/lwir_keepalive.pause" && echo created; fi')
+    if code:
+        raise StartupError('장치의 keepalive 일시정지를 설정하지 못했습니다: ' + error)
+    return marker == 'created'
+
+
+def stop_web(client, child, parent):
+    if web_process(client) != (child, parent):
+        raise StartupError('기존 model-bank 실행이 바뀌어 자동 전환을 중단했습니다')
+    code, _, error = remote_command(client, 'kill -TERM ' + str(parent))
+    if code:
+        raise StartupError('기존 model-bank 종료 요청 실패: ' + error)
+    for _ in range(30):
+        code, _, _ = remote_command(client, 'kill -0 ' + str(child) + ' 2>/dev/null')
+        if code:
+            return
+        time.sleep(1)
+    raise StartupError('기존 model-bank가 30초 안에 종료되지 않았습니다. 장치 상태를 확인하세요')
+
+
 def launch(client, root):
     root_q = shlex.quote(root)
     script_q = shlex.quote(root + '/tracking_server/scripts/run_direct_lan.sh')
     log_q = shlex.quote(root + '/tracking_server/direct_lan_launch.out')
     # A paused keepalive cannot race us by relaunching the web mode. Restore
     # the marker on startup failure only when this launch created it.
-    code, marker, error = remote_command(client,
-        'if test -e "$HOME/lwir_keepalive.pause"; then echo existing; '
-        'else touch "$HOME/lwir_keepalive.pause" && echo created; fi')
-    if code:
-        raise StartupError('장치의 keepalive 일시정지를 설정하지 못했습니다: ' + error)
-    created = marker == 'created'
+    created = pause_keepalive(client)
     detached = (
         'import subprocess,sys; '
         'root,script,log=sys.argv[1:]; '
@@ -127,7 +180,8 @@ def restore_marker(client):
     remote_command(client, 'rm "$HOME/lwir_keepalive.pause"')
 
 
-def start(board, port, user, password=None, remote_root='', progress=lambda _text: None):
+def start(board, port, user, password=None, remote_root='', progress=lambda _text: None,
+          allow_web_switch=False):
     if ready(board, port):
         progress('직결 모드가 이미 실행 중입니다')
         return False
@@ -139,8 +193,21 @@ def start(board, port, user, password=None, remote_root='', progress=lambda _tex
             progress('직결 모드가 이미 실행 중입니다')
             return False
         root = find_root(client, remote_root)
+        old = web_process(client)
+        if old:
+            if not allow_web_switch:
+                raise SwitchRequired('기존 model-bank 8090 실행을 종료하고 직결 모드로 전환할까요?')
+            progress('기존 model-bank 웹 실행을 정상 종료 중…')
+            created = pause_keepalive(client)
+            stop_web(client, *old)
         progress('Orange Pi에서 model-bank 직결 모드를 시작 중…')
-        pid, created = launch(client, root)
+        try:
+            pid, launch_created = launch(client, root)
+            created = created or launch_created
+        except StartupError:
+            if created:
+                restore_marker(client)
+            raise
         for index in range(120):
             if ready(board, port):
                 progress('Orange Pi 직결 모드 준비 완료')

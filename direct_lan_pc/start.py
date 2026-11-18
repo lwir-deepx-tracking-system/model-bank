@@ -12,7 +12,7 @@ from tkinter import messagebox, simpledialog, ttk
 
 from app import App
 from link import Link
-from remote_start import PasswordRequired, StartupError, start
+from remote_start import PasswordRequired, StartupError, SwitchRequired, start
 
 
 CONFIG = Path.home() / '.config' / 'modelbank' / 'direct_lan.json'
@@ -38,6 +38,7 @@ class DesktopStart:
         self.root = root
         self.settings = settings
         self.password = None
+        self.allow_web_switch = False
         self.events = queue.Queue()
         self.answers = queue.Queue(maxsize=1)
         self.busy = False
@@ -59,6 +60,7 @@ class DesktopStart:
         if self.busy:
             return
         self.busy = True
+        self.allow_web_switch = False
         self.retry.state(['disabled'])
         self.message.set('Orange Pi 연결 상태를 확인합니다…')
         thread = threading.Thread(target=self.work, name='modelbank-remote-start', daemon=True)
@@ -70,9 +72,16 @@ class DesktopStart:
                 try:
                     start(self.settings['board'], self.settings['port'], self.settings['ssh_user'],
                           password=self.password, remote_root=self.settings.get('remote_root', ''),
-                          progress=lambda value: self.events.put(('progress', value)))
+                          progress=lambda value: self.events.put(('progress', value)),
+                          allow_web_switch=self.allow_web_switch)
                     self.events.put(('ready', None))
                     return
+                except SwitchRequired as exc:
+                    self.events.put(('switch', str(exc)))
+                    self.allow_web_switch = self.answers.get()
+                    if not self.allow_web_switch:
+                        self.events.put(('error', '기존 웹 실행을 유지했습니다'))
+                        return
                 except PasswordRequired:
                     self.events.put(('password', None))
                     self.password = self.answers.get()
@@ -93,6 +102,8 @@ class DesktopStart:
                         'Orange Pi SSH 비밀번호를 입력하세요. 비밀번호는 저장하지 않습니다.',
                         show='*', parent=self.root)
                     self.answers.put(answer)
+                elif kind == 'switch':
+                    self.answers.put(messagebox.askyesno('ModelBank 직결 LAN', value, parent=self.root))
                 elif kind == 'error':
                     self.password = None
                     self.busy = False

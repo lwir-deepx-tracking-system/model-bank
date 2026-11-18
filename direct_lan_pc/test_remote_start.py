@@ -78,6 +78,7 @@ class RemoteStartTests(unittest.TestCase):
         with patch.object(remote_start, 'ready', return_value=False), \
              patch.object(remote_start, 'connect', return_value=client), \
              patch.object(remote_start, 'find_root', return_value='/home/user/model-bank'), \
+             patch.object(remote_start, 'web_process', return_value=None), \
              patch.object(remote_start, 'launch', return_value=(1234, True)), \
              patch.object(remote_start, 'launch_failure', return_value='NPU busy'), \
              patch.object(remote_start, 'restore_marker') as restore, \
@@ -86,6 +87,46 @@ class RemoteStartTests(unittest.TestCase):
                 remote_start.start('192.0.2.2', 8765, 'user')
             restore.assert_called_once_with(client)
             client.close.assert_called_once()
+
+    def test_existing_web_run_requires_consent_and_does_not_stop(self):
+        client = Mock()
+        with patch.object(remote_start, 'ready', return_value=False), \
+             patch.object(remote_start, 'connect', return_value=client), \
+             patch.object(remote_start, 'find_root', return_value='/home/user/model-bank'), \
+             patch.object(remote_start, 'web_process', return_value=(101, 100)), \
+             patch.object(remote_start, 'stop_web') as stop:
+            with self.assertRaises(remote_start.SwitchRequired):
+                remote_start.start('192.0.2.2', 8765, 'user')
+            stop.assert_not_called()
+            client.close.assert_called_once()
+
+    def test_consented_switch_stops_web_before_direct_launch(self):
+        client = Mock()
+        actions = []
+        def stop(*_args): actions.append('stop')
+        def launch(*_args): actions.append('launch'); return (1234, False)
+        with patch.object(remote_start, 'ready', side_effect=[False, False, True]), \
+             patch.object(remote_start, 'connect', return_value=client), \
+             patch.object(remote_start, 'find_root', return_value='/home/user/model-bank'), \
+             patch.object(remote_start, 'web_process', return_value=(101, 100)), \
+             patch.object(remote_start, 'pause_keepalive', return_value=False), \
+             patch.object(remote_start, 'stop_web', side_effect=stop), \
+             patch.object(remote_start, 'launch', side_effect=launch):
+            self.assertTrue(remote_start.start('192.0.2.2', 8765, 'user', allow_web_switch=True))
+            self.assertEqual(actions, ['stop', 'launch'])
+            client.close.assert_called_once()
+
+    def test_inspection_rejects_multiple_web_runs(self):
+        with patch.object(remote_start, 'remote_command', return_value=(0, '101 100\n201 200', '')):
+            with self.assertRaisesRegex(remote_start.StartupError, '여러 개'):
+                remote_start.web_process(Mock())
+
+    def test_switch_refuses_when_web_process_changed(self):
+        with patch.object(remote_start, 'web_process', return_value=None), \
+             patch.object(remote_start, 'remote_command') as command:
+            with self.assertRaisesRegex(remote_start.StartupError, '바뀌어'):
+                remote_start.stop_web(Mock(), 101, 100)
+            command.assert_not_called()
 
 
 if __name__ == '__main__':
