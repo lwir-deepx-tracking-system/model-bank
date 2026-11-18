@@ -10,12 +10,20 @@ Orange Pi의 `--direct-lan-bind` 실행은 지정한 유선 IP에서 PC 한 대�
 - 이 설치의 기본 주소는 **PC `192.168.77.1/24`**, **Orange Pi `192.168.77.2/24`**, 통신 포트 `8765`입니다. 다른 주소를 쓴다면 양쪽 실행 옵션도 함께 바꿉니다.
 - 유선 고정 주소를 처음 설정할 때는 각 장치에서 `sudo bash tracking_server/scripts/setup_direct_ip.sh <유선 인터페이스> <주소/24>`를 실행합니다. 이 스크립트는 전용 NetworkManager 프로필만 만들거나 고치며, 다른 네트워크의 기본 경로를 바꾸지 않습니다. 이 작업 환경의 PC 프로필은 `enp3s0`에 `192.168.77.1/24`로 이미 준비되어 있습니다. 케이블이 없어 현재 연결 검사는 보류 상태입니다.
 - Orange Pi에는 기존 `tracking_server/scripts/setup.sh`가 준비한 model-bank 모델, 카메라 프로그램, 짐벌 브리지가 있어야 합니다. `scripts/live.env`의 장치별 설정은 기존 실행과 같이 읽습니다.
-- PC에는 Python 3, Tkinter, Pillow가 필요합니다. Debian/Ubuntu: `sudo apt install python3-tk python3-pil`.
+- PC에는 Python 3, Tkinter, Pillow, Paramiko가 필요합니다. Debian/Ubuntu: `sudo apt install python3-tk python3-pil python3-paramiko`.
 - 랜선이 연결되지 않은 지금은 실제 영상·짐벌·NPU 동작을 검증할 수 없습니다.
 
 ## 실행 방법
 
-기존 8090 실행/keepalive가 Orange Pi의 카메라·NPU를 쓰고 있다면 먼저 **그 실행을 정상 종료**하고, keepalive가 다시 켜지지 않도록 장치의 기존 `lwir_keepalive.pause` 절차를 적용합니다. 다른 작업자의 실행을 강제로 종료하지 않습니다. 그런 다음 Orange Pi의 model-bank 저장소에서:
+**최초 한 번:** Orange Pi의 model-bank에 이 브랜치를 설치하고, 유선 IP와 SSH 접속을 준비해야 합니다. 이미 켜진 8090 실행이 카메라·NPU를 쓰고 있다면 그 실행을 **정상 종료**합니다. 바탕화면 실행기는 기존 실행을 강제로 종료하지 않습니다.
+
+그다음 PC 바탕화면의 **ModelBank 직결 LAN** 아이콘을 누르면, PC가 먼저 직결 모드의 실행 여부를 확인합니다. 꺼져 있으면 `192.168.77.2`의 SSH로 Orange Pi에 접속해 `run_direct_lan.sh`를 시작하고, 직결 통신이 준비되면 PC 앱 창을 엽니다. SSH 키가 없다면 앱 창에서 SSH 비밀번호를 물으며 **저장하지 않습니다**. 실행 중인 직결 모드가 이미 있으면 다시 시작하지 않고 바로 앱을 엽니다. SSH 사용자 이름은 처음 한 번만 묻고 PC의 `~/.config/modelbank/direct_lan.json`에 저장합니다. 이 파일에는 비밀번호가 없습니다.
+
+실행기는 Orange Pi의 홈 폴더에서 직결 스크립트 하나를 찾습니다. model-bank 복사본이 여러 개라면 임의의 복사본을 선택하지 않습니다. PC에서 `./direct_lan_pc/launch.sh --remote-root <Orange Pi의 model-bank 절대 경로>`로 지정하거나 위 설정 파일의 `remote_root`에 넣습니다. 주소나 계정을 바꿀 때는 `--board`, `--port`, `--ssh-user` 옵션을 사용합니다.
+
+실행기가 시작한 직결 모드는 PC 창을 닫아도 Orange Pi에서 계속 동작합니다. 실행기는 기존 keepalive가 8090을 다시 켜지 않도록 `~/lwir_keepalive.pause`를 만들고, 시작이 즉시 실패하면 이번에 만든 표시만 되돌립니다. 직결 모드를 종료하고 기존 8090 자동 실행으로 돌아가려면 Orange Pi에서 해당 직결 실행을 정상 종료한 뒤 기존 안내대로 이 표시를 해제합니다.
+
+Orange Pi에서 직접 켜고 싶을 때는 model-bank 저장소에서:
 
 ```bash
 bash tracking_server/scripts/run_direct_lan.sh
@@ -35,7 +43,7 @@ PC 바탕화면 아이콘을 설치하려면:
 bash tracking_server/scripts/desktop/install_direct_lan.sh
 ```
 
-아이콘 이름은 **ModelBank 직결 LAN**입니다. Orange Pi 주소를 바꾼 경우 PC에서는 `./direct_lan_pc/launch.sh --board <주소> --port <포트>`로 실행합니다. 종료할 때 PC 창을 닫으면 짐벌 정지 명령을 보냅니다. Orange Pi 실행은 기존과 같이 `Ctrl+C`로 정상 종료합니다.
+아이콘 이름은 **ModelBank 직결 LAN**입니다. PC 창을 닫으면 짐벌 정지 명령을 보냅니다. Orange Pi에서 직접 실행한 경우는 기존과 같이 `Ctrl+C`로 정상 종료합니다.
 
 ## PC 앱 기능
 
@@ -51,6 +59,7 @@ bash tracking_server/scripts/desktop/install_direct_lan.sh
 ## 확인 상태
 
 - PC에서 직결 명령의 요청·응답, JPEG 바이너리, 기존 설정 명령 경로, 표시 프레임의 ID 소유권 전달과 사진 먼저 모드의 프레임 짝을 5개 모의 시험했습니다.
+- 바탕화면 자동 시작의 기존 실행 재사용, 장치 경로 선택, 분리 실행, 실패 시 keepalive 표시 복구를 PC에서 7개 시험했습니다. 실제 SSH 장치 접속 시험은 아닙니다.
 - PC 앱 창을 실제 Tk 화면과 모의 영상/상태로 띄워 확인했습니다.
 - 기존 웹 영상 관련 회귀 시험을 실행했습니다. 알려진 `test_live_preview_prepare` 모형 함수 오류 한 건은 기반 브랜치에도 있습니다.
 - **아직 확인하지 못한 것:** 랜선 연결, Orange Pi의 새 코드 설치/실행, 실제 카메라·NPU·짐벌, 1:1 전송 지연과 프레임률. 이 항목은 케이블을 연결할 수 있을 때 함께 확인합니다.
