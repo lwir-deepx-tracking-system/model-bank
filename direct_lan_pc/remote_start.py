@@ -129,18 +129,71 @@ def pause_keepalive(client):
     return marker == 'created'
 
 
-def stop_web(client, child, parent):
+def web_root(client, parent):
+    code, cwd, error = remote_command(client, 'readlink -f /proc/' + str(parent) + '/cwd')
+    if code or not cwd.endswith('/tracking_server'):
+        raise StartupError('기존 model-bank 작업 폴더를 확인하지 못했습니다: ' + error)
+    return cwd[:-len('/tracking_server')]
+
+
+def session_script(root):
+    return shlex.quote(root + '/tracking_server/scripts/direct_lan_session.py')
+
+
+def stop_web(client, child, parent, direct_root):
     if web_process(client) != (child, parent):
         raise StartupError('기존 model-bank 실행이 바뀌어 자동 전환을 중단했습니다')
-    code, _, error = remote_command(client, 'kill -TERM ' + str(parent))
+    old_root = web_root(client, parent)
+    command = ('python3 ' + session_script(direct_root) + ' quiesce --pid ' + str(parent)
+               + ' --root ' + shlex.quote(old_root))
+    code, _, error = remote_command(client, command, timeout=70)
     if code:
-        raise StartupError('기존 model-bank 종료 요청 실패: ' + error)
-    for _ in range(30):
-        code, _, _ = remote_command(client, 'kill -0 ' + str(child) + ' 2>/dev/null')
+        raise StartupError('기존 model-bank 종료 실패: ' + error)
+    return old_root
+
+
+def record_session(client, root, pid, old_root, marker_created):
+    command = ('python3 ' + session_script(root) + ' record --root ' + shlex.quote(root)
+               + ' --pid ' + str(pid) + ' --web-root ' + shlex.quote(old_root))
+    if marker_created:
+        command += ' --marker-created'
+    code, _, error = remote_command(client, command)
+    if code:
+        raise StartupError('직결 종료·복구 정보를 저장하지 못했습니다: ' + error)
+
+
+def recover_failed_start(client, root, old_root, marker_created):
+    if old_root:
+        command = ('python3 ' + session_script(root) + ' restore --web-root '
+                   + shlex.quote(old_root))
+        if marker_created:
+            command += ' --marker-created'
+        code, _, error = remote_command(client, command, timeout=110)
         if code:
-            return
-        time.sleep(1)
-    raise StartupError('기존 model-bank가 30초 안에 종료되지 않았습니다. 장치 상태를 확인하세요')
+            raise StartupError('직결 시작 실패 후 기존 서버 복구도 실패했습니다: ' + error)
+    elif marker_created:
+        restore_marker(client)
+
+
+def stop_unrecorded_direct(client, root, pid):
+    command = ('python3 ' + session_script(root) + ' quiesce --pid ' + str(pid)
+               + ' --root ' + shlex.quote(root))
+    code, _, error = remote_command(client, command, timeout=70)
+    if code:
+        raise StartupError('직결 실행 종료 실패: ' + error)
+
+
+def finish_session(board, user, password=None, remote_root=''):
+    client = connect(board, user, password)
+    try:
+        root = find_root(client, remote_root)
+        command = 'python3 ' + session_script(root) + ' finish'
+        code, out, error = remote_command(client, command, timeout=170)
+        if code:
+            raise StartupError('기존 서버 복구 실패: ' + error)
+        return out
+    finally:
+        client.close()
 
 
 def launch(client, root):
@@ -188,6 +241,7 @@ def start(board, port, user, password=None, remote_root='', progress=lambda _tex
     progress('Orange Pi 유선 SSH에 연결 중…')
     client = connect(board, user, password)
     created = False
+    old_root = ''
     try:
         if ready(board, port):
             progress('직결 모드가 이미 실행 중입니다')
@@ -199,25 +253,29 @@ def start(board, port, user, password=None, remote_root='', progress=lambda _tex
                 raise SwitchRequired('기존 model-bank 8090 실행을 종료하고 직결 모드로 전환할까요?')
             progress('기존 model-bank 웹 실행을 정상 종료 중…')
             created = pause_keepalive(client)
-            stop_web(client, *old)
+            old_root = stop_web(client, *old, root)
         progress('Orange Pi에서 model-bank 직결 모드를 시작 중…')
         try:
             pid, launch_created = launch(client, root)
             created = created or launch_created
         except StartupError:
-            if created:
-                restore_marker(client)
+            recover_failed_start(client, root, old_root, created)
             raise
         for index in range(120):
             if ready(board, port):
+                try:
+                    record_session(client, root, pid, old_root, created)
+                except StartupError:
+                    stop_unrecorded_direct(client, root, pid)
+                    recover_failed_start(client, root, old_root, created)
+                    raise
                 progress('Orange Pi 직결 모드 준비 완료')
                 return True
             if index == 1 or (index and index % 5 == 0):
                 progress('Orange Pi 모델과 카메라 준비 중… %d초' % index)
                 failure = launch_failure(client, root, pid)
                 if failure:
-                    if created:
-                        restore_marker(client)
+                    recover_failed_start(client, root, old_root, created)
                     raise StartupError('Orange Pi 실행 실패:\n' + failure)
             time.sleep(1)
         raise StartupError('Orange Pi는 실행 중이지만 직결 통신 준비가 120초 안에 끝나지 않았습니다. 장치 로그를 확인하세요. keepalive 일시정지는 유지했습니다.')

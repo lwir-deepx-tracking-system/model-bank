@@ -30,8 +30,9 @@ def pretty(value):
 
 
 class App:
-    def __init__(self, root, link):
+    def __init__(self, root, link, on_close=None):
         self.root, self.link = root, link
+        self.on_close = on_close
         self.stop = threading.Event()
         self.events = queue.Queue(maxsize=12)
         self.frame_lock = threading.Lock()
@@ -829,12 +830,17 @@ class App:
             self.command('/gimbal/move', x=0, y=0)
 
     def close(self):
+        if self.stop.is_set():
+            return
         self.stop.set()
         self.controls.shutdown(wait=True, cancel_futures=True)
         try: self.link.post('/gimbal/stop')
         except Exception: pass
         self.workers.shutdown(wait=False, cancel_futures=True)
-        self.root.destroy()
+        if self.on_close:
+            self.on_close()
+        else:
+            self.root.destroy()
 
 
 def main():

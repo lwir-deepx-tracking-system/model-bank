@@ -111,9 +111,11 @@ class RemoteStartTests(unittest.TestCase):
              patch.object(remote_start, 'web_process', return_value=(101, 100)), \
              patch.object(remote_start, 'pause_keepalive', return_value=False), \
              patch.object(remote_start, 'stop_web', side_effect=stop), \
-             patch.object(remote_start, 'launch', side_effect=launch):
+             patch.object(remote_start, 'launch', side_effect=launch), \
+             patch.object(remote_start, 'record_session') as record:
             self.assertTrue(remote_start.start('192.0.2.2', 8765, 'user', allow_web_switch=True))
             self.assertEqual(actions, ['stop', 'launch'])
+            record.assert_called_once_with(client, '/home/user/model-bank', 1234, None, False)
             client.close.assert_called_once()
 
     def test_inspection_rejects_multiple_web_runs(self):
@@ -125,8 +127,17 @@ class RemoteStartTests(unittest.TestCase):
         with patch.object(remote_start, 'web_process', return_value=None), \
              patch.object(remote_start, 'remote_command') as command:
             with self.assertRaisesRegex(remote_start.StartupError, '바뀌어'):
-                remote_start.stop_web(Mock(), 101, 100)
+                remote_start.stop_web(Mock(), 101, 100, '/home/user/direct')
             command.assert_not_called()
+
+    def test_finish_runs_board_session_script(self):
+        client = Mock()
+        with patch.object(remote_start, 'connect', return_value=client), \
+             patch.object(remote_start, 'find_root', return_value='/home/user/direct'), \
+             patch.object(remote_start, 'remote_command', return_value=(0, 'restored', '')) as command:
+            self.assertEqual(remote_start.finish_session('192.0.2.2', 'user'), 'restored')
+            self.assertIn('direct_lan_session.py finish', command.call_args.args[1])
+            client.close.assert_called_once()
 
 
 if __name__ == '__main__':

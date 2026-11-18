@@ -12,7 +12,7 @@ from tkinter import messagebox, simpledialog, ttk
 
 from app import App
 from link import Link
-from remote_start import PasswordRequired, StartupError, SwitchRequired, start
+from remote_start import PasswordRequired, StartupError, SwitchRequired, finish_session, start
 
 
 CONFIG = Path.home() / '.config' / 'modelbank' / 'direct_lan.json'
@@ -112,11 +112,46 @@ class DesktopStart:
                     messagebox.showerror('ModelBank 직결 LAN', value, parent=self.root)
                 elif kind == 'ready':
                     self.box.destroy()
-                    App(self.root, Link(self.settings['board'], self.settings['port']))
+                    App(self.root, Link(self.settings['board'], self.settings['port']),
+                        on_close=self.restore)
                     return
         except queue.Empty:
             pass
         self.root.after(100, self.pump)
+
+    def restore(self):
+        self.root.title('ModelBank · 기존 서버 복구 중')
+        self.message = tk.StringVar(value='직결 실행을 종료하고 기존 서버를 다시 시작하는 중…')
+        ttk.Label(self.root, textvariable=self.message, padding=16).pack(anchor='w')
+        threading.Thread(target=self.restore_work, daemon=True).start()
+        self.root.after(100, self.pump_restore)
+
+    def restore_work(self):
+        try:
+            result = finish_session(self.settings['board'], self.settings['ssh_user'],
+                                    password=self.password,
+                                    remote_root=self.settings.get('remote_root', ''))
+            self.events.put(('restored', result))
+        except (StartupError, OSError, ValueError) as exc:
+            self.events.put(('restore_error', str(exc)))
+
+    def pump_restore(self):
+        try:
+            kind, value = self.events.get_nowait()
+        except queue.Empty:
+            self.root.after(100, self.pump_restore)
+            return
+        if kind == 'restored':
+            self.root.destroy()
+        elif kind == 'restore_error':
+            if messagebox.askretrycancel('ModelBank 기존 서버 복구',
+                                         value + '\n다시 시도할까요?', parent=self.root):
+                threading.Thread(target=self.restore_work, daemon=True).start()
+                self.root.after(100, self.pump_restore)
+            else:
+                self.root.destroy()
+        else:
+            self.root.after(100, self.pump_restore)
 
 
 def main():
