@@ -40,7 +40,8 @@ class SessionTests(unittest.TestCase):
             pause.touch()
             with patch.object(session, 'PAUSE', pause), \
                  patch.object(session, 'direct_running', return_value=False), \
-                 patch.object(session, 'web_running', side_effect=[False, True, True]), \
+                 patch.object(session, 'web_running', return_value=False), \
+                 patch.object(session, 'web_healthy', return_value=True), \
                  patch.object(session.subprocess, 'Popen') as launch:
                 session.restore_web(str(base), marker_created=False)
                 self.assertEqual(Path(launch.call_args.kwargs['cwd']), base / 'tracking_server')

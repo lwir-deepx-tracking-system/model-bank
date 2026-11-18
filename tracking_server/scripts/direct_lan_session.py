@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.request import ProxyHandler, build_opener
 
 
 STATE = Path.home() / '.modelbank_direct_session.json'
@@ -107,6 +108,31 @@ def web_running():
     return False
 
 
+def web_healthy():
+    opener = build_opener(ProxyHandler({}))
+    for item in Path('/proc').iterdir():
+        if not item.name.isdigit():
+            continue
+        info = process(int(item.name))
+        if not info or 'start_tracking_server.py' not in info['argv']:
+            continue
+        args = info['argv']
+        try:
+            port = int(args[args.index('--live-port') + 1])
+            bind = args[args.index('--live-bind') + 1]
+        except (ValueError, IndexError):
+            continue
+        if bind == '0.0.0.0':
+            bind = '127.0.0.1'
+        try:
+            with opener.open('http://%s:%d/healthz' % (bind, port), timeout=1) as response:
+                if response.status == 200:
+                    return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def direct_running():
     for item in Path('/proc').iterdir():
         if item.name.isdigit() and child(int(item.name), 'direct'):
@@ -143,11 +169,12 @@ def restore_web(web_root, marker_created):
             subprocess.Popen(['bash', 'scripts/run_real_gui.sh'], cwd=base,
                              stdin=subprocess.DEVNULL, stdout=output,
                              stderr=subprocess.STDOUT, start_new_session=True, close_fds=True)
+    if web_root:
         deadline = time.monotonic() + 90
-        while time.monotonic() < deadline and not web_running():
+        while time.monotonic() < deadline and not web_healthy():
             time.sleep(1)
-        if not web_running():
-            raise RuntimeError('기존 서버가 90초 안에 시작되지 않았습니다')
+        if not web_healthy():
+            raise RuntimeError('기존 서버가 90초 안에 /healthz 응답을 주지 않았습니다')
     if marker_created and PAUSE.exists():
         PAUSE.unlink()
 
