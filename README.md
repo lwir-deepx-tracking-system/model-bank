@@ -15,6 +15,8 @@
 
 > 이어서 일하는 사람이나 AI 작업자는 [HANDOFF.md](HANDOFF.md)(지금 상태, 다음 할 일, 규칙)를 먼저 읽으세요.
 
+> 8090의 머리~골반 상체 박스, 머리~발 전신 추정, 중복 제거와 NPU 모드 실측은 [박스 표시 인수인계](tracking_server/docs/box-display-2026-11-19.md)에 정리했습니다.
+
 > 발표 자료를 만드는 분은 [LWIR 사람 검출·추적 발표 인계](tracking_server/research/LWIR_PRESENTATION_KO.md)에서 학습 대조, 가림 전후 수치, DX-M1 실측과 남은 검증을 확인할 수 있습니다.
 
 ## 1. 추적 서버 (`tracking_server/`)
