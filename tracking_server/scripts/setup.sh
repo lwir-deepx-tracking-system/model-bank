@@ -13,6 +13,9 @@ cd "$(dirname "$0")/.."
 g++ -O3 -shared -fPIC -o src/detect/post.so src/detect/post.cpp
 echo "post.so built"
 
+gcc -O3 -shared -fPIC -ffp-contract=off -std=c11 -o src/detect/tone_map.so src/detect/tone_map.c
+echo "tone_map.so built"
+
 if ! bash scripts/build_native_trackers.sh; then
   echo "Optional C++ tracker build failed; check the build log. Unsupported presets use Python." >&2
 fi

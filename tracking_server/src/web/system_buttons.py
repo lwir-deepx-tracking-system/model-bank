@@ -34,7 +34,8 @@ def npu_feed_state():
     reason = frame_feed.switch_conflict()
     if reason is None and state['pending'] and frame_feed.manual_pending(APP.FEED):   # 11-16: the page may replace an automatic switch
         reason = 'NPU 검출 모드를 바꾸고 있습니다'
-    if reason is None and state['requested'] == 'normal' and len(APP.FEED.eng) != 2:
+    engines = getattr(APP.FEED, 'regular_eng', APP.FEED.eng) if reason is None and APP.FEED.mode == 'tile' else (APP.FEED.eng if reason is None else ())
+    if reason is None and state['requested'] == 'normal' and len(engines) != 2:
         reason = 'NPU 1에 검출 모델이 올라가 있지 않습니다'
     state.update(can_toggle=reason is None, toggle_reason=reason)
     return state

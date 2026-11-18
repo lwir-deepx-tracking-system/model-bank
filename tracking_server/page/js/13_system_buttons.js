@@ -1,7 +1,7 @@
 // System controls
 let sysbusy=false, sysat=null;
 const CR=$('camreset'), SR=$('sysreboot'), restartButton=$('serverrestart');
-const feedToggle=$('npu-feed'), feedAuto=$('npu-feed-auto'), feedApply=$('npu-feed-apply');
+const feedToggle=$('npu-feed'), feedAuto=$('npu-feed-auto'), feedTile=$('npu-feed-tile'), feedApply=$('npu-feed-apply');
 const feedState=$('npu-feed-state'), feedCounts=$('npu-feed-counts'), feedHint=$('npu-feed-hint');
 let feedChoice=null;   // 11-16: the mode chosen on the page and not applied yet ('normal' / 'arrival' / 'auto'), null = as the server says
 
@@ -12,15 +12,18 @@ function syncSystemButtons(){
   restartButton.title=rlast&&!rlast.server_restart?'표준 실행 스크립트로 서버를 시작한 뒤 사용할 수 있습니다':'';
 
   const reportedFeed=rlast?.npu_feed;
-  const feed=reportedFeed?.mode==='normal'||reportedFeed?.mode==='arrival'?reportedFeed:null;
-  const wanted=feed?(feed.requested==='arrival'||feed.requested==='auto'?feed.requested:'normal'):null;
+  const feed=['normal','arrival','tile'].includes(reportedFeed?.mode)?reportedFeed:null;
+  const wanted=feed?(['arrival','auto','tile'].includes(feed.requested)?feed.requested:'normal'):null;
   const requested=wanted==='arrival', auto=wanted==='auto';
   const switching=feed?.pending===true;
   if(feed&&!switching&&feedChoice===wanted)feedChoice=null;
   const selectedMode=feedChoice??wanted??'normal';
   feedAuto.checked=selectedMode==='auto';
+  feedTile.checked=selectedMode==='tile';
   feedToggle.checked=selectedMode==='arrival'||(selectedMode==='auto'&&feed?.active===true);
   feedAuto.disabled=sysbusy||pending||switching||!feed;
+  feedTile.disabled=feedAuto.disabled||(!feed?.tile_available&&selectedMode!=='tile');
+  feedTile.title=feed?.tile_available?'':(feed?.tile_reason||'E10 관절 모델을 선택한 뒤 사용할 수 있습니다');
   feedToggle.disabled=feedAuto.disabled||feedAuto.checked;   // auto chooses the cores itself
   feedApply.disabled=feedAuto.disabled||feed?.can_toggle!==true||
     (selectedMode===feed.requested&&(selectedMode==='auto'||selectedMode===feed.mode));
@@ -29,18 +32,19 @@ function syncSystemButtons(){
   let state='상태를 확인하는 중…';
   if(rlast&&!feed)state='이 서버에는 이 설정이 없습니다.';
   if(feed){
-    state='지금 '+(feed.active?'번갈아 쓰는 중':'NPU 0만 쓰는 중');
+    state='지금 '+(feed.tile_active?'한 장을 나눠 NPU 0·1 동시 사용':feed.active?'번갈아 쓰는 중':'NPU 0만 쓰는 중');
     if(switching)state='전환 중 · '+state;
     else{
       if(auto)state='자동 · '+state+(mon?(mon.why?' · '+mon.why:''):' · 자동 선택 멈춤 (서버 기록 참고)');   // 11-16: no monitor = the rule stopped (error) or the feed turned itself off
-      else if(requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
+      else if(wanted==='tile'&&!feed.tile_active)state='분할 검출 준비 대기 · '+state;
+      else if(wanted!=='tile'&&requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
       if(feed.reason)state+=' · '+feed.reason;
     }
     if(per?.state)state+=' · '+per.text;
   }
   if(feedState.textContent!==state)feedState.textContent=state;
 
-  let counts=(feed?.active||requested||auto)&&Array.isArray(feed.cores)&&feed.cores.length===2
+  let counts=(feed?.tile_active||feed?.active||requested||auto)&&Array.isArray(feed.cores)&&feed.cores.length===2
     ?'투입 장 수 · '+feed.cores.map((count,index)=>'NPU '+index+' '+count.toLocaleString('ko-KR')+'장').join(' · ')
     :'';
   if(mon?.service_ms?.p90!=null&&mon.period_ms!=null)counts+=(counts?' · ':'')+'검출 '+mon.service_ms.p50+' / p90 '+mon.service_ms.p90+' ms · 주기 '+mon.period_ms+' ms'
@@ -107,9 +111,13 @@ feedAuto.addEventListener('change',()=>{
   feedChoice=feedAuto.checked?'auto':(feedToggle.checked?'arrival':'normal');
   syncSystemButtons();
 });
+feedTile.addEventListener('change',()=>{
+  feedChoice=feedTile.checked?'tile':'normal';
+  syncSystemButtons();
+});
 feedApply.addEventListener('click',async()=>{
   if(feedApply.disabled)return;
-  const mode=feedAuto.checked?'auto':(feedToggle.checked?'arrival':'normal');
+  const mode=feedTile.checked?'tile':feedAuto.checked?'auto':(feedToggle.checked?'arrival':'normal');
   try{
     const result=await syspost('/system/npu-feed?mode='+mode,'검출 NPU 사용 방식을 바꾸는 중…','');
     if(result.ok)await rtick();

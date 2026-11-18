@@ -727,7 +727,8 @@ def main():
                 if fd_ and sub_ and not APP.args.mock:
                     rec = APP.FEED.cur
                     if rec is not None and rec.e >= 0:
-                        feed_core = rec.grp[0][rec.e].core
+                        engine_ = rec.grp[0][rec.e]
+                        feed_core = tuple(getattr(engine_, 'cores', (engine_.core,)))
                 vw = vit_sync(g, prev_gray, i) if async_vit else 0.0                                          # sync point 1
                 ra = APP.a.wait() if sub_ else None; rb = (APP.b.wait() if APP.b is not None else None) if sub_ else None; t1 = time.perf_counter_ns(); t_nms0 = t1
                 if fd_ and not sub_: APP.FEED.cur = None
@@ -758,7 +759,7 @@ def main():
             if APP.LIVE is not None and sub_ and APP.LIVE.arr:
                 cores = ()
                 if not APP.args.mock:
-                    cores = (APP.a.core if feed_core is None else feed_core,)
+                    cores = (APP.a.core,) if feed_core is None else feed_core
                     if APP.b is not None:
                         cores += (APP.b.core,)
                     if z_ms != (0.0, 0.0):

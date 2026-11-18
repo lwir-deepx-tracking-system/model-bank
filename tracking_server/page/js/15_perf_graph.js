@@ -168,7 +168,7 @@ function pfpipe(){
   const modeLabel=$('pf-feed-mode');
   if(replay)modeLabel.textContent='녹화 재생';
   else if(feed?.submitted){
-    const mode=feed.active?'NPU 0·1 교대':'NPU 0 단독';
+    const mode=feed.tile_active?'NPU 0·1 한 장 분할':feed.active?'NPU 0·1 교대':'NPU 0 단독';
     modeLabel.textContent=(feed.requested==='auto'?'자동 · ':'')+mode;
   }else modeLabel.textContent='NPU 모드 확인 중';
   pfSchedule(p);
