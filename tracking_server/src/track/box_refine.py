@@ -72,6 +72,7 @@ import time
 import numpy as np
 
 from ..common.state import APP
+from ..common import frame_math
 from ..common.shared_values import PERSON_CLS
 
 MODES = ('off', 'size', 'body')
@@ -172,6 +173,9 @@ class BodyTable:
             to, kh, kw = self.person; h = np.maximum(z[:, 3], 1.); n = len(z)
             return np.c_[np.zeros(n), np.full(n, -0.5 + to + kh / 2), np.log(kw * h / np.maximum(z[:, 2], 1.)), np.full(n, math.log(kh))]
         tab, lh_cen, ar_cen = self.tab, self.lh_cen, self.ar_cen; lh = np.log(np.maximum(z[:, 3], 1.)); ar = z[:, 2] / np.maximum(z[:, 3], 1.)
+        native = frame_math.body_deltas(tab, lh_cen, ar_cen, lh, ar)
+        if native is not None:
+            return native
         i = np.clip(np.searchsorted(lh_cen, lh, 'right') - 1, 0, len(lh_cen) - 2); t = np.clip((lh - lh_cen[i]) / (lh_cen[i + 1] - lh_cen[i]), 0., 1.)[:, None]
         j = np.clip(np.searchsorted(ar_cen, ar, 'right') - 1, 0, len(ar_cen) - 2); u = np.clip((ar - ar_cen[j]) / (ar_cen[j + 1] - ar_cen[j]), 0., 1.)[:, None]
         return (1 - t) * (1 - u) * tab[i, j] + (1 - t) * u * tab[i, j + 1] + t * (1 - u) * tab[i + 1, j] + t * u * tab[i + 1, j + 1]

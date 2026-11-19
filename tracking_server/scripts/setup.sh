@@ -13,6 +13,18 @@ cd "$(dirname "$0")/.."
 g++ -O3 -shared -fPIC -o src/detect/post.so src/detect/post.cpp
 echo "post.so built"
 
+frame_math=src/common/liblwir_frame_math.so
+if frame_math_tmp=$(mktemp "$frame_math.XXXXXX"); then
+  if g++ -O3 -std=c++17 -ffp-contract=off -shared -fPIC -o "$frame_math_tmp" src/common/frame_math.cpp &&
+     chmod 755 "$frame_math_tmp"; then
+    mv -f "$frame_math_tmp" "$frame_math"
+    echo "liblwir_frame_math.so built"
+  else
+    rm -f "$frame_math_tmp"
+    echo "Optional frame math build failed. Python geometry remains available." >&2
+  fi
+fi
+
 gcc -O3 -shared -fPIC -ffp-contract=off -std=c11 -o src/detect/tone_map.so src/detect/tone_map.c
 echo "tone_map.so built"
 

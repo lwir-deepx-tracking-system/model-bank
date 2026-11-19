@@ -47,6 +47,7 @@ from .camera import temp_ring   # 11-14: --cam-temp (camera temperature map for 
 from .gimbal import gimbal_link
 from .common import result_summary
 from .common import stage_timing   # 2026-11-11: 단계별 시간 재기 (LWIR_STAGE_TIMING=1 일 때만, 기본 꺼짐)
+from .common import frame_math
 from .detect import frame_feed     # 2026-11-11: 도착하는 대로 검출기에 넣기 (LWIR_NPU_FEED=arrival 일 때만, 기본 꺼짐)
 from .detect import auto_det       # 2026-11-15: 검출 모델 자동 선택 (근거리 / 먼 거리, 화면이나 /rules/set?auto_det=1 로 켤 때만, 기본 꺼짐)
 from .detect import resident_det   # 2026-11-15: 두 모델 상주·즉시 전환 (LWIR_RESIDENT_DET=1 이나 /rules/set?resident_det=1 로 켤 때만, 기본 꺼짐)
@@ -807,7 +808,10 @@ def main():
                 if frame_time is not None:
                     APP.CTL['lead_motion'] = motion.paired(previous_motion_frame, g, previous_motion_time, frame_time)
                     if APP.CTL['lead_motion'] is not None:   # 11-15: the last frame pairs, for the gimbal search re-catch (live_tracks._motion)
-                        APP.CTL.setdefault("motion_hist", collections.deque(maxlen=32)).append(APP.CTL['lead_motion'])
+                        hist = APP.CTL.get('motion_hist')
+                        if hist is None:
+                            hist = APP.CTL['motion_hist'] = frame_math.motion_history(32)
+                        hist.append(APP.CTL['lead_motion'])
                 previous_motion_frame, previous_motion_time = (g, frame_time) if frame_time is not None else (None, None)
                 for t_ in APP.tracker.tracked:
                     if not t_.is_activated and t_.mean is not None:

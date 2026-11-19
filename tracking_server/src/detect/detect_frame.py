@@ -2,9 +2,11 @@
 import time
 import numpy as np
 from ..common.state import APP
+from ..common import frame_math
 from ..common.shared_values import PERSON_CLS
 from ..common.fast_path import FAST, STAT
 from . import dual_tile
+from .pose_duplicate import suppress_nested_people
 from ..detect.model_scan import S6_DETS, W480_DETS, E2E_DETS, RAW_DETS, KPT_DETS
 
 
@@ -119,7 +121,9 @@ def attach_kpts(dec, kraw, p_, h, w, yoff):
         m = p_[:, 5] == 0
         if not m.any(): KP['cur'] = dict(boxes=np.zeros((0, 4), np.float32), kpts=np.zeros((0, 17, 3), np.float32)); return
         d = dec[0]; gx, gy, gs = _kp_grid(h, w); rows = p_[m]
-        idx = _kp_anchors(d, rows) if FAST['kpts'] else _kp_anchors_loop(d, rows)
+        idx = frame_math.pose_anchors(d, rows) if FAST['kpts'] and not FAST['kpts_check'] else None
+        if idx is None:
+            idx = _kp_anchors(d, rows) if FAST['kpts'] else _kp_anchors_loop(d, rows)
         if FAST['kpts_check']:   # both ways on the same frame (a check on a recording)
             STAT['kpts_checked'] += 1; STAT['kpts_differ'] += int(not np.array_equal(_kp_anchors(d, rows), _kp_anchors_loop(d, rows)))
         k = kraw[0][:, idx].reshape(17, 3, -1).transpose(2, 0, 1).astype(np.float32)
@@ -177,7 +181,12 @@ def _detect(ra, rb):     # raw NPU outputs -> NMS detections in FRAME coordinate
 
 
 def detect(ra, rb):      # v27 (user 11-10): person boxes under --min-person-h px tall are not people for this system; dropped before the tracker (0 = off = unchanged)
+    prior_keypoints = KP['cur']
     p_ = APP._detect(ra, rb)
+    if APP.args.det in ('bank:yolo26m_pose_lwir1056_20261118_bodybox_kpt_640x480',
+                        'bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480',
+                        'bank:yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480') and KP['cur'] is not prior_keypoints:
+        p_, KP['cur'] = suppress_nested_people(p_, KP['cur'], PERSON_CLS)
     if APP.args.min_person_h > 0 and len(p_): p_ = p_[~((p_[:, 5] == PERSON_CLS) & ((p_[:, 3] - p_[:, 1]) < APP.args.min_person_h))]
     return p_
 

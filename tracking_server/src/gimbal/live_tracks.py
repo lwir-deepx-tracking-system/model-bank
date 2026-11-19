@@ -10,6 +10,7 @@ import time
 import numpy as np
 
 from ..camera import replay_link
+from ..common import frame_math
 from ..common.state import APP
 from ..track.stabilizer import stab_people_real
 from . import bounded_seek, follow_guard, native_control, predictive_lead, search_follow
@@ -182,7 +183,12 @@ def _motion(t0, t1):
     """The 2x3 camera-motion warp from frame time t0 to frame time t1 composed from APP.CTL['motion_hist'], else None."""
     if t0 == t1:
         return np.array([[1., 0., 0.], [0., 1., 0.]])
-    hist = list(APP.CTL.get('motion_hist') or ())
+    hist = APP.CTL.get('motion_hist')
+    if isinstance(hist, frame_math.MotionHistory):
+        out = hist.compose(t0, t1)
+        if out is not None:
+            return out
+    hist = list(hist or ())
     out, t = None, t0
     for _ in range(len(hist)):
         step = next((m for m in hist if m[0] == t), None)

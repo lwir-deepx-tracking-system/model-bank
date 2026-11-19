@@ -32,6 +32,7 @@ Appearance (feature set B) and the crop budget (--judge-crops N per frame, defau
 import json, math, time, hashlib
 from pathlib import Path
 import numpy as np
+from ..common import frame_math
 
 VIEW = (0.0, 16.0, 640.0, 496.0)      # RT480 detector view in frame coords (rows 16..496 of the 640x512 frame)
 WINDOW = 90                            # candidate window (frames), = KeepID LOST_MAX
@@ -55,22 +56,33 @@ def unit(v):
     v = np.asarray(v, np.float64); return v / max(float(np.linalg.norm(v)), 1e-12)
 
 
-def make_obs(t, row, P, prow, m1=None):
+def make_obs(t, row, P, prow, m1=None, *, geometry=None):
     """one output person row at frame t -> observation dict (everything here is from frame t only); m1 = its RepVGG feature or None"""
     x1, y1, x2, y2 = [float(v) for v in row[:4]]; tid, k = int(row[4]), int(row[7])
     w, h = x2 - x1, y2 - y1; cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
     db = P.get(k)                                     # the detection box (crop source; KeepID's overlap rule uses it)
-    ref = db if db is not None else [x1, y1, x2, y2]
-    others = [b for j, b in P.items() if j != k]
-    ious = [iou(ref, b) for b in others]
-    rc = ((ref[0] + ref[2]) / 2, (ref[1] + ref[3]) / 2); rh = ref[3] - ref[1]
-    n_near_det = sum(1 for b in others if math.hypot(rc[0] - (b[0] + b[2]) / 2, rc[1] - (b[1] + b[3]) / 2) <= NEAR_H * rh)
-    n_near_trk = sum(1 for r in prow if int(r[4]) != tid and math.hypot(cx - (r[0] + r[2]) / 2, cy - (r[1] + r[3]) / 2) <= NEAR_H * h)
+    if geometry is None:
+        ref = db if db is not None else [x1, y1, x2, y2]
+        others = [b for j, b in P.items() if j != k]
+        ious = [iou(ref, b) for b in others]
+        rc = ((ref[0] + ref[2]) / 2, (ref[1] + ref[3]) / 2); rh = ref[3] - ref[1]
+        n_near_det = sum(1 for b in others if math.hypot(rc[0] - (b[0] + b[2]) / 2, rc[1] - (b[1] + b[3]) / 2) <= NEAR_H * rh)
+        n_near_trk = sum(1 for r in prow if int(r[4]) != tid and math.hypot(cx - (r[0] + r[2]) / 2, cy - (r[1] + r[3]) / 2) <= NEAR_H * h)
+        miou, n_ovl = max(ious, default=0.0), sum(1 for v in ious if v > 0)
+    else:
+        miou, n_ovl, n_near_det, n_near_trk = geometry
     return dict(t=t, tid=tid, box=(x1, y1, x2, y2), conf=float(row[5]), k=k, w=w, h=h, cx=cx, cy=cy,
                 crop_h=(db[3] - db[1]) if db is not None else NAN, in_P=db is not None,
-                miou=max(ious, default=0.0), n_ovl=sum(1 for v in ious if v > 0), n_near_det=n_near_det, n_near_trk=n_near_trk,
+                miou=miou, n_ovl=n_ovl, n_near_det=n_near_det, n_near_trk=n_near_trk,
                 ex=min(x1 - VIEW[0], VIEW[2] - x2), ey=min(y1 - VIEW[1], VIEW[3] - y2),
                 m1=(m1 if k >= 0 else None), fp=None)
+
+
+def make_observations(t, rows, detections, features):
+    geometry = frame_math.keepid_geometry(rows, detections, NEAR_H)
+    return {row[4]: make_obs(t, row, detections, rows, features.get(row[4]),
+                             geometry=None if geometry is None else geometry[i])
+            for i, row in enumerate(rows)}
 
 
 def cv_velocity(obs):
@@ -353,7 +365,7 @@ class OnlineJudge:
         st['crops_new'] += n_new; st['crops_refresh'] += len(req) - n_new; st['crops_embedded'] += len(feat); self.per_frame.append((len(req), len(feat)))
         st['crops_new_births_with_candidates'] += sum(1 for b in bc[:n_new] if b in feat)
         # ---- observations of this frame (not yet in hist: candidate histories are the frames before t0)
-        obs = {int(r[4]): make_obs(t, r, P, prow_r, feat.get(int(r[4]))) for r in prow_r}
+        obs = make_observations(t, prow_r, P, feat)
         # ---- id bookkeeping (relabel_online): retired ids reappearing get a fresh id; births get their own id
         for b in now:
             if b in self.retired:

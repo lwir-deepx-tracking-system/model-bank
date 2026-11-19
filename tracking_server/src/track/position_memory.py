@@ -6,6 +6,7 @@ import time
 import numpy as np
 import threading as _pos_th
 from collections import deque as _pos_dq
+from ..common import frame_math
 from ..common.shared_values import PERSON_CLS, TRACKED
 
 
@@ -98,12 +99,17 @@ def _kp_boxfeat(v, b, prev, inn):
     return np.r_[v / h, inn, chg, np.log(h / 100.), np.log(w / h), edge]
 
 
-def _kp_lookup(box_xywh):
-    """keypoints of the detection of the previous frame that matches this track box (IoU >= 0.5), from detect_frame.KP['prev'] -> (z xywh, kpts [17,3]) or (None, None)."""
+def _kp_previous():
     try:
         from ..detect.detect_frame import KP
-        d = KP.get('prev')
-    except Exception: return None, None
+        return KP.get('prev')
+    except Exception:
+        return None
+
+
+def _kp_lookup(box_xywh):
+    """Match a detection in the previous frame (IoU >= 0.5)."""
+    d = _kp_previous()
     if not d or not len(d['boxes']): return None, None
     b = d['boxes']; x1, y1 = box_xywh[0] - box_xywh[2] / 2, box_xywh[1] - box_xywh[3] / 2; x2, y2 = x1 + box_xywh[2], y1 + box_xywh[3]
     iw = np.clip(np.minimum(b[:, 2], x2) - np.maximum(b[:, 0], x1), 0, None); ih = np.clip(np.minimum(b[:, 3], y2) - np.maximum(b[:, 1], y1), 0, None); inter = iw * ih
@@ -123,17 +129,40 @@ def _kp_feat_seen(v, z, zprev, inn, kp, posetrack=False, edges=True):
     return np.clip(np.r_[f, kf, 0.], -KP_CLIP, KP_CLIP)
 
 
+def _kp_seen_batch(M, pool, mean, gen):
+    if not frame_math.position_available():
+        return {}
+    seen = [i for i, t in enumerate(pool) if t.state == TRACKED]
+    if not seen:
+        return {}
+    previous = []
+    for i in seen:
+        memory = getattr(pool[i], 'pk', None)
+        previous.append(memory['z'] if memory and memory['gen'] == gen and memory['j'] == 0 else None)
+    batch = frame_math.position_seen(mean[seen, :6], [getattr(pool[i], 'pp_inn', _POS_Z4) for i in seen],
+                                     previous, _kp_previous(), getattr(M, 'posetrack', False),
+                                     getattr(M, 'edges', True))
+    return {} if batch is None else dict(zip(seen, zip(*batch)))
+
+
 def pos_predict_kpt(M, kf, pool, mean, cov):
     """Keypoint arms. Seen tracks collect inputs; a lost track gets the corrected plain Kalman path (camera warp applied to the path) written into its mean after the normal predict."""
     W = getattr(kf, 'warp', None); gen = POSP['gen']; todo = []
+    inputs = _kp_seen_batch(M, pool, mean, gen)
     for i, t in enumerate(pool):
         p = getattr(t, 'pk', None)
         if t.state == TRACKED:
             if p is None or p['gen'] != gen or p['j'] != 0: p = t.pk = dict(gen=gen, hist=_pos_dq(maxlen=KP_HIST), n=0, z=None, post=None, j=0)
-            z, kp = _kp_lookup(mean[i, :4])
-            if z is None: z = mean[i, :4].astype(np.float64)
-            p['hist'].append(_kp_feat_seen(mean[i, 4:6], z, p['z'] if p['z'] is not None else z, getattr(t, 'pp_inn', _POS_Z4), kp, getattr(M, 'posetrack', False),
-                                           getattr(M, 'edges', True))); p['n'] += 1
+            precomputed = inputs.get(i)
+            if precomputed is None:
+                z, kp = _kp_lookup(mean[i, :4])
+                if z is None: z = mean[i, :4].astype(np.float64)
+                features = _kp_feat_seen(mean[i, 4:6], z, p['z'] if p['z'] is not None else z,
+                                        getattr(t, 'pp_inn', _POS_Z4), kp, getattr(M, 'posetrack', False),
+                                        getattr(M, 'edges', True))
+            else:
+                z, features = (part.copy() for part in precomputed)
+            p['hist'].append(features); p['n'] += 1
             p['z'] = z; p['post'] = mean[i].copy()
             p['w1'] = None if W is None else np.array(W, np.float64)   # 11-16: this frame's camera warp = the one of lost step 1 if the track is not matched now
         elif p is not None and p['gen'] == gen and 0 <= p['j'] < KP_STEPS:

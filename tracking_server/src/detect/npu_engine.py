@@ -2,6 +2,7 @@
 from collections import deque
 import time
 import numpy as np
+from ..common import frame_math
 from ..common.state import APP
 from ..common.shared_values import HERE, anchors
 from ..detect.model_scan import BANK, E2E_KEYS, RAW_KEYS, KPT_KEYS, raw_shape
@@ -63,6 +64,10 @@ class Engine:
         self.q.append((self.b.run_async(x, user_arg={'f': f}, output_buffer=self.packs[s_]), x))   # the input stays referenced until wait
     def wait(self):
         vals = self.b.wait(APP.pending.pop(self.name) if self.depth == 1 else self.q.pop(0)[0]); d = {}
+        if self.split6:
+            merged = frame_math.merge_heads(vals, self.slots)
+            if merged is not None:
+                return merged
         for n, v, s in zip(self.names, vals, self.slots):
             v = np.asarray(v); assert v.size == s.size and np.isfinite(v).all(), (n, v.shape, s.shape)
             if v.shape != s.shape: v = v.reshape(s.shape)
