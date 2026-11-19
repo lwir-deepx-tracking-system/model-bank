@@ -4,6 +4,7 @@ import numpy as np
 from ..common.state import APP
 from ..common.shared_values import PERSON_CLS
 from ..common.fast_path import FAST, STAT
+from . import dual_tile
 from ..detect.model_scan import S6_DETS, W480_DETS, E2E_DETS, RAW_DETS, KPT_DETS
 
 
@@ -144,10 +145,8 @@ def drop_giant(arr, person_cls=0, max_h=MAX_PERSON_H):
 
 
 def _detect(ra, rb):     # raw NPU outputs -> NMS detections in FRAME coordinates (512x640), columns x1,y1,x2,y2,conf,cls
-    if isinstance(ra, (list, tuple)) and len(ra) == 6:
-        from . import dual_tile, npu_engine
-        if dual_tile.is_result(ra):
-            return dual_tile.detect(ra, npu_engine)
+    if isinstance(ra, dual_tile.TileHeads) or dual_tile.is_result(ra):
+        return dual_tile.detect(ra)
     if APP.args.det in E2E_DETS:   # v30: end-to-end head; rows are x1,y1,x2,y2,score,class in model pixels, already one box per object (no host NMS)
         p_ = ra[0].reshape(-1, 6); p_ = p_[(p_[:, 4] > .001) & (p_[:, 2] > p_[:, 0]) & (p_[:, 3] > p_[:, 1])].astype(np.float32); p_[:, 1] += APP.det_yoff; p_[:, 3] += APP.det_yoff
         return p_

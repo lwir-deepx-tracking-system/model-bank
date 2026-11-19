@@ -109,13 +109,17 @@ class NativeTiles:
             raise RuntimeError(self.error())
         return list(self.timing.job_id)
 
-    def wait(self, jobs, names):
+    def wait(self, jobs, names, *, owned=False):
         if list(self.timing.job_id) != jobs:
             raise RuntimeError("Native split job identity changed")
-        if self.lib.lwir_split_wait(self.handle, self.buffers[0].ctypes.data, self.buffers[1].ctypes.data,
+        # An eager feeder can collect the next frame before the tracker has
+        # decoded this one. Each handed-off frame owns its SDK destinations.
+        buffers = [np.empty_like(buf) for buf in self.buffers] if owned else self.buffers
+        if self.lib.lwir_split_wait(self.handle, buffers[0].ctypes.data, buffers[1].ctypes.data,
                                     self.output_size, c.byref(self.timing)):
             raise RuntimeError(self.error())
-        return [[tile[name] for name in names] for tile in self.views]
+        views = [self.tensor_views(buf) for buf in buffers] if owned else self.views
+        return [[tile[name] for name in names] for tile in views]
 
     def close(self):
         if self.handle:

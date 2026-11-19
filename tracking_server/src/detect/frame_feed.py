@@ -136,7 +136,7 @@ def status():
     feed = state.get('FEED')
     result = dict(requested=mode, mode='normal', pending=False, active=False, tile_active=False,
                   tile_available=False, tile_reason=None, cores=[0, 0],
-                  tile_backend=None, tile_validation_frames=0, tile_native_error=None,
+                  tile_backend=None, tile_post_backend=None, tile_validation_frames=0, tile_native_error=None,
                   submitted=0, taken=0, order_errors=0, reason=state.get('FEED_REASON'))
     if feed is not None:
         with live.cond:
@@ -154,6 +154,7 @@ def status():
                           tile_available=bool(tile and dual_tile.selected()),
                           tile_reason=getattr(feed, 'tile_error', None),
                           tile_backend=('cpp' if getattr(backend, 'using_native', False) else 'python') if backend is not None else None,
+                          tile_post_backend=('cpp' if getattr(backend, 'native_post', None) else 'legacy') if backend is not None else None,
                           tile_validation_frames=getattr(backend, 'native_checks', 0),
                           tile_native_error=getattr(backend, 'native_error', None),
                           cores=list(feed.st['core']), submitted=feed.st['submitted'], taken=feed.st['taken'],
@@ -598,7 +599,7 @@ class Feed:
         started = time.perf_counter_ns()
         output = e_.wait()
         done = time.perf_counter_ns()
-        if keep_:
+        if keep_ and not isinstance(output, dual_tile.TileHeads):
             # The next input may reuse the engine's output buffer.
             output = [np.array(value, copy=True) if np.may_share_memory(value, e_.packed) else value for value in output]
         profile = getattr(getattr(e_, 'b', None), 'profile', None)

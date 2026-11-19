@@ -5,6 +5,7 @@ uses the ordinary tracker and KeepID downstream. It never changes the default
 detector or substitutes a different model when the verified asset is absent.
 """
 import ctypes as c
+from dataclasses import dataclass
 import os
 from pathlib import Path
 import time
@@ -30,6 +31,21 @@ N = sum((H // s) * (TW // s) for s in STRIDES)
 BOXES = tuple(f'box_s{s}' for s in STRIDES)
 CLASSES = tuple(f'/cv3.{i}/cv3.{i}.2/Conv_output_0' for i in range(3))
 POSES = tuple(f'kpt_s{s}_nhwc' for s in STRIDES)
+HEAD_ORDER = tuple(name for level in zip(BOXES, CLASSES, POSES) for name in level)
+
+
+@dataclass(frozen=True)
+class TileHeads:
+    """Keep SDK output alive through decoding on the tracker thread."""
+    arrays: tuple
+    pointers: c.Array
+    logits: np.ndarray
+
+
+def flatten_tile(heads):
+    return (np.concatenate([a.reshape(1, 4, -1) for a in heads[::3]], axis=2),
+            np.concatenate([a.reshape(-1) for a in heads[1::3]]),
+            np.concatenate([a.reshape(-1, 51) for a in heads[2::3]], axis=0))
 
 
 def assets_reason():
@@ -85,6 +101,7 @@ class PairBackend:
         self.native = None
         self.native_checks = 0
         self.native_error = None
+        self.native_post = getattr(getattr(APP, 'native_post', None), 'prepare_split_heads', None)
         self.native_allowed = (vars(APP).get('LIVE') is not None and NATIVE_SPLIT.is_file()
                                and os.environ.get('LWIR_CPP_SPLIT', '1') == '1')
         self.profile = TileJobProfile(APP.out, APP.dx) if vars(APP).get('LIVE') is not None else None
@@ -123,6 +140,7 @@ class PairBackend:
                 if self.names is not None and self.names != names:
                     raise RuntimeError('tile engines disagree on output order')
                 self.names = names
+                self.head_indices = tuple(names.index(name) for name in HEAD_ORDER)
                 self.buffers.append(np.empty(sum(sizes)//4, np.float32))
         except BaseException:
             self.close_python()
@@ -222,8 +240,8 @@ class PairBackend:
         native = self.using_native
         if native:
             try:
-                waited = self.native.wait(jobs, self.names)
-                results = self.pack(waited)
+                waited = self.native.wait(jobs, self.names, owned=self.native_post is not None)
+                results = self.pack(waited, owned=True)
             except Exception as error:
                 self.disable_native(error)
                 # Same input, newly recreated Python engines. The failed
@@ -244,6 +262,7 @@ class PairBackend:
             results = self.pack(waited)
         if trace is not None:
             trace["packed_ns"] = time.perf_counter_ns()
+            trace["post_backend"] = "cpp" if isinstance(results, TileHeads) else "legacy"
             self.profile.record_result(trace, jobs, self.metrics())
         if not native and self.native_allowed:
             self.check_native(waited)
@@ -269,7 +288,31 @@ class PairBackend:
             raise failure
         return waited
 
-    def pack(self, waited):
+    def pack(self, waited, *, owned=False):
+        if self.native_post is None:
+            return self.pack_legacy(waited)
+        if owned:
+            # The native SDK has already validated the frame layout.
+            heads = tuple(raw[i] for raw in waited for i in self.head_indices)
+        else:
+            heads = []
+            for raw in waited:
+                if len(raw) != len(self.names):
+                    raise RuntimeError('tile output count changed')
+                for name, index in zip(HEAD_ORDER, self.head_indices):
+                    array = np.asarray(raw[index])
+                    if array.shape != self.shapes[name] or array.dtype != np.float32:
+                        raise RuntimeError(f'invalid tile output {name}: {array.shape}/{array.dtype}')
+                    # The Python SDK reuses its output buffer on the next job.
+                    heads.append(array.copy(order='C'))
+            heads = tuple(heads)
+        logits = np.empty((2, N), np.float32)
+        pointers, invalid = self.native_post(heads, logits)
+        if invalid >= 0:
+            raise RuntimeError(f'invalid tile output {HEAD_ORDER[invalid % 9]} on core {invalid // 9}')
+        return TileHeads(heads, pointers, logits)
+
+    def pack_legacy(self, waited):
         results = []
         for raw in waited:
             if len(raw) != len(self.names):
@@ -280,12 +323,7 @@ class PairBackend:
                 if array.shape != self.shapes[name] or array.dtype != np.float32 or not np.isfinite(array).all():
                     raise RuntimeError(f'invalid tile output {name}: {array.shape}/{array.dtype}')
                 heads[name] = array
-            boxes = np.concatenate([heads[n].reshape(1, 4, -1) for n in BOXES], axis=2)
-            # This converted model has one person class. Do not allocate the
-            # 15 absent class planes merely to sigmoid and discard them.
-            scores = np.concatenate([heads[n].reshape(-1) for n in CLASSES])
-            poses = np.concatenate([heads[n].reshape(-1, 51) for n in POSES], axis=0)
-            results.extend((boxes, scores, poses))
+            results.extend(flatten_tile([heads[name] for name in HEAD_ORDER]))
         return results
 
     def metrics(self):
@@ -331,7 +369,22 @@ def is_result(raw):
 _decode_cache = None
 
 
-def detect(raw, detector):
+def detect(raw):
+    from . import detect_frame
+    if isinstance(raw, TileHeads):
+        decoded = APP.native_post.decode_split_heads(raw.pointers, raw.logits, APP.det_yoff)
+        if decoded is not None:
+            rows, points = decoded
+            detect_frame.KP['prev'] = detect_frame.KP['cur']
+            detect_frame.KP['cur'] = {'boxes': rows[:, :4].copy(), 'kpts': points}
+            return rows
+        # Finite but extreme box logits can overflow the legacy box math.
+        # Retain its behavior in that exceptional case.
+        raw = (*flatten_tile(raw.arrays[:9]), *flatten_tile(raw.arrays[9:]))
+    return detect_legacy(raw)
+
+
+def detect_legacy(raw):
     """Return NMS boxes and set the standard KP cache, preserving tile ownership."""
     global _decode_cache
     if _decode_cache is None:

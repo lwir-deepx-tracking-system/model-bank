@@ -23,3 +23,24 @@ if hasattr(lib, 'nms_person'):
  def fast_nms_person(y):
   n=lib.nms_person(y,_nmsout,y.shape[2]);assert 0<=n<=300
   return _nmsout[:n].copy()
+
+
+if hasattr(lib, 'prepare_split_heads') and hasattr(lib, 'decode_split_heads'):
+    head_pointers = ctypes.c_void_p * 18
+    lib.prepare_split_heads.argtypes = [head_pointers, arr]
+    lib.prepare_split_heads.restype = ctypes.c_int
+    lib.decode_split_heads.argtypes = [head_pointers, arr, ctypes.c_float, arr, arr]
+    lib.decode_split_heads.restype = ctypes.c_int
+
+    def prepare_split_heads(heads, logits):
+        pointers = head_pointers(*(head.ctypes.data for head in heads))
+        invalid = lib.prepare_split_heads(pointers, logits)
+        return pointers, invalid
+
+    def decode_split_heads(pointers, logits, y_offset):
+        # Use the same OpenCV float32 exp as the ordinary detector scores.
+        exp_scores = cv2.exp(logits)
+        rows = np.empty((300, 6), np.float32)
+        points = np.empty((300, 17, 3), np.float32)
+        count = lib.decode_split_heads(pointers, exp_scores, y_offset, rows, points)
+        return None if count < 0 else (rows[:count], points[:count])
