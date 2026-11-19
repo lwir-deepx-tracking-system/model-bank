@@ -1,9 +1,11 @@
 """웹 화면: 보여 줄 그림 만들기(live_publish), 페이지 요청 처리(lv_Handler, lv_Server), 서버 끝내기(live_close)."""
 from colorsys import hsv_to_rgb
 from functools import lru_cache
+from ipaddress import IPv4Address, IPv4Network
 import json
 import math
 import os
+import socket
 import time
 from urllib.parse import parse_qs, urlsplit
 import numpy as np
@@ -633,7 +635,10 @@ def make_lv_Handler():
             except (BrokenPipeError, ConnectionResetError, OSError): pass
         def do_GET(self):
             try:
-                if self.path.startswith('/stream'):
+                if urlsplit(self.path).path == '/network':
+                    body = json.dumps(network_state()).encode()
+                    self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+                elif self.path.startswith('/stream'):
                     # 11-15: f=1 = the page reads the stream with fetch, which WebKit (iPhone Safari) refuses for x-mixed-replace
                     ctype_ = 'multipart/mixed' if 'f=1' in urlsplit(self.path).query.split('&') else 'multipart/x-mixed-replace'
                     self.send_response(200); self.send_header('Content-Type', ctype_ + '; boundary=frame'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Connection', 'close'); self.end_headers()
@@ -729,6 +734,86 @@ def make_lv_Server():
     return lv_Server
 
 
+def lan_ipv4(value):
+    """Explicit private/link-local ranges, not ipaddress's broader is_private."""
+    try:
+        address = IPv4Address(value)
+    except (ValueError, TypeError) as exc:
+        raise ValueError('LAN bind must be an IPv4 address') from exc
+    private = any(address in IPv4Network(net) for net in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'))
+    link_local = IPv4Address('169.254.1.0') <= address <= IPv4Address('169.254.254.255')
+    if not (private or link_local):
+        raise ValueError('LAN bind must be RFC1918 or usable IPv4 link-local')
+    return str(address)
+
+
+def start_lan_listener(handler):
+    """Optional second HTTP listener; same handler/APP, no camera or engine start."""
+    APP.lv_srv_lan = None
+    APP.lv_lan_listener = None
+    APP.lv_lan_url = None
+    address = getattr(APP.args, 'live_lan_bind', None)
+    if not address:
+        return
+    address = lan_ipv4(address)
+    if APP.args.live_bind in (address, '0.0.0.0', ''):
+        # The existing primary socket already covers this address.
+        if not _lan_address_assigned(address):
+            print('LIVE optional LAN address is not assigned locally', flush=True)
+            return
+        APP.lv_lan_listener = (APP.lv_srv, APP.lv_srv_thread)
+    else:
+        server = None
+        try:
+            # Ordinary bind deliberately does not use the primary's IP_FREEBIND:
+            # an absent LAN address must not be advertised as reachable.
+            server = APP.lv_http.ThreadingHTTPServer((address, APP.args.live_port), handler)
+            server.daemon_threads = True
+            thread = APP.lv_th.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+        except (OSError, RuntimeError) as exc:
+            if server is not None:
+                server.server_close()
+            print('LIVE no optional LAN listener (%s)' % exc, flush=True)
+            return
+        APP.lv_srv_lan = server
+        APP.lv_lan_listener = (server, thread)
+    APP.lv_lan_url = 'http://%s:%d/' % (address, APP.args.live_port)
+
+
+def _lan_address_assigned(address):
+    """Normal local UDP bind checks ownership without sending any packet."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.bind((address, 0))
+        return True
+    except OSError:
+        return False
+
+
+def network_state():
+    """Advertise configured LAN URL only while its serving socket/thread live."""
+    state = vars(APP)
+    listener = state.get('lv_lan_listener')
+    live = state.get('LIVE')
+    if listener is not None and live is not None and not live.stopped:
+        server, thread = listener
+        if thread.is_alive() and server.socket.fileno() >= 0:
+            return dict(lan_url=state.get('lv_lan_url'))
+    return dict(lan_url=None)
+
+
+def close_lan_listener():
+    """Withdraw the URL before closing; reused primary sockets stay primary-owned."""
+    server = vars(APP).get('lv_srv_lan')
+    APP.lv_lan_url = None
+    APP.lv_lan_listener = None
+    APP.lv_srv_lan = None
+    if server is not None:
+        server.shutdown()
+        server.server_close()
+
+
 def live_close():
     worker_ = getattr(APP.LIVE, 'preview_worker', None)
     if worker_ is not None: worker_.close()
@@ -739,6 +824,7 @@ def live_close():
     try: replay_eval.finish('server stopped')   # 11-12: a replay still running: its comparison is written
     except Exception as e_: print('REPLAY EVAL save failed', e_, flush=True)
     with APP.LIVE.jcond: APP.LIVE.jcond.notify_all()
+    close_lan_listener()
     APP.lv_srv.shutdown()
     if APP.lv_srv_local is not None: APP.lv_srv_local.shutdown()
     if APP.GB is not None:

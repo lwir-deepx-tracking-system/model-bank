@@ -266,6 +266,9 @@ body:not(.adv) .adv-only{display:none!important}
 @media (max-width:900px) and (max-height:400px) and (orientation:landscape){
   .pfo .pfx canvas{height:40px}
 }
+
+#lan-web:not([hidden]){display:inline-flex;align-items:center;flex:none;text-decoration:none}
+#lan-web:not([href]){cursor:default}
 /* phone, portrait */
 @media (max-width:900px){
   :root{--bar-h:48px}
@@ -496,7 +499,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         <div class="joy" id="joyb" aria-hidden="true"><i id="joyk"></i></div>
       </div>
       <section class="pfpipe-time pfo" id="pfo" aria-labelledby="pfpipe-title">
-        <header class="pf-summary-head"><h2 id="pfpipe-title">서버 성능</h2><span id="pf-feed-mode" class="pf-feed-mode">NPU 모드 확인 중</span></header>
+        <header class="pf-summary-head"><h2 id="pfpipe-title">서버 성능</h2><a class="hbtn" id="lan-web" hidden title="직결 LAN 주소로 이 화면 열기">LAN 접속</a><span id="pf-feed-mode" class="pf-feed-mode">NPU 모드 확인 중</span></header>
         <div class="pf-main-result">
           <div><span>서버 수신 → 추적 완료 <b>p95 · 최근 1분</b></span><span id="pf-goal-status" title="최근 1분 동안 서버가 프레임을 받은 때부터 최종 추적까지 걸린 시간">목표 33 ms</span></div>
           <strong id="pf-track-p95" class="num">–</strong><small id="pf-p95-samples">표본 집계 중</small>
@@ -1409,6 +1412,7 @@ function rdoc(k){if(BT_KEYS.includes(k))k='bytetrack';if(k===rdk)return;rdk=k;co
 const OTG=[['',['엔드투엔드']],['사람 찾기 (검출)',['검출 모델 자동 선택','검출 모델']],['번호 붙이기 (추적)',['Tracker','위치 기억 · 신뢰도','KeepID']],['짐벌 · 화면',['제어','화면 표시']]];
 let otadv=false;try{otadv=localStorage.getItem('lwir_live_otadv')==='1';}catch(_){}
 
+
 // Catalog version badge only: /model has no installation timestamp. This does not select a model.
 function latestGeneralDetector(catalog){
   const rank=c=>{
@@ -1425,7 +1429,6 @@ function latestGeneralDetector(catalog){
   // Equal explicit versions are ambiguous: do not invent installation chronology from menu IDs.
   return ranked.length&&!(ranked[1]&&ranked[0].date===ranked[1].date&&ranked[0].epoch===ranked[1].epoch)?ranked[0].det:null;
 }
-
 // node = {name, note, sel, lock (why it cannot be picked; '' = open), u (POST url), model (answer is /model state), info (hint only, nothing sent), ask (confirm text)}
 function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const Q=q=>'/rules/set?'+q,trk=pend(r,'tracker'),rel=!!pend(r,'relabel'),prd=pend(r,'predictor')||'kalman',bot=trk==='botsort';
@@ -1877,6 +1880,26 @@ function verboseSet(on){document.body.classList.toggle('verbose',on);verboseButt
 let verboseSaved=false;try{verboseSaved=localStorage.getItem('lwir_verbose')==='1';}catch(_){}
 verboseSet(verboseSaved);
 verboseButton.addEventListener('click',()=>{const on=!document.body.classList.contains('verbose');verboseSet(on);try{localStorage.setItem('lwir_verbose',on?'1':'0');}catch(_){}});
+
+async function showLanWebLink(){
+  const link=$('lan-web');
+  try{
+    const response=await fetch('/network',{cache:'no-store'});
+    if(!response.ok)return;
+    const {lan_url}=await response.json();
+    if(!lan_url)return;
+    const target=new URL(lan_url);
+    if(target.protocol!=='http:'||target.username||target.password||target.pathname!=='/'||target.search||target.hash)return;
+    if(target.origin===location.origin){
+      link.textContent='LAN 연결';
+      link.title='직결 LAN 주소로 연결됨';
+    }else{
+      link.href=target.href;
+    }
+    link.hidden=false;
+  }catch(_){}
+}
+showLanWebLink();
 // v26d: small speed / delay graphs below the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
 const PF={rows:[],span:60,off:0,busy:false,marks:[],seen:null,pipeline:null,receivedAt:0};   /* marks: setting changes seen while this page is open, drawn as vertical lines */
 try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if([60,300,900].includes(s_.span))PF.span=s_.span;if(s_.detail===true)$('pfdetail').open=true;}catch(_){}
