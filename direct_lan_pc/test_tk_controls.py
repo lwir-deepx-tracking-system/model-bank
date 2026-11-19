@@ -4,9 +4,10 @@ import tkinter as tk
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
+from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from app import App
+from app import App, visible_box
 
 
 class TkControlTests(unittest.TestCase):
@@ -152,6 +153,18 @@ class TkControlTests(unittest.TestCase):
         self.app.start_replay()
         route = self.link.post.call_args.args[0]
         self.assertIn('seq=%EC%B8%A1%EC%A0%95%2Fday%2Foriginal', route)
+
+    def test_offscreen_replay_box_does_not_draw_a_full_height_edge(self):
+        self.assertIsNone(visible_box(-142, -158, 254, 488, 640, 480))
+        self.assertEqual(visible_box(-20, 10, 100, 200, 640, 480), (0, 10, 100, 200))
+        self.app.image = Image.new('RGB', (640, 480))
+        self.app.overlay = {'pf': 1, 'w': 640, 'h': 480, 'b': [], 'p': []}
+        self.app.overlay_boxes = [[-142, -158, 254, 488, 30, 0],
+                                  [300, 100, 400, 250, 1, 0]]
+        self.app.draw_frame()
+        rectangles = [item for item in self.app.video.find_all()
+                      if self.app.video.type(item) == 'rectangle']
+        self.assertEqual(len(rectangles), 1)
 
 
 if __name__ == '__main__':

@@ -29,6 +29,21 @@ def pretty(value):
     return json.dumps(value, ensure_ascii=False, indent=2, default=str)
 
 
+def visible_box(left, top, right, bottom, width, height):
+    """Keep a mostly off-screen track from drawing one long edge over the video."""
+    values = (left, top, right, bottom, width, height)
+    if not all(isinstance(value, (int, float)) and math.isfinite(value) for value in values):
+        return None
+    if width <= 0 or height <= 0 or right <= left or bottom <= top:
+        return None
+    clipped = (max(0, left), max(0, top), min(width, right), min(height, bottom))
+    x1, y1, x2, y2 = clipped
+    if x2 <= x1 or y2 <= y1:
+        return None
+    visible_fraction = (x2 - x1) * (y2 - y1) / ((right - left) * (bottom - top))
+    return clipped if visible_fraction >= 0.5 else None
+
+
 class App:
     def __init__(self, root, link, on_close=None):
         self.root, self.link = root, link
@@ -607,6 +622,9 @@ class App:
         if overlay.get('pf') == 1:
             for b in self.overlay_boxes:
                 bx1, by1, bx2, by2, tid, followed = b
+                clipped = visible_box(bx1, by1, bx2, by2, overlay['w'], overlay['h'])
+                if clipped is None: continue
+                bx1, by1, bx2, by2 = clipped
                 color = ORANGE if followed else '#55e5a1'
                 self.video.create_rectangle(x0 + bx1 * dw / overlay['w'], y0 + by1 * dh / overlay['h'],
                                             x0 + bx2 * dw / overlay['w'], y0 + by2 * dh / overlay['h'],
@@ -617,6 +635,9 @@ class App:
             for p in overlay.get('p', []):
                 if len(p) < 6: continue
                 bx1, by1, bx2, by2, tid, label = p[:6]
+                clipped = visible_box(bx1, by1, bx2, by2, overlay['w'], overlay['h'])
+                if clipped is None: continue
+                bx1, by1, bx2, by2 = clipped
                 self.video.create_rectangle(x0 + bx1 * dw / overlay['w'],
                                             y0 + by1 * dh / overlay['h'],
                                             x0 + bx2 * dw / overlay['w'],
@@ -771,7 +792,11 @@ class App:
             value = r.get(source or key)
             if source and isinstance(value, dict): value = value.get(key if key in value else 'on')
             var.set(bool(value))
-        typing = isinstance(self.root.focus_get(), (ttk.Entry, ttk.Combobox, tk.Entry))
+        try:
+            focused = self.root.focus_get()
+        except (KeyError, tk.TclError):  # Tk's combobox popdown is not a Python widget.
+            focused = None
+        typing = isinstance(focused, (ttk.Entry, ttk.Combobox, tk.Entry))
         for var, key in [(self.warm_min, 'warm_min'), (self.warm_max, 'warm_max'),
                          (self.edge_birth, 'edge_birth')]:
             if not typing:
