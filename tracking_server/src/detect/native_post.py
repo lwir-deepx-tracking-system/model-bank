@@ -16,3 +16,10 @@ _nmsout=np.empty((300,6),np.float32)
 def fast_nms(y):
  n=lib.nms_decoded(y,_nmsout,y.shape[2]);assert 0<=n<=300
  return _nmsout[:n].copy()
+
+if hasattr(lib, 'nms_person'):
+ lib.nms_person.argtypes=[arr,arr,ctypes.c_int];lib.nms_person.restype=ctypes.c_int
+
+ def fast_nms_person(y):
+  n=lib.nms_person(y,_nmsout,y.shape[2]);assert 0<=n<=300
+  return _nmsout[:n].copy()

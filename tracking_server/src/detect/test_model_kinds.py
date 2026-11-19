@@ -388,6 +388,17 @@ class NativeDecodeTests(DecodeTests):
         a, b = self.nms(y), ref_nms(y)
         self.assertEqual(a.shape, b.shape); self.assertGreater(len(a), 50); np.testing.assert_allclose(a, b, rtol=0, atol=1e-4)
 
+    def test_dense_cap_keeps_stable_score_order_across_classes(self):
+        n = 680
+        y = np.zeros((1, 20, n), np.float32)
+        y[0, 0] = np.repeat(np.arange(n // 2, dtype=np.float32) * 5, 2)
+        y[0, 1:4] = 2.
+        y[0, 4, :] = .8
+        y[0, 5, ::3] = .8
+        expected = ref_nms(y)
+        self.assertEqual(expected.shape, (300, 6))
+        np.testing.assert_array_equal(self.nms(y), expected)
+
 
 class FakeOption:
     BOUND_OPTION = SimpleNamespace(NPU_0=0, NPU_1=1, NPU_2=2)

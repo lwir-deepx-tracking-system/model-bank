@@ -218,7 +218,8 @@ def detect(raw, detector):
     right[0, 4:, right[0, 0] < W // 2] = 0
     decoded[:, :, :N] = left
     decoded[:, :, N:] = right
-    rows = APP.fast_nms(decoded).copy()
+    person_nms = getattr(APP.native_post, 'fast_nms_person', APP.fast_nms)
+    rows = person_nms(decoded).copy()
     from . import detect_frame
     person = rows[rows[:, 5] == 0]
     anchors = detect_frame._kp_anchors(decoded[0], person)
