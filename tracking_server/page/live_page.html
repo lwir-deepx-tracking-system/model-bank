@@ -1929,25 +1929,70 @@ let verboseSaved=false;try{verboseSaved=localStorage.getItem('lwir_verbose')==='
 verboseSet(verboseSaved);
 verboseButton.addEventListener('click',()=>{const on=!document.body.classList.contains('verbose');verboseSet(on);try{localStorage.setItem('lwir_verbose',on?'1':'0');}catch(_){}});
 
-async function showLanWebLink(){
-  const link=$('lan-web');
+const lanLink=$('lan-web');
+const lanRetryKey='lwir_lan_redirect_at';
+let lanTarget=null,lanBusy=false,lanSwitched=false,lanLocal=false;
+let lanFailures=0,lanReachable=Date.now(),lanDiscoverAt=0;
+
+function lanAddress(value){
+  if(!value)return null;
+  let target;
+  try{target=new URL(value);}catch(_){return null;}
+  const [a,b,c]=target.hostname.split('.').map(Number);
+  const ipv4=/^(\d{1,3}\.){3}\d{1,3}$/.test(target.hostname);
+  const local=a===10||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||
+    (a===169&&b===254&&c>=1&&c<=254);
+  if(!ipv4||!local||target.protocol!=='http:'||target.username||target.password||
+      target.pathname!=='/'||target.search||target.hash)return null;
+  return target;
+}
+
+async function checkLanNetwork(){
+  if(document.hidden||lanBusy||lanLocal||lanSwitched)return;
+  const now=Date.now();
+  const idle=()=>Date.now()-Math.max(lastOk,grace,lanReachable);
+  const discover=!lanTarget;
+  if(discover&&now<lanDiscoverAt)return;
+  if(!discover&&idle()<5000){lanFailures=0;return;}
+  lanDiscoverAt=now+10000;
+  lanBusy=true;
+  const controller=new AbortController();
+  const limit=setTimeout(()=>controller.abort(),1800);
   try{
-    const response=await fetch('/network',{cache:'no-store'});
+    const response=await fetch('/network',{cache:'no-store',signal:controller.signal});
+    lanReachable=Date.now();
+    lanFailures=0;
     if(!response.ok)return;
     const {lan_url}=await response.json();
-    if(!lan_url)return;
-    const target=new URL(lan_url);
-    if(target.protocol!=='http:'||target.username||target.password||target.pathname!=='/'||target.search||target.hash)return;
-    if(target.origin===location.origin){
-      link.textContent='LAN 연결';
-      link.title='직결 LAN 주소로 연결됨';
+    lanTarget=lanAddress(lan_url);
+    lanLink.hidden=!lanTarget;
+    if(!lanTarget)return;
+    lanLocal=lanTarget.origin===location.origin;
+    if(lanLocal){
+      lanLink.textContent='LAN 연결';
+      lanLink.title='직결 LAN 주소로 연결됨';
     }else{
-      link.href=target.href;
+      lanLink.href=lanTarget.href;
     }
-    link.hidden=false;
-  }catch(_){}
+  }catch(_){
+    if(discover||document.hidden||idle()<5000){lanFailures=0;return;}
+    if(++lanFailures<2)return;
+    // Top-level navigation also works when the browser blocks cross-origin LAN probes.
+    try{
+      const previous=Number(sessionStorage.getItem(lanRetryKey));
+      if(previous>0&&Date.now()-previous<60000)return;
+      sessionStorage.setItem(lanRetryKey,String(Date.now()));
+    }catch(_){}
+    lanSwitched=true;
+    lanLink.textContent='LAN으로 다시 연결 중';
+    location.assign(lanTarget.href);
+  }finally{
+    clearTimeout(limit);
+    lanBusy=false;
+  }
 }
-showLanWebLink();
+setInterval(checkLanNetwork,2000);
+checkLanNetwork();
 // v26d: small speed / delay graphs below the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
 const PF={rows:[],span:60,off:0,busy:false,marks:[],seen:null,pipeline:null,receivedAt:0};   /* marks: setting changes seen while this page is open, drawn as vertical lines */
 try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if([60,300,900].includes(s_.span))PF.span=s_.span;if(s_.detail===true)$('pfdetail').open=true;}catch(_){}

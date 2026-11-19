@@ -1,3 +1,7 @@
+const DRETIRED_26M=new Set([
+  'bank:yolo26m_pose_ft16v7_reviewed264_e24_provisional_kpt_640x480',
+  'bank:yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480'
+]);
 // node = {name, note, sel, lock (why it cannot be picked; '' = open), u (POST url), model (answer is /model state), info (hint only, nothing sent), ask (confirm text)}
 function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const Q=q=>'/rules/set?'+q,trk=pend(r,'tracker'),rel=!!pend(r,'relabel'),prd=pend(r,'predictor')||'kalman',bot=trk==='botsort';
@@ -6,7 +10,8 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {name:'흔들림 보정',note:'optical flow · 화면+검출 · 시험 안 함',sel:!!r.stab,lock:r.stab==null?OLDSRV:'',u:Q('stab='+(r.stab?0:1))}]});
   const cat=(m&&m.catalog)||[];
   const dk=c=>String(c.det)+' '+String(c.name)+' '+(DN[c.det]||''),ADVON=document.body.classList.contains('adv'),HIDEF=['기본 (공개 데이터)','다른 구조 (비교용)'],curm=m?(m.busy?m.pending:m.current):null;
-  const catv=cat,dfs=DSTR.filter(f=>catv.some(c=>dfold(dk(c))===f));   // 11-13 (user): every detector folder always shows (hiding the comparison models was a problem)   // 11-13: folders by use, only the ones that have models
+  const catv=cat.filter(c=>c.id===m.current||(m.busy&&c.id===m.pending)||!DRETIRED_26M.has(c.det));
+  const latestDetector=latestGeneralDetector(catv),dfs=DSTR.filter(f=>catv.some(c=>dfold(dk(c))===f));
   const ad=r.auto_det,adOn=!!(ad&&ad.on),ADASK='검출 모델 자동 선택이 켜져 있습니다.\n손으로 모델을 고르면 자동 선택이 꺼집니다. 고를까요?';   // 11-15 (user): 검출 모델 자동 선택 (src/detect/auto_det.py)
   // 11-15 (user: 상황에 맞는 최적 모델 알아서 선택): 근거리 / 먼 거리 모델을 사람 크기로 고름. 녹화 재생 중에는 바꾸지 않고 바꿨을 순간만 기록 (시험 운전) · 11-15 (user): 검출 모델 목록보다 위에 (모델이 많아 목록 아래에 묻혔음)
   {const AK={near:'근거리',far:'먼 거리',other:'다른 모델'},P=(ad&&ad.params)||{},s=ad&&ad.signal,dl=ad&&ad.dry_recent&&ad.dry_recent.length?ad.dry_recent[ad.dry_recent.length-1]:null;
@@ -21,7 +26,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'켬',note:thr+(now?' · '+now:''),sel:adOn,lock:adOn?'':miss,u:Q('auto_det=1'),
        ask:adOn?'':'검출 모델 자동 선택은 아직 장치에서 시험하지 않은 기능입니다.\n사람이 작게 보이면 먼 거리 모델로, 크게 보이면 근거리 모델로 바꿉니다.\n바꾸는 동안 화면이 잠깐 멈춥니다. 켤까요?'}]});}
   T.push({lab:'검출 모델',sub:'구조별 · YOLO26 안은 쓰는 곳별'+(adOn?' · 자동 선택 켜짐'+(ad.mode==='live'?' · 지금 '+({near:'근거리',far:'먼 거리',other:'다른 모델'}[ad.current]||'–')+' 모델':''):''),f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
-    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:c.det==='bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480'||REC.includes(c.det),latest:c.det===latestGeneralDetector((m&&m.catalog)||[]),note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1,ask:adOn?ADASK:''}))});
+    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:c.det==='bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480'||REC.includes(c.det),latest:c.det===latestDetector,note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1,ask:adOn?ADASK:''}))});
   T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
