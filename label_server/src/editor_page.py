@@ -13,7 +13,7 @@ INJECT = """
   const ob=$('open');ob.textContent='목록으로';ob.onclick=()=>{location.href='/';};
   document.title=seq+' - LWIR 라벨';
   const tag=document.createElement('span');tag.className='st';tag.textContent=seq+' · '+user;ob.after(tag);
-  async function beat(){if(!window.LWIR_LOADED)return;try{const r=await(await fetch(api('/api/meta'))).json();
+  async function beat(){if(!window.LWIR_LOADED||window.LWIR_FRAME_SNAPSHOT)return;try{const r=await(await fetch(api('/api/meta'))).json();
     const others=(r.open_by||[]).filter(x=>x!==user);
     if(others.length)status('주의: '+others.join(', ')+' 님도 이 시퀀스를 열어 두었습니다. 한 사람만 저장하세요.');
     else if(window.LWIR_BASE!==r.version)status('다른 곳에서 라벨이 저장되었습니다. 작업을 내려받아 보관한 뒤 최신 라벨을 다시 여세요.');}catch(e){}}
@@ -21,6 +21,7 @@ INJECT = """
   let busy=false,autoOff=false;
   window.srvSave=async function(force,auto){
     if(!nFrames||busy||!window.LWIR_LOADED||window.LWIR_LOAD_FAILED)return;
+    if(window.LWIR_FRAME_SNAPSHOT&&await window.LWIR_COLLAB_SAVE?.(auto))return;
     if(window.LWIR_DRAFT_CONFLICT){status('이전 버전의 초안입니다. 작업 내려받기로 보관한 뒤 최신 라벨을 다시 여세요.');return;}
     busy=true;if(!auto)autoOff=false;
     try{
@@ -68,4 +69,8 @@ def build_editor(root):
     src = src.replace(a, a + 'if(window.srvSave)return window.srvSave();')
     src = src.replace(b, "srcName='http:'+base;")
     src = src.replace('<head>', '<head><script>window.LWIR_SERVER_MODE=true;</script>', 1)
-    return src.replace('</body>', INJECT + '</body>')
+    collaboration = ''
+    if 'id="collab-card"' in src:
+        with open(os.path.join(HERE, 'page', 'editor_collaboration.js'), encoding='utf-8') as script:
+            collaboration = '<script>\n' + script.read() + '\n</script>'
+    return src.replace('</body>', collaboration + INJECT + '</body>')
