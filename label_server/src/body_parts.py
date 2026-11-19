@@ -6,16 +6,37 @@ import math
 
 IMAGE_SIZE = (640, 480)
 BOX_PARTS = frozenset(('head', 'torso', 'phone'))
-POINT_PARTS = frozenset(
+LEGACY_POINT_PARTS = frozenset(
     side + '_' + joint
     for side in ('left', 'right')
     for joint in ('shoulder', 'hip', 'elbow', 'wrist')
 )
+COCO_KEYPOINTS = (
+    'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
+    'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+    'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
+    'left_knee', 'right_knee', 'left_ankle', 'right_ankle',
+)
+POINT_PARTS = frozenset(COCO_KEYPOINTS)
 STATES = ('visible', 'occluded', 'out_of_frame', 'unknown')
 
 
 def empty_parts():
     return {'schema_version': 1, 'image_size': list(IMAGE_SIZE), 'annotations': []}
+
+
+def requires_coco_editor(data):
+    """Old partial sidecars stay valid; added COCO fields require editor v3.
+
+    Check both existing and incoming sidecars at save time so an older editor
+    cannot silently discard the last additional point by omitting it.
+    Malformed payload validation remains validate_parts()' responsibility.
+    """
+    if not isinstance(data, dict) or not isinstance(data.get('annotations'), list):
+        return False
+    added = POINT_PARTS - LEGACY_POINT_PARTS
+    return any(isinstance(row, dict) and isinstance(row.get('parts'), dict)
+               and not added.isdisjoint(row['parts']) for row in data['annotations'])
 
 
 def validate_parts(data, mot_lines, frames):

@@ -84,6 +84,7 @@ struct SmoothingConfig {
     bool seek = false;
     int seek_ms = 4500;
     int seek_speed = 8;
+    bool bounded_seek = false;
     // Control step at arrival (11-15, latency audit finding 2). false = the team rule: a new tracking result waits for the
     // worker's own period (period_ms, 25 ms; 0..25 ms, 12.5 ms on average). true: the control step runs as soon as a new
     // result is taken in, and the period timer restarts from there; the timer still runs the step every period_ms for

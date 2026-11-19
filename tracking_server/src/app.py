@@ -140,6 +140,8 @@ def main():
     ap.add_argument('--direct-lan-port', type=int, default=8765, help='direct PC app TCP port')
     ap.add_argument('--direct-lan-peer', default='', help='only accept this PC IPv4 on the direct link')
     ap.add_argument('--live-bind', default='127.0.0.1', help='address of the web page. The page has no password; the default is this device only, give the address of a trusted network to view it from another computer')
+    ap.add_argument('--live-lan-bind', type=page_handler.lan_ipv4, default=None,
+                    help='optional extra web listener on an RFC1918 or usable IPv4 link-local address; keeps the primary and loopback listeners')
     ap.add_argument('--live-seconds', type=float, default=600, help='v14: live run length in seconds')
     ap.add_argument('--measure-dir', default='/mnt/lwir_data/results/live_measure', help='v22c: folder for the measurement button files (a YYYYMMDD subfolder per day); the run folder when it cannot be written')
     ap.add_argument('--live-wait', type=float, default=90, help='v21: seconds to wait for the first camera frame; 0 = never give up: the page and the gimbal link stay up with a placeholder picture and the camera is reopened every 180 s until --live-seconds ends')
@@ -190,6 +192,13 @@ def main():
             ap.error('--direct-lan-port must be between 1 and 65535')
     APP.direct_live = bool(APP.args.direct_lan_bind)
     APP.args.live_port = APP.args.live_port or (APP.args.direct_lan_port if APP.direct_live else 0)
+    if not APP.direct_live and APP.args.live_port and not APP.args.mock and os.environ.get('LWIR_GC_IMPORTS', '1') != '0':
+        # Move the import-time graph out of full scans before camera, models, and workers exist.
+        # New runtime objects still use the normal three GC generations.
+        import gc
+        gc.collect()
+        gc.freeze()
+        print('Live GC: %d startup objects excluded from runtime scans' % gc.get_freeze_count(), flush=True)
     APP.FEED_MODE = frame_feed.load_mode()
     APP.FEED = None
     APP.FEED_READY = False
@@ -408,7 +417,7 @@ def main():
                 print('MAMBA', json.dumps(dict(folder=str(APP.args.mamba), crops=APP.args.mamba_crops, veto=APP.relabeler.veto, duplicates=APP.args.mamba_duplicates)), flush=True)
             elif APP.args.judge:   # v10: the learned judge takes OnlineRelabel's place (same step / reset / stats / events / per_frame interface)
                 from .reid.relink_online_judge import OnlineJudge
-                APP.relabeler = OnlineJudge(APP.args.judge, crops=APP.args.judge_crops)
+                APP.relabeler = OnlineJudge(APP.args.judge, crops=APP.args.judge_crops, compact_ids=bool(APP.args.live_port))
                 print('JUDGE', json.dumps(dict(spec=str(APP.args.judge), sha256=APP.relabeler.spec_sha, config=APP.relabeler.spec['config'], threshold=APP.relabeler.thr, features=len(APP.relabeler.feats), crops=APP.args.judge_crops)), flush=True)
             else:
                 APP.relabeler = OnlineRelabel(budget=True, every=APP.args.rl_every, k=APP.args.rl_k, new_k=APP.args.rl_new_k)
@@ -585,13 +594,15 @@ def main():
                 lv_Handler = page_handler.make_lv_Handler()
                 lv_Server = page_handler.make_lv_Server()
                 APP.lv_srv = lv_Server((APP.args.live_bind, APP.args.live_port), lv_Handler); APP.lv_srv.daemon_threads = True
-                APP.lv_th.Thread(target=APP.lv_srv.serve_forever, daemon=True).start()
+                APP.lv_srv_thread = APP.lv_th.Thread(target=APP.lv_srv.serve_forever, daemon=True)
+                APP.lv_srv_thread.start()
+                APP.lv_srv_local = None
                 if APP.args.live_bind not in ('', '0.0.0.0', '127.0.0.1', 'localhost'):   # v26b: the same pages on 127.0.0.1, so the keep-alive on the board can read /healthz while the page address (Tailscale) is away
                     try:
                         APP.lv_srv_local = lv_Server(('127.0.0.1', APP.args.live_port), lv_Handler); APP.lv_srv_local.daemon_threads = True
                         APP.lv_th.Thread(target=APP.lv_srv_local.serve_forever, daemon=True).start()
                     except OSError as e_: APP.lv_srv_local = None; print('LIVE no listener on 127.0.0.1:%d (%s)' % (APP.args.live_port, e_), flush=True)
-                print('LIVE http://%s:%d/ for %d s' % (APP.args.live_bind, APP.args.live_port, APP.args.live_seconds), flush=True)
+                page_handler.start_lan_listener(lv_Handler)
             live_close = page_handler.live_close
         if APP.args.preload:         # --preload: decode once, outside every timed interval
             t_pl = time.perf_counter(); APP.mem = [APP.to_canvas(APP.cv2.imread(str(APP.DATA / im_['file_name']), APP.cv2.IMREAD_GRAYSCALE | APP.cv2.IMREAD_ANYDEPTH), im_['file_name']) for im_ in APP.images]
@@ -864,6 +875,7 @@ def main():
                 if APP.relabeler is not None: APP.relabeler.reset()
                 if APP.tracker is not None and APP.LIVE is not None: APP.tracker = mk_tracker_(APP.RULES['tracker'])
                 print('E2E: server detector + tracker %s at frame %d' % ('skipped' if own_ else 'back on', i), flush=True)
+            bs_feats, bs_boxes = None, None
             if own_:   # 11-14: the end-to-end model (or the stored result) makes the rows; the server tracker is not run
                 tr_rows = []; t4 = time.perf_counter_ns(); vs = 0.0; POSP['boxes'] = []
             elif budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association
@@ -875,12 +887,13 @@ def main():
             else:
                 feat_fn = (lambda idxs, g_=g, arr_=arr, f_=i: sync_embed(idxs, g_, arr_, f_)) if (vit is not None and APP.args.vit_sync and APP.args.app_first) else None
                 if GATE_FN is not None: APP.tracker.gray = g   # v11: the gate's local-contrast / texture features read the current gray frame
-                bs_feats = None   # v38: BoT-SORT appearance = RepVGG_(TMOT,CAMEL) (KeepID engine, NPU core 2) on the 4 highest-score people >= 32 px. v40: app = off | repvgg
                 is_botsort = isinstance(APP.tracker, BotSortTracker) or (APP.LIVE is not None and APP.RULES['tracker'] == 'botsort')
                 if is_botsort and APP.rl_eng is not None and len(arr) and APP.CTL['app'] == 'repvgg':
                     bk_ = [int(j) for j in np.argsort(-arr[:, 4]) if int(arr[j, 5]) == PERSON_CLS and arr[j, 4] >= 0.25 and arr[j, 3] - arr[j, 1] >= 32.0][:4]
                     try:
-                        if bk_: bs_feats = APP.rl_embed(bk_, g, {j: arr[j, :4].tolist() for j in bk_})
+                        if bk_:
+                            bs_boxes = {j: arr[j, :4].tolist() for j in bk_}
+                            bs_feats = APP.rl_embed(bk_, g, bs_boxes)
                     except Exception as e_:
                         bs_feats = None; print('BOTSORT embed failed', repr(e_)[:120], flush=True)
                 tr_rows = APP.tracker.update(arr, bs_feats, feat_fn); t4 = time.perf_counter_ns()
@@ -897,8 +910,11 @@ def main():
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
                 mamba_kw_ = dict(warp=W_, ts_ns=None if APP.args.live_port else (i + 1) * 33333333) if APP.args.mamba else {}
-                tr_rows = APP.relabeler.step(tr_rows, P_, lambda ks, g_=g, b_=P_: APP.rl_embed(ks, g_, b_), frame=Path(im['file_name']).name,
-                                         embed_async=(lambda ks, g_=g, b_=P_: APP.rl_async.submit(ks, g_, b_)) if APP.rl_async is not None else None, **mamba_kw_)
+                submit = APP.rl_async.submit if APP.rl_async is not None else None
+                keep_embed, keep_submit = reid_embed.same_frame_keepid(
+                    g, P_, APP.rl_embed, submit, bs_boxes, bs_feats if APP.LIVE is not None and bs_feats else {})
+                tr_rows = APP.relabeler.step(tr_rows, P_, keep_embed, frame=Path(im['file_name']).name,
+                                         embed_async=keep_submit, **mamba_kw_)
                 rl_ms = (time.perf_counter_ns() - tr0_) / 1e6
                 if APP.LIVE is not None:
                     click_relabel_namespace = getattr(APP.relabeler, 'id_map', None)

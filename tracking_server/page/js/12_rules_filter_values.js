@@ -47,7 +47,20 @@ function gshow(g){const v=x=>x==null||x===''?'프로그램 기본값':'<b class=
     h='짐벌 프로그램 <b>'+esc(g.program||'–')+'</b> · 제어 방식 '+(g.controller?'<b>'+esc(String(g.controller).toUpperCase())+'</b>':'프로그램 기본값')+' · Kp '+v(g.kp)+' · Ki '+v(g.ki)+' · Kd '+v(g.kd)+' · 불감대 '+v(g.deadband)+' · 자동 속도 최대 '+v(g.speed_max)+' · 손으로 움직일 때 속도 '+v(g.manual_speed)
       +' · 놓친 사람을 기다리는 시간 '+(g.reacquire_ms!=null&&isFinite(ms)?'<b class="num">'+ms/1000+'</b>초':v(g.reacquire_ms))+' · 겨누는 높이 '+v(g.aim_y)+(g.aim_y!=null?' (사람 상자 위에서부터의 비율'+(an?' · '+an:'')+')':'')+' · 그 밖의 옵션 '+(g.extra?'<b class="num">'+esc(g.extra)+'</b>':'없음');}
   if(h!==glast){glast=h;$('gcfg').innerHTML=h;}}
-function rtick(){if(document.hidden)return Promise.resolve();return fetch('/rules',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(rshow).catch(()=>{});}
+let rulesRequest=0, rulesShown=0;
+function rtick(signal){
+  if(document.hidden)return Promise.resolve();
+  const request=++rulesRequest;
+  return fetch('/rules',{cache:'no-store',signal}).then(r=>{
+    lastOk=Date.now();
+    return r.json();
+  }).then(r=>{
+    if(request<rulesShown)return rlast;
+    rulesShown=request;
+    rshow(r);
+    return r;
+  }).catch(()=>{});
+}
 // Preserve the saved warmth range when the filter is off and both inputs are 0.
 RA2.addEventListener('click',()=>{RA2.disabled=true;FM.textContent='보내는 중…';
   const woff=rlast&&rlast.warm_on===false&&!(+RW.value>0)&&!(+RWX.value>0);

@@ -369,6 +369,8 @@ tracking_server/
 뜻:
 
 - `LWIR_LIVE_BIND`, `LWIR_LIVE_PORT` — 웹 화면 주소와 포트
+- `LWIR_LIVE_NETWORK=lan`, `LWIR_LIVE_LAN_BIND` — 직결 LAN에서만 웹 화면을 열 때 사용할 보드 IPv4 주소
+
 - `LWIR_GUI_HOST` — 팀 PC GUI 주소
 - `LWIR_GIMBAL_DEV` — 짐벌 직렬 장치
 - `LWIR_GIMBAL_AIM_Y` — 사람 상자의 어느 높이를 화면 가운데에 둘지 (위에서부터 비율. 0.08 = 머리, 0.3 = 가슴)
@@ -382,6 +384,13 @@ tracking_server/
 - `LWIR_STALL_DIAG` — 서버가 잠깐 멈춘 까닭을 찾는 기록. `1` 일 때만 켜짐. 줄은 `camera_events.log` 에 남고 (`READER_SLOW`, `GIL_STALL`, `GC_SLOW`, `LOCK_HELD`, `SPAN_SLOW`, `LOOP_SLOW`) 카메라 프로그램의 `INPUT_GAP` 줄과 시각으로 맞춰 봅니다. 5분쯤 재는 용도이고, 설명과 읽는 법은 `scripts/live.env.example` 과 `src/camera/stall_diag.py` 맨 위
 
 시험·측정용 값(단계별 시간 재기, 카메라 시간표, 번갈아 넣기 등)은 `scripts/live.env.example` 아래쪽에 설명이 있고, 모두 기본 꺼짐입니다.
+
+### 인터넷 없이 웹 GUI에서 LAN으로 접속
+
+1. PC와 Orange Pi를 유선으로 연결합니다. PC가 자동 IP를 쓸 때 두 장치를 같은 공유기에 연결하거나, 직결망에서 Windows와 보드가 같은 `169.254.0.0/16` 자동 주소 대역을 쓰도록 보드에 해당 대역의 주소를 할당합니다. 기존 고정 주소를 쓰는 직결망에서는 PC도 그 주소와 같은 서브넷을 사용합니다.
+2. 보드의 `scripts/live.env`에 실제 유선 주소를 `LWIR_LIVE_LAN_BIND`로 설정합니다. 웹 실행 스크립트와 keepalive가 이 설정을 읽습니다. 기존 접속과 LAN을 둘 다 쓰려면 이 항목만 지정합니다. 웹 접속을 LAN으로 제한하려면 `LWIR_LIVE_NETWORK=lan`도 지정합니다.
+3. 웹 GUI를 연 상태에서 기존 서버가 5초 넘게 응답하지 않고 연결 확인도 두 번 실패하면, 같은 탭에서 보드의 LAN 주소를 엽니다. 카메라만 멈추고 서버가 응답하면 현재 주소에서 카메라 복구를 기다립니다.
+4. 영상 아래 **LAN 접속**을 누르면 즉시 전환할 수 있고, LAN 주소로 열린 화면에는 **LAN 연결**이 표시됩니다. 접속 전에 인터넷이 끊겼다면 저장해 둔 LAN 주소를 직접 엽니다. LAN에 연결되지 않은 상태에서 자동으로 주소가 바뀌면 브라우저의 뒤로 가기로 원격 주소에 돌아올 수 있습니다.
 
 **짐벌 제어값**
 - PD 제어 (Kp 30, Ki 0, Kd 6), 불감대 0.06, 손으로 움직일 때 속도 20.

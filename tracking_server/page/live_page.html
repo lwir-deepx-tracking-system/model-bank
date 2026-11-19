@@ -266,6 +266,9 @@ body:not(.adv) .adv-only{display:none!important}
 @media (max-width:900px) and (max-height:400px) and (orientation:landscape){
   .pfo .pfx canvas{height:40px}
 }
+
+#lan-web:not([hidden]){display:inline-flex;align-items:center;flex:none;text-decoration:none}
+#lan-web:not([href]){cursor:default}
 /* phone, portrait */
 @media (max-width:900px){
   :root{--bar-h:48px}
@@ -496,7 +499,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         <div class="joy" id="joyb" aria-hidden="true"><i id="joyk"></i></div>
       </div>
       <section class="pfpipe-time pfo" id="pfo" aria-labelledby="pfpipe-title">
-        <header class="pf-summary-head"><h2 id="pfpipe-title">서버 성능</h2><span id="pf-feed-mode" class="pf-feed-mode">NPU 모드 확인 중</span></header>
+        <header class="pf-summary-head"><h2 id="pfpipe-title">서버 성능</h2><a class="hbtn" id="lan-web" hidden title="직결 LAN 주소로 이 화면 열기">LAN 접속</a><span id="pf-feed-mode" class="pf-feed-mode">NPU 모드 확인 중</span></header>
         <div class="pf-main-result">
           <div><span>서버 수신 → 추적 완료 <b>p95 · 최근 1분</b></span><span id="pf-goal-status" title="최근 1분 동안 서버가 프레임을 받은 때부터 최종 추적까지 걸린 시간">목표 33 ms</span></div>
           <strong id="pf-track-p95" class="num">–</strong><small id="pf-p95-samples">표본 집계 중</small>
@@ -1408,6 +1411,28 @@ function rdoc(k){if(BT_KEYS.includes(k))k='bytetrack';if(k===rdk)return;rdk=k;co
 // 11-16 (design review 4): the rows in three groups, the rest folded as '고급 설정' (its title says what is switched on inside). Rows keep their order; a row not named here is 'advanced'.
 const OTG=[['',['엔드투엔드']],['사람 찾기 (검출)',['검출 모델 자동 선택','검출 모델']],['번호 붙이기 (추적)',['Tracker','위치 기억 · 신뢰도','KeepID']],['짐벌 · 화면',['제어','화면 표시']]];
 let otadv=false;try{otadv=localStorage.getItem('lwir_live_otadv')==='1';}catch(_){}
+
+
+// Catalog version badge only: /model has no installation timestamp. This does not select a model.
+function latestGeneralDetector(catalog){
+  const rank=c=>{
+    const text=String(c.det||'')+' '+String(c.name||'')+' '+(DN[c.det]||'');
+    if(c.available===false||!/^bank:yolo26m(?:_|\b)/i.test(String(c.det||''))||!/범용|실내·실외 공통/.test(text))return null;
+    const dates=[...text.matchAll(/(20\d{2})[-/]?(0[1-9]|1[0-2])[-/]?([0-2]\d|3[01])/g)]
+      .map(m=>Number(m[1]+m[2]+m[3]));
+    const epochs=[...text.matchAll(/(?:^|[^a-z])e(?:poch)?[_ -]?(\d+)(?:\+(\d+))?/gi)]
+      .map(m=>Number(m[1])+Number(m[2]||0));
+    return {det:c.det,date:Math.max(0,...dates),epoch:Math.max(0,...epochs)};
+  };
+  const ranked=(catalog||[]).map(rank).filter(r=>r&&r.date);
+  ranked.sort((a,b)=>b.date-a.date||b.epoch-a.epoch||String(a.det).localeCompare(String(b.det)));
+  // Equal explicit versions are ambiguous: do not invent installation chronology from menu IDs.
+  return ranked.length&&!(ranked[1]&&ranked[0].date===ranked[1].date&&ranked[0].epoch===ranked[1].epoch)?ranked[0].det:null;
+}
+const DRETIRED_26M=new Set([
+  'bank:yolo26m_pose_ft16v7_reviewed264_e24_provisional_kpt_640x480',
+  'bank:yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480'
+]);
 // node = {name, note, sel, lock (why it cannot be picked; '' = open), u (POST url), model (answer is /model state), info (hint only, nothing sent), ask (confirm text)}
 function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const Q=q=>'/rules/set?'+q,trk=pend(r,'tracker'),rel=!!pend(r,'relabel'),prd=pend(r,'predictor')||'kalman',bot=trk==='botsort';
@@ -1416,7 +1441,8 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {name:'흔들림 보정',note:'optical flow · 화면+검출 · 시험 안 함',sel:!!r.stab,lock:r.stab==null?OLDSRV:'',u:Q('stab='+(r.stab?0:1))}]});
   const cat=(m&&m.catalog)||[];
   const dk=c=>String(c.det)+' '+String(c.name)+' '+(DN[c.det]||''),ADVON=document.body.classList.contains('adv'),HIDEF=['기본 (공개 데이터)','다른 구조 (비교용)'],curm=m?(m.busy?m.pending:m.current):null;
-  const catv=cat,dfs=DSTR.filter(f=>catv.some(c=>dfold(dk(c))===f));   // 11-13 (user): every detector folder always shows (hiding the comparison models was a problem)   // 11-13: folders by use, only the ones that have models
+  const catv=cat.filter(c=>c.id===m.current||(m.busy&&c.id===m.pending)||!DRETIRED_26M.has(c.det));
+  const latestDetector=latestGeneralDetector(catv),dfs=DSTR.filter(f=>catv.some(c=>dfold(dk(c))===f));
   const ad=r.auto_det,adOn=!!(ad&&ad.on),ADASK='검출 모델 자동 선택이 켜져 있습니다.\n손으로 모델을 고르면 자동 선택이 꺼집니다. 고를까요?';   // 11-15 (user): 검출 모델 자동 선택 (src/detect/auto_det.py)
   // 11-15 (user: 상황에 맞는 최적 모델 알아서 선택): 근거리 / 먼 거리 모델을 사람 크기로 고름. 녹화 재생 중에는 바꾸지 않고 바꿨을 순간만 기록 (시험 운전) · 11-15 (user): 검출 모델 목록보다 위에 (모델이 많아 목록 아래에 묻혔음)
   {const AK={near:'근거리',far:'먼 거리',other:'다른 모델'},P=(ad&&ad.params)||{},s=ad&&ad.signal,dl=ad&&ad.dry_recent&&ad.dry_recent.length?ad.dry_recent[ad.dry_recent.length-1]:null;
@@ -1431,7 +1457,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'켬',note:thr+(now?' · '+now:''),sel:adOn,lock:adOn?'':miss,u:Q('auto_det=1'),
        ask:adOn?'':'검출 모델 자동 선택은 아직 장치에서 시험하지 않은 기능입니다.\n사람이 작게 보이면 먼 거리 모델로, 크게 보이면 근거리 모델로 바꿉니다.\n바꾸는 동안 화면이 잠깐 멈춥니다. 켤까요?'}]});}
   T.push({lab:'검출 모델',sub:'구조별 · YOLO26 안은 쓰는 곳별'+(adOn?' · 자동 선택 켜짐'+(ad.mode==='live'?' · 지금 '+({near:'근거리',far:'먼 거리',other:'다른 모델'}[ad.current]||'–')+' 모델':''):''),f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
-    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:REC.includes(c.det),note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1,ask:adOn?ADASK:''}))});
+    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:c.det==='bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480'||REC.includes(c.det),latest:c.det===latestDetector,note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1,ask:adOn?ADASK:''}))});
   T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
@@ -1466,9 +1492,12 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const hot=!!(r.reid_hot&&r.reids&&r.reids.length),rk=hot?(r.reid_pending||r.reid):'',fol=!!(r.gimbal&&r.gimbal.auto);
   const JN='번호 잇기 판정기는 기본 모델 기준 · 미검증',FOLK='따라가기 중에는 외형 모델을 바꿀 수 없습니다. 멈춘 뒤 고르세요',SWAPH='외형 모델을 바꾸는 중 — 화면이 잠깐 멈추고 사람 번호가 새로 매겨집니다';
   const NOVIT={g:'ViT-lite',name:'ViT-lite_distillation_(TMOT,CAMEL)_202610',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',lock:'장치에 파일이 없습니다. 올리고 추적 프로그램을 다시 켜야 합니다'};
-  const rn=(a,on,q,jn)=>({g:a.folder||'',name:a.name||a.key,note:(a.note||'')+(jn&&!a.judge_fit?(a.note?' · ':'')+JN:''),sel:on&&a.key===rk,lock:a.available===false?(a.why||'지금은 고를 수 없습니다'):(fol&&a.key!==rk)?FOLK:'',u:Q(q+'&reid='+encodeURIComponent(a.key)),hint:a.key!==rk?SWAPH:''});
+  const publicRepVggKey='RVGGA0_REID2C256';
+  const publicRepVgg='RepVGG · 사전학습 SOLIDER 증류 · 2026-11-03',publicRepVggNote='공개 열화상 TMOT·CAMEL·FLIR로 증류 · 현장 라벨 추가 학습 없음';
+  const reidName=a=>a.key===publicRepVggKey?publicRepVgg:a.name||a.key;
+  const rn=(a,on,q,jn)=>({g:a.folder||'',name:reidName(a),note:(a.key===publicRepVggKey?publicRepVggNote:a.note||'')+(jn&&!a.judge_fit?(a.note?' · ':'')+JN:''),sel:on&&a.key===rk,lock:a.available===false?(a.why||'지금은 고를 수 없습니다'):(fol&&a.key!==rk)?FOLK:'',u:Q(q+'&reid='+encodeURIComponent(a.key)),hint:a.key!==rk?SWAPH:''});
   // 11-13 (user): one appearance model serves both uses, so the list is drawn once (row '외형 모델' below); here only on / off
-  const rname=(r.reids&&(r.reids.find(a=>a.key===rk)||{}).name)||'';
+  const currentReid=r.reids?.find(a=>a.key===rk),rname=currentReid?reidName(currentReid):'';
   if(hot)T.push({lab:'외형 비교',sub:'사람 생김새로도 짝짓기 · 모델은 아래 외형 모델',kidOf:TRI,kidKey:'botsort',show:bot,n:[{name:'끔',note:'위치만으로 짝짓기',sel:bot&&app==='off',u:Q('app=off')},{name:'켬',note:rname,sel:bot&&app!=='off',u:Q('app=repvgg')}]});
   else T.push({lab:'외형 비교',sub:'',kidOf:TRI,kidKey:'botsort',show:bot,f:['RepVGG','ViT-lite'],n:apps.map(a=>({g:AFOLD[a.key]||'',name:AN[a.key]||a.name||a.key,note:a.note||'',sel:bot&&a.key===app,lock:!bot?'BoT-SORT를 골라야 열립니다':!r.apps?OLDSRV:a.available===false?(a.note||'지금은 고를 수 없습니다'):'',u:Q('app='+encodeURIComponent(a.key))}))});
   const pl=r.predictors||[{key:'kalman',available:true}];
@@ -1478,7 +1507,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   if(hot&&!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람에게 예전 번호',n:[{name:'끔',sel:!rel,u:Q('relabel=0')},{name:'켬',note:rname,sel:rel,u:Q('relabel=1')}]});
   else if(!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[
     {name:'끔',sel:!rel,u:Q('relabel=0')},
-    {g:'RepVGG',name:'RepVGG_distillation_(TMOT,CAMEL)_20261103',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',sel:rel,lock:!rel&&!r.relabel_available?'재식별 모델이 이 실행에 없습니다':'',u:Q('relabel=1')},
+    {g:'RepVGG',name:publicRepVgg,note:publicRepVggNote,sel:rel,lock:!rel&&!r.relabel_available?'재식별 모델이 이 실행에 없습니다':'',u:Q('relabel=1')},
     {g:'RepVGG',name:'RepVGG_distillation_(실내)_20261110',note:'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
     {g:'RepVGG',name:'RepVGG_fine-tuning_(실내)_20261110',note:'우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
     {g:'ViT-lite',name:'ViT-lite_distillation_(TMOT,CAMEL)_202610',note:'teacher SOLIDER · 공개 열화상 데이터로 학습',lock:'장치에 파일이 없습니다. 올리고 추적 프로그램을 다시 켜야 합니다'},
@@ -1542,7 +1571,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   {const HIDE=['흔들림 보정','사람 후보 (공간 주파수)','피부 온도 (카메라 온도)'];T.forEach(t=>{if(t.n)t.n=t.n.filter(n=>!HIDE.includes(n.name));});
     // 11-16 (user): old choices hidden unless one of them is the choice in use (then it stays so it can be changed): 온도 Filter (this camera's values are not temperatures),
     // KeepID 찾는 범위 '마지막 자리 주변' (old way), the appearance models before RepVGG_fine-tuning_(OTP2)_20261113. Kept on purpose: SORT, the Python engines, NPU 0·1 번갈아 쓰기.
-    const OLD={'검출 뒤 Filter':['온도 Filter'],'KeepID 찾는 범위':['마지막 자리 주변'],'외형 모델':['RepVGG_distillation_(TMOT,CAMEL)_20261103','RepVGG_distillation_(실내)_20261110','RepVGG_fine-tuning_(실내)_20261110','ViT-lite_distillation_(TMOT,CAMEL)_202610','ViT-lite_distillation_(실내)_20261111','ViT-lite_fine-tuning_(실내)_20261111']};
+    const OLD={'검출 뒤 Filter':['온도 Filter'],'KeepID 찾는 범위':['마지막 자리 주변'],'외형 모델':['RepVGG_distillation_(실내)_20261110','RepVGG_fine-tuning_(실내)_20261110','ViT-lite_distillation_(TMOT,CAMEL)_202610','ViT-lite_distillation_(실내)_20261111','ViT-lite_fine-tuning_(실내)_20261111']};
     T.forEach(t=>{const o=OLD[t.lab];if(o&&t.n){t.n=t.n.filter(n=>n.sel||!o.includes(n.name));if(t.f)t.f=t.f.filter(f=>t.n.some(n=>n.g===f));}});
     const drop=f=>{const i=T.findIndex(f);if(i>=0){T.splice(i,1);T.forEach(t=>{if(t.kidOf!=null&&t.kidOf>i)t.kidOf--;});}};
     drop(t=>t.lab==='전처리'&&!t.n.length);drop(t=>t.lab==='KeepID 찾는 범위'&&t.n.length<2);}
@@ -1550,7 +1579,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   return T;}
 function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const body=(t,i)=>{let h='';
-    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&!n.pick?'<i class="ot-box'+(n.sel?' on':'')+'"></i>':'')+wn(n.name)+(n.rec?'<span class="ot-rec">추천</span>':'')+(n.note?'<small>'+esc(n.note)+'</small>':'')+(n.lock&&n.lock!==n.note?'<small class="ot-why">'+esc(n.lock)+'</small>':'')+'</button>';   // 11-13: why a node is locked, shown in it
+    const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&!n.pick?'<i class="ot-box'+(n.sel?' on':'')+'"></i>':'')+wn(n.name)+(n.rec?'<span class="ot-rec">추천</span>':'')+(n.latest?'<span class="ot-rec">최신</span>':'')+(n.note?'<small>'+esc(n.note)+'</small>':'')+(n.lock&&n.lock!==n.note?'<small class="ot-why">'+esc(n.lock)+'</small>':'')+'</button>';   // 11-13: why a node is locked, shown in it
     if(!t.f)t.n.forEach((n,j)=>{const kids=n.sel&&n.key?OTT.map((c,ki)=>[c,ki]).filter(([c])=>c.kidOf===i&&c.show&&c.kidKey===n.key):[];   // v42: a chosen tile that owns child rows becomes one box with the children inside. 11-16: all of them (only the first was drawn, so BoT-SORT had no engine row)
       if(!kids.length){h+=btn(n,j);return;}
       h+='<div class="ot-grp sel ot-own">'+btn(n,j)+kids.map(([c,ki])=>'<div class="ot-kid" data-kid="'+ki+'"><div class="ot-kidlab">'+esc(c.lab)+(c.sub?'<small>'+esc(c.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(c,ki)+'</div></div>').join('')+'</div>';});
@@ -1671,7 +1700,20 @@ function gshow(g){const v=x=>x==null||x===''?'프로그램 기본값':'<b class=
     h='짐벌 프로그램 <b>'+esc(g.program||'–')+'</b> · 제어 방식 '+(g.controller?'<b>'+esc(String(g.controller).toUpperCase())+'</b>':'프로그램 기본값')+' · Kp '+v(g.kp)+' · Ki '+v(g.ki)+' · Kd '+v(g.kd)+' · 불감대 '+v(g.deadband)+' · 자동 속도 최대 '+v(g.speed_max)+' · 손으로 움직일 때 속도 '+v(g.manual_speed)
       +' · 놓친 사람을 기다리는 시간 '+(g.reacquire_ms!=null&&isFinite(ms)?'<b class="num">'+ms/1000+'</b>초':v(g.reacquire_ms))+' · 겨누는 높이 '+v(g.aim_y)+(g.aim_y!=null?' (사람 상자 위에서부터의 비율'+(an?' · '+an:'')+')':'')+' · 그 밖의 옵션 '+(g.extra?'<b class="num">'+esc(g.extra)+'</b>':'없음');}
   if(h!==glast){glast=h;$('gcfg').innerHTML=h;}}
-function rtick(){if(document.hidden)return Promise.resolve();return fetch('/rules',{cache:'no-store'}).then(r=>{lastOk=Date.now();return r.json();}).then(rshow).catch(()=>{});}
+let rulesRequest=0, rulesShown=0;
+function rtick(signal){
+  if(document.hidden)return Promise.resolve();
+  const request=++rulesRequest;
+  return fetch('/rules',{cache:'no-store',signal}).then(r=>{
+    lastOk=Date.now();
+    return r.json();
+  }).then(r=>{
+    if(request<rulesShown)return rlast;
+    rulesShown=request;
+    rshow(r);
+    return r;
+  }).catch(()=>{});
+}
 // Preserve the saved warmth range when the filter is off and both inputs are 0.
 RA2.addEventListener('click',()=>{RA2.disabled=true;FM.textContent='보내는 중…';
   const woff=rlast&&rlast.warm_on===false&&!(+RW.value>0)&&!(+RWX.value>0);
@@ -1711,6 +1753,15 @@ const CR=$('camreset'), SR=$('sysreboot'), restartButton=$('serverrestart');
 const feedToggle=$('npu-feed'), feedAuto=$('npu-feed-auto'), feedTile=$('npu-feed-tile'), feedApply=$('npu-feed-apply');
 const feedState=$('npu-feed-state'), feedCounts=$('npu-feed-counts'), feedHint=$('npu-feed-hint');
 let feedChoice=null;   // 11-16: the mode chosen on the page and not applied yet ('normal' / 'arrival' / 'auto'), null = as the server says
+
+function paintFeedMode(){
+  const label=$('pf-feed-mode'), feed=rlast?.npu_feed;
+  if(document.body.classList.contains('replay-mode'))label.textContent='녹화 재생';
+  else if(feed?.submitted){
+    const mode=feed.tile_active?'NPU 0·1 한 장 분할':feed.active?'NPU 0·1 교대':'NPU 0 단독';
+    label.textContent=(feed.pending?'전환 중 · ':feed.requested==='auto'?'자동 · ':'')+mode;
+  }else label.textContent='NPU 모드 확인 중';
+}
 
 function syncSystemButtons(){
   const pending=!!(rlast&&rlast.restart_pending);
@@ -1765,6 +1816,7 @@ function syncSystemButtons(){
     ?feed.toggle_reason||(replay?'녹화 재생을 먼저 끝내세요.':'현재 설정을 변경할 수 없습니다.')
     :'';
   if(feedHint.textContent!==hint)feedHint.textContent=hint;
+  paintFeedMode();
 }
 
 function finishSystemRequest(){
@@ -1810,6 +1862,25 @@ async function waitForServer(previous){
   SM.textContent='90초 안에 새 서버의 응답을 확인하지 못했습니다';
 }
 
+async function waitForFeedMode(mode){
+  const deadline=performance.now()+1500;
+  while(!document.hidden&&performance.now()<deadline){
+    const remaining=Math.max(1,Math.ceil(deadline-performance.now()));
+    const state=await rtick(AbortSignal.timeout(remaining));
+    const feed=state?.npu_feed;
+    if(feed&&!feed.pending){
+      const active=mode==='tile'?feed.tile_active:mode==='arrival'?feed.active:feed.mode==='normal';
+      const applied=feed.requested===mode&&(mode==='auto'||active===true);
+      if(applied||feed.reason){
+        SM.textContent=applied?'검출 NPU 전환 완료':feed.reason;
+        return;
+      }
+    }
+    await new Promise(resolve=>setTimeout(resolve,60));
+  }
+  SM.textContent='검출 NPU 상태를 확인 중입니다';
+}
+
 feedToggle.addEventListener('change',()=>{
   feedChoice=feedToggle.checked?'arrival':'normal';
   syncSystemButtons();
@@ -1826,8 +1897,9 @@ feedApply.addEventListener('click',async()=>{
   if(feedApply.disabled)return;
   const mode=feedTile.checked?'tile':feedAuto.checked?'auto':(feedToggle.checked?'arrival':'normal');
   try{
-    const result=await syspost('/system/npu-feed?mode='+mode,'검출 NPU 사용 방식을 바꾸는 중…','');
-    if(result.ok)await rtick();
+    const changing='검출 NPU 사용 방식을 바꾸는 중…';
+    const result=await syspost('/system/npu-feed?mode='+mode,changing,changing);
+    if(result.ok)await waitForFeedMode(mode);
   }finally{
     finishSystemRequest();
   }
@@ -1859,6 +1931,71 @@ function verboseSet(on){document.body.classList.toggle('verbose',on);verboseButt
 let verboseSaved=false;try{verboseSaved=localStorage.getItem('lwir_verbose')==='1';}catch(_){}
 verboseSet(verboseSaved);
 verboseButton.addEventListener('click',()=>{const on=!document.body.classList.contains('verbose');verboseSet(on);try{localStorage.setItem('lwir_verbose',on?'1':'0');}catch(_){}});
+
+const lanLink=$('lan-web');
+const lanRetryKey='lwir_lan_redirect_at';
+let lanTarget=null,lanBusy=false,lanSwitched=false,lanLocal=false;
+let lanFailures=0,lanReachable=Date.now(),lanDiscoverAt=0;
+
+function lanAddress(value){
+  if(!value)return null;
+  let target;
+  try{target=new URL(value);}catch(_){return null;}
+  const [a,b,c]=target.hostname.split('.').map(Number);
+  const ipv4=/^(\d{1,3}\.){3}\d{1,3}$/.test(target.hostname);
+  const local=a===10||(a===172&&b>=16&&b<=31)||(a===192&&b===168)||
+    (a===169&&b===254&&c>=1&&c<=254);
+  if(!ipv4||!local||target.protocol!=='http:'||target.username||target.password||
+      target.pathname!=='/'||target.search||target.hash)return null;
+  return target;
+}
+
+async function checkLanNetwork(){
+  if(document.hidden||lanBusy||lanLocal||lanSwitched)return;
+  const now=Date.now();
+  const idle=()=>Date.now()-Math.max(lastOk,grace,lanReachable);
+  const discover=!lanTarget;
+  if(discover&&now<lanDiscoverAt)return;
+  if(!discover&&idle()<5000){lanFailures=0;return;}
+  lanDiscoverAt=now+10000;
+  lanBusy=true;
+  const controller=new AbortController();
+  const limit=setTimeout(()=>controller.abort(),1800);
+  try{
+    const response=await fetch('/network',{cache:'no-store',signal:controller.signal});
+    lanReachable=Date.now();
+    lanFailures=0;
+    if(!response.ok)return;
+    const {lan_url}=await response.json();
+    lanTarget=lanAddress(lan_url);
+    lanLink.hidden=!lanTarget;
+    if(!lanTarget)return;
+    lanLocal=lanTarget.origin===location.origin;
+    if(lanLocal){
+      lanLink.textContent='LAN 연결';
+      lanLink.title='직결 LAN 주소로 연결됨';
+    }else{
+      lanLink.href=lanTarget.href;
+    }
+  }catch(_){
+    if(discover||document.hidden||idle()<5000){lanFailures=0;return;}
+    if(++lanFailures<2)return;
+    // Top-level navigation also works when the browser blocks cross-origin LAN probes.
+    try{
+      const previous=Number(sessionStorage.getItem(lanRetryKey));
+      if(previous>0&&Date.now()-previous<60000)return;
+      sessionStorage.setItem(lanRetryKey,String(Date.now()));
+    }catch(_){}
+    lanSwitched=true;
+    lanLink.textContent='LAN으로 다시 연결 중';
+    location.assign(lanTarget.href);
+  }finally{
+    clearTimeout(limit);
+    lanBusy=false;
+  }
+}
+setInterval(checkLanNetwork,2000);
+checkLanNetwork();
 // v26d: small speed / delay graphs below the picture. Rows from GET /perf: [t (unix s), track fps, cam fps, delay ms, delay max ms, compute ms], one per second, 15 min kept by the server. Only the rows after the last one we have are asked for, and nothing is asked while the graphs are switched off.
 const PF={rows:[],span:60,off:0,busy:false,marks:[],seen:null,pipeline:null,receivedAt:0};   /* marks: setting changes seen while this page is open, drawn as vertical lines */
 try{const s_=JSON.parse(localStorage.getItem('lwir_live_pf')||'{}')||{};if([60,300,900].includes(s_.span))PF.span=s_.span;if(s_.detail===true)$('pfdetail').open=true;}catch(_){}
@@ -2025,13 +2162,7 @@ function pfpipe(){
   $('pf-input-latency').textContent=liveData?fmt(p.camera_p95_ms,'ms'):'–';
   $('pf-detect-latency').textContent=liveData?fmt(p.det_p95_ms,'ms'):'–';
   $('pf-detect-fps').textContent=liveData?fmt(p.det_fps_5s,'FPS'):'–';
-  const feed=typeof rlast==='undefined' ? null : rlast?.npu_feed;
-  const modeLabel=$('pf-feed-mode');
-  if(replay)modeLabel.textContent='녹화 재생';
-  else if(feed?.submitted){
-    const mode=feed.tile_active?'NPU 0·1 한 장 분할':feed.active?'NPU 0·1 교대':'NPU 0 단독';
-    modeLabel.textContent=(feed.requested==='auto'?'자동 · ':'')+mode;
-  }else modeLabel.textContent='NPU 모드 확인 중';
+  paintFeedMode();
   pfSchedule(p);
 }
 function pfdraw(){
@@ -2066,6 +2197,7 @@ const RPSEC=$('rpsec'),RPSEL=$('rpsel'),RPBACK=$('rpbackend'),RPFPS=$('rpfps'),R
 let rpKeys='',rpBackendKeys='',rpList=[],rpBusy=false,rpLast=null,rpSelSynced='';
 const EVBAR=$('rpevbar'),EVLIVE=$('rpevallive'),EVSLIDER=$('rpevalslider'),EVFINAL=$('rpevalfinal'),EVRESET=$('rpevalreset'),EVVIEW=$('rpevalview');
 let rpEvalMode='live',rpEvalFinal=null,rpEvalPrefix=null,rpEvalPrefixPos=null,rpEvalError='',rpEvalPending=false,rpEvalToken=0,rpEvalRunId=null,rpEvalRetryTimer=0;
+function rpHasRecording(st){return !!(st?.on&&!st.returning);}
 function rpEnded(st){return !!(st&&st.on&&!st.loop&&!st.seeking&&st.total>0&&st.pos===st.total-1);}
 function rpItem(n){return rpList.find(x=>x.name===n)||null;}
 // 11-13: the name of what is playing comes first (state.backend_label exists only while a stored result plays; one key may carry another label in another recording)
@@ -2161,7 +2293,7 @@ function rpRenderEval(r){const live=r.eval||{},pos=rpEvalPrefixPos;let shown=nul
     else if(rpEvalFinal){shown=rpEvalFinal;note=rpEvalFinal.final_previous?'이전 완주 결과입니다. 현재 재생과 다른 실행일 수 있습니다. 슬라이더 위치는 바뀌지 않았습니다.':'저장된 최종 결과입니다. 슬라이더 위치는 바뀌지 않았습니다.';}
     else note=live.final_ready?'최종 결과를 불러오지 못했습니다. 다시 “최종 보기”를 눌러 주세요.':'끝까지 완주한 최종 결과가 없습니다. 현재 재생 진행 결과를 표시합니다.';
   }else {shown=live;note=live.final_ready?'현재 진행 결과입니다. 완주 결과는 최종 보기를 누르면 확인할 수 있습니다.':'현재 재생 진행 결과입니다. 한 번 끝까지 재생해야 최종 결과가 확정됩니다.';}
-  EVBAR.hidden=!(r.result_views&&(r.state&&r.state.on||live.name||rpEvalFinal&&rpEvalFinal.name||rpEvalPrefix&&rpEvalPrefix.name));
+  EVBAR.hidden=!(r.result_views&&rpHasRecording(r.state));
   EVVIEW.textContent=note;evShow(shown,shown?null:(rpEvalMode==='live'&&!live.name?'재생을 시작하면 검수된 정답 라벨과 비교합니다.':note));barShow(r,rpEvalMode==='live'?undefined:shown);}
 function rpBeginPrefix(pos){const st=rpLast&&rpLast.state;if(!st||!st.on||!Number.isFinite(pos))return null;pos=Math.min(Math.max(0,Math.round(pos)),Math.max(0,st.total-1));rpEvalSetMode('slider');rpEvalPrefixPos=pos;rpEvalPending=true;const token=rpEvalToken,runId=(rpLast.eval||{}).run_id;rpRenderEval(rpLast);return {pos,token,runId};}
 function rpLoadPrefix(pos,token,runId){if(token==null){const request=rpBeginPrefix(pos);if(!request)return;token=request.token;pos=request.pos;runId=request.runId;}
@@ -2175,7 +2307,7 @@ function rpLoadPrefix(pos,token,runId){if(token==null){const request=rpBeginPref
     rpEvalPending=true;rpRenderEval(rpLast||{});rpEvalRetryTimer=setTimeout(load,1000);
   }).catch(()=>{if(token!==rpEvalToken)return;rpEvalPending=false;rpEvalPrefix=null;rpEvalError='슬라이더 위치 결과를 불러오지 못했습니다.';rpRenderEval(rpLast||{});});
   load();}
-function rpLoadFinal(){rpEvalSetMode('final');rpEvalFinal=null;rpEvalPending=true;const token=rpEvalToken;rpRenderEval(rpLast||{});
+function rpLoadFinal(){if(!rpHasRecording(rpLast?.state))return;rpEvalSetMode('final');rpEvalFinal=null;rpEvalPending=true;const token=rpEvalToken;rpRenderEval(rpLast||{});
   const load=()=>fetch('/replay/eval?view=final',{cache:'no-store'}).then(x=>x.json()).then(d=>{if(token!==rpEvalToken||rpEvalMode!=='final')return;rpEvalFinal=d.eval||null;rpEvalPending=!!(rpEvalFinal&&rpEvalFinal.metric_status==='pending');rpRenderEval(rpLast||{});if(rpEvalPending)rpEvalRetryTimer=setTimeout(load,1000);}).catch(()=>{if(token!==rpEvalToken)return;rpEvalPending=false;rpEvalFinal=null;rpRenderEval(rpLast||{});});
   load();}
 EVDR.addEventListener('change',()=>{evDrawT=Date.now();fetch('/replay/eval/draw?on='+(EVDR.checked?1:0),{method:'POST',headers:{'X-Gimbal':'1'}}).catch(()=>{});});
@@ -2191,7 +2323,7 @@ function apText(e,v){return e.detector_metrics===false?'없음':metricText(e,v);
 function barShow(r,viewEval){
   const st=r.state||{},e=viewEval===undefined?(r.eval||{}):(viewEval||{});
   // seek bar: only while a recording plays (one copy; the slider follows state.pos, which comes from the frame header)
-  const on=!!(st.on&&st.total>0);RSK.hidden=!on;
+  const replay=rpHasRecording(st),on=replay&&st.total>0;RSK.hidden=!on;
   RRETURN.disabled=!on||!!st.busy||rpBusy;
   if(on){const tot=st.total,fps=st.fps||25,pos=st.pos;
     RSL.max=Math.max(0,tot-1);
@@ -2207,7 +2339,7 @@ function barShow(r,viewEval){
     if(rpCmT&&Date.now()>rpCmT){RCM.textContent='';rpCmT=0;}
   }
   // Keep the live-camera view clear; completed results remain in the replay panel.
-  if(!e.name||(!on&&viewEval===undefined)||(!e.on&&viewEval===undefined)){RNUM.hidden=true;}
+  if(!replay||!e.name||(!on&&viewEval===undefined)||(!e.on&&viewEval===undefined)){RNUM.hidden=true;}
   else{RNUM.hidden=false;
     RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+(e.backend_label||rpBackendLabel(e.backend,r)):'');
     if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';rpIdsHtml='';}
@@ -2224,7 +2356,7 @@ function barShow(r,viewEval){
       rpIdsDraw(e);
     }
   }
-  RB.hidden=RNUM.hidden&&EVBAR.hidden;
+  RB.hidden=!replay||(RNUM.hidden&&EVBAR.hidden);
 }
 let rpMore=false;   // 11-13: the 'more' state of the replay score survives the re-render every 0.5 s
 RMAIN.addEventListener('click',e=>{const b=e.target.closest('.rpmorebtn');if(!b)return;rpMore=!rpMore;RMAIN.classList.toggle('more',rpMore);b.textContent=rpMore?'접기':'자세히';});
@@ -2291,7 +2423,7 @@ RPBACK.addEventListener('change',()=>{const b=RPBACK.value,o=RPBACK.selectedOpti
 EVLIVE.addEventListener('click',()=>{rpEvalSetMode('live');rpRenderEval(rpLast||{});});
 EVSLIDER.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on||st.pos==null){EVVIEW.textContent='재생 중인 영상에서 슬라이더 위치를 선택할 수 있습니다.';return;}if(st.seeking){EVVIEW.textContent='프레임 이동이 끝난 뒤 결과를 다시 요청해 주세요.';return;}rpLoadPrefix(st.pos);});
 EVFINAL.addEventListener('click',rpLoadFinal);
-EVRESET.addEventListener('click',()=>{if(rpBusy)return;if(!confirm('현재 녹화를 처음부터 한 번 끝까지 재생해 최종 결과를 다시 계산할까요? 재생은 반복하지 않습니다.'))return;rpEvalSetMode('live');EVRESET.disabled=true;rpctl('/replay/eval/reset').finally(()=>{EVRESET.disabled=false;});});
+EVRESET.addEventListener('click',()=>{if(rpBusy||!rpHasRecording(rpLast?.state))return;if(!confirm('현재 녹화를 처음부터 한 번 끝까지 재생해 최종 결과를 다시 계산할까요? 재생은 반복하지 않습니다.'))return;rpEvalSetMode('live');EVRESET.disabled=true;rpctl('/replay/eval/reset').finally(()=>{EVRESET.disabled=false;});});
 RPFPS.addEventListener('change',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}rpctl('/replay/speed?fps='+f);});
 RPST.addEventListener('click',()=>{const n=RPSEL.value;if(!n)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}
   // 11-13 (user): '재생 시작' just plays (no confirm box). The note under the button already says the camera stops and the gimbal stays.

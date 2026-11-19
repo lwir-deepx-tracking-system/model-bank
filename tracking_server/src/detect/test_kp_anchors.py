@@ -22,6 +22,21 @@ def scene(rng, n=6300, people=60, ties=True):
 
 
 class KeypointAnchorTests(unittest.TestCase):
+    def test_dense_score_ranges_handle_quantization_ties_and_missing_scores(self):
+        rng = np.random.default_rng(401)
+        d, rows = scene(rng, n=7560, people=300)
+        d[0, 4, d[0, 4] < .001] = rng.integers(1, 10, size=(d[0, 4] < .001).sum()) * .001
+        d[0, 4, :2] = rows[20, 4]
+        for anchor in (0, 1):
+            d[0, :4, anchor] = [rows[20, 0], rows[20, 1], 0., 0.]
+        rows[7, 4] = np.float32(.9999375)
+        rows[10, 1] = np.nan
+        sparse = DF._kp_anchors_score_ranges(d[0], rows, np.arange(d.shape[-1]))
+        self.assertIsNotNone(sparse)
+        self.assertEqual(int(sparse[20]), 0)
+        np.testing.assert_array_equal(sparse, DF._kp_anchors_loop(d[0], rows))
+        np.testing.assert_array_equal(DF._kp_anchors(d[0], rows), sparse)
+
     def test_same_anchors_as_the_loop(self):
         rng = np.random.default_rng(7)
         for people in (1, 2, 5, 60, 110, 300):

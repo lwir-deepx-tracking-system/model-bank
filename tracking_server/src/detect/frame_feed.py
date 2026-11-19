@@ -293,7 +293,7 @@ def _switch_interval():
 
 
 class _Rec:
-    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc', 'grp')
+    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc', 'grp', 'result')
 
 
 class Feed:
@@ -304,6 +304,7 @@ class Feed:
     auto_to = None   # 11-16: 'arrival' / 'normal' while pending is the automatic choice's own switch (the setting stays 'auto')
     auto_err = None  # 11-16: why the automatic choice stopped (an error in its rule), for /rules npu_feed.auto_error
     auto_live = False   # 11-16: the live switch is there because auto was asked for (not LWIR_NPU_HOT_SWITCH=1): a saved page choice records it
+    reset_monitor_on_take = False
     _clock = staticmethod(time.perf_counter)   # 11-16: the automatic choice's clock (tests put their own)
 
     def __init__(self, second_, *, hot_switch=False):
@@ -373,6 +374,8 @@ class Feed:
                 with L_.cond:
                     while True:
                         if self.quit or L_.stopped or getattr(L_, 'restart_stop', False): return
+                        if self.pending in ('arrival', 'tile') and self.mode in ('arrival', 'tile') and self.pending != self.mode:
+                            self._apply_mode(from_feeder=True)
                         if not self.paused and self.pending is None:
                             skip_ = e2e_live.skip_detector()   # 11-14: end-to-end model on -> the frame is queued without the detector (engine -1)
                             e_ = (-1 if skip_ else self._free()) if len(self.out) < AHEAD else None
@@ -403,7 +406,20 @@ class Feed:
                 if e_ >= 0: self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
                 else: r_.t_sub = time.perf_counter_ns(); self._job = None; e2e_live.prefetch(r_.gg)   # 11-15: the end-to-end AE starts on arrival
                 r_.e = e_; r_.job = self._job; r_.grp = grp_ if e_ >= 0 else None; self._tgt_e = None
+                r_.result = None
+                eager_tile = self.mode == 'tile' and e_ >= 0
+                if eager_tile:
+                    # The pair has one slot. Read both tiles while the main
+                    # loop finishes tracking the previous frame.
+                    try:
+                        r_.result = self._wait_result(r_, keep_=True)
+                    except BaseException:
+                        # The tile backend drains both jobs before raising.
+                        self._job = None
+                        raise
                 with L_.cond:
+                    if eager_tile:
+                        grp_[1][e_] = False
                     self.out.append(r_); self.working = False
                     if e_ >= 0:
                         self.last_e = e_; self.st['submitted'] += 1; self.st['core'][e_] += 1
@@ -479,10 +495,10 @@ class Feed:
             APP.LIVE.cond.notify_all()
         return True, 'NPU 검출 모드 변경을 요청했습니다'
 
-    def _apply_mode(self):
-        """Called by the frame loop while holding the condition, after previous jobs have been collected."""
+    def _apply_mode(self, *, from_feeder=False):
+        """Apply under the condition after collecting the previous detector jobs."""
         mode = self.pending
-        if mode is None or self.out or self.working or any(self.busy):
+        if mode is None or self.paused or self.out or self.working or any(self.busy):
             return
         to_ = self.auto_to
         if to_ is not None:   # 11-16: the automatic choice's own switch. The setting stays 'auto', nothing is saved
@@ -515,7 +531,10 @@ class Feed:
                     if mode != 'auto': self.mode = mode
                     elif was_tile_: self.mode = 'normal'
                 self.last_e = len(self.eng) - 1
-                if self.mon is not None: self.mon.reset()
+                if from_feeder:
+                    self.reset_monitor_on_take = True
+                elif self.mon is not None:
+                    self.mon.reset()
                 camera_extra.say('FEED mode changed to %s' % mode)
         self.pending = None
         APP.LIVE.cond.notify_all()
@@ -561,17 +580,41 @@ class Feed:
         if self.on_take is not None: self.on_take(r_, g_)   # 11-15 resident_det: the result is in hand (timing of the first detection of the new model after an instant switch)
         return o_
 
+    def _wait_result(self, r_, keep_):
+        eng_ = r_.grp[0] if r_.grp is not None else self.eng
+        e_ = eng_[r_.e]
+        APP.pending[e_.name] = r_.job
+        started = time.perf_counter_ns()
+        output = e_.wait()
+        done = time.perf_counter_ns()
+        if keep_:
+            # The next input may reuse the engine's output buffer.
+            output = [np.array(value, copy=True) if np.may_share_memory(value, e_.packed) else value for value in output]
+        return output, started, done
+
     def _collect(self, r_, keep_):
         if r_.e < 0: return None   # 11-14: queued without the detector
-        eng_, busy_ = r_.grp if r_.grp is not None else (self.eng, self.busy)   # 11-15: the pair it was submitted to (resident_det may have switched the feed since)
-        e_ = eng_[r_.e]
-        try:
-            APP.pending[e_.name] = r_.job; tw_ = time.perf_counter_ns(); o_ = e_.wait()
-            if keep_ and self.mon is not None: self.mon.result(r_.e, r_.t, r_.t_sub, tw_, time.perf_counter_ns())   # 11-16: service time of this frame
-            if keep_: o_ = [np.array(v_, copy=True) if np.may_share_memory(v_, e_.packed) else v_ for v_ in o_]   # 같은 엔진에 다음 프레임이 곧 들어간다
-        finally:
-            with APP.LIVE.cond: busy_[r_.e] = False; r_.grp = None; APP.LIVE.cond.notify_all()   # grp dropped: a released engine must not stay referenced (do_model_swap frees it by gc)
-        return o_
+        ready = getattr(r_, 'result', None)
+        if ready is not None:
+            output, started, done = ready
+            r_.result = None
+            r_.grp = None
+        else:
+            busy_ = r_.grp[1] if r_.grp is not None else self.busy
+            try:
+                output, started, done = self._wait_result(r_, keep_)
+            finally:
+                with APP.LIVE.cond:
+                    busy_[r_.e] = False
+                    r_.grp = None
+                    APP.LIVE.cond.notify_all()
+        # The monitor has one open frame until tracking publishes it. Open
+        # that frame here, even if the feeder already collected its tiles.
+        if not keep_:
+            return None
+        if self.mon is not None:
+            self.mon.result(r_.e, r_.t, r_.t_sub, started, done)
+        return output
 
     def _next(self):   # camera_link.live_next 와 같은 일을 한다. 다른 점: 줄 대신 "검출기에 넣어 둔 프레임"에서 꺼내고, 8 비트 바꾸기·흔들림 보정은 넣는 스레드가 이미 했다
         L_ = APP.LIVE
@@ -591,7 +634,17 @@ class Feed:
                     return None
                 r_ = self.out.popleft() if self.out else None
                 if r_ is not None:
-                    # An idle core can take queued input before this job is collected.
+                    if self.reset_monitor_on_take:
+                        # The previous tracking result may have been published after the NPU switch.
+                        if self.mon is not None:
+                            self.mon.close(self._clock())
+                            self.mon.reset()
+                        self.reset_monitor_on_take = False
+                    if r_.seq <= self.prev_seq:
+                        self.st['order_bad'] += 1
+                    self.prev_seq = r_.seq
+                    self.st['taken'] += 1
+                    # Free the read-ahead slot for an idle engine.
                     L_.cond.notify_all()
             if r_ is not None:
                 if L_.prev_t is not None and r_.t - L_.prev_t > 1.0:
@@ -605,10 +658,6 @@ class Feed:
                 if L_.last is None: raise RuntimeError('camera delivered no frame')
                 self._off(''); return L_.last
             with L_.cam_lock: APP.lv_cam_wait()
-        with L_.cond:
-            if r_.seq <= self.prev_seq: self.st['order_bad'] += 1
-            self.prev_seq = r_.seq
-            self.st['taken'] += 1
         APP.FRAME_DY[0] = 16.0
         L_.stabq.append(r_.stab); L_.arr.append(r_.t); L_.last = r_.gg
         if APP.GB is not None and APP.GB.gui: L_.raws.append(r_.raw if APP.args.gui_map == 'team' else (r_.g8.astype(np.uint16) * 257))

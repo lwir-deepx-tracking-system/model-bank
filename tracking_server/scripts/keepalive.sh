@@ -36,10 +36,20 @@ RESTART_BUDGET=3    # restarts per 10 min before a 10 min stand-down
 up() { cut -d. -f1 /proc/uptime; }
 log() { echo "$(date '+%F %T') up=$(up) $*"; }
 server_pid() { pgrep -f 'python3 -B [s]tart_tracking_server.py' | head -1; }
-# address the page binds to: LWIR_LIVE_BIND, else the Tailscale IPv4 address (empty until Tailscale is up)
-bind_addr() { if [ -n "${LWIR_LIVE_BIND:-}" ]; then echo "$LWIR_LIVE_BIND"; else ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1; fi; }
+. "$T/scripts/live_bind.sh"
+bind_addr() { lwir_live_bind; }
 probe_addr() { local a; a=$(bind_addr); [ "$a" = "0.0.0.0" ] && a=127.0.0.1; echo "$a"; }
-get_page() { local a; a=$(probe_addr); [ -n "$a" ] && curl -s -m 4 "http://$a:$PORT/$1"; }
+get_page() {
+  local primary lan result
+  primary=$(probe_addr)
+  if [ -n "$primary" ] && result=$(curl -s -m 4 "http://$primary:$PORT/$1"); then
+    printf '%s
+' "$result"
+    return 0
+  fi
+  lan=$(lwir_live_lan_bind)
+  [ -n "$lan" ] && [ "$lan" != "$primary" ] && curl -s -m 4 "http://$lan:$PORT/$1"
+}
 health() { get_page healthz; }
 replay_holding() {
   local replay; replay=$(get_page replay) || return 1
@@ -76,7 +86,11 @@ raise SystemExit(0 if holding else 1)
 jget() { echo "$1" | python3 -I -c "import json,sys
 try: d=json.load(sys.stdin); v=d.get('$2'); print('' if v is None else (int(v) if isinstance(v,bool) else v))
 except Exception: print('')" 2>/dev/null; }
-addr_up() { local a; a=$(bind_addr); [ -n "$a" ] && { [ "$a" = "0.0.0.0" ] || ip -4 -o addr show 2>/dev/null | grep -q " $a/"; }; }
+addr_up() {
+  local address
+  address=$(bind_addr)
+  [ -n "$address" ] && { [ "$address" = "0.0.0.0" ] || ip -4 -o addr show 2>/dev/null | grep -Fq " $address/" || [ -n "$(lwir_live_lan_bind)" ]; }
+}
 # the server can only start when the NPU driver, the NPU daemon and the address the page binds to exist
 prereq_ok() { [ -e /dev/dxrt0 ] && pgrep -x dxrtd > /dev/null && addr_up; }
 experiment_running() { pgrep -x cam_pipe_exp > /dev/null || pgrep -x cam_diag > /dev/null; }

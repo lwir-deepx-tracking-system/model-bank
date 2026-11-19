@@ -10,6 +10,30 @@ now keep arrays and are turned into exactly the old lists only when a file is wr
 import numpy as np
 
 TRACK_KEY = 'tracks_xyxy_id_conf_class_detectionindex'
+HISTORY_LIMIT = 6000
+HISTORY_TRIM = 3000
+RELEASE_PER_FRAME = 16
+
+
+class LiveHistoryTrim:
+    """Keep the same visible window while spreading memory release across frames."""
+
+    def __init__(self):
+        self._retired = []
+
+    def trim(self, histories):
+        for records in histories:
+            # The slice keeps the objects alive when the live history drops them.
+            self._retired.append(records[:HISTORY_TRIM])
+            del records[:HISTORY_TRIM]
+
+    def release(self):
+        if not self._retired:
+            return
+        for chunk in self._retired:
+            del chunk[-RELEASE_PER_FRAME:]
+        if not any(self._retired):
+            self._retired.clear()
 
 
 def pred_arrays(pc):

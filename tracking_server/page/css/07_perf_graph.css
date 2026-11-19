@@ -98,3 +98,6 @@
 @media (max-width:900px) and (max-height:400px) and (orientation:landscape){
   .pfo .pfx canvas{height:40px}
 }
+
+#lan-web:not([hidden]){display:inline-flex;align-items:center;flex:none;text-decoration:none}
+#lan-web:not([href]){cursor:default}

@@ -15,6 +15,7 @@ import os
 import tempfile
 import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
@@ -427,6 +428,33 @@ class StoredResultOddFilesTest(Fixture):
         with patch.object(replay_backends, 'MOT_MAX_BYTES', 10), self.assertRaises(replay_backends.Refused) as caught:
             replay_backends.PrecomputedTracks('motip', str(mot), str(meta), range(1, FRAMES + 1))
         self.assertEqual(str(caught.exception), '결과 파일이 너무 큼')
+
+
+class RecordingListConcurrencyTest(Fixture):
+    def test_expired_and_manual_requests_share_one_scan(self):
+        for has_cached_list in (False, True):
+            with self.subTest(has_cached_list=has_cached_list):
+                if has_cached_list:
+                    replay_link._C['t'] = -1e9
+                waiting = threading.Barrier(8)
+                lock = threading.Lock()
+
+                class SynchronizedLock:
+                    def __enter__(self):
+                        waiting.wait(timeout=5)
+                        lock.acquire()
+
+                    def __exit__(self, *_):
+                        lock.release()
+
+                with patch.object(replay_link, '_LIST_LOCK', SynchronizedLock()), \
+                        patch.object(replay_link, '_scan', wraps=replay_link._scan) as scan, \
+                        ThreadPoolExecutor(max_workers=8) as callers:
+                    lists = list(callers.map(replay_link.listing, (False, True) * 4))
+
+                self.assertEqual(scan.call_count, 1)
+                self.assertEqual(len(lists[0]), 2)
+                self.assertTrue(all(items is lists[0] for items in lists))
 
 
 class StoredResultListCacheTest(Fixture):

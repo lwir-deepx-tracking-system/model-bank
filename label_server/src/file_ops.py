@@ -9,10 +9,12 @@ save       편집 화면의 MOT, 검수 상태, 신체부위 데이터를 함께
 import json, os, re, shutil, sys, tempfile, time
 from uuid import uuid4
 
-from .body_parts import validate_parts
+from .body_parts import requires_coco_editor, validate_parts
 from .state import EDITED_MOT, HERE, LOCK, MOT_LINE, PARTS_FILE, PRESENCE, RESCAN, REVIEW_FILE, SAVE_NAMES, SEQS
 from .sequences import mot_name, read_json, scan, version
 from .transactions import finish_transaction, publish_journal, purge_paths, recover_transaction, transfer_image, write_durable
+from . import collaboration
+from .sequences import annotation_snapshot
 
 
 def frame_numbers(values):
@@ -73,6 +75,89 @@ def commit_files(d, rel, backup_dir, backup_tag, updates, operation=None, images
 class FileOps:
     """handler.H 에 섞어 쓰는 부분. self.send, self.seq_of, self.headers, self.rfile, self.server 는 H 의 것이다."""
 
+    def claims_store(self):
+        return self.server.__dict__.setdefault('frame_claims', {})
+
+    def claim_request(self, action, q):
+        try:
+            n = int(self.headers.get('Content-Length', '0') or 0)
+            if not 0 < n <= 4096:
+                return self.send(413, {'error': 'bad size'})
+            body = json.loads(self.rfile.read(n).decode('utf-8'))
+            if not isinstance(body, dict):
+                raise ValueError('expected object')
+            owner = collaboration.owner_token(body.get('owner'))
+        except (OSError, ValueError) as error:
+            return self.send(400, {'error': str(error)})
+        with LOCK:
+            rel = self.seq_of(q)
+            if not rel:
+                return self.send(404, {'error': 'unknown sequence'})
+            store = self.claims_store()
+            try:
+                if action == '/api/release':
+                    collaboration.release_range(store, rel, owner)
+                    result = dict(ok=True)
+                else:
+                    claim = collaboration.claim_range(store, rel, owner, body.get('user'),
+                                                       body.get('first'), body.get('last'), SEQS[rel]['frames'])
+                    result = dict(ok=True, claim=claim)
+            except collaboration.Conflict as error:
+                return self.send(409, dict(error=str(error), frames=error.frames,
+                                           claims=collaboration.public_claims(store, rel, owner)))
+            except ValueError as error:
+                return self.send(400, {'error': str(error)})
+            result['claims'] = collaboration.public_claims(store, rel, owner)
+        return self.send(200, result)
+
+    def save_patch(self, q, body):
+        if type(body.get('editor_schema')) is not int or body['editor_schema'] != 3:
+            return self.send(428, {'error': 'editor_schema 3 required'})
+        try:
+            owner = collaboration.owner_token(body.get('owner'))
+        except ValueError as error:
+            return self.send(400, {'error': str(error)})
+        with LOCK:
+            rel = self.seq_of(q)
+            if not rel:
+                return self.send(404, {'error': 'unknown sequence'})
+            claim = collaboration.live_claims(self.claims_store(), rel).get(owner)
+            if claim is None:
+                edits = body.get('frame_patch')
+                frames = [r['frame'] for r in edits if isinstance(r, dict) and type(r.get('frame')) is int] if isinstance(edits, list) else []
+                return self.send(409, {'error': 'live frame claim required', 'frames': sorted(set(frames))})
+            try:
+                before = annotation_snapshot(rel)
+                merged = collaboration.merge_patch(before, body.get('frame_patch'), claim)
+                review = merged['review']
+                review.update(saved_by=claim['user'], saved=time.strftime('%Y-%m-%dT%H:%M:%S'), frames=before['frames'])
+                complete = len(set(review['reviewed']) | set(review['removed'])) >= before['frames']
+                if complete:
+                    review.setdefault('completed_by', claim['user'])
+                    review.setdefault('completed', time.strftime('%Y-%m-%d %H:%M'))
+                else:
+                    review.pop('completed_by', None)
+                    review.pop('completed', None)
+                updates = {EDITED_MOT: merged['mot'].encode('utf-8'), REVIEW_FILE: json_bytes(review),
+                           PARTS_FILE: json_bytes(merged['parts'])}
+            except collaboration.Conflict as error:
+                return self.send(409, {'error': str(error), 'frames': error.frames})
+            except (TypeError, ValueError, KeyError, IndexError) as error:
+                return self.send(400, {'error': str(error)})
+            except OSError as error:
+                return self.write_failed(error)
+            d = SEQS[rel]['dir']
+            stamp = transaction_stamp()
+            bdir = os.path.join(self.server.backup, rel.replace('/', os.sep))
+            try:
+                commit_files(d, rel, bdir, stamp + '_before_patch_' + owner[:8], updates)
+                snapshot = annotation_snapshot(rel)
+            except (OSError, RuntimeError) as error:
+                return self.write_failed(error)
+            self.save_log(stamp, rel, claim['user'], f"PATCH {len(body['frame_patch'])} frames")
+            return self.send(200, dict(ok=True, boxes=len(mot_lines(snapshot['mot'])),
+                                       version=snapshot['version'], snapshot=snapshot))
+
     def purge(self, q):
         # move the image files of soft-deleted frames to the server trash folder; frame numbers stay as they are
         user = re.sub(r'[^\w가-힣 .-]', '', q.get('user', [''])[0])[:20] or 'unknown'
@@ -87,6 +172,8 @@ class FileOps:
             rel = self.seq_of(q)
             if not rel:
                 return self.send(404, {'error': 'unknown sequence'})
+            if collaboration.live_claims(self.claims_store(), rel):
+                return self.send(409, {'error': 'frame claims active; purge blocked'})
             d, frames = SEQS[rel]['dir'], SEQS[rel]['frames']
             try:
                 cur = version(d, rel)
@@ -154,6 +241,8 @@ class FileOps:
         with LOCK:
             if rel not in SEQS:
                 return self.send(404, {'error': '없는 시퀀스입니다. 목록을 새로 고쳐 주세요.'})
+            if collaboration.live_claims(self.claims_store(), rel):
+                return self.send(409, {'error': 'frame claims active; sequence change blocked'})
             d = os.path.abspath(SEQS[rel]['dir'])
             if d == root or not d.startswith(root + os.sep):
                 return self.send(400, {'error': 'bad path'})
@@ -202,6 +291,10 @@ class FileOps:
             return self.send(413, {'error': 'bad size'})
         try:
             body = json.loads(self.rfile.read(n).decode('utf-8'))
+            if not isinstance(body, dict):
+                raise ValueError('expected object')
+            if 'frame_patch' in body:
+                return self.save_patch(q, body)
             mot, review = body['mot'], body['review']
             if not isinstance(mot, str) or not isinstance(review, dict):
                 raise ValueError('expected MOT text and review object')
@@ -212,6 +305,8 @@ class FileOps:
             rel = self.seq_of(q)
             if not rel:
                 return self.send(404, {'error': 'unknown sequence'})
+            if collaboration.live_claims(self.claims_store(), rel):
+                return self.send(409, {'error': 'frame claims active; full save blocked'})
             d, frames = SEQS[rel]['dir'], SEQS[rel]['frames']
             try:
                 cur = version(d, rel)
@@ -226,6 +321,7 @@ class FileOps:
 
             try:
                 old = read_json(d, REVIEW_FILE, {})
+                old_parts = read_json(d, PARTS_FILE, {})
                 purged = frame_numbers(old.get('purged', []))
                 old_done = frame_numbers(old.get('reviewed', [])) | frame_numbers(old.get('removed', []))
             except (OSError, ValueError):
@@ -233,6 +329,10 @@ class FileOps:
 
             if (has_parts and base != cur) or (not has_parts and not body.get('force') and base not in (None, cur)):
                 return self.send(409, {'error': 'conflict', 'version': cur, 'by': old.get('saved_by', '')})
+
+            if (requires_coco_editor(old_parts) or requires_coco_editor(body.get('parts'))):
+                if type(body.get('editor_schema')) is not int or body['editor_schema'] != 3:
+                    return self.send(428, {'error': '17관절을 지원하는 최신 편집기로 다시 열어 주세요.', 'version': cur})
 
             try:
                 kept = []

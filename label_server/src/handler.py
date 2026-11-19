@@ -20,6 +20,7 @@ from .list_page import INDEX
 from .editor_page import build_editor
 from .file_ops import FileOps
 from .transactions import recover_transaction
+from . import collaboration
 
 
 class H(FileOps, BaseHTTPRequestHandler):
@@ -93,6 +94,18 @@ class H(FileOps, BaseHTTPRequestHandler):
                 except OSError:
                     return self.send(500, {'error': '저장된 라벨 파일을 읽지 못했습니다.'})
             return self.send(200, body, extra={'Cache-Control': 'no-store'})
+        if p == '/api/claims':
+            with LOCK:
+                rel = self.seq_of(q)
+                if not rel:
+                    return self.send(404, {'error': 'unknown sequence'})
+                try:
+                    owner = collaboration.owner_token(q['owner'][0]) if 'owner' in q else None
+                except ValueError as error:
+                    return self.send(400, {'error': str(error)})
+                store = self.server.__dict__.setdefault('frame_claims', {})
+                body = dict(claims=collaboration.public_claims(store, rel, owner), lease_seconds=90)
+            return self.send(200, body, extra={'Cache-Control': 'no-store'})
         if p in ('/api/meta', '/api/annotations'):
             with LOCK:
                 rel = self.seq_of(q)
@@ -147,6 +160,8 @@ class H(FileOps, BaseHTTPRequestHandler):
             return self.send(403, {'error': 'no key'})
         if u.path == '/api/purge':
             return self.purge(q)
+        if u.path in ('/api/claim', '/api/release'):
+            return self.claim_request(u.path, q)
         if u.path in ('/api/seq_trash', '/api/seq_rename'):
             return self.seq_admin(u.path, q)
         if u.path != '/api/save':

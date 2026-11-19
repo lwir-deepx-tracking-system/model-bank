@@ -92,6 +92,27 @@ class ReidBirthPipelineTests(unittest.TestCase):
         with patch.dict(os.environ, {'LWIR_REID_BIRTH_PIPELINE': '1'} if enabled else {}, clear=True):
             return reid_embed.rl_embed(keys, self.gray, self.boxes)
 
+    def test_keepid_reuses_only_exact_same_frame_pixels(self):
+        tracked_boxes = {8: [-5.0, -3.0, 18.01, 14.8], 6: [9.9, 20., 30., 40.]}
+        tracked_features = reid_embed.rl_embed([8, 6], self.gray, tracked_boxes)
+        expected = reid_embed.rl_embed([8, 6, 2], self.gray, self.boxes)
+        sync_before = len(self.serial.b.inputs)
+        with patch.dict(fast_path.STAT, {'embed_reused': 0}):
+            sync, submit = reid_embed.same_frame_keepid(self.gray, self.boxes, reid_embed.rl_embed,
+                                                       self.async_engine.submit, tracked_boxes, tracked_features)
+            sync_result = sync([6, 8])
+            self.assertEqual(list(sync_result), [6, 8])
+            self.assertEqual(len(self.serial.b.inputs)-sync_before, 1)
+            collect = submit([8, 2, 6])
+            self.assertEqual(self.async_engine.inflight, 2)
+            delayed = collect()
+            self.assertEqual(list(delayed), [8, 2, 6])
+            self.assertEqual(self.async_engine.inflight, 0)
+            self.assertEqual(fast_path.STAT['embed_reused'], 2)
+        for output in (sync_result, delayed):
+            for key, feature in output.items():
+                np.testing.assert_array_equal(feature, expected[key])
+
     def test_bounded_batches_preserve_crops_order_embeddings_and_ownership(self):
         keys = [8, 2, 5, 6, 9, 8]
         expected = self.embed(keys, enabled=False)

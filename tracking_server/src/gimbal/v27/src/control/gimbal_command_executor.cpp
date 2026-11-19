@@ -147,8 +147,9 @@ void GimbalCommandExecutor::run()
         // v27 arrival control: a newly taken-in frame is acted on now instead of at the next period (0..period_ms later).
         // The period timer restarts here, so time-outs, ramps, coast and search keep running every period_ms.
         const bool arrival = smoothing_.arrival_control && arrived_;
-        if (resumed || arrival || Clock::now() >= next) {
-            tick(arrival);
+        const bool bounded_seek_frame = smoothing_.bounded_seek && seeking_ && arrived_;
+        if (resumed || arrival || bounded_seek_frame || Clock::now() >= next) {
+            tick(arrival || bounded_seek_frame);
             next = Clock::now() + std::chrono::milliseconds(
                 std::min(config_.automatic.period_ms, config_.poll_interval_ms));
         }
@@ -328,7 +329,7 @@ const Track* GimbalCommandExecutor::target(std::uint32_t id, bool* present) cons
         if (present) *present = true;
         const bool valid = controller_.valid(t, latest_->frame->image.cols,
             latest_->frame->image.rows, latest_->aim_y);
-        if (smoothing_.observation_grace_ms == 0) {
+        if (smoothing_.observation_grace_ms == 0 && !(smoothing_.bounded_seek && state_.lost)) {
             if (valid) return &t;
         } else {
             if (!valid || found) return nullptr;
@@ -645,7 +646,11 @@ void GimbalCommandExecutor::tick(bool arrival)
         if (!t && smoothing_.seek) t = seek_target(now);   // v27 seek: after (or without) the coast
         if (!t) {
             coasting_ = false;
-            if (seeking_) { seeking_ = false; state_.search = 0; }
+            if (seeking_) {
+                if (smoothing_.bounded_seek && state_.moving) stop("bounded seek ended");
+                seeking_ = false;
+                state_.search = 0;
+            }
             if (smoothing_.search) { search_step(now); return; }   // v27
             if (state_.moving && grace_deadline_ == Clock::time_point{}) stop("target lost/stale");
             return;
@@ -653,9 +658,35 @@ void GimbalCommandExecutor::tick(bool arrival)
     }
     const bool coast = t == &coast_track_;   // v27 coast / seek: still lost (the reacquire timeout runs), no lead/brake/catch-up
     const bool seek = coast && seeking_;     // v27 seek: SPD capped, a turn goes through STOP
+    if (seek && smoothing_.bounded_seek) {
+        const double width = latest_->frame->image.cols;
+        const double height = latest_->frame->image.rows;
+        const double dx = (t->x + t->width / 2.0) / width - .5;
+        const double dy = (t->y + latest_->aim_y * t->height) / height - smoothing_.aim_screen_y;
+        const int x = std::abs(dx) >= .04 ? (dx > 0 ? 1 : -1) : 0;
+        const int y = std::abs(dy) >= .04 ? (dy > 0 ? -1 : 1) : 0;
+        if (((x == 0) == (y == 0)) || std::max(std::abs(dx), std::abs(dy)) > .08 || !ready()) {
+            if (state_.moving) stop("invalid bounded seek");
+            return;
+        }
+        if (state_.moving && (x != x_ || y != y_)) {
+            stop("bounded seek turn");
+            return;
+        }
+        send(x, y, smoothing_.seek_speed, true);
+        controller_.set_applied_output(x_ * sent_speed_, -y_ * sent_speed_);
+        return;
+    }
     if (!coast) {
         coasting_ = coasted_ = false;
-        if (seeking_) { seeking_ = false; state_.search = 0; }
+        if (seeking_) {
+            if (smoothing_.bounded_seek) {
+                if (state_.moving) stop("bounded seek target back");
+                controller_.reset();
+            }
+            seeking_ = false;
+            state_.search = 0;
+        }
         if (state_.lost && smoothing_.observation_grace_ms > 0)
             lead_after_frame_ = latest_->frame->metadata.frame_id;
         if (search_.phase != Search::None) {   // v27: the same ID is back; the search output is the starting point of following

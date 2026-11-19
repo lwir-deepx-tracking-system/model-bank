@@ -36,6 +36,7 @@ def main():
     ap.add_argument('--template', default=None)
     ap.add_argument('--occlude-p', type=float, default=0.0)        # experiment C: objects in front of people (pose_partial.Occlude)
     ap.add_argument('--thermal-look', type=int, default=0)         # blur / noise / gain changes (pose_partial.ThermalLook)
+    ap.add_argument('--thermal-contrast-p', type=float, default=0.0)
     # Occlude v4 (2026-11-15): real office patches (tools/build_occluder_bank.py), heavy-occluder share ramp start end n_epochs, keep box-only people
     ap.add_argument('--office-bank', default=None); ap.add_argument('--bank-share', type=float, default=0.5)
     ap.add_argument('--heavy-ramp', type=float, nargs=3, default=None); ap.add_argument('--keep-unlabelled', type=int, default=0)
@@ -45,6 +46,8 @@ def main():
     # epoch 1 and needed 12 epochs to get back to 0.65. Lower rate, short warm-up, no bias boost.
     ap.add_argument('--lr0', type=float, default=0.0005); ap.add_argument('--warmup-epochs', type=float, default=1.0)
     a = ap.parse_args()
+    if not 0 <= a.thermal_contrast_p <= 1:
+        ap.error('--thermal-contrast-p must be between 0 and 1')
     import torch
     import ultralytics
     from ultralytics import settings
@@ -56,6 +59,9 @@ def main():
     if run.exists(): raise SystemExit('run folder already exists: %s (use a new --name)' % run)
     Trainer = pose_partial.make_trainer(partial_p=a.partial_p, body_box_template=a.template, occlude_p=a.occlude_p, thermal_look=bool(a.thermal_look),
                                         office_bank=a.office_bank, bank_share=a.bank_share, heavy_ramp=a.heavy_ramp, keep_unlabelled=bool(a.keep_unlabelled))
+    if a.thermal_contrast_p:
+        import thermal_contrast
+        Trainer = thermal_contrast.with_person_thermal_contrast(Trainer, a.thermal_contrast_p)
     over = dict(model=a.weights, data=a.data, epochs=a.epochs, batch=a.batch, imgsz=a.imgsz, device=a.device, workers=a.workers, seed=a.seed,
                 project=a.project, name=a.name, exist_ok=False, fraction=a.fraction, plots=True, save_period=a.save_period, patience=a.patience,
                 amp=True, deterministic=not a.fast, cache='ram' if a.fast else False,
@@ -68,6 +74,9 @@ def main():
                     cuda=torch.version.cuda, gpu=torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
                     sha256=dict(weights=sha(a.weights), train_pose=sha(__file__), pose_partial=sha(Path(__file__).with_name('pose_partial.py')), data_yaml=sha(a.data)),
                     patches=dict(box_only=dict(pose_partial.BOX_ONLY), hidden_flag=pose_partial.HIDDEN, ignore_flag=getattr(pose_partial, 'IGNORE', None), area_thr=pose_partial.AREA_THR, occlude_p=a.occlude_p, body_box=a.template is not None, thermal_look=bool(a.thermal_look), office_bank=a.office_bank, bank_share=a.bank_share, heavy_ramp=a.heavy_ramp, keep_unlabelled=bool(a.keep_unlabelled)))
+    if a.thermal_contrast_p:
+        manifest['sha256']['thermal_contrast'] = sha(thermal_contrast.__file__)
+        manifest['patches']['thermal_contrast_bands'] = thermal_contrast.GAIN_BANDS
     t.save_dir.mkdir(parents=True, exist_ok=True)
     (t.save_dir / 'RUN_MANIFEST.json').write_text(json.dumps(manifest, indent=1))
     t.train()

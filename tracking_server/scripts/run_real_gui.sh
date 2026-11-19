@@ -28,6 +28,7 @@ cd "$T" || exit 9
 MODE="${LWIR_GUI_MODE:-web}"
 [ -f scripts/live.env ] && . scripts/live.env
 PORT="${LWIR_LIVE_PORT:-8090}"
+. scripts/live_bind.sh
 GUI_HOST="${LWIR_GUI_HOST:-192.168.50.1}"
 GIMBAL_DEV="${LWIR_GIMBAL_DEV:-}"
 [ -n "$GIMBAL_DEV" ] || GIMBAL_DEV="$(ls /dev/serial/by-id/usb-Silicon_Labs_CP2102N_* 2>/dev/null | head -1)"   # 고정 이름 먼저: ttyUSB 번호는 USB 가 끊겼다 붙으면 바뀐다
@@ -48,8 +49,9 @@ if [ "$MODE" = direct ]; then
   mode_label="direct=$LAN_BIND:$LAN_PORT pc=$LAN_PEER"
 else
   [ "$MODE" = web ] || { echo "LWIR_GUI_MODE must be web or direct"; exit 8; }
-  BIND="${LWIR_LIVE_BIND:-$(ip -4 -o addr show tailscale0 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)}"
-  [ -n "$BIND" ] || { echo "no page address: tailscale0 has no IPv4 address; set LWIR_LIVE_BIND in scripts/live.env"; exit 8; }
+  BIND=$(lwir_live_bind)
+  LAN_BIND=$(lwir_live_lan_bind)
+  [ -n "$BIND" ] || { echo "no page address: check LWIR_LIVE_BIND or the assigned LWIR_LIVE_LAN_BIND in scripts/live.env"; exit 8; }
   live_args=(--live-port "$PORT" --live-bind "$BIND")
   gui_args=(--gui-host "$GUI_HOST" --gui-bind 0.0.0.0)
   mode_label="page=$BIND:$PORT gui=$GUI_HOST"
@@ -92,6 +94,8 @@ tracker_args=(
   --gimbal "$GIMBAL_DEV" --gimbal-speed 10 --gimbal-aim-y "$AIM_Y" --gimbal-bridge "$BRIDGE" --gimbal-opts "--controller pid --ki 0 --kd 6 --integral-limit 3 --deadband 0.06 --manual-speed 20 --speed-max $SPEED_MAX --reacquire-ms $REACQUIRE_MS $EXTRA_OPTS"
   "${gui_args[@]}"
 )
+
+if [ "$MODE" = web ] && [ -n "$LAN_BIND" ]; then tracker_args+=(--live-lan-bind "$LAN_BIND"); fi
 
 # A fresh process releases all of the previous DXRT client's resources.
 # Only a graceful restart requested from the web page returns 75.

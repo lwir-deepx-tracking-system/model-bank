@@ -309,7 +309,7 @@ DXNN 이 아니라 가중치가 든 JSON / npz 이고, 서버가 장치 CPU 에�
 
 각 항목: 화면 이름 — 파일, 학습 자료, 측정값, 상태 · 재지 않은 것.
 
-- **RepVGG_distillation_(TMOT,CAMEL)_20261103**
+- **RepVGG · 사전학습 SOLIDER 증류 · 2026-11-03** (기존 이름 RepVGG_distillation_(TMOT,CAMEL)_20261103)
   - 파일 `reid/repvgg_tmot_camel_reid.dxnn`
   - 학습: teacher SOLIDER 에서 distillation. TMOT 학습 24편 + CAMEL 14편 + FLIR 사람 조각
   - 측정: 조각 한 장 NPU 코어 2 에서 2.3 ms (옛 README 기록)
