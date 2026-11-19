@@ -32,7 +32,7 @@ INJECT = """
       if(r.status===409||r.status===428){autoOff=true;status((r.status===409?'다른 곳에서 먼저 저장했습니다. ':'편집기를 업데이트해야 합니다. ')+'작업 내려받기로 현재 작업을 보관한 뒤 새로 고침하세요. 기존 라벨은 덮어쓰지 않았습니다.');return;}
       if(!r.ok)throw Error(j.error||r.status);
       window.LWIR_BASE=j.version;
-      if(toMot()===sent&&sig()===sentR){dirty=false;$('save').disabled=true;try{localStorage.removeItem('lwir_edit_'+srcName);}catch(e){}}
+      if(toMot()===sent&&sig()===sentR){dirty=false;$('save').disabled=true;clearOwnDraft();}
       else persistDraft();
       status((auto?'자동 저장했습니다 (':'서버에 저장했습니다 (')+new Date().toLocaleTimeString('ko-KR')+', 사람 상자 '+j.boxes+'개 · 부위 기록 '+parts.annotations.length+'개).');
     }catch(e){status('저장하지 못했습니다: '+e.message+' — 창을 닫지 말고 다시 저장하세요.');}finally{busy=false;}

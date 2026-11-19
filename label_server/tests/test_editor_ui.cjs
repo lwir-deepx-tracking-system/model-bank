@@ -12,9 +12,10 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
  const browser=await chromium.launch({headless:true});
  try{
   const fixture=await browser.newPage();await fixture.setContent(img);const png=await fixture.locator('svg').screenshot();await fixture.close();
-  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];let saves=[],version='v1',conflict=false,holdSave=null,releaseSave,acceptDialogs=true,dialogs=0,imagePaths=[],fixtureFrames=3,fixtureReview={};
+  const context=await browser.newContext({viewport:{width:1440,height:1000}});
+  const page=await context.newPage(),errors=[];let saves=[],version='v1',conflict=false,holdSave=null,releaseSave,acceptDialogs=true,dialogs=0,imagePaths=[],fixtureFrames=3,fixtureReview={};
   page.on('pageerror',e=>errors.push(String(e)));page.on('dialog',d=>{dialogs++;return acceptDialogs?d.accept():d.dismiss();});
-  await page.route('**/*',async route=>{
+  await page.context().route('**/*',async route=>{
    const u=new URL(route.request().url());let body;
    if(u.pathname==='/edit')return route.fulfill({contentType:'text/html',body:html});
    if(u.pathname.includes('/images/')){imagePaths.push(u.pathname);return route.fulfill({contentType:'image/png',body:png});}
@@ -41,7 +42,9 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
   await clickAt(170,220);
   await page.locator('#part-place').click();let a=await xy(120,60),b=await xy(200,130);
   await page.mouse.move(a.x,a.y);await page.mouse.down();await page.mouse.move(b.x,b.y);await page.mouse.up();
-  let doc=await page.evaluate(()=>partsDocument());assert.equal(doc.annotations.length,1);assert.equal(doc.annotations[0].parts.head.state,'visible');assert.ok(Math.abs(doc.annotations[0].parts.head.xywh[2]-80)<1);
+  a=await xy(130,65);b=await xy(210,135);
+  await page.mouse.move(a.x,a.y);await page.mouse.down();await page.mouse.move(b.x,b.y);await page.mouse.up();
+  let doc=await page.evaluate(()=>partsDocument());assert.ok(Math.abs(doc.annotations[0].parts.head.xywh[0]-130)<1);assert.equal(doc.annotations.length,1);assert.equal(doc.annotations[0].parts.head.state,'visible');assert.ok(Math.abs(doc.annotations[0].parts.head.xywh[2]-80)<1);
   await selectPart('left_shoulder');await page.locator('#part-place').click();await clickAt(120,155);
   const jointKeys=await page.evaluate(()=>PART_DEFS.filter(part=>part[2]==='xy').map(part=>part[0]));
   assert.equal(jointKeys.length,17);
@@ -49,8 +52,17 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
    assert.ok(jointKeys.includes(key),key);
   await selectPart('left_knee');await page.locator('#part-place').click();await clickAt(130,310);
   await selectPart('left_ankle');await page.locator('#part-place').click();await clickAt(131,380);
+  assert.equal(await page.locator('#part-place').getAttribute('aria-pressed'),'true');
+  await clickAt(148,395);
+  assert.ok(await page.evaluate(()=>Math.abs(partRecord(1,1).parts.left_ankle.xy[1]-395)<1));
+  await page.keyboard.press('Escape');
+  assert.equal(await page.locator('#part-place').getAttribute('aria-pressed'),'false');
+  await selectPart('right_ankle');await page.locator('#part-state').selectOption('unknown');
+  await page.locator('#part-place').click();await clickAt(175,375);
+  assert.equal(await page.evaluate(()=>partRecord(1,1).parts.right_ankle.state),'visible');
+  await page.keyboard.press('Escape');
   assert.ok(await page.evaluate(()=>POSE_LINKS.some(([a,b])=>a==='left_knee'&&b==='left_ankle')));
-  const ankle=await xy(131,380),movedAnkle=await xy(150,402);
+  const ankle=await xy(148,395),movedAnkle=await xy(150,402);
   await page.mouse.move(ankle.x,ankle.y);await page.mouse.down();await page.mouse.move(movedAnkle.x,movedAnkle.y);await page.mouse.up();
   doc=await page.evaluate(()=>partsDocument());assert.ok(Math.abs(doc.annotations[0].parts.left_ankle.xy[0]-150)<1);
   assert.ok(Math.abs(doc.annotations[0].parts.left_ankle.xy[1]-402)<1);
@@ -138,6 +150,47 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
   assert.equal(await page.evaluate(()=>reviewDocument().removed.length),199);
   await page.evaluate(()=>{removed=new Set(Array.from({length:700},(_,i)=>i+1));refresh();});
   assert.equal(await page.evaluate(()=>cur),0);assert.equal(await page.locator('#slider').isDisabled(),true);
-  assert.deepEqual(errors,[]);console.log('PASS: parts geometry, person count, ID, undo, copy/review, ignore/cancel, empty/ignored source, swap/delete, '+(web?'save/race/conflict/import guard, ':'')+'desktop/mobile');
+  // Visible ordinals skip excluded frames. The original-number range can select one exact frame.
+  fixtureFrames=7;fixtureReview={reviewed:[],removed:[1,4,7]};conflict=false;
+  await page.evaluate(()=>{dirty=false;localStorage.clear();sessionStorage.clear();});
+  await page.reload();await page.waitForFunction(()=>nFrames===7&&window.LWIR_LOADED);
+  await page.evaluate(()=>{go(2);sel={f:2,i:0};activePart='left_ankle';writePart({state:'visible',xy:[123,378]});refresh();});
+  await page.locator('#id-scope').selectOption('range');await page.locator('#id-set-first').click();await page.locator('#id-set-last').click();
+  assert.equal(await page.locator('#id-first').inputValue(),'1');
+  await page.locator('#newid').fill('7');await page.locator('#relabel').click();
+  assert.deepEqual(await page.evaluate(()=>[boxes.get(1)[0].id,boxes.get(2)[0].id,boxes.get(3)[0].id,partRecord(2,7).parts.left_ankle.xy]),[1,7,1,[123,378]]);
+  await page.evaluate(()=>{go(3);sel={f:3,i:0};activePart='left_knee';writePart({state:'visible',xy:[125,301]});sel={f:3,i:1};writePart({state:'visible',xy:[450,302]});sel={f:3,i:0};refresh();});
+  await page.locator('#id-basis').selectOption('original');await page.locator('#id-first').fill('3');await page.locator('#id-last').fill('3');
+  await page.locator('#newid').fill('2');await page.locator('#relabel').click();
+  assert.deepEqual(await page.evaluate(()=>boxes.get(3).map(b=>b.id)),[1,2]);
+  await page.locator('#swapid').click();
+  assert.deepEqual(await page.evaluate(()=>[partRecord(3,1).parts.left_knee.xy,partRecord(3,2).parts.left_knee.xy,partRecord(2,7).parts.left_ankle.xy]),[[450,302],[125,301],[123,378]]);
+  await page.locator('#id-last').fill('8');await page.locator('#newid').fill('12');await page.locator('#relabel').click();
+  assert.deepEqual(await page.evaluate(()=>boxes.get(3).map(b=>b.id)),[2,1]);
+  if(web){
+    // Two real tabs sharing localStorage retain independent drafts when one saves.
+    await page.evaluate(()=>{dirty=false;localStorage.clear();sessionStorage.clear();});
+    fixtureFrames=3;fixtureReview={};await page.reload();
+    await page.waitForFunction(()=>nFrames===3&&window.LWIR_LOADED);
+    const peer=await page.context().newPage();
+    peer.on('dialog',d=>d.accept());
+    await peer.goto('http://labels.local/edit?seq=demo&user=peer');
+    await peer.waitForFunction(()=>nFrames===3&&window.LWIR_LOADED);
+    const editIn=async (tab,x,key)=>tab.evaluate(([x,key])=>{
+      go(1);sel={f:1,i:0};activePart=key;snapshot();writePart({state:'visible',xy:[x,390]});refresh();return draftKey();
+    },[x,key]);
+    const ownKey=await editIn(page,111,'left_ankle'),peerKey=await editIn(peer,130,'right_ankle');
+    assert.notEqual(ownKey,peerKey);
+    assert.ok(await page.evaluate(([a,b])=>localStorage.getItem(a)&&localStorage.getItem(b),[ownKey,peerKey]));
+    await page.locator('#save').click();await page.waitForFunction(()=>!dirty);
+    assert.ok(await page.evaluate(([a,b])=>!localStorage.getItem(a)&&localStorage.getItem(b),[ownKey,peerKey]));
+    conflict=true;await peer.locator('#save').click();
+    await peer.waitForFunction(()=>$('st').textContent.includes('덮어쓰지'));
+    assert.ok(await peer.evaluate(k=>dirty&&localStorage.getItem(k),peerKey));
+    await peer.reload();await peer.waitForFunction(()=>window.LWIR_LOADED&&window.LWIR_DRAFT_CONFLICT);
+    assert.deepEqual(await peer.evaluate(()=>partRecord(1,1).parts.right_ankle.xy),[130,390]);
+    await peer.close();
+  }
+  assert.deepEqual(errors,[]);console.log('PASS: geometry, repeated point/box editing, range and part IDs, undo/copy/review, ignore/delete, '+(web?'save race, conflict and two-tab recovery, ':'')+'desktop/mobile');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});

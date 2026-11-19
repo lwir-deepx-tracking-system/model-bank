@@ -41,6 +41,11 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 .part-state{width:100%;padding:8px;background:#0b0f14;color:var(--ink);border:1px solid var(--line);border-radius:6px}
 .part-hint{padding:8px;background:#101e2b;border-radius:6px;margin:8px 0;line-height:1.6}
 .part-warn{color:#ffd27a}
+#draft-dialog{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:12px;width:min(420px,92vw)}
+#draft-dialog::backdrop{background:#080c14aa}
+#draft-list{display:grid;gap:6px;max-height:50vh;overflow:auto}
+.id-range-values label{display:flex;align-items:center;gap:4px}
+.id-range-values input{width:72px}
 @media (max-width:900px){body{height:auto;min-height:100%}main{flex:none;grid-template-columns:1fr}.cv{height:auto;aspect-ratio:4/3;flex:none}.side{overflow:visible;min-height:auto}.bar input[type=range]{min-width:120px}}
 </style></head><body>
 <header>
@@ -49,6 +54,8 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
   <input type="file" id="pick" webkitdirectory multiple hidden>
   <button id="save" disabled>저장</button>
   <button id="export" title="저장 충돌 때도 현재 작업을 파일로 보관합니다">작업 내려받기</button>
+  <button id="recover" hidden>미저장 작업 복구</button>
+  <span class="st part-warn" id="draft-warning" hidden></span>
   <span class="st" id="st">원드라이브의 녹화 폴더(labels_yolo26x_bytetrack)를 여세요.</span>
 </header>
 <main>
@@ -72,7 +79,20 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
       <div class="row"><button class="danger" id="delbox" disabled>이 박스 지우기 <kbd>Del</kbd></button></div>
       <div class="row"><button class="danger" id="deltrack" disabled>이 번호 전체 지우기</button></div>
       <div class="row" style="align-items:center">번호를 <input type="number" id="newid" min="1"> 로 <button id="relabel" disabled>바꾸기</button> <button id="swapid" disabled title="두 번호를 서로 맞바꿉니다 (번호가 뒤바뀐 경우)">맞바꾸기</button></div>
-      <div class="row"><label class="st"><input type="checkbox" id="fromhere" checked> 이 프레임부터 뒤로만</label></div>
+      <label class="st" for="id-scope">번호 변경 범위</label>
+      <select id="id-scope" class="part-state">
+        <option value="rest">현재 프레임부터 끝까지</option><option value="range">시작·끝 프레임 지정</option><option value="all">전체 프레임</option>
+      </select>
+      <div id="id-range" hidden>
+        <label class="st" for="id-basis">프레임 번호 기준</label>
+        <select id="id-basis" class="part-state"><option value="visible">화면 순번</option><option value="original">원본 프레임 번호</option></select>
+        <div class="row id-range-values">
+          <label class="st">시작 <input id="id-first" type="number" min="1" step="1" aria-label="번호 변경 시작 프레임"></label>
+          <label class="st">끝 <input id="id-last" type="number" min="1" step="1" aria-label="번호 변경 끝 프레임"></label>
+        </div>
+        <div class="row"><button id="id-set-first">시작=현재</button><button id="id-set-last">끝=현재</button></div>
+        <div class="st" id="id-range-note"></div>
+      </div>
       <div class="row"><button id="copyprev" title="선택 번호의 이전 프레임 박스를 이 프레임에 복사 (C)">이전 프레임에서 복사 <kbd>C</kbd></button></div>
     </section>
     <section class="card" id="parts-card">
@@ -141,6 +161,11 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
     </section>
   </div>
 </main>
+<dialog id="draft-dialog" aria-labelledby="draft-title">
+  <form method="dialog"><button style="float:right">닫기</button></form>
+  <h2 id="draft-title">이 브라우저의 미저장 작업</h2>
+  <div id="draft-list"></div>
+</dialog>
 <div id="drop">폴더를 여기에 놓으세요</div>
 <script>
 'use strict';
@@ -154,7 +179,54 @@ function status(t){ST.textContent=t;}
 function parseMot(txt){const m=new Map();for(const l of txt.split(/\r?\n/)){const p=l.trim().split(',');if(p.length<6)continue;const f=+p[0],b={id:+p[1],x:+p[2],y:+p[3],w:+p[4],h:+p[5],c:p.length>6?+p[6]:1,m:false,g:p.length>7&&+p[7]===1};if(!m.has(f))m.set(f,[]);m.get(f).push(b);}return m;}
 function toMot(){const out=[];for(const f of [...boxes.keys()].sort((a,b)=>a-b))for(const b of boxes.get(f))out.push([f,b.id,b.x.toFixed(2),b.y.toFixed(2),b.w.toFixed(2),b.h.toFixed(2),(b.m?1:b.c).toFixed(4),b.g?1:0,-1,-1].join(','));return out.join('\n')+'\n';}
 function snapshot(){undo.push(JSON.stringify([[...boxes],[...reviewed],[...removed],[...partRecords]]));if(undo.length>200)undo.shift();dirty=true;$('save').disabled=false;}
-function persistDraft(){if(!dirty)return;try{localStorage.setItem('lwir_edit_'+srcName,JSON.stringify({boxes:[...boxes],reviewed:[...reviewed],removed:[...removed],parts:[...partRecords],base:window.LWIR_BASE??null,t:Date.now()}));}catch(e){}}
+function draftId(){return Array.from(crypto.getRandomValues(new Uint32Array(4)),n=>n.toString(16).padStart(8,'0')).join('');}
+let draftToken=draftId();
+const draftPrefix=()=> 'lwir_draft_v2:'+encodeURIComponent(srcName)+':';
+const draftKey=()=>draftPrefix()+draftToken;
+const draftPointer=()=>draftPrefix()+'current';
+function persistDraft(){
+  if(!dirty)return;
+  try{
+    localStorage.setItem(draftKey(),JSON.stringify({boxes:[...boxes],reviewed:[...reviewed],removed:[...removed],parts:[...partRecords],base:window.LWIR_BASE??null,t:Date.now()}));
+    try{sessionStorage.setItem(draftPointer(),draftKey());}catch(e){}
+    $('draft-warning').hidden=true;
+  }catch(e){const warning=$('draft-warning');warning.textContent='브라우저에 복구본을 저장하지 못했습니다. 작업 내려받기로 보관하세요.';warning.hidden=false;}
+}
+function clearOwnDraft(){
+  try{localStorage.removeItem(draftKey());}catch(e){}
+  try{if(sessionStorage.getItem(draftPointer())===draftKey())sessionStorage.removeItem(draftPointer());}catch(e){}
+  refreshDraftButton();
+}
+function readDraft(key){
+  try{const d=JSON.parse(localStorage.getItem(key)||'null');return d&&Array.isArray(d.boxes)&&Array.isArray(d.reviewed)&&Number.isFinite(d.t)?d:null;}catch(e){return null;}
+}
+function draftOptions(){
+  try{return [...new Set(Object.keys(localStorage).filter(k=>k.startsWith(draftPrefix())).concat('lwir_edit_'+srcName))]
+    .filter(k=>k!==draftKey()).map(k=>[k,readDraft(k)]).filter(([,d])=>d).sort((a,b)=>b[1].t-a[1].t);}catch(e){return [];}
+}
+function refreshDraftButton(){$('recover').hidden=!nFrames||!draftOptions().length;}
+function restoreDraft(d){
+  boxes=new Map(d.boxes);reviewed=new Set(d.reviewed);removed=new Set(d.removed||[]);partRecords=new Map(d.parts||[]);
+  for(const f of purged)removed.add(f);
+  window.LWIR_DRAFT_CONFLICT=!!window.LWIR_SERVER_MODE&&d.base!==window.LWIR_BASE;
+  dirty=true;$('save').disabled=false;
+  return window.LWIR_DRAFT_CONFLICT?'다른 저장 이후의 미저장 작업입니다. 작업 내려받기로 보관할 수 있습니다.':'미저장 편집을 복구했습니다.';
+}
+$('recover').onclick=()=>{
+  const list=$('draft-list');list.replaceChildren();
+  for(const [,d] of draftOptions()){
+    const item=document.createElement('button');
+    item.textContent=new Date(d.t).toLocaleString()+(window.LWIR_SERVER_MODE&&d.base!==window.LWIR_BASE?' · 이전 서버 버전':'');
+    item.onclick=()=>{
+      if(dirty&&!confirm('현재 작업을 복구본으로 보관하고 선택한 작업을 열까요?'))return;
+      persistDraft();draftToken=draftId();
+      sel=null;undo=[];cancelPart();status(restoreDraft(d));$('draft-dialog').close();refresh();
+    };
+    list.append(item);
+  }
+  if(list.children.length)$('draft-dialog').showModal();
+};
+addEventListener('storage',e=>{if(e.key===null||e.key.startsWith(draftPrefix())||e.key==='lwir_edit_'+srcName)refreshDraftButton();});
 function doUndo(){const s=undo.pop();if(!s)return;const [b,r,x,p]=JSON.parse(s);boxes=new Map(b);reviewed=new Set(r);removed=new Set(x||[]);partRecords=new Map(p||[]);for(const f of purged)removed.add(f);sel=null;cancelPart();dirty=true;$('save').disabled=false;refresh();}
 // Parts are image coordinates attached to a person, never additional MOT rows.
 const PART_DEFS=[
@@ -204,7 +276,7 @@ function loadParts(doc){
 function partsDocument(){const annotations=[...partRecords.values()].sort((a,b)=>a.frame-b.frame||a.id-b.id);for(const r of annotations)checkPartRecord(r);return{schema_version:1,image_size:[W0,H0],annotations};}
 function writePart(value){const b=partParent();if(!b)return;const key=partKey(cur,b.id);const r=partRecords.get(key)||{frame:cur,id:b.id,needs_review:false,parts:{}};r.parts[activePart]=value;partRecords.set(key,r);}
 function armPart(){
-  const b=partParent();if(!b)return;const state=$('part-state').value;if(!['visible','occluded'].includes(state)){status('화면 밖·확인 불가는 좌표를 그리지 않습니다.');return;}
+  const b=partParent();if(!b)return;const state=$('part-state').value==='occluded'?'occluded':'visible';
   if(playing)togglePlay();setDraw(false);drag=null;partTool={frame:cur,id:b.id,key:activePart,state};partDrag=null;partPanel();render();
 }
 function changePartState(){
@@ -218,8 +290,11 @@ function partPanel(){
   $('part-tools').innerHTML=PART_DEFS.map(([key,name,kind])=>{const p=r?.parts[key];return `<button type="button" data-part="${key}" class="${key===activePart?'active':''}" ${b?'':'disabled'}>${name}<small>${p?PART_STATES[p.state]+(p[kind]?' · 위치 있음':' · 좌표 없음'):'미지정'} · ${kind==='xy'?'점':'박스'}</small></button>`;}).join('');
   for(const el of $('part-tools').querySelectorAll('button'))el.onclick=()=>{activePart=el.dataset.part;cancelPart();partPanel();render();};
   for(const id of ['part-place','part-clear','parts-copy','parts-confirm','part-state'])$(id).disabled=!b;
-  const p=r?.parts[activePart];$('part-state').value=partTool?.state||p?.state||'visible';
-  $('part-help').textContent=partTool?(PART_BY_KEY[activePart][2]==='xy'?'영상에서 관절 위치를 클릭하세요.':'영상에서 부위의 사각형을 드래그하세요.')+' Esc로 취소합니다.':(r?.needs_review?'표시된 위치를 확인·수정한 뒤 「부위 검수 완료」를 누르세요.':'부위를 고르고 「위치 표시」를 누르세요. 가려진 위치를 모르면 상태만 지정합니다.');
+  const p=r?.parts[activePart],kind=PART_BY_KEY[activePart][2];
+  $('part-state').value=partTool?.state||p?.state||'visible';
+  $('part-place').textContent=partTool?'연속 편집 끝내기':kind==='xy'?(p?.xy?'위치 다시 찍기':'위치 찍기'):(p?.xywh?'박스 다시 그리기':'박스 그리기');
+  $('part-place').setAttribute('aria-pressed',String(!!partTool));
+  $('part-help').textContent=partTool?(PART_BY_KEY[activePart][2]==='xy'?'영상에서 관절 위치를 클릭하세요.':'영상에서 부위의 사각형을 드래그하세요.')+' 같은 부위를 계속 수정할 수 있고 Esc로 끝냅니다.':(r?.needs_review?'표시된 위치를 확인·수정한 뒤 「부위 검수 완료」를 누르세요.':'부위를 고르고 「위치 표시」를 누르세요. 가려진 위치를 모르면 상태만 지정합니다.');
   C.style.cursor=partTool?'crosshair':drawMode?'copy':'default';
 }
 function movePartId(f,from,to){const r=partRecord(f,from);partRecords.delete(partKey(f,to));partRecords.delete(partKey(f,from));if(r){r.id=to;partRecords.set(partKey(f,to),r);}}
@@ -259,7 +334,7 @@ function drawPersonParts(record,selected){
   X.restore();
 }
 $('show-pose').onchange=()=>{cancelPart();partPanel();render();};
-$('part-place').onclick=armPart;$('part-state').onchange=changePartState;
+$('part-place').onclick=()=>{if(partTool){cancelPart();refresh();}else armPart();};$('part-state').onchange=changePartState;
 $('part-clear').onclick=()=>{const b=partParent(),r=b&&partRecord(cur,b.id);if(!r?.parts[activePart])return;snapshot();delete r.parts[activePart];if(!Object.keys(r.parts).length)partRecords.delete(partKey(cur,b.id));cancelPart();refresh();};
 $('parts-confirm').onclick=()=>{const b=partParent(),r=b&&partRecord(cur,b.id);if(!r||!r.needs_review)return;snapshot();r.needs_review=false;refresh();};
 $('parts-copy').onclick=()=>{const b=partParent();if(!b)return;let r;for(let f=cur-1;f>=1;f--){r=partRecord(f,b.id);if(r)break;}if(!r){status('같은 사람의 이전 부위 기록이 없습니다.');return;}if(partRecord(cur,b.id)&&!confirm('현재 프레임의 부위를 이전 기록으로 바꿀까요? 되돌릴 수 있습니다.'))return;snapshot();copyPartTo(r,cur,b.id);refresh();};
@@ -308,11 +383,11 @@ C.addEventListener('pointerup',e=>{
   refresh();
 },true);
 C.addEventListener('pointerdown',e=>{if(!partTool||e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();const b=partParent();if(!b||b.id!==partTool.id||cur!==partTool.frame){cancelPart();return;}const raw=toImg(e);if(raw.x<0||raw.y<0||raw.x>=W0||raw.y>=H0)return;const p=boundedPoint(raw);try{C.setPointerCapture(e.pointerId);}catch(_){}
-  if(PART_BY_KEY[activePart][2]==='xy'){snapshot();writePart({state:partTool.state,xy:[p.x,p.y]});cancelPart();refresh();}
+  if(PART_BY_KEY[activePart][2]==='xy'){snapshot();writePart({state:partTool.state,xy:[p.x,p.y]});refresh();}
   else partDrag={x0:p.x,y0:p.y,x1:p.x,y1:p.y};
 },true);
 C.addEventListener('pointermove',e=>{if(!partDrag)return;e.preventDefault();e.stopImmediatePropagation();const p=boundedPoint(toImg(e));partDrag.x1=p.x;partDrag.y1=p.y;render();},true);
-C.addEventListener('pointerup',e=>{if(!partDrag)return;e.preventDefault();e.stopImmediatePropagation();const r=normRect(partDrag);if(r.w>=1&&r.h>=1){snapshot();writePart({state:partTool.state,xywh:[r.x,r.y,r.w,r.h]});}cancelPart();refresh();},true);
+C.addEventListener('pointerup',e=>{if(!partDrag)return;e.preventDefault();e.stopImmediatePropagation();const r=normRect(partDrag);if(r.w>=1&&r.h>=1){snapshot();writePart({state:partTool.state,xywh:[r.x,r.y,r.w,r.h]});}partDrag=null;refresh();},true);
 C.addEventListener('pointercancel',()=>{cancelPart();drag=null;refresh();});
 // ---------- loading ----------
 async function readText(name){if(files[name])return await files[name].text();return null;}
@@ -339,8 +414,11 @@ async function afterLoad(imgs){
   boxes=parseMot(edited!==null?edited:(orig||''));reviewed=new Set(rv?JSON.parse(rv).reviewed||[]:[]);removed=new Set(rv?JSON.parse(rv).removed||[]:[]);purged=new Set(rv?JSON.parse(rv).purged||[]:[]);for(const f of purged)removed.add(f);
   partRecords=new Map();const pt=await readText('person_parts.json');if(pt!==null)loadParts(JSON.parse(pt));cancelPart();
   let note=edited!==null?'고친 라벨(tracks_edited_mot.txt)을 불러왔습니다':'원래 라벨(tracks_mot.txt)을 불러왔습니다';
-  try{const ls=JSON.parse(localStorage.getItem('lwir_edit_'+srcName)||'null');
-    if(ls&&confirm('이 브라우저에 저장 안 된 편집이 남아 있습니다 ('+new Date(ls.t).toLocaleString()+'). 불러올까요?')){boxes=new Map(ls.boxes);reviewed=new Set(ls.reviewed);removed=new Set(ls.removed||[]);partRecords=new Map(ls.parts||[]);for(const f of purged)removed.add(f);if(window.LWIR_SERVER_MODE&&ls.base!==window.LWIR_BASE){window.LWIR_DRAFT_CONFLICT=true;note='이전 저장본과 다른 초안입니다. 작업 내려받기로 보관한 뒤 최신 라벨을 다시 여세요.';}else note='저장 안 된 편집을 불러왔습니다';dirty=true;$('save').disabled=false;}}catch(e){}
+  try{
+    const remembered=sessionStorage.getItem(draftPointer()),draft=remembered&&readDraft(remembered);
+    if(draft&&confirm('이 탭에 저장 안 된 편집이 남아 있습니다. 불러올까요?'))note=restoreDraft(draft);
+  }catch(e){}
+  refreshDraftButton();
   cur=1;undo=[];sel=null;
   status(note+' · '+nFrames+'프레임'+(window.LWIR_SERVER_MODE?' · 저장하면 서버에 씁니다':' · 저장하면 파일로 내려받습니다'));
   refresh();
@@ -423,7 +501,7 @@ function refresh(){
   const b=sel&&(boxes.get(sel.f)||[])[sel.i];
   $('selinfo').innerHTML=b?`번호 <b style="color:${col(b.id)}">${b.id}</b> · ${b.g?'무시 · ':''}${b.m?'수동':'점수 '+b.c.toFixed(2)} · x ${b.x.toFixed(0)} y ${b.y.toFixed(0)} w ${b.w.toFixed(0)} h ${b.h.toFixed(0)} · 넓이 ${(b.w*b.h).toFixed(0)}`:'박스를 클릭하세요.';
   for(const id of ['delbox','deltrack','relabel','swapid','igtoggle'])$(id).disabled=!b;{let n=0,t=0;for(const bs of boxes.values())for(const x of bs){t++;if(x.g)n++;}if(nFrames&&n)$('iginfo').textContent=`무시 박스 ${n}개 / 전체 ${t}개`;}
-  pruneParts();partPanel();persistDraft();delPanel(kept.length);idList();multiPanel();render();
+  pruneParts();partPanel();persistDraft();idRangePanel();delPanel(kept.length);idList();multiPanel();render();
 }
 function idList(){
   const cnt=new Map(),first=new Map(),{positions}=frameNavigation();for(const [f,bs] of boxes)if(positions.has(f))for(const b of bs){cnt.set(b.id,(cnt.get(b.id)||0)+1);if(!first.has(b.id)||f<first.get(b.id))first.set(b.id,f);}
@@ -488,14 +566,57 @@ function igToggle(){const b=selBox();if(!b)return;if(!b.g&&partRecord(cur,b.id)&
 function delBox(){const b=selBox();if(!b)return;snapshot();boxes.get(sel.f).splice(sel.i,1);sel=null;refresh();}
 function delTrack(){const b=selBox();if(!b)return;const id=b.id;let n=0;for(const bs of boxes.values())n+=bs.filter(x=>x.id===id).length;
   if(!confirm(`${id}번 박스 ${n}개를 모든 프레임에서 지웁니다. (되돌리기 Ctrl+Z 가능)`))return;snapshot();for(const [f,bs] of boxes)boxes.set(f,bs.filter(x=>x.id!==id));sel=null;refresh();}
-function relabel(){const b=selBox();const to=+$('newid').value;if(!b||!to||to===b.id)return;const from=b.id,start=$('fromhere').checked?cur:1;
-  let clash=0;for(const [f,bs] of boxes)if(f>=start&&bs.some(x=>x.id===from)&&bs.some(x=>x.id===to))clash++;
-  if(clash&&!confirm(`${clash}개 프레임에 ${to}번이 이미 있습니다. 그 프레임에서는 기존 ${to}번 박스를 지우고 바꿉니다. 계속할까요?`))return;
-  snapshot();for(const [f,bs] of boxes){if(f<start||!bs.some(x=>x.id===from))continue;movePartId(f,from,to);const keep=bs.filter(x=>x.id!==to);for(const x of keep)if(x.id===from)x.id=to;boxes.set(f,keep);}
-  const i=(boxes.get(cur)||[]).findIndex(x=>x.id===to);sel=i>=0?{f:cur,i}:null;status(`${from}번을 ${to}번으로 바꿨습니다 (${start===1?'전체':start+'프레임부터'})`);refresh();}
-function swapIds(){const b=selBox();const to=+$('newid').value;if(!b||!to||to===b.id)return;const from=b.id,start=$('fromhere').checked?cur:1;let n=0;
-  snapshot();for(const [f,bs] of boxes){if(f<start)continue;swapPartIds(f,from,to);for(const x of bs){if(x.id===from){x.id=to;n++;}else if(x.id===to){x.id=from;n++;}}}
-  const i=(boxes.get(cur)||[]).findIndex(x=>x.id===to);sel=i>=0?{f:cur,i}:null;status(`${from}번과 ${to}번을 서로 맞바꿨습니다 (${start===1?'전체':start+'프레임부터'}, 박스 ${n}개)`);refresh();}
+function idFrameNumbers(){return frameNavigation().numbers.filter(f=>!removed.has(f));}
+function idRangePanel(){
+  const scoped=$('id-scope').value==='range',original=$('id-basis').value==='original';
+  const limit=original?nFrames:idFrameNumbers().length;
+  $('id-range').hidden=!scoped;
+  for(const id of ['id-first','id-last'])$(id).max=limit;
+  $('id-range-note').textContent=limit?(original?'원본 번호 ':'화면 순번 ')+'1~'+limit+' · 시작과 끝 포함':'선택할 프레임이 없습니다.';
+}
+$('id-scope').onchange=idRangePanel;
+$('id-basis').onchange=()=>{$('id-first').value='';$('id-last').value='';idRangePanel();};
+for(const [button,input] of [['id-set-first','id-first'],['id-set-last','id-last']]){
+  $(button).onclick=()=>{if(cur&&!removed.has(cur))$(input).value=$('id-basis').value==='original'?cur:idFrameNumbers().indexOf(cur)+1;};
+}
+function idTargetFrames(){
+  const numbers=idFrameNumbers(),scope=$('id-scope').value;
+  if(scope==='all')return numbers;
+  if(scope==='rest')return numbers.filter(f=>f>=cur);
+  const original=$('id-basis').value==='original',limit=original?nFrames:numbers.length;
+  const first=$('id-first').valueAsNumber,last=$('id-last').valueAsNumber;
+  if(!Number.isSafeInteger(first)||!Number.isSafeInteger(last)||first<1||first>last||last>limit){
+    status('프레임 범위를 확인하세요. 시작과 끝을 1~'+limit+' 사이의 정수로, 시작부터 끝 순서로 넣으세요.');
+    return null;
+  }
+  return original?numbers.filter(f=>first<=f&&f<=last):numbers.slice(first-1,last);
+}
+function changeIds(swap){
+  const b=selBox(),to=$('newid').valueAsNumber;
+  if(!b||!Number.isSafeInteger(to)||to<1||to===b.id){status('바꿀 번호를 다른 양의 정수로 넣으세요.');return;}
+  const frames=idTargetFrames();
+  if(!frames)return;
+  const from=b.id;
+  const targets=frames.map(f=>[f,boxes.get(f)||[]]).filter(([,bs])=>bs.some(x=>x.id===from||(swap&&x.id===to)));
+  if(!targets.length){status('지정한 범위에 바꿀 번호가 없습니다.');return;}
+  if(!swap&&targets.some(([,bs])=>bs.some(x=>x.id===to))){
+    status('같은 프레임에 대상 번호가 이미 있습니다. 두 사람을 서로 바꾸려면 「맞바꾸기」를 쓰세요.');return;
+  }
+  snapshot();
+  let n=0;
+  for(const [f,bs] of targets){
+    if(swap)swapPartIds(f,from,to);else movePartId(f,from,to);
+    for(const x of bs){
+      if(x.id===from){x.id=to;n++;}
+      else if(swap&&x.id===to){x.id=from;n++;}
+    }
+  }
+  const verb=swap?'맞바꿨습니다':'바꿨습니다';
+  status(from+'번과 '+to+'번 · '+targets.length+'장, 박스 '+n+'개를 '+verb+'.');
+  refresh();
+}
+function relabel(){changeIds(false);}
+function swapIds(){changeIds(true);}
 let cbuf=[],cbufF=0,cbufParts={};
 function copyPrev(){const b=selBox();let id=b?b.id:+$('drawid').value;if(!id){status('복사할 번호를 고르세요 (박스 선택 또는 새 박스 번호 입력).');return;}
   for(let f=cur-1;f>=1;f--){const p=(boxes.get(f)||[]).find(x=>x.id===id);if(p){if(!confirmPartCopy([[id,partRecord(f,id),p.g]],cur))return;snapshot();copyPartTo(partRecord(f,id),cur,id);if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);const k=bs.findIndex(x=>x.id===id);const nb={...p,m:true,c:1};if(k>=0)bs[k]=nb;else bs.push(nb);sel={f:cur,i:k>=0?k:bs.length-1};status(`${f}프레임의 ${id}번 박스를 복사했습니다. 부위 없는 출처는 현재 부위를 유지합니다. 위치를 다시 확인하세요.`);refresh();return;}}
@@ -535,7 +656,7 @@ addEventListener('keydown',e=>{if(e.target.tagName==='SELECT'||e.target.tagName=
   else if(k==='+'||k==='='){zoomBy(1.25);}else if(k==='-'||k==='_'){zoomBy(0.8);}else if(k==='0'){zoomReset();}
   else if(k==='m'||k==='M'){$('multi').checked=!$('multi').checked;$('multi').onchange();}
   else if(k===' '){e.preventDefault();togglePlay();}else if(k==='Delete'||k==='Backspace'){e.preventDefault();delBox();}
-  else if(k==='n'||k==='N')setDraw(!drawMode);else if(k==='c'||k==='C')copyPrev();else if(k==='r'||k==='R')markRev();else if(k==='i'||k==='I')igToggle();else if(k==='x'||k==='X')delFrames(cur,cur,!removed.has(cur));else if(k==='Escape'){setDraw(false);drag=null;render();}});
+  else if(k==='n'||k==='N')setDraw(!drawMode);else if(k==='c'||k==='C')copyPrev();else if(k==='r'||k==='R')markRev();else if(k==='i'||k==='I')igToggle();else if(k==='x'||k==='X')delFrames(cur,cur,!removed.has(cur));else if(k==='Escape'){setDraw(false);drag=null;partPanel();render();}});
 addEventListener('resize',render);
 $('zin').onclick=()=>zoomBy(1.25);$('zout').onclick=()=>zoomBy(0.8);$('zfit').onclick=zoomReset;
 addEventListener('beforeunload',e=>{if(dirty){persistDraft();e.preventDefault();e.returnValue='';}});
