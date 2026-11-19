@@ -4,6 +4,7 @@ const RPSEC=$('rpsec'),RPSEL=$('rpsel'),RPBACK=$('rpbackend'),RPFPS=$('rpfps'),R
 let rpKeys='',rpBackendKeys='',rpList=[],rpBusy=false,rpLast=null,rpSelSynced='';
 const EVBAR=$('rpevbar'),EVLIVE=$('rpevallive'),EVSLIDER=$('rpevalslider'),EVFINAL=$('rpevalfinal'),EVRESET=$('rpevalreset'),EVVIEW=$('rpevalview');
 let rpEvalMode='live',rpEvalFinal=null,rpEvalPrefix=null,rpEvalPrefixPos=null,rpEvalError='',rpEvalPending=false,rpEvalToken=0,rpEvalRunId=null,rpEvalRetryTimer=0;
+function rpHasRecording(st){return !!(st?.on&&!st.returning);}
 function rpEnded(st){return !!(st&&st.on&&!st.loop&&!st.seeking&&st.total>0&&st.pos===st.total-1);}
 function rpItem(n){return rpList.find(x=>x.name===n)||null;}
 // 11-13: the name of what is playing comes first (state.backend_label exists only while a stored result plays; one key may carry another label in another recording)
@@ -99,7 +100,7 @@ function rpRenderEval(r){const live=r.eval||{},pos=rpEvalPrefixPos;let shown=nul
     else if(rpEvalFinal){shown=rpEvalFinal;note=rpEvalFinal.final_previous?'이전 완주 결과입니다. 현재 재생과 다른 실행일 수 있습니다. 슬라이더 위치는 바뀌지 않았습니다.':'저장된 최종 결과입니다. 슬라이더 위치는 바뀌지 않았습니다.';}
     else note=live.final_ready?'최종 결과를 불러오지 못했습니다. 다시 “최종 보기”를 눌러 주세요.':'끝까지 완주한 최종 결과가 없습니다. 현재 재생 진행 결과를 표시합니다.';
   }else {shown=live;note=live.final_ready?'현재 진행 결과입니다. 완주 결과는 최종 보기를 누르면 확인할 수 있습니다.':'현재 재생 진행 결과입니다. 한 번 끝까지 재생해야 최종 결과가 확정됩니다.';}
-  EVBAR.hidden=!(r.result_views&&(r.state&&r.state.on||live.name||rpEvalFinal&&rpEvalFinal.name||rpEvalPrefix&&rpEvalPrefix.name));
+  EVBAR.hidden=!(r.result_views&&rpHasRecording(r.state));
   EVVIEW.textContent=note;evShow(shown,shown?null:(rpEvalMode==='live'&&!live.name?'재생을 시작하면 검수된 정답 라벨과 비교합니다.':note));barShow(r,rpEvalMode==='live'?undefined:shown);}
 function rpBeginPrefix(pos){const st=rpLast&&rpLast.state;if(!st||!st.on||!Number.isFinite(pos))return null;pos=Math.min(Math.max(0,Math.round(pos)),Math.max(0,st.total-1));rpEvalSetMode('slider');rpEvalPrefixPos=pos;rpEvalPending=true;const token=rpEvalToken,runId=(rpLast.eval||{}).run_id;rpRenderEval(rpLast);return {pos,token,runId};}
 function rpLoadPrefix(pos,token,runId){if(token==null){const request=rpBeginPrefix(pos);if(!request)return;token=request.token;pos=request.pos;runId=request.runId;}
@@ -113,7 +114,7 @@ function rpLoadPrefix(pos,token,runId){if(token==null){const request=rpBeginPref
     rpEvalPending=true;rpRenderEval(rpLast||{});rpEvalRetryTimer=setTimeout(load,1000);
   }).catch(()=>{if(token!==rpEvalToken)return;rpEvalPending=false;rpEvalPrefix=null;rpEvalError='슬라이더 위치 결과를 불러오지 못했습니다.';rpRenderEval(rpLast||{});});
   load();}
-function rpLoadFinal(){rpEvalSetMode('final');rpEvalFinal=null;rpEvalPending=true;const token=rpEvalToken;rpRenderEval(rpLast||{});
+function rpLoadFinal(){if(!rpHasRecording(rpLast?.state))return;rpEvalSetMode('final');rpEvalFinal=null;rpEvalPending=true;const token=rpEvalToken;rpRenderEval(rpLast||{});
   const load=()=>fetch('/replay/eval?view=final',{cache:'no-store'}).then(x=>x.json()).then(d=>{if(token!==rpEvalToken||rpEvalMode!=='final')return;rpEvalFinal=d.eval||null;rpEvalPending=!!(rpEvalFinal&&rpEvalFinal.metric_status==='pending');rpRenderEval(rpLast||{});if(rpEvalPending)rpEvalRetryTimer=setTimeout(load,1000);}).catch(()=>{if(token!==rpEvalToken)return;rpEvalPending=false;rpEvalFinal=null;rpRenderEval(rpLast||{});});
   load();}
 EVDR.addEventListener('change',()=>{evDrawT=Date.now();fetch('/replay/eval/draw?on='+(EVDR.checked?1:0),{method:'POST',headers:{'X-Gimbal':'1'}}).catch(()=>{});});
@@ -129,7 +130,7 @@ function apText(e,v){return e.detector_metrics===false?'없음':metricText(e,v);
 function barShow(r,viewEval){
   const st=r.state||{},e=viewEval===undefined?(r.eval||{}):(viewEval||{});
   // seek bar: only while a recording plays (one copy; the slider follows state.pos, which comes from the frame header)
-  const on=!!(st.on&&st.total>0);RSK.hidden=!on;
+  const replay=rpHasRecording(st),on=replay&&st.total>0;RSK.hidden=!on;
   RRETURN.disabled=!on||!!st.busy||rpBusy;
   if(on){const tot=st.total,fps=st.fps||25,pos=st.pos;
     RSL.max=Math.max(0,tot-1);
@@ -145,7 +146,7 @@ function barShow(r,viewEval){
     if(rpCmT&&Date.now()>rpCmT){RCM.textContent='';rpCmT=0;}
   }
   // Keep the live-camera view clear; completed results remain in the replay panel.
-  if(!e.name||(!on&&viewEval===undefined)||(!e.on&&viewEval===undefined)){RNUM.hidden=true;}
+  if(!replay||!e.name||(!on&&viewEval===undefined)||(!e.on&&viewEval===undefined)){RNUM.hidden=true;}
   else{RNUM.hidden=false;
     RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+(e.backend_label||rpBackendLabel(e.backend,r)):'');
     if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';rpIdsHtml='';}
@@ -162,7 +163,7 @@ function barShow(r,viewEval){
       rpIdsDraw(e);
     }
   }
-  RB.hidden=RNUM.hidden&&EVBAR.hidden;
+  RB.hidden=!replay||(RNUM.hidden&&EVBAR.hidden);
 }
 let rpMore=false;   // 11-13: the 'more' state of the replay score survives the re-render every 0.5 s
 RMAIN.addEventListener('click',e=>{const b=e.target.closest('.rpmorebtn');if(!b)return;rpMore=!rpMore;RMAIN.classList.toggle('more',rpMore);b.textContent=rpMore?'접기':'자세히';});
@@ -229,7 +230,7 @@ RPBACK.addEventListener('change',()=>{const b=RPBACK.value,o=RPBACK.selectedOpti
 EVLIVE.addEventListener('click',()=>{rpEvalSetMode('live');rpRenderEval(rpLast||{});});
 EVSLIDER.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on||st.pos==null){EVVIEW.textContent='재생 중인 영상에서 슬라이더 위치를 선택할 수 있습니다.';return;}if(st.seeking){EVVIEW.textContent='프레임 이동이 끝난 뒤 결과를 다시 요청해 주세요.';return;}rpLoadPrefix(st.pos);});
 EVFINAL.addEventListener('click',rpLoadFinal);
-EVRESET.addEventListener('click',()=>{if(rpBusy)return;if(!confirm('현재 녹화를 처음부터 한 번 끝까지 재생해 최종 결과를 다시 계산할까요? 재생은 반복하지 않습니다.'))return;rpEvalSetMode('live');EVRESET.disabled=true;rpctl('/replay/eval/reset').finally(()=>{EVRESET.disabled=false;});});
+EVRESET.addEventListener('click',()=>{if(rpBusy||!rpHasRecording(rpLast?.state))return;if(!confirm('현재 녹화를 처음부터 한 번 끝까지 재생해 최종 결과를 다시 계산할까요? 재생은 반복하지 않습니다.'))return;rpEvalSetMode('live');EVRESET.disabled=true;rpctl('/replay/eval/reset').finally(()=>{EVRESET.disabled=false;});});
 RPFPS.addEventListener('change',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}rpctl('/replay/speed?fps='+f);});
 RPST.addEventListener('click',()=>{const n=RPSEL.value;if(!n)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}
   // 11-13 (user): '재생 시작' just plays (no confirm box). The note under the button already says the camera stops and the gimbal stays.
