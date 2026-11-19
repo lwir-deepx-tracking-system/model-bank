@@ -45,6 +45,7 @@ class TkControlTests(unittest.TestCase):
         self.app.replay_var.set('recording')
         self.app.seek_var.set('123')
         self.app.measure_n.set('1')
+        self.app.measure_stop_button.configure(state='normal')
         expected = {
             '원점 복귀 (Space)': '/gimbal/home', '따라가기 정지': '/gimbal/stop',
             '카메라로': '/replay/stop', '예측 제어 시간 적용': '/rules/set',

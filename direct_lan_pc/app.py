@@ -338,11 +338,14 @@ class App:
         self.measure_video = tk.BooleanVar(value=True)
         ttk.Checkbutton(box, text='16비트 원본 영상 저장', variable=self.measure_video).pack(anchor='w')
         row = self._row(box)
-        self._button(row, '측정 시작', lambda: self.command('/measure/start',
+        self.measure_start_button = self._button(row, '측정 시작', lambda: self.command('/measure/start',
                     body={'name': self.measure_name.get(), 'memo': self.measure_memo.get(),
-                          'video': self.measure_video.get()})).pack(side='left', padx=3)
-        self._button(row, '측정 끝', lambda: self.command('/measure/stop',
-                    body={'memo': self.measure_memo.get()})).pack(side='left', padx=3)
+                          'video': self.measure_video.get()}))
+        self.measure_start_button.pack(side='left', padx=3)
+        self.measure_stop_button = self._button(row, '측정 끝', lambda: self.command('/measure/stop',
+                    body={'memo': self.measure_memo.get()}))
+        self.measure_stop_button.pack(side='left', padx=3)
+        self.measure_stop_button.configure(state='disabled')
         self.measure_status = tk.StringVar(value='측정 대기 중')
         ttk.Label(box, textvariable=self.measure_status, wraplength=440).pack(anchor='w')
         self.recording_status = tk.StringVar(value='영상 저장을 선택하고 측정을 시작하면 16비트 원본을 녹화합니다.')
@@ -808,6 +811,8 @@ class App:
         if not self.eval_override:
             self._set_text(self.eval_text, pretty(rp.get('eval') or rp.get('eval_last') or {}))
         self.measure_status.set(f"{'측정 중' if ms.get('on') else '측정 대기'} · {ms.get('frames', 0)}장 · {ms.get('seconds', 0):.1f}초")
+        self.measure_start_button.configure(state='disabled' if ms.get('on') else 'normal')
+        self.measure_stop_button.configure(state='normal' if ms.get('on') else 'disabled')
         if ms.get('on'):
             if ms.get('video_frames') is not None:
                 self.recording_status.set(f"16비트 영상 녹화 중 · 저장 {ms.get('video_frames', 0)}장"
