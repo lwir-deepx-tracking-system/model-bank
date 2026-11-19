@@ -12,20 +12,21 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
  const browser=await chromium.launch({headless:true});
  try{
   const fixture=await browser.newPage();await fixture.setContent(img);const png=await fixture.locator('svg').screenshot();await fixture.close();
-  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];let saves=[],version='v1',conflict=false,holdSave=null,releaseSave,acceptDialogs=true,dialogs=0,imagePaths=[];
+  const page=await browser.newPage({viewport:{width:1440,height:1000}}),errors=[];let saves=[],version='v1',conflict=false,holdSave=null,releaseSave,acceptDialogs=true,dialogs=0,imagePaths=[],fixtureFrames=3,fixtureReview={};
   page.on('pageerror',e=>errors.push(String(e)));page.on('dialog',d=>{dialogs++;return acceptDialogs?d.accept():d.dismiss();});
   await page.route('**/*',async route=>{
    const u=new URL(route.request().url());let body;
    if(u.pathname==='/edit')return route.fulfill({contentType:'text/html',body:html});
    if(u.pathname.includes('/images/')){imagePaths.push(u.pathname);return route.fulfill({contentType:'image/png',body:png});}
-   if(u.pathname==='/api/annotations')body={version,frames:3,mot,review:{},parts:empty,parts_supported:true};
+   if(u.pathname==='/api/annotations')body={version,frames:fixtureFrames,mot,review:fixtureReview,parts:empty,parts_supported:true};
    else if(u.pathname==='/api/meta')body={version,open_by:[]};
    else if(u.pathname==='/api/save'){
     const req=route.request().postDataJSON();saves.push(req);
     if(holdSave)await holdSave;
     if(conflict)return route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({error:'conflict',version:'other'})});
     version='v'+(saves.length+1);body={ok:true,version,boxes:6};
-   }else if(u.pathname.endsWith('/RESULT.json'))body={frames:3};
+   }else if(u.pathname.endsWith('/RESULT.json'))body={frames:fixtureFrames};
+   else if(u.pathname.endsWith('/review_state.json'))body=fixtureReview;
    else if(u.pathname.endsWith('/tracks_mot.txt'))return route.fulfill({body:mot});
    else return route.fulfill({status:404,body:''});
    return route.fulfill({contentType:'application/json',body:JSON.stringify(body)});
@@ -95,6 +96,25 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
   assert.ok(await page.evaluate(()=>C.getBoundingClientRect().bottom<=document.querySelector('.bar').getBoundingClientRect().top),'canvas must not cover playback controls');
   assert.ok(await page.evaluate(()=>document.querySelector('.view').getBoundingClientRect().bottom<=document.querySelector('.side').getBoundingClientRect().top),'mobile editor must not overlap part controls');
   if(output)await page.screenshot({path:path.join(output,web?'parts-web-mobile.png':'parts-local-mobile.png'),fullPage:true});
+  // Direct navigation, sliders, and playback must all use the same filtered frame list.
+  fixtureFrames=7;fixtureReview={reviewed:[],removed:[1,4,7],purged:[7]};imagePaths=[];
+  await page.evaluate(()=>{dirty=false;localStorage.clear();});
+  await page.reload();await page.waitForFunction(()=>nFrames===7&&window.LWIR_LOADED);
+  assert.deepEqual(await page.evaluate(()=>[cur,...frameNavigation().numbers]),[2,2,3,5,6]);
+  await page.waitForFunction(()=>$('fno').textContent.includes('2번'));
+  await page.locator('#next').click();await page.locator('#next').click();
+  assert.equal(await page.evaluate(()=>cur),5);
+  await page.locator('#slider').evaluate(e=>{e.value=1;e.dispatchEvent(new Event('input'));});
+  assert.equal(await page.evaluate(()=>cur),2);
+  await page.evaluate(()=>go(4));assert.equal(await page.evaluate(()=>cur),5);
+  await page.locator('#play').click();await page.waitForFunction(()=>cur===6&&!playing);
+  assert.ok(imagePaths.length&&imagePaths.every(p=>!/(000001|000004|000007)[.]png$/.test(p)));
+  await page.locator('#showdel').evaluate(e=>{e.checked=true;e.dispatchEvent(new Event('change'));});
+  await page.evaluate(()=>go(4));assert.equal(await page.evaluate(()=>cur),4);
+  await page.locator('#showdel').evaluate(e=>{e.checked=false;e.dispatchEvent(new Event('change'));});
+  assert.equal(await page.evaluate(()=>cur),5);
+  await page.evaluate(()=>{removed=new Set([1,2,3,4,5,6,7]);refresh();});
+  assert.equal(await page.evaluate(()=>cur),0);assert.equal(await page.locator('#slider').isDisabled(),true);
   assert.deepEqual(errors,[]);console.log('PASS: parts geometry, person count, ID, undo, copy/review, ignore/cancel, empty/ignored source, swap/delete, '+(web?'save/race/conflict/import guard, ':'')+'desktop/mobile');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exitCode=1;});
