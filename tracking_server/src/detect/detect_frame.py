@@ -48,6 +48,43 @@ def _kp_anchors_loop(d, rows, only=None):
     return np.array(idx, dtype=np.int64)
 
 
+def _kp_anchors_score_ranges(d, rows, candidates):
+    """Compare corners only within each row's score range, preserving the anchor order on ties."""
+    scores = d[4]
+    row_scores = rows[:, 4]
+    ordered = candidates[np.argsort(scores[candidates])]
+    ordered_scores = scores[ordered].astype(np.float64)
+    # Use a wider range for the lookup, then apply the original float32 match.
+    left = np.searchsorted(ordered_scores, row_scores.astype(np.float64) - 2e-6)
+    right = np.searchsorted(ordered_scores, row_scores.astype(np.float64) + 2e-6, side='right')
+    lengths = right - left
+    total = int(lengths.sum())
+    if total == 0 or total * 4 >= len(candidates) * len(rows):
+        return None
+
+    present = np.flatnonzero(lengths)
+    lengths = lengths[present]
+    starts = np.cumsum(lengths) - lengths
+    indices = ordered[np.arange(total) + np.repeat(left[present] - starts, lengths)]
+    members = np.repeat(present, lengths)
+    x1 = d[0, indices] - d[2, indices] * .5
+    y1 = d[1, indices] - d[3, indices] * .5
+    distance = np.abs(x1 - rows[members, 0]) + np.abs(y1 - rows[members, 1])
+    distance[np.abs(scores[indices] - row_scores[members]) >= 1e-6] = np.inf
+    minima = np.minimum.reduceat(distance, starts)
+    sentinel = d.shape[1]
+    tied = distance == np.repeat(minima, lengths)
+    nearest = np.minimum.reduceat(np.where(tied, indices, sentinel), starts)
+    good = np.isfinite(minima)
+    result = np.full(len(rows), sentinel, np.int64)
+    result[present[good]] = nearest[good]
+    redo = np.flatnonzero(result == sentinel)
+    if len(redo):
+        STAT['kpts_loop_rows'] += len(redo)
+        result[redo] = _kp_anchors_loop(d, rows, redo)
+    return result
+
+
 def _kp_anchors(d, rows):
     """2026-11-15: the same anchors as _kp_anchors_loop, for all rows at once. Only anchors whose person score is at least the lowest
     row score (less a margin ten times the match tolerance) can match a row, so the comparison runs on those few (in anchor order,
@@ -57,7 +94,12 @@ def _kp_anchors(d, rows):
     if n == 0: return np.zeros(0, np.int64)
     s = d[4]; r4 = rows[:, 4]
     S = np.flatnonzero(s > r4.min() - 1e-5)
-    if len(S) == 0 or len(S) * n > 4000000: return _kp_anchors_loop(d, rows)
+    if len(S) == 0: return _kp_anchors_loop(d, rows)
+    if len(S) * n >= 16000 and np.isfinite(r4).all():
+        sparse = _kp_anchors_score_ranges(d, rows, S)
+        if sparse is not None:
+            return sparse
+    if len(S) * n > 4000000: return _kp_anchors_loop(d, rows)
     hit = np.abs(s[S][None, :] - r4[:, None]) < 1e-6
     x1 = d[0][S] - d[2][S] * .5; y1 = d[1][S] - d[3][S] * .5
     cost = np.abs(x1[None, :] - rows[:, 0:1]) + np.abs(y1[None, :] - rows[:, 1:2]); cost[~hit] = np.inf

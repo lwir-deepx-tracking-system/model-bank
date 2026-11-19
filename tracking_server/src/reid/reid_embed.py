@@ -8,14 +8,55 @@ from ..common.shared_values import HERE, PERSON_CLS, sha
 from ..common import fast_path
 
 
-def _crop_into(gray, box, output, width, height):
+def _crop_bounds(box):
     x1, y1, x2, y2 = box
-    left, top, right, bottom = int(max(0, x1)), int(max(0, y1)), int(min(640, x2)), int(min(512, y2))
+    return int(max(0, x1)), int(max(0, y1)), int(min(640, x2)), int(min(512, y2))
+
+
+def _crop_into(gray, box, output, width, height):
+    left, top, right, bottom = _crop_bounds(box)
     if right - left < 2 or bottom - top < 2:
         return False
     resized = APP.cv2.resize(gray[top:bottom, left:right], (width, height), interpolation=APP.cv2.INTER_LINEAR)
     output[0] = APP.cv2.cvtColor(resized, APP.cv2.COLOR_GRAY2RGB)
     return True
+
+
+def same_frame_keepid(gray, boxes, embed, submit, tracked_boxes, tracked_features):
+    """Reuse BoT-SORT's feature when KeepID requests the identical pixels of this frame."""
+    reused = {k: feature for k, feature in tracked_features.items() if k in boxes
+              and _crop_bounds(tracked_boxes[k]) == _crop_bounds(boxes[k])}
+    if not reused:
+        return lambda keys: embed(keys, gray, boxes), (
+            (lambda keys: submit(keys, gray, boxes)) if submit is not None else None)
+
+    def partition(keys):
+        found = {k: reused[k] for k in keys if k in reused}
+        missing = [k for k in keys if k not in found]
+        if found:
+            fast_path.STAT['embed_reused'] = fast_path.STAT.get('embed_reused', 0) + len(found)
+        return found, missing
+
+    def synchronous(keys):
+        keys = tuple(keys)
+        found, missing = partition(keys)
+        if missing:
+            found.update(embed(missing, gray, boxes) or {})
+        return {k: found[k] for k in keys if k in found}
+
+    def asynchronous(keys):
+        keys = tuple(keys)
+        found, missing = partition(keys)
+        collect = submit(missing, gray, boxes) if missing else None
+
+        def combined():
+            if collect is not None:
+                found.update(collect() or {})
+            return {k: found[k] for k in keys if k in found}
+
+        return combined
+
+    return synchronous, asynchronous if submit is not None else None
 
 
 def _embed_slot_batch(engine, keys, gray, boxes, got, base=0):

@@ -39,6 +39,7 @@ NEAR_H = 2.0                           # "near" = centre distance <= 2 heights
 CLEAN_H = 32.0                         # KeepID crop height rule
 CV_N = 5                               # constant-velocity fit on the last 5 output boxes
 GAL_N = 5                              # mean of the last 5 available features
+FOLLOW_HISTORY_N = 12                  # gimbal appearance looks at the last 12 observations
 MIN_H = 32.0                           # crops below this height get no feature (crop_from_pred.py rule)
 NAN = float('nan')
 
@@ -84,8 +85,45 @@ def cv_velocity(obs):
     return vx, vy, len(o)
 
 
+class _LiveObservationHistory(list):
+    """Bound the geometry window while preserving identity features and sparse galleries."""
+
+    __slots__ = ('first_t', 'total', 'features')
+
+    def __init__(self):
+        super().__init__()
+        self.first_t = None
+        self.total = 0
+        self.features = {}
+
+    def append(self, observation):
+        if not self:
+            self.first_t = observation['t']
+        self.total += 1
+        super().append(observation)
+        if len(self) > FOLLOW_HISTORY_N:
+            del self[0]
+        for key in ('m1', 'fp'):
+            self.add_feature(observation, key)
+
+    def add_feature(self, observation, key):
+        if observation[key] is None:
+            return
+        self._keep((key, False), observation)
+        if observation['crop_h'] >= CLEAN_H and observation['miou'] == 0.0:
+            self._keep((key, True), observation)
+
+    def _keep(self, key, observation):
+        observations = self.features.setdefault(key, [])
+        observations.append(observation)
+        if len(observations) > GAL_N:
+            del observations[0]
+
+
 def gallery(obs, key, clean=False):
     """the last GAL_N available features of an observation list (any overlap / height unless clean) -> (list of obs, most recent last)"""
+    if isinstance(obs, _LiveObservationHistory):
+        return list(obs.features.get((key, clean), ()))
     out = []
     for o in reversed(obs):
         if o[key] is None: continue
@@ -103,6 +141,10 @@ def pair_features(nobs, cobs, t0, t_now, rows_now, coexist):
     """nobs = the new ID's observations t0..t_now (time order), cobs = the candidate's observations before t0; rows_now = output person
     rows of frame t_now. Returns a dict of causal features (no GT)."""
     n, c = nobs[-1], cobs[-1]
+    if isinstance(cobs, _LiveObservationHistory):
+        candidate_count, candidate_first_t = cobs.total, cobs.first_t
+    else:
+        candidate_count, candidate_first_t = len(cobs), cobs[0]['t']
     gap = n['t'] - c['t']; hl, wl = max(c['h'], 1e-6), max(c['w'], 1e-6)
     dx, dy = n['cx'] - c['cx'], n['cy'] - c['cy']; d = math.hypot(dx, dy)
     vx, vy, nv = cv_velocity(cobs)
@@ -127,7 +169,7 @@ def pair_features(nobs, cobs, t0, t_now, rows_now, coexist):
              miou_last=c['miou'], n_ovl_last=c['n_ovl'], n_near_det_last=c['n_near_det'], n_near_trk_last=c['n_near_trk'],
              n_trk_near_lastpos_now=sum(1 for r in rows_now if int(r[4]) != n['tid'] and
                                          math.hypot(c['cx'] - (r[0] + r[2]) / 2, c['cy'] - (r[1] + r[3]) / 2) <= NEAR_H * hl),
-             cand_len=len(cobs), cand_age=c['t'] - cobs[0]['t'], cand_born_first_frame=int(cobs[0]['t'] == 0),
+             cand_len=candidate_count, cand_age=c['t'] - candidate_first_t, cand_born_first_frame=int(candidate_first_t == 0),
              new_crop_h=n['crop_h'], new_in_P=int(n['in_P']))
     for s in ('m1', 'fp'):
         g = gallery(cobs, s); nf = [o for o in nobs if o[s] is not None]
@@ -216,6 +258,7 @@ class OnlineJudge:
         self.M, self.feats, self.thr = self.spec['model'], list(self.spec['features']), float(self.spec['decision']['threshold'])
         self.crops = int(crops)
         self.compact_ids = bool(compact_ids)
+        self._history_type = _LiveObservationHistory if compact_ids else list
         self.stats = dict(new_ids=0, births=0, births_with_candidates=0, pairs_scored=0, relabelled=0, retired_reappearances=0, frames=0,
                           crops_new=0, crops_refresh=0, crops_embedded=0, crops_new_births_with_candidates=0, births_with_candidates_no_feature=0,
                           decided_with_feature=0)
@@ -232,7 +275,7 @@ class OnlineJudge:
         self.t = -1; self.fresh = 10 ** 6
         self.next_public_id = 1
         self.public_identity_token = object() if self.compact_ids else None
-        self.hist = {}            # tracker id -> [obs] (time order), every output person row of the sequence
+        self.hist = {}            # tracker id -> observation history, preserving raw IDs after disappearance
         self.id_map = {}          # tracker id -> output id (popped when retired)
         self.retired = set()      # tracker ids handed over; a fresh output id if output again
         self.last_emb = {}        # tracker id -> t of its last feature (refresh priority)
@@ -263,7 +306,13 @@ class OnlineJudge:
         if self.deferred is not None:                                     # last frame's asynchronous refresh joins its observations now
             recs_d, collect_d = self.deferred; self.deferred = None; got_d = collect_d() or {}
             for o_, k_ in recs_d:
-                if k_ in got_d: o_['m1'] = got_d[k_]; self.last_emb[o_['tid']] = o_['t']; st['crops_embedded'] += 1
+                if k_ in got_d:
+                    o_['m1'] = got_d[k_]
+                    history = self.hist[o_['tid']]
+                    if isinstance(history, _LiveObservationHistory):
+                        history.add_feature(o_, 'm1')
+                    self.last_emb[o_['tid']] = o_['t']
+                    st['crops_embedded'] += 1
         prow = [r for r in rows if int(r[6]) == 0]
         # rows rounded like TRACKS_BASE.jsonl, so the features equal an offline rebuild from the saved rows
         prow_r = [[round(float(v), 2) for v in r[:4]] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in prow]
@@ -346,7 +395,9 @@ class OnlineJudge:
             self.events.append(dict(frame=frame, t=t, tracker_id=b, new_id=old_new, old_id=oid, cand_tid=c, p=round(pv, 4), n_cand=len(cands[b])))
         # ---- histories + deferred refresh
         for b, o in obs.items():
-            self.hist.setdefault(b, []).append(o)
+            if b not in self.hist:
+                self.hist[b] = self._history_type()
+            self.hist[b].append(o)
             if o['m1'] is not None: self.last_emb[b] = t
         if recs is not None: self.deferred = ([(obs[bid], k) for bid, k in recs if bid in obs], collect)
         out = []

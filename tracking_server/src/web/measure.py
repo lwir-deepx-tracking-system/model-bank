@@ -7,6 +7,10 @@ import numpy as np
 from ..common.state import APP
 
 
+STAGE_FIELDS = ('det_total_ms', 'pre_model_ms', 'nms_ms', 'tracker_ms',
+                'gmc_ms', 'relabel_ms', 'frame_total_ms', 'n', 'n_tracks')
+
+
 def meas_stats(v_):   # v22
     if not v_: return None
     a_ = np.asarray(v_, np.float64)
@@ -94,7 +98,8 @@ def meas_stop(memo_=None):
         fc_.write('프레임순번,측정시작후_초,입력출력지연_ms,처리시간_ms,NPU대기_ms,트래커_ms,카메라_fps\n')
         for i_, r_ in enumerate(rw_): fc_.write('%d,%.4f,%.3f,%.3f,%.3f,%.3f,%.2f\n' % (i_ + 1, r_[0] - m_['t0'], r_[1], r_[2], r_[3], r_[4], r_[5]))
     res_['rows_saved'] = len(rw_)
-    (md_ / fn_).write_text(json.dumps(dict(res_, rows=[dict(t=round(r_[0] - m_['t0'], 4), delay_ms=round(r_[1], 3), compute_ms=round(r_[2], 3), npu_wait_ms=round(r_[3], 3), tracker_ms=round(r_[4], 3), cam_fps=round(r_[5], 2)) for r_ in rw_]), ensure_ascii=False), encoding='utf-8')
+    details = dict(stage_fields=STAGE_FIELDS, stage_rows=m_['stage_rows']) if 'stage_rows' in m_ else {}
+    (md_ / fn_).write_text(json.dumps(dict(res_, rows=[dict(t=round(r_[0] - m_['t0'], 4), delay_ms=round(r_[1], 3), compute_ms=round(r_[2], 3), npu_wait_ms=round(r_[3], 3), tracker_ms=round(r_[4], 3), cam_fps=round(r_[5], 2)) for r_ in rw_], **details), ensure_ascii=False), encoding='utf-8')
     print('MEASURE', json.dumps({k_: res_[k_] for k_ in ('n', 'frames', 'seconds', 'out_fps', 'cam_fps', 'delay', 'interval', 'file')}), flush=True)
     APP.LIVE.meas_last = res_; APP.LIVE.meas_hist.append(res_)
 

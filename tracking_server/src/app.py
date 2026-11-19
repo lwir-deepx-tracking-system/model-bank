@@ -174,6 +174,13 @@ def main():
     ap.add_argument('--confirm-gate', default='', help='v11: path of GATE_GRU32_FROZEN.json = the learned confirmation gate replaces 3FrameConfirm (GateTracker); requires --tracker bytetrack --class-gate --no-vit; default off = unchanged')
     ap.add_argument('--judge-crops', type=int, default=2, help='v10: with --judge, crops per frame on NPU_2 (new IDs first, then refresh); 0 = every eligible crop')
     APP.args = ap.parse_args()
+    if APP.args.live_port and not APP.args.mock and os.environ.get('LWIR_GC_IMPORTS', '1') != '0':
+        # Move the import-time graph out of full scans before camera, models, and workers exist.
+        # New runtime objects still use the normal three GC generations.
+        import gc
+        gc.collect()
+        gc.freeze()
+        print('Live GC: %d startup objects excluded from runtime scans' % gc.get_freeze_count(), flush=True)
     APP.FEED_MODE = frame_feed.load_mode()
     APP.FEED = None
     APP.FEED_READY = False
@@ -841,6 +848,7 @@ def main():
                 if APP.relabeler is not None: APP.relabeler.reset()
                 if APP.tracker is not None and APP.LIVE is not None: APP.tracker = mk_tracker_(APP.RULES['tracker'])
                 print('E2E: server detector + tracker %s at frame %d' % ('skipped' if own_ else 'back on', i), flush=True)
+            bs_feats, bs_boxes = None, None
             if own_:   # 11-14: the end-to-end model (or the stored result) makes the rows; the server tracker is not run
                 tr_rows = []; t4 = time.perf_counter_ns(); vs = 0.0; POSP['boxes'] = []
             elif budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association
@@ -852,12 +860,13 @@ def main():
             else:
                 feat_fn = (lambda idxs, g_=g, arr_=arr, f_=i: sync_embed(idxs, g_, arr_, f_)) if (vit is not None and APP.args.vit_sync and APP.args.app_first) else None
                 if GATE_FN is not None: APP.tracker.gray = g   # v11: the gate's local-contrast / texture features read the current gray frame
-                bs_feats = None   # v38: BoT-SORT appearance = RepVGG_(TMOT,CAMEL) (KeepID engine, NPU core 2) on the 4 highest-score people >= 32 px. v40: app = off | repvgg
                 is_botsort = isinstance(APP.tracker, BotSortTracker) or (APP.LIVE is not None and APP.RULES['tracker'] == 'botsort')
                 if is_botsort and APP.rl_eng is not None and len(arr) and APP.CTL['app'] == 'repvgg':
                     bk_ = [int(j) for j in np.argsort(-arr[:, 4]) if int(arr[j, 5]) == PERSON_CLS and arr[j, 4] >= 0.25 and arr[j, 3] - arr[j, 1] >= 32.0][:4]
                     try:
-                        if bk_: bs_feats = APP.rl_embed(bk_, g, {j: arr[j, :4].tolist() for j in bk_})
+                        if bk_:
+                            bs_boxes = {j: arr[j, :4].tolist() for j in bk_}
+                            bs_feats = APP.rl_embed(bk_, g, bs_boxes)
                     except Exception as e_:
                         bs_feats = None; print('BOTSORT embed failed', repr(e_)[:120], flush=True)
                 tr_rows = APP.tracker.update(arr, bs_feats, feat_fn); t4 = time.perf_counter_ns()
@@ -874,8 +883,11 @@ def main():
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
                 mamba_kw_ = dict(warp=W_, ts_ns=None if APP.args.live_port else (i + 1) * 33333333) if APP.args.mamba else {}
-                tr_rows = APP.relabeler.step(tr_rows, P_, lambda ks, g_=g, b_=P_: APP.rl_embed(ks, g_, b_), frame=Path(im['file_name']).name,
-                                         embed_async=(lambda ks, g_=g, b_=P_: APP.rl_async.submit(ks, g_, b_)) if APP.rl_async is not None else None, **mamba_kw_)
+                submit = APP.rl_async.submit if APP.rl_async is not None else None
+                keep_embed, keep_submit = reid_embed.same_frame_keepid(
+                    g, P_, APP.rl_embed, submit, bs_boxes, bs_feats if APP.LIVE is not None and bs_feats else {})
+                tr_rows = APP.relabeler.step(tr_rows, P_, keep_embed, frame=Path(im['file_name']).name,
+                                         embed_async=keep_submit, **mamba_kw_)
                 rl_ms = (time.perf_counter_ns() - tr0_) / 1e6
                 if APP.LIVE is not None:
                     click_relabel_namespace = getattr(APP.relabeler, 'id_map', None)
