@@ -55,7 +55,7 @@
     normalBase=currentState();window.LWIR_BASE=snapshot.version;
   }
   function replaceBase(snapshot,reapply){
-    const selectedId=selBox()?.id;
+    const selectedId=selBox()?.id??focusedTrackId;
     boxes=parseMot(snapshot.mot);
     reviewed=new Set(snapshot.review.reviewed||[]);
     removed=new Set(snapshot.review.removed||[]);
@@ -64,9 +64,8 @@
     loadParts(snapshot.parts);setBase(snapshot);
     recoveredBefore=new Map(reapply.filter(x=>x.before).map(x=>[x.frame,x.before]));
     applyFrames(reapply);
-    const i=(boxes.get(cur)||[]).findIndex(b=>b.id===selectedId);
-    sel=i<0?null:{f:cur,i};
-    undo=[];cancelPart();drag=null;
+    carryToFrame(cur,selectedId);
+    undo=[];
   }
   async function json(action,body){
     const options=body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'};

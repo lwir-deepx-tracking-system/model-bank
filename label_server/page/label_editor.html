@@ -184,6 +184,7 @@ const $=id=>document.getElementById(id);
 const C=$('c'),X=C.getContext('2d'),ST=$('st');
 const W0=640,H0=480;
 let dirHandle=null,files={},nFrames=0,cur=1,boxes=new Map(),reviewed=new Set(),removed=new Set(),purged=new Set(),sel=null,undo=[],dirty=false,playing=null,drawMode=false,drag=null,cache=new Map(),srcName='';
+let focusedTrackId=null,parkedPartTool=null;
 // boxes: frame -> [{id,x,y,w,h,c,m}]  (m = manual)
 const col=id=>{const h=(id*137.508)%360;return `hsl(${h},75%,60%)`;};
 function status(t){ST.textContent=t;}
@@ -273,7 +274,8 @@ const partKey=(f,id)=>`${f}:${id}`;
 const clonePart=a=>a?JSON.parse(JSON.stringify(a)):null;
 function partParent(){const b=selBox();return b&&!b.g&&!removed.has(cur)&&(boxes.get(cur)||[]).filter(x=>x.id===b.id&&!x.g).length===1?b:null;}
 function partRecord(f,id){return partRecords.get(partKey(f,id));}
-function cancelPart(){partTool=null;partDrag=null;pointDrag=null;}
+function cancelPart(){partTool=null;parkedPartTool=null;partDrag=null;pointDrag=null;}
+function clearFrameSelection(){sel=null;focusedTrackId=null;cancelPart();}
 function needsPartReview(f,id){const p=partRecord(f,id);if(p)p.needs_review=true;}
 function pruneParts(){for(const [key,r] of partRecords)if(purged.has(r.frame)||!(boxes.get(r.frame)||[]).some(b=>b.id===r.id&&!b.g))partRecords.delete(key);}
 function checkPartRecord(r){
@@ -441,7 +443,7 @@ async function afterLoad(imgs){
     if(draft&&confirm('이 탭에 저장 안 된 편집이 남아 있습니다. 불러올까요?'))note=restoreDraft(draft);
   }catch(e){}
   refreshDraftButton();
-  cur=1;undo=[];sel=null;
+  cur=1;undo=[];clearFrameSelection();
   status(note+' · '+nFrames+'프레임'+(window.LWIR_SERVER_MODE?' · 저장하면 서버에 씁니다':' · 저장하면 파일로 내려받습니다'));
   refresh();
 }
@@ -508,7 +510,7 @@ function frameNumber(f,positions){
 }
 function refresh(){
   const {numbers,positions}=frameNavigation();
-  if(!positions.has(cur)){cur=visibleTarget(cur,numbers);sel=null;cancelPart();drag=null;}
+  if(!positions.has(cur))carryToFrame(visibleTarget(cur,numbers));
   const slider=$('slider'),slot=(positions.get(cur)??0)+1;
   slider.max=Math.max(1,numbers.length);slider.value=slot;slider.disabled=numbers.length<2;
   const count=(boxes.get(cur)||[]).length;
@@ -529,7 +531,7 @@ function idList(){
   const cnt=new Map(),first=new Map(),{positions}=frameNavigation();for(const [f,bs] of boxes)if(positions.has(f))for(const b of bs){cnt.set(b.id,(cnt.get(b.id)||0)+1);if(!first.has(b.id)||f<first.get(b.id))first.set(b.id,f);}
   const selId=sel&&(boxes.get(sel.f)||[])[sel.i]?.id;
   $('ids').innerHTML=[...cnt.keys()].sort((a,b)=>first.get(a)-first.get(b)).map(id=>`<div class="idrow${id===selId?' sel':''}" data-id="${id}" data-f="${first.get(id)}"><span class="sw" style="background:${col(id)}"></span>${id}번<span class="n">${frameNumber(first.get(id),positions)}~ · ${cnt.get(id)}개</span></div>`).join('')||'박스 없음';
-  for(const r of $('ids').querySelectorAll('.idrow'))r.onclick=()=>{go(+r.dataset.f);const bs=boxes.get(cur)||[];const i=bs.findIndex(b=>b.id===+r.dataset.id);sel=i>=0?{f:cur,i}:null;refresh();};
+  for(const r of $('ids').querySelectorAll('.idrow'))r.onclick=()=>{clearFrameSelection();focusedTrackId=+r.dataset.id;go(+r.dataset.f);};
 }
 // ---------- frames with 2+ boxes ----------
 function multiFrames(){return frameNavigation().numbers.filter(f=>(boxes.get(f)||[]).length>=2);}
@@ -549,7 +551,21 @@ function multiPanel(){
   for(const r of $('runs').querySelectorAll('.idrow'))r.onclick=()=>{go(+r.dataset.f);};
 }
 $('multi').onchange=()=>{if($('multi').checked&&(boxes.get(cur)||[]).length<2){const a=multiFrames();const t=a.find(f=>f>=cur)??a[0];if(t)go(t);}refresh();};
-function go(f){const {numbers,positions}=frameNavigation();if(!numbers.length)return;cancelPart();drag=null;cur=positions.has(f)?f:visibleTarget(f,numbers);if(sel&&sel.f!==cur){const id=(boxes.get(sel.f)||[])[sel.i]?.id;const i=(boxes.get(cur)||[]).findIndex(b=>b.id===id);sel=i>=0?{f:cur,i}:null;}refresh();}
+function carryToFrame(frame,identity=selBox()?.id??focusedTrackId){
+  const previous=partTool||parkedPartTool;
+  partDrag=null;pointDrag=null;drag=null;partTool=null;
+  focusedTrackId=identity;cur=frame;
+  const i=(boxes.get(cur)||[]).findIndex(b=>b.id===identity);
+  sel=i<0?null:{f:cur,i};
+  parkedPartTool=!playing&&previous?.id===identity?previous:null;
+  const person=partParent();
+  if(!parkedPartTool||!person||!mayEdit([cur],true))return;
+  const {key,state:previousState,frame:previousFrame}=parkedPartTool;
+  const existing=partRecord(cur,identity)?.parts[key];
+  const state=previousFrame===cur?previousState:existing?.state==='occluded'?'occluded':'visible';
+  partTool={frame:cur,id:identity,key,state};
+}
+function go(f){const {numbers,positions}=frameNavigation();if(!numbers.length)return;carryToFrame(positions.has(f)?f:visibleTarget(f,numbers));refresh();}
 // ---------- mouse ----------
 function hit(p){const bs=boxes.get(cur)||[];const tol=8/view.s;
   if(sel&&sel.f===cur){const b=bs[sel.i];if(b){const cs=corners(b);for(let k=0;k<4;k++)if(Math.abs(p.x-cs[k][0])<tol&&Math.abs(p.y-cs[k][1])<tol)return{i:sel.i,corner:k};}}
@@ -559,7 +575,7 @@ C.addEventListener('wheel',e=>{if(!nFrames)return;e.preventDefault();const c=cpx
 C.addEventListener('pointerdown',e=>{if(!cur)return;const p=toImg(e);try{C.setPointerCapture(e.pointerId);}catch(_){}
   if(e.button===2||e.button===1){e.preventDefault();const c=cpx(e);zdrag={kind:e.button===2&&!e.shiftKey?'zoom':'pan',y0:e.clientY,k0:Z.k,c,ip:p};return;}
   if(drawMode){if(!mayEdit())return;drag={kind:'new',x0:p.x,y0:p.y,x1:p.x,y1:p.y};return;}
-  const h=hit(p);if(!h){sel=null;refresh();return;}
+  const h=hit(p);if(!h){clearFrameSelection();refresh();return;}
   sel={f:cur,i:h.i};const b=boxes.get(cur)[h.i];if(!mayEdit([cur],true)){refresh();return;}drag={kind:h.corner!=null?'corner':'move',corner:h.corner,p0:p,b0:{...b},moved:false};refresh();});
 C.addEventListener('pointermove',e=>{if(zdrag){const c=cpx(e);if(zdrag.kind==='zoom')zoomAt(zdrag.k0*Math.exp((zdrag.y0-e.clientY)/120),zdrag.c.x,zdrag.c.y,zdrag.ip);else zoomAt(Z.k,c.x,c.y,zdrag.ip);return;}
   if(!drag||!mayEdit([cur],true))return;const p=toImg(e);
@@ -608,10 +624,10 @@ function igApply(){if(!nFrames)return;const T=+$('igarea').value;if(!(T>=0)||$('
   if(!snapshot(affected))return;for(const bs of boxes.values())for(const b of bs)b.g=T>0&&b.w*b.h<=T;try{localStorage.setItem('lwir_igarea',String(T));}catch(e){}
   status(`무시 표시 ${on}개, 해제 ${off}개. 저장하면 반영됩니다.`);refresh();}
 function igToggle(){const b=selBox();if(!b)return;if(!b.g&&partRecord(cur,b.id)&&!confirm('이 사람을 무시하면 연결된 신체 부위도 제거합니다. 무시 해제만으로 부위가 돌아오지는 않습니다. Ctrl+Z로 함께 복원할 수 있습니다. 계속할까요?'))return;if(!snapshot())return;b.g=!b.g;refresh();}
-function delBox(){const b=selBox();if(!b)return;if(!snapshot())return;boxes.get(sel.f).splice(sel.i,1);sel=null;refresh();}
+function delBox(){const b=selBox();if(!b)return;if(!snapshot())return;boxes.get(sel.f).splice(sel.i,1);clearFrameSelection();refresh();}
 function delTrack(){const b=selBox();if(!b)return;const id=b.id;let n=0;for(const bs of boxes.values())n+=bs.filter(x=>x.id===id).length;
   if(!confirm(`${id}번 박스 ${n}개를 모든 프레임에서 지웁니다. (되돌리기 Ctrl+Z 가능)`))return;const affected=[...boxes].filter(([,bs])=>bs.some(x=>x.id===id)).map(([f])=>f);
-  if(!snapshot(affected))return;for(const [f,bs] of boxes)boxes.set(f,bs.filter(x=>x.id!==id));sel=null;refresh();}
+  if(!snapshot(affected))return;for(const [f,bs] of boxes)boxes.set(f,bs.filter(x=>x.id!==id));clearFrameSelection();refresh();}
 function idFrameNumbers(){return frameNavigation().numbers.filter(f=>!removed.has(f));}
 function idRangePanel(){
   const scoped=$('id-scope').value==='range',original=$('id-basis').value==='original';
@@ -658,7 +674,7 @@ function changeIds(swap){
       else if(swap&&x.id===to){x.id=from;n++;}
     }
   }
-  const verb=swap?'맞바꿨습니다':'바꿨습니다';
+  cancelPart();const verb=swap?'맞바꿨습니다':'바꿨습니다';
   status(from+'번과 '+to+'번 · '+targets.length+'장, 박스 '+n+'개를 '+verb+'.');
   refresh();
 }
@@ -689,7 +705,7 @@ function markRev(){if(!cur||removed.has(cur))return;if(!snapshot())return;if(rev
 function setDraw(on){cancelPart();drawMode=on;$('draw').textContent=on?'그리는 중… (Esc 취소)':'그리기 시작';$('draw').className=on?'primary':'';C.style.cursor=on?'copy':'crosshair';}
 $('delbox').onclick=delBox;$('deltrack').onclick=delTrack;$('relabel').onclick=relabel;$('swapid').onclick=swapIds;$('copyprev').onclick=copyPrev;$('markrev').onclick=markRev;$('draw').onclick=()=>setDraw(!drawMode);
 // ---------- play / nav ----------
-function togglePlay(){if(playing){clearInterval(playing);playing=null;$('play').textContent='▶ 재생';return;}if(!cur)return;$('play').textContent='❚❚ 정지';playing=setInterval(()=>{if(!step(1))togglePlay();},42);}
+function togglePlay(){if(playing){clearInterval(playing);playing=null;$('play').textContent='▶ 재생';return;}if(!cur)return;cancelPart();partPanel();$('play').textContent='❚❚ 정지';playing=setInterval(()=>{if(!step(1))togglePlay();},42);}
 $('prev').onclick=()=>step(-1);$('next').onclick=()=>step(1);$('play').onclick=togglePlay;$('slider').oninput=e=>go(frameNavigation().numbers[Number(e.target.value)-1]);
 addEventListener('keydown',e=>{if(e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA'||(e.target.tagName==='INPUT'&&e.target.type!=='range'&&e.target.type!=='checkbox'))return;
   const k=e.key;if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='z'){e.preventDefault();doUndo();return;}

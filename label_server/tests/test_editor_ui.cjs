@@ -150,6 +150,22 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
   assert.equal(await page.evaluate(()=>reviewDocument().removed.length),199);
   await page.evaluate(()=>{removed=new Set(Array.from({length:700},(_,i)=>i+1));refresh();});
   assert.equal(await page.evaluate(()=>cur),0);assert.equal(await page.locator('#slider').isDisabled(),true);
+  // Keep the same track and editing tool both on the next frame and after a temporary detection gap.
+  fixtureFrames=3;fixtureReview={};
+  await page.evaluate(()=>{dirty=false;localStorage.clear();sessionStorage.clear();});
+  await page.reload();await page.waitForFunction(()=>nFrames===3&&window.LWIR_LOADED);
+  await page.evaluate(()=>{go(1);sel={f:1,i:0};activePart='left_knee';refresh();});
+  await page.locator('#part-place').click();
+  await page.locator('#next').click();
+  assert.deepEqual(await page.evaluate(()=>[cur,selBox()?.id,activePart,partTool?.frame]),[2,1,'left_knee',2]);
+  await page.evaluate(()=>{go(1);boxes.set(2,boxes.get(2).filter(b=>b.id!==1));});
+  await page.locator('#next').click();
+  assert.deepEqual(await page.evaluate(()=>[cur,selBox()?.id??null,partTool??null]),[2,null,null]);
+  await page.locator('#next').click();
+  assert.deepEqual(await page.evaluate(()=>[cur,selBox()?.id,partTool?.key,partTool?.frame]),[3,1,'left_knee',3]);
+  await page.keyboard.press('Escape');
+  await page.locator('#prev').click();await page.locator('#prev').click();
+  assert.deepEqual(await page.evaluate(()=>[cur,selBox()?.id,partTool??null]),[1,1,null]);
   // Visible ordinals skip excluded frames. The original-number range can select one exact frame.
   fixtureFrames=7;fixtureReview={reviewed:[],removed:[1,4,7]};conflict=false;
   await page.evaluate(()=>{dirty=false;localStorage.clear();sessionStorage.clear();});
