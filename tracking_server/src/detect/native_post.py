@@ -32,9 +32,15 @@ if hasattr(lib, 'prepare_split_heads') and hasattr(lib, 'decode_split_heads'):
     lib.decode_split_heads.argtypes = [head_pointers, arr, ctypes.c_float, arr, arr]
     lib.decode_split_heads.restype = ctypes.c_int
 
+    def split_head_pointers(heads):
+        return head_pointers(*(head.ctypes.data for head in heads))
+
+    def validate_split_heads(pointers, logits):
+        return lib.prepare_split_heads(pointers, logits)
+
     def prepare_split_heads(heads, logits):
-        pointers = head_pointers(*(head.ctypes.data for head in heads))
-        invalid = lib.prepare_split_heads(pointers, logits)
+        pointers = split_head_pointers(heads)
+        invalid = validate_split_heads(pointers, logits)
         return pointers, invalid
 
     def decode_split_heads(pointers, logits, y_offset):

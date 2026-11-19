@@ -5,7 +5,7 @@ uses the ordinary tracker and KeepID downstream. It never changes the default
 detector or substitutes a different model when the verified asset is absent.
 """
 import ctypes as c
-from dataclasses import dataclass
+from collections import deque
 import os
 from pathlib import Path
 import time
@@ -34,12 +34,40 @@ POSES = tuple(f'kpt_s{s}_nhwc' for s in STRIDES)
 HEAD_ORDER = tuple(name for level in zip(BOXES, CLASSES, POSES) for name in level)
 
 
-@dataclass(frozen=True)
 class TileHeads:
     """Keep SDK output alive through decoding on the tracker thread."""
-    arrays: tuple
-    pointers: c.Array
-    logits: np.ndarray
+    __slots__ = ('_heads', '_pointers', '_logits', '_recycle', '_slot')
+
+    def __init__(self, arrays, pointers, logits, *, recycle=None, slot=None):
+        self._heads, self._pointers, self._logits = arrays, pointers, logits
+        self._recycle, self._slot = recycle, slot
+
+    @property
+    def arrays(self):
+        # A caller that keeps an array after the frame is gone must keep its data.
+        if self._recycle is not None:
+            return tuple(array.copy() for array in self._heads)
+        return self._heads
+
+    def decode(self, post, y_offset):
+        return post.decode_split_heads(self._pointers, self._logits, y_offset)
+
+    def legacy(self):
+        return (*flatten_tile(self._heads[:9]), *flatten_tile(self._heads[9:]))
+
+    def __del__(self):
+        if self._recycle is not None:
+            self._recycle.append(self._slot)
+
+
+class _OutputSlot:
+    def __init__(self, sdk, post):
+        self.buffers = [np.empty_like(buf) for buf in sdk.buffers]
+        self.destinations = tuple(buf.ctypes.data for buf in self.buffers)
+        views = [sdk.tensor_views(buf) for buf in self.buffers]
+        self.heads = tuple(tile[name] for tile in views for name in HEAD_ORDER)
+        self.pointers = post.split_head_pointers(self.heads)
+        self.logits = np.empty((2, N), np.float32)
 
 
 def flatten_tile(heads):
@@ -73,10 +101,13 @@ class Tone:
         self.lib.percentile16.restype = None
         self.lib.apply_tone.argtypes = [i, o, c.c_size_t, c.c_float, c.c_float]
         self.lib.apply_tone.restype = None
+        self.prepare_split = getattr(self.lib, 'prepare_split_u16', None)
+        if self.prepare_split is not None:
+            rgb = np.ctypeslib.ndpointer(dtype=np.uint8, ndim=4, flags='C_CONTIGUOUS')
+            self.prepare_split.argtypes = [i, o, rgb, rgb, c.c_float, c.c_float]
+            self.prepare_split.restype = None
 
-    def __call__(self, raw):
-        if APP.args.live_map == 'fixed':
-            return APP.lv_to8(raw)
+    def _levels(self, raw):
         if raw.dtype != np.uint16 or raw.shape != (H, W) or not raw.flags.c_contiguous:
             raise ValueError('dual tile requires the 16-bit 640x480 camera buffer')
         a, b = c.c_uint32(), c.c_uint32()
@@ -89,9 +120,21 @@ class Tone:
         else:
             APP.LIVE.lo += .1 * (lo - APP.LIVE.lo)
             APP.LIVE.hi += .1 * (hi - APP.LIVE.hi)
+        return APP.LIVE.lo, 255.0 / (APP.LIVE.hi - APP.LIVE.lo)
+
+    def __call__(self, raw):
+        if APP.args.live_map == 'fixed':
+            return APP.lv_to8(raw)
         out = np.empty((H, W), np.uint8)
-        self.lib.apply_tone(raw, out, raw.size, APP.LIVE.lo, 255.0 / (APP.LIVE.hi - APP.LIVE.lo))
+        self.lib.apply_tone(raw, out, raw.size, *self._levels(raw))
         return out
+
+    def prepare(self, raw, inputs):
+        if self.prepare_split is None or APP.args.live_map == 'fixed':
+            return None
+        canvas = np.empty((H + 32, W), np.uint8)
+        self.prepare_split(raw, canvas, *inputs, *self._levels(raw))
+        return canvas
 
 
 class PairBackend:
@@ -103,6 +146,7 @@ class PairBackend:
         self.validation_source = 'live'
         self.native_error = None
         self.native_post = getattr(getattr(APP, 'native_post', None), 'prepare_split_heads', None)
+        self.output_pool = None
         self.native_allowed = (vars(APP).get('LIVE') is not None and NATIVE_SPLIT.is_file()
                                and os.environ.get('LWIR_CPP_SPLIT', '1') == '1')
         self.profile = TileJobProfile(APP.out, APP.dx) if vars(APP).get('LIVE') is not None else None
@@ -160,6 +204,7 @@ class PairBackend:
         if self.native is not None:
             self.native.close()
             self.native = None
+        self.output_pool = None
         self.native_allowed = False
         self.native_error = str(error)[:180]
         print(f"NATIVE_SPLIT fallback to Python SDK: {self.native_error}", flush=True)
@@ -178,6 +223,9 @@ class PairBackend:
                 for name, a, b in zip(self.names, before, after, strict=True):
                     if not np.array_equal(np.asarray(a).view(np.uint32), b.view(np.uint32)):
                         raise ValueError(f"raw tensor differs at core {core}, {name}")
+            post = APP.native_post if self.native_post is not None else None
+            if self.native_checks + 1 == NATIVE_CHECK_FRAMES and hasattr(post, 'validate_split_heads'):
+                self.output_pool = deque(_OutputSlot(self.native, post) for _ in range(3))
             self.native_checks += 1
         except Exception as error:
             self.disable_native(error)
@@ -201,9 +249,12 @@ class PairBackend:
     def run_async(self, gray, user_arg=None, output_buffer=None):
         if gray.dtype != np.uint8 or gray.shape != (H, W):
             raise ValueError(f'unexpected dual-tile input: {gray.shape}/{gray.dtype}')
-        trace = self.profile.begin((user_arg or {}).get('f')) if self.profile is not None else None
         APP.cv2.cvtColor(gray[:, :TW], APP.cv2.COLOR_GRAY2RGB, dst=self.inputs[0][0])
         APP.cv2.cvtColor(gray[:, RIGHT:], APP.cv2.COLOR_GRAY2RGB, dst=self.inputs[1][0])
+        return self.submit_prepared(user_arg)
+
+    def submit_prepared(self, user_arg):
+        trace = self.profile.begin((user_arg or {}).get('f')) if self.profile is not None else None
         jobs = None
         if self.using_native:
             try:
@@ -252,8 +303,11 @@ class PairBackend:
         native = self.using_native
         if native:
             try:
-                waited = self.native.wait(jobs, self.names, owned=self.native_post is not None)
-                results = self.pack(waited, owned=True)
+                if self.output_pool is not None:
+                    results = self.wait_reusable(jobs)
+                else:
+                    waited = self.native.wait(jobs, self.names, owned=self.native_post is not None)
+                    results = self.pack(waited, owned=True)
             except Exception as error:
                 self.disable_native(error)
                 # Same input, newly recreated Python engines. The failed
@@ -279,6 +333,20 @@ class PairBackend:
         if not native and self.native_allowed:
             self.check_native(waited)
         return results
+
+    def wait_reusable(self, jobs):
+        pool = self.output_pool
+        try:
+            slot = pool.popleft()
+        except IndexError:
+            # The feeder can run ahead. A retained frame must never block it.
+            pool = None
+            slot = _OutputSlot(self.native, APP.native_post)
+        self.native.wait_into(jobs, slot.destinations)
+        invalid = APP.native_post.validate_split_heads(slot.pointers, slot.logits)
+        if invalid >= 0:
+            raise RuntimeError(f'invalid tile output {HEAD_ORDER[invalid % 9]} on core {invalid // 9}')
+        return TileHeads(slot.heads, slot.pointers, slot.logits, recycle=pool, slot=slot)
 
     def wait_python(self, jobs, trace):
         # Drain both submissions before their buffers may be reused.
@@ -384,7 +452,7 @@ _decode_cache = None
 def detect(raw):
     from . import detect_frame
     if isinstance(raw, TileHeads):
-        decoded = APP.native_post.decode_split_heads(raw.pointers, raw.logits, APP.det_yoff)
+        decoded = raw.decode(APP.native_post, APP.det_yoff)
         if decoded is not None:
             rows, points = decoded
             detect_frame.KP['prev'] = detect_frame.KP['cur']
@@ -392,7 +460,7 @@ def detect(raw):
             return rows
         # Finite but extreme box logits can overflow the legacy box math.
         # Retain its behavior in that exceptional case.
-        raw = (*flatten_tile(raw.arrays[:9]), *flatten_tile(raw.arrays[9:]))
+        raw = raw.legacy()
     return detect_legacy(raw)
 
 

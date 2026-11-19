@@ -25,7 +25,7 @@ if frame_math_tmp=$(mktemp "$frame_math.XXXXXX"); then
   fi
 fi
 
-gcc -O3 -shared -fPIC -ffp-contract=off -std=c11 -o src/detect/tone_map.so src/detect/tone_map.c
+g++ -O3 -shared -fPIC -ffp-contract=off -std=c++17 -o src/detect/tone_map.so src/detect/tone_map.cpp
 echo "tone_map.so built"
 
 split_library=src/detect/liblwir_split_sdk.so

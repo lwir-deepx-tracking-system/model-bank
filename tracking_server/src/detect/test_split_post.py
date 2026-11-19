@@ -121,6 +121,48 @@ class SplitPostTests(unittest.TestCase):
 
 
 class SplitSdkOutputTests(unittest.TestCase):
+    def test_reusable_results_outlive_later_jobs_and_return_to_pool(self):
+        from collections import deque
+        from unittest.mock import patch
+
+        class FakeNative:
+            buffers = [np.empty(18 * 4, np.uint8) for _ in range(2)]
+
+            def tensor_views(self, buf):
+                return {name: buf.view(np.float32)[i:i + 1]
+                        for i, name in enumerate(dual_tile.HEAD_ORDER)}
+
+            def wait_into(self, jobs, destinations):
+                for value, address in zip(jobs, destinations):
+                    array = np.ctypeslib.as_array((c_float * 18).from_address(address))
+                    array.fill(value)
+
+        def decode(pointers, logits, _):
+            return tuple(np.ctypeslib.as_array((c_float * 1).from_address(pointer))[0]
+                         for pointer in pointers)
+
+        post = SimpleNamespace(
+            split_head_pointers=lambda heads: tuple(a.ctypes.data for a in heads),
+            validate_split_heads=lambda pointers, logits: -1,
+            decode_split_heads=decode,
+        )
+        backend = dual_tile.PairBackend.__new__(dual_tile.PairBackend)
+        backend.native = FakeNative()
+        slot = dual_tile._OutputSlot(backend.native, post)
+        backend.output_pool = deque([slot])
+        with patch.dict(vars(dual_tile.APP), {'native_post': post}):
+            first = backend.wait_reusable([1, 2])
+            escaped = first.arrays[-1]
+            overflow = backend.wait_reusable([3, 4])
+            self.assertEqual(first.decode(post, 0), (1,) * 9 + (2,) * 9)
+            self.assertEqual(overflow.decode(post, 0), (3,) * 9 + (4,) * 9)
+            self.assertFalse(backend.output_pool)
+            del first
+            self.assertIs(backend.output_pool[0], slot)
+            later = backend.wait_reusable([5, 6])
+            self.assertEqual(later.decode(post, 0), (5,) * 9 + (6,) * 9)
+            self.assertEqual(escaped[0], 2)
+
     def test_owned_wait_buffers_survive_another_job(self):
         sdk = NativeTiles.__new__(NativeTiles)
         sdk.timing = Timing()

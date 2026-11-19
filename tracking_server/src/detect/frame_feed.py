@@ -415,13 +415,28 @@ class Feed:
                     self.working = True
                     if sum(self.busy) + (sum(self.held) if self.held is not None else 0) > 1: self.st['overlap'] += 1
                 self._job = None
+                prepared_ = None
                 if r_ is None:
                     restart = camera_extra.replay_eval.reset_first_input(t_)
-                    g8_ = (self.tile_tone(raw_) if self.mode == 'tile' and self.tile_tone is not None else APP.lv_to8(raw_)); gg_ = np.empty((512, 640), np.uint8); gg_[16:496] = g8_; gg_[:16] = g8_[0]; gg_[496:] = g8_[-1]   # live_next 와 같은 순서, 같은 계산
-                    sc_ = stab_live(g8_, t_, gg_) if STAB['on'] else stab_off()
+                    stabilize_ = STAB['on']
+                    tone_ = self.tile_tone if self.mode == 'tile' else None
+                    prepare_ = getattr(tone_, 'prepare', None)
+                    if prepare_ is not None and e_ >= 0 and not stabilize_:
+                        prepared_ = prepare_(raw_, self._tgt_e.b.inputs)
+                    if prepared_ is not None:
+                        gg_, g8_ = prepared_, prepared_[16:496]
+                    else:
+                        g8_ = tone_(raw_) if tone_ is not None else APP.lv_to8(raw_)
+                        gg_ = np.empty((512, 640), np.uint8)
+                        gg_[16:496], gg_[:16], gg_[496:] = g8_, g8_[0], g8_[-1]
+                    sc_ = stab_live(g8_, t_, gg_) if stabilize_ else stab_off()
                     r_ = _Rec(); r_.seq = self.seq; self.seq += 1; r_.t = t_; r_.raw = raw_; r_.g8 = g8_; r_.gg = gg_; r_.stab = sc_
                     r_.gmc = self._gmc(gg_, restart) if APP.args.gmc_thread else None
-                if e_ >= 0: self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
+                if prepared_ is not None:
+                    self.tgt = e_
+                    r_.t_sub = time.perf_counter_ns()
+                    self._job = self._tgt_e.b.submit_prepared({'f': r_.seq})
+                elif e_ >= 0: self.tgt = e_; r_.t_sub = detect_frame.submit_tiles(r_.gg, r_.seq)   # APP.a 가 이 객체라서 submit() 으로 온다
                 else: r_.t_sub = time.perf_counter_ns(); self._job = None; e2e_live.prefetch(r_.gg)   # 11-15: the end-to-end AE starts on arrival
                 r_.e = e_; r_.job = self._job; r_.grp = grp_ if e_ >= 0 else None; self._tgt_e = None
                 r_.result = None
