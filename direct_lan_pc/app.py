@@ -203,6 +203,16 @@ class App:
         widget.delete('1.0', 'end')
         widget.insert('1.0', text)
 
+    def _emit(self, kind, data):
+        try:
+            self.events.put_nowait((kind, data))
+        except queue.Full:
+            # A slow screen must never block a network/control worker.
+            try: self.events.get_nowait()
+            except queue.Empty: pass
+            try: self.events.put_nowait((kind, data))
+            except queue.Full: pass
+
     def _operation_tab(self):
         p = self._tab('운영')
         self.switches = []
@@ -314,7 +324,7 @@ class App:
         box = self._section(p, '정답 비교')
         row = self._row(box)
         self._button(row, '현재 진행', lambda: self.eval_view('/replay/eval')).pack(side='left', padx=2)
-        self._button(row, '이 위치까지', lambda: self.eval_view('/replay/eval?pos=' + str(max(0, int(self.seek_var.get()) - 1)))).pack(side='left', padx=2)
+        self._button(row, '이 위치까지', self.eval_to_seek).pack(side='left', padx=2)
         self._button(row, '최종 결과', lambda: self.eval_view('/replay/eval?view=final')).pack(side='left', padx=2)
         self.eval_text = self._text(box, 14)
 
@@ -377,9 +387,9 @@ class App:
         def work():
             try:
                 result = self.link.post(path, body)
-                self.events.put(('command', result), timeout=1)
+                self._emit('command', result)
             except Exception as exc:
-                self.events.put(('error', str(exc)), timeout=1)
+                self._emit('error', str(exc))
         self.controls.submit(work)
 
     def rule(self, key, value):
@@ -445,9 +455,16 @@ class App:
     def eval_view(self, path):
         self.eval_override = True
         def work():
-            try: self.events.put(('eval', self.link.get(path)), timeout=1)
-            except Exception as exc: self.events.put(('error', str(exc)), timeout=1)
+            try: self._emit('eval', self.link.get(path))
+            except Exception as exc: self._emit('error', str(exc))
         self.workers.submit(work)
+
+    def eval_to_seek(self):
+        try: pos = max(0, int(self.seek_var.get()) - 1)
+        except ValueError:
+            self.message.set('장 번호를 숫자로 입력하세요')
+            return
+        self.eval_view('/replay/eval?pos=' + str(pos))
 
     def show_measure_record(self, label):
         try: index = self.measure_history_box['values'].index(label)
@@ -456,14 +473,14 @@ class App:
         self.measure_n.set(str(number))
         self.measure_override = True
         def work():
-            try: self.events.put(('measure_record', self.link.get('/measure/' + str(number))), timeout=1)
-            except Exception as exc: self.events.put(('error', str(exc)), timeout=1)
+            try: self._emit('measure_record', self.link.get('/measure/' + str(number)))
+            except Exception as exc: self._emit('error', str(exc))
         self.workers.submit(work)
 
     def detail_route(self, path):
         def work():
-            try: self.events.put(('detail', self.link.get(path)), timeout=1)
-            except Exception as exc: self.events.put(('error', str(exc)), timeout=1)
+            try: self._emit('detail', self.link.get(path))
+            except Exception as exc: self._emit('error', str(exc))
         self.workers.submit(work)
 
     def video_loop(self):
@@ -479,8 +496,7 @@ class App:
                                 self.frame_slot = (head, jpeg)
                         self.stop.wait(0.03)
             except Exception as exc:
-                try: self.events.put(('error', str(exc)), timeout=0.2)
-                except queue.Full: pass
+                self._emit('error', str(exc))
                 self.stop.wait(1)
 
     def state_loop(self):
@@ -494,43 +510,45 @@ class App:
                          ('measure', '/measure'), ('perf', '/perf'),
                          ('health', '/healthz'), ('people', '/gimbal/people')]}
                 data['_clock'] = (end - start, clock.get('t', end) - (start + end) / 2)
-                try: self.events.put(('state', data), timeout=0.5)
-                except queue.Full: pass
+                self._emit('state', data)
             except Exception as exc:
-                try: self.events.put(('error', str(exc)), timeout=0.2)
-                except queue.Full: pass
+                self._emit('error', str(exc))
             self.stop.wait(1)
 
     def ping_loop(self):
         while not self.stop.is_set():
             try:
                 data = self.link.post('/gimbal/ping')
-                try: self.events.put(('ping', data), timeout=0.1)
-                except queue.Full: pass
+                self._emit('ping', data)
             except Exception: pass
             self.stop.wait(0.4)
 
     def pump(self):
-        for _ in range(8):
-            try: kind, data = self.events.get_nowait()
-            except queue.Empty: break
-            if kind == 'state': self.show_state(data)
-            elif kind == 'ping': self.show_ping(data)
-            elif kind == 'command':
-                self.message.set(data.get('text') or data.get('answer') or '적용되었습니다')
-            elif kind == 'eval': self._set_text(self.eval_text, pretty(data.get('eval', data)))
-            elif kind == 'measure_record': self._set_text(self.measure_text, pretty(data))
-            elif kind == 'detail': self._set_text(self.detail_text, pretty(data))
-            elif kind == 'error':
-                self.status.set('Orange Pi 연결 대기 중')
-                self.message.set(data[:160])
-                self.connected = False
-        with self.frame_lock:
-            frame = self.frame_slot
-            self.frame_slot = None
-        if frame is not None:
-            self.show_frame(*frame)
-        if not self.stop.is_set(): self.root.after(25, self.pump)
+        try:
+            for _ in range(8):
+                try: kind, data = self.events.get_nowait()
+                except queue.Empty: break
+                try:
+                    if kind == 'state': self.show_state(data)
+                    elif kind == 'ping': self.show_ping(data)
+                    elif kind == 'command':
+                        self.message.set(data.get('text') or data.get('answer') or '적용되었습니다')
+                    elif kind == 'eval': self._set_text(self.eval_text, pretty(data.get('eval', data)))
+                    elif kind == 'measure_record': self._set_text(self.measure_text, pretty(data))
+                    elif kind == 'detail': self._set_text(self.detail_text, pretty(data))
+                    elif kind == 'error':
+                        self.status.set('Orange Pi 연결 대기 중')
+                        self.message.set(data[:160])
+                        self.connected = False
+                except Exception as exc:
+                    self.message.set(f'화면 갱신 오류 ({kind}): {exc}')
+            with self.frame_lock:
+                frame = self.frame_slot
+                self.frame_slot = None
+            if frame is not None:
+                self.show_frame(*frame)
+        finally:
+            if not self.stop.is_set(): self.root.after(25, self.pump)
 
     def show_frame(self, header, jpeg):
         try:
@@ -662,8 +680,8 @@ class App:
         if not 0 <= x <= 1 or not 0 <= y <= 1: return
         token = self.frame_token
         def work():
-            try: self.events.put(('command', self.link.click(token, x, y)), timeout=1)
-            except Exception as exc: self.events.put(('error', str(exc)), timeout=1)
+            try: self._emit('command', self.link.click(token, x, y))
+            except Exception as exc: self._emit('error', str(exc))
         self.controls.submit(work)
 
     def show_ping(self, data):
@@ -833,14 +851,26 @@ class App:
         if self.stop.is_set():
             return
         self.stop.set()
+        self.status.set('짐벌 정지 및 연결 종료 중…')
+        self.close_done = threading.Event()
+        self.controls.shutdown(wait=False, cancel_futures=True)
+        self.workers.shutdown(wait=False, cancel_futures=True)
+        threading.Thread(target=self._finish_close, daemon=True).start()
+        self.root.after(50, self._poll_close)
+
+    def _finish_close(self):
+        # A queued movement must finish before the final stop command. Keep
+        # socket timeouts and thread joining away from Tk's event loop.
         self.controls.shutdown(wait=True, cancel_futures=True)
         try: self.link.post('/gimbal/stop')
         except Exception: pass
-        self.workers.shutdown(wait=False, cancel_futures=True)
-        if self.on_close:
-            self.on_close()
+        self.close_done.set()
+
+    def _poll_close(self):
+        if self.close_done.is_set():
+            (self.on_close or self.root.destroy)()
         else:
-            self.root.destroy()
+            self.root.after(50, self._poll_close)
 
 
 def main():
