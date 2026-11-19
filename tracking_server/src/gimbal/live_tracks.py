@@ -14,6 +14,7 @@ from ..common.state import APP
 from ..track.stabilizer import stab_people_real
 from . import bounded_seek, follow_guard, predictive_lead, search_follow
 from .gimbal_link import reset_lead, without_lead
+from .reentry_tilt import ReentryTilt, limit_downward
 
 
 def current_source():
@@ -50,6 +51,7 @@ def _boundary_locked(gb, source):
     gb.people_t = 0.0
     gb.selection_reset = True
     gb.lead_pending = 0
+    gb.reentry_tilt = None
     reset_lead()
     gb.wcond.notify()
 
@@ -561,7 +563,7 @@ def _guard_locked(gb, selected, frame_t, correction=None):
     return (selected if d['mask'] else 0), (d['pred'] if on_coast else None)
 
 
-def _search_velocity_locked(gb, selected, real, rows, frame_t, correction):
+def _search_velocity_locked(gb, selected, real, rows, frame_t, correction, tilt_hold=False):
     """11-15: ' VEL <id> <vx> <vy>' for a bridge that said SEARCH_CONTROL 1: the followed person's velocity against the
     background (picture px/s) from the predictive-control estimator (predictive_lead.estimate, the same one LEAD uses; when
     LEAD is on its own sample of this frame is reused). The bridge uses it only to keep turning where the person should be
@@ -582,9 +584,12 @@ def _search_velocity_locked(gb, selected, real, rows, frame_t, correction):
                                          correction=correction)
         predictive_lead.LAST['why'] = why   # the lead counters stay those of the lead path
         gb.search_lv = lv
-    if lv is None or lv.time != frame_t or not (math.isfinite(lv.vx) and math.isfinite(lv.vy)) or (lv.vx == 0 and lv.vy == 0):
+    if lv is None or lv.time != frame_t or not (math.isfinite(lv.vx) and math.isfinite(lv.vy)):
         return ''
-    return ' VEL %d %.1f %.1f' % (selected, lv.vx, lv.vy)
+    vy = min(0., lv.vy) if tilt_hold else lv.vy
+    if lv.vx == 0 and vy == 0:
+        return ''
+    return ' VEL %d %.1f %.1f' % (selected, lv.vx, vy)
 
 
 def _record_click_owners(gb, raw_owners, namespace):
@@ -644,8 +649,28 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         hidden, pred = _guard_locked(gb, selected, frame_t, correction)   # 11-15: bridge --coast 1 or LWIR_FOLLOW_GUARD=1 only
         real = stab_people_real([p for p in gb.people if not hidden or int(p[0]) != hidden], correction,
                                 float(APP.LIVE_W), float(APP.LIVE_H))
-        rows = [' %d %.1f %.1f %.1f %.1f %.3f' %
-                (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real]
+        aim_y = _bridge_aim_y(gb)
+        aim_screen = _bridge_aim_screen_y(gb) * APP.LIVE_H
+        tilt_hold = False
+        if APP.CTL['lead'] and selected and gb.state.get('auto') and aim_y is not None:
+            tilt = getattr(gb, 'reentry_tilt', None)
+            if tilt is None or tilt.selected != selected:
+                tilt = gb.reentry_tilt = ReentryTilt(selected)
+            seen = [follow_guard.cwh(person) for person in real if person[0] == selected]
+            raw_correction = (0., 0.) if correction is None else correction
+            tilt_hold = tilt.step(frame_t, seen[0] if len(seen) == 1 else None, raw_correction, _motion)
+        else:
+            gb.reentry_tilt = None
+        gb.state['reentry_tilt_hold'] = tilt_hold
+        observed_rows = [' %d %.1f %.1f %.1f %.1f %.3f' %
+                         (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real]
+        rows = observed_rows
+        if tilt_hold:
+            rows = observed_rows.copy()
+            for index, person in enumerate(real):
+                if person[0] == selected:
+                    x1, y1, x2, y2 = limit_downward(person[1:5], aim_y, aim_screen)
+                    rows[index] = ' %d %.1f %.1f %.1f %.1f %.3f' % (selected, x1, y1, x2-x1, y2-y1, person[5])
         text = ''.join(rows)
         if marked:
             text += ' OBS %d' % bool(healthy)  # Before LEAD: without_lead must preserve this.
@@ -657,16 +682,18 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         if (APP.CTL['lead'] and getattr(gb, 'lead_control_supported', False) and epoch is not None
                 and not getattr(gb, 'lead_pending', 0) and gb.state.get('auto')
                 and not gb.state.get('lost') and not gb.state.get('error')):
-            matches = [row for person, row in zip(real, rows) if person[0] == selected]
+            matches = [row for person, row in zip(real, observed_rows) if person[0] == selected]
             observed = None
             if len(matches) == 1:
-                # Use the clipped, rounded observation that the controller reads.
+                # Estimate motion from the actual observation before the tilt limit.
                 x, y, w, h = map(float, matches[0].split()[1:5])
                 observed = (selected, x, y, x + w, y + h)
             previous = APP.CTL['lv']
             sample, (dx, dy) = predictive_lead.estimate(
                 previous, selected, observed, frame_t, APP.CTL.get('lead_motion'), APP.CTL['lead_ms'],
-                aim_y=_bridge_aim_y(gb), correction=correction)
+                aim_y=aim_y, correction=correction)
+            if tilt_hold:
+                dy = 0.
             # A settings request can reset the sample while NumPy is running.
             st_ = APP.CTL.setdefault('lead_stats', {}); w_ = predictive_lead.LAST.get('why') or '?'
             if w_ == 'sent' and not math.hypot(dx, dy): w_ = 'zero'
@@ -690,21 +717,25 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                                                        float(APP.LIVE_H), .5 if aim is None else aim,
                                                        _bridge_aim_screen_y(gb))
                     q = (selected, cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2)
-                pr = ' PRED %d %.1f %.1f %.1f %.1f' % (selected, q[1], q[2], q[3] - q[1], q[4] - q[2])
+                x1, y1, x2, y2 = limit_downward(q[1:5], aim_y, aim_screen) if tilt_hold else q[1:5]
+                pr = ' PRED %d %.1f %.1f %.1f %.1f' % (selected, x1, y1, x2 - x1, y2 - y1)
                 text = text.replace(' LEAD ', pr + ' LEAD ', 1) if ' LEAD ' in text else text + pr
         seek = getattr(gb, 'seek_out', None)
         if gb.seek_raw is not None:
             sx, sy, sw, sh = gb.seek_raw
-            sk = ' SEEK %d %.1f %.1f %.1f %.1f' % (selected, sx, sy, sw, sh)
-            text = text.replace(' LEAD ', sk + ' LEAD ', 1) if ' LEAD ' in text else text + sk
+            # This seek is single-axis. Keep horizontal and upward steps.
+            if not tilt_hold or sy + aim_y * sh <= aim_screen + .05:
+                sk = ' SEEK %d %.1f %.1f %.1f %.1f' % (selected, sx, sy, sw, sh)
+                text = text.replace(' LEAD ', sk + ' LEAD ', 1) if ' LEAD ' in text else text + sk
         if seek is not None:   # 11-16: where to look while the person stays lost, for the bridge's --seek 1 (like PRED)
             cx, cy, w, h = seek
             q = stab_people_real([(selected, cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2., 1.0)], correction,
                                  float(APP.LIVE_W), float(APP.LIVE_H))[0]
             if all(map(math.isfinite, q[1:5])):
-                sk_ = ' SEEK %d %.1f %.1f %.1f %.1f' % (selected, q[1], q[2], q[3] - q[1], q[4] - q[2])
+                x1, y1, x2, y2 = limit_downward(q[1:5], aim_y, aim_screen) if tilt_hold else q[1:5]
+                sk_ = ' SEEK %d %.1f %.1f %.1f %.1f' % (selected, x1, y1, x2 - x1, y2 - y1)
                 text = text.replace(' LEAD ', sk_ + ' LEAD ', 1) if ' LEAD ' in text else text + sk_
-        vel = _search_velocity_locked(gb, selected, real, rows, frame_t, correction)
+        vel = _search_velocity_locked(gb, selected, real, observed_rows, frame_t, correction, tilt_hold)
         if vel:   # before LEAD: without_lead() cuts from LEAD to the end of the line
             text = text.replace(' LEAD ', vel + ' LEAD ', 1) if ' LEAD ' in text else text + vel
         # 11-15 (latency audit finding 3): the 614 KB picture goes to the bridge only while a PC GUI is connected

@@ -230,6 +230,8 @@ class PublishFixture(unittest.TestCase):
     def setUp(self):
         self.saved = APP.__dict__.copy()
         APP.tracker = object()
+        APP.relabeler = None
+        APP.RULES = {}
         APP.LIVE = NS(camera_bytetrack=None)
         APP.LIVE_W, APP.LIVE_H = 640, 480
         APP.CTL = dict(lv=None, lead_px=0, lead=False, lead_ms=150, lead_motion=None, motion_hist=deque(maxlen=32))
@@ -262,6 +264,60 @@ class PublishFixture(unittest.TestCase):
 
 
 class PublishTests(PublishFixture):
+    def enable_reentry_tilt(self):
+        self.frame([person(7, 300., cy=240., h=200.)], acknowledge=True)
+        gb = APP.GB
+        gb.state.update(id=7, auto=1)
+        gb.proc = NS(args=['bridge', '--aim-y', '0.5', '--aim-screen-y', '0.5'])
+        gb.lead_control_supported = True
+        gb.control_epoch = 3
+        APP.CTL['lead'] = True
+        for _ in range(5):
+            self.frame([person(7, 300., cy=240., h=200.)])
+
+    def test_abrupt_drop_holds_tilt_before_the_box_disappears_and_resumes(self):
+        self.enable_reentry_tilt()
+        partial = person(7, 318., cy=318., h=124.)
+        packet = self.frame([partial])
+        self.assertTrue(APP.GB.state['reentry_tilt_hold'])
+        self.assertEqual(APP.GB.people, [partial])
+        self.assertIn(' 7 273.0 178.0 90.0 124.0 0.900', packet)
+        self.assertEqual(float(packet.split(' LEAD 7 ')[1].split()[1]), 0.)
+        for _ in range(5):
+            self.frame([])
+        self.frame([person(7, 318., cy=240., h=200.)])
+        self.assertFalse(APP.GB.state['reentry_tilt_hold'])
+        self.assertFalse(APP.GB.state.get('lost', 0))
+
+    def test_loss_suppresses_a_downward_coast_and_seek(self):
+        self.enable_reentry_tilt()
+
+        def downward_targets(gb, *_args, **_kwargs):
+            gb.fguard = NS(upper_coast_view=None)
+            gb.seek_raw, gb.seek_out = (310., 259., 20., 20.), None
+            return 0, (355., 400., 80., 100.)
+
+        with patch.object(live_tracks, '_guard_locked', side_effect=downward_targets):
+            packet = self.frame([])
+        self.assertIn(' PRED 7 315.0 190.0 80.0 100.0', packet)
+        self.assertNotIn(' SEEK ', packet)
+
+    def test_clear_and_stable_lower_position_restores_tilt_after_short_hold(self):
+        self.enable_reentry_tilt()
+        low = person(7, 300., cy=315., h=200.)
+        self.frame([low])
+        self.assertTrue(APP.GB.state['reentry_tilt_hold'])
+        for _ in range(14):
+            packet = self.frame([low])
+        self.assertFalse(APP.GB.state['reentry_tilt_hold'])
+        self.assertIn(' 7 255.0 215.0 90.0 200.0 0.900', packet)
+
+    def test_camera_motion_alone_does_not_trigger_the_drop_guard(self):
+        self.enable_reentry_tilt()
+        tilt = APP.GB.reentry_tilt
+        with patch.object(live_tracks, '_motion', return_value=np.array([[1., 0., 0.], [0., 1., 60.]])):
+            self.assertFalse(tilt.step(self.t + DT, (300., 300., 90., 200.), (0., 0.), live_tracks._motion))
+
     def test_pred_only_while_missing_and_only_to_a_coast_bridge(self):
         self.follow()
         self.assertNotIn(' PRED ', self.frame([person(7, 330.)]))
