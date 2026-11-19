@@ -116,14 +116,14 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
     <section class="card">
       <h2>프레임 삭제</h2>
       <div class="row"><button class="danger" id="delcur">이 프레임 삭제</button><kbd style="align-self:center">X</kbd></div>
-      <div class="row" style="align-items:center"><input type="number" id="delfrom" min="1" style="width:70px"> ~ <input type="number" id="delto" min="1" style="width:70px"></div>
+      <div class="row" style="align-items:center"><span class="st">원본 번호</span><input type="number" id="delfrom" aria-label="원본 시작 프레임 번호" min="1" style="width:70px"> ~ <input type="number" id="delto" aria-label="원본 끝 프레임 번호" min="1" style="width:70px"></div>
       <div class="row"><button id="delset1">시작=현재</button><button id="delset2">끝=현재</button></div>
       <div class="row"><button class="danger" id="delrange">구간 삭제</button><button id="undelrange">구간 되살리기</button></div>
       <label class="st" style="color:var(--ink)"><input type="checkbox" id="showdel"> 삭제한 프레임도 넘기며 보기</label>
       <div class="st" id="delinfo" style="margin:6px 0">-</div>
       <div id="delruns" style="max-height:120px;overflow-y:auto"></div>
       <div class="row"><button class="danger" id="purge" style="display:none">삭제한 프레임의 영상 파일 지우기</button></div>
-      <div class="st">프레임 삭제만으로는 영상 파일이 남습니다. 삭제한 프레임은 넘길 때 건너뛰고 학습에서 뺍니다. 영상 파일까지 지우면 편집 화면에서 되살릴 수 없고, 남은 프레임 번호는 그대로입니다.</div>
+      <div class="st">프레임 삭제만으로는 영상 파일이 남습니다. 삭제한 프레임은 넘길 때 건너뛰고 학습에서 뺍니다. 영상 파일까지 지우면 편집 화면에서 되살릴 수 없고, 저장된 원본 번호는 그대로입니다.</div>
     </section>
     <section class="card keys">
       <b>단축키</b><br>
@@ -322,14 +322,19 @@ function frameNavigation(){
   return frameNavigationCache;
 }
 function visibleTarget(f,numbers){return numbers.find(n=>n>=f)??numbers.at(-1)??0;}
+function frameNumber(f,positions){
+  return $('showdel').checked||!positions.has(f)?f:positions.get(f)+1;
+}
 function refresh(){
   const {numbers,positions}=frameNavigation();
   if(!positions.has(cur)){cur=visibleTarget(cur,numbers);sel=null;cancelPart();drag=null;}
   const slider=$('slider'),slot=(positions.get(cur)??0)+1;
   slider.max=Math.max(1,numbers.length);slider.value=slot;slider.disabled=numbers.length<2;
   const count=(boxes.get(cur)||[]).length;
-  $('fno').textContent=cur?cur+'번 프레임 · '+slot+' / '+numbers.length+'장 · 박스 '+count+'개'+(removed.has(cur)?' · 삭제됨':''):(nFrames?'표시할 프레임 없음':'-');
-  slider.setAttribute('aria-valuetext',$('fno').textContent);
+  const frameInfo=$('fno'),original=$('showdel').checked;
+  frameInfo.textContent=cur?(original?'원본 '+cur+'번 프레임':slot+'번 / '+numbers.length+'장')+' · 박스 '+count+'개'+(removed.has(cur)?' · 삭제됨':''):(nFrames?'표시할 프레임 없음':'-');
+  frameInfo.title=cur?'원본 '+cur+'번 프레임':'';
+  slider.setAttribute('aria-valuetext',frameInfo.textContent);
   for(const id of ['prev','next','play','draw','copyprev','markrev','delcur'])$(id).disabled=!cur;
   const r=reviewed.has(cur);$('rev').textContent=cur?(r?'확인함':'미확인'):'-';$('rev').className='badge'+(r?' ok':'');
   const kept=numbers.filter(f=>!removed.has(f));
@@ -342,7 +347,7 @@ function refresh(){
 function idList(){
   const cnt=new Map(),first=new Map(),{positions}=frameNavigation();for(const [f,bs] of boxes)if(positions.has(f))for(const b of bs){cnt.set(b.id,(cnt.get(b.id)||0)+1);if(!first.has(b.id)||f<first.get(b.id))first.set(b.id,f);}
   const selId=sel&&(boxes.get(sel.f)||[])[sel.i]?.id;
-  $('ids').innerHTML=[...cnt.keys()].sort((a,b)=>first.get(a)-first.get(b)).map(id=>`<div class="idrow${id===selId?' sel':''}" data-id="${id}" data-f="${first.get(id)}"><span class="sw" style="background:${col(id)}"></span>${id}번<span class="n">${first.get(id)}~ · ${cnt.get(id)}개</span></div>`).join('')||'박스 없음';
+  $('ids').innerHTML=[...cnt.keys()].sort((a,b)=>first.get(a)-first.get(b)).map(id=>`<div class="idrow${id===selId?' sel':''}" data-id="${id}" data-f="${first.get(id)}"><span class="sw" style="background:${col(id)}"></span>${id}번<span class="n">${frameNumber(first.get(id),positions)}~ · ${cnt.get(id)}개</span></div>`).join('')||'박스 없음';
   for(const r of $('ids').querySelectorAll('.idrow'))r.onclick=()=>{go(+r.dataset.f);const bs=boxes.get(cur)||[];const i=bs.findIndex(b=>b.id===+r.dataset.id);sel=i>=0?{f:cur,i}:null;refresh();};
 }
 // ---------- frames with 2+ boxes ----------
@@ -354,12 +359,12 @@ function step(d){if(!cur)return false;if(!$('multi').checked){const {numbers,pos
   if(t==null){status(d>0?'마지막 겹친 프레임입니다':'첫 겹친 프레임입니다');return false;}go(t);return true;}
 function stepN(d,n){for(let k=0;k<n;k++)if(!step(d))break;}
 function multiPanel(){
-  const a=multiFrames();const runs=[];for(const f of a){const r=runs[runs.length-1];if(r&&f===r[1]+1)r[1]=f;else runs.push([f,f]);}
+  const {positions}=frameNavigation(),a=multiFrames();const runs=[];for(const f of a){const r=runs[runs.length-1];if(r&&f===r[1]+1)r[1]=f;else runs.push([f,f]);}
   const done=a.filter(f=>reviewed.has(f)).length;
   $('multiinfo').textContent=`박스 2개 이상: ${a.length}프레임, ${runs.length}구간 · 확인함 ${done}`;
   $('runs').innerHTML=runs.map(([s,e])=>{const ids=new Set();for(let f=s;f<=e;f++)for(const b of boxes.get(f)||[])ids.add(b.id);
     const ok=[...Array(e-s+1).keys()].every(k=>reviewed.has(s+k));const here=cur>=s&&cur<=e;
-    return `<div class="idrow${here?' sel':''}" data-f="${s}">${s===e?s:s+'–'+e}<span class="n">${e-s+1}장 · 번호 ${[...ids].sort((x,y)=>x-y).join(', ')}${ok?' · ✓':''}</span></div>`;}).join('')||'<div class="st">없음</div>';
+    return `<div class="idrow${here?' sel':''}" data-f="${s}">${s===e?frameNumber(s,positions):frameNumber(s,positions)+'–'+frameNumber(e,positions)}<span class="n">${e-s+1}장 · 번호 ${[...ids].sort((x,y)=>x-y).join(', ')}${ok?' · ✓':''}</span></div>`;}).join('')||'<div class="st">없음</div>';
   for(const r of $('runs').querySelectorAll('.idrow'))r.onclick=()=>{go(+r.dataset.f);};
 }
 $('multi').onchange=()=>{if($('multi').checked&&(boxes.get(cur)||[]).length<2){const a=multiFrames();const t=a.find(f=>f>=cur)??a[0];if(t)go(t);}refresh();};
@@ -424,7 +429,7 @@ function delFrames(a,b,on){if(!nFrames)return;a=Math.max(1,Math.min(nFrames,Math
   snapshot();for(let f=a;f<=b;f++){if(on)removed.add(f);else if(!purged.has(f))removed.delete(f);}
   status(`${a===b?a:a+'–'+b} 프레임 ${n}장을 ${on?'삭제했습니다':'되살렸습니다'}. 자동 저장됩니다.`);
   refresh();}
-function delRange(on){const a=+$('delfrom').value,b=+$('delto').value;if(!a||!b){status('구간의 시작과 끝 프레임 번호를 넣으세요. "시작=현재", "끝=현재" 버튼을 쓰면 편합니다.');return;}delFrames(a,b,on);}
+function delRange(on){const a=+$('delfrom').value,b=+$('delto').value;if(!a||!b){status('구간의 원본 시작과 끝 프레임 번호를 넣으세요. "시작=현재", "끝=현재" 버튼을 쓰면 편합니다.');return;}delFrames(a,b,on);}
 function markAll(){const kept=frameNavigation().numbers.filter(f=>!removed.has(f));
   if(!kept.length)return;const left=kept.filter(f=>!reviewed.has(f)).length;
   if(left<=0){if(!confirm('이미 모든 프레임이 확인됨입니다. 전체 확인 표시를 지울까요? (되돌리기 Ctrl+Z 가능)'))return;snapshot();reviewed=new Set();status('전체 확인 표시를 지웠습니다.');refresh();return;}

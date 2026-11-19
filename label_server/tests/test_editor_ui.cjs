@@ -101,7 +101,8 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
   await page.evaluate(()=>{dirty=false;localStorage.clear();});
   await page.reload();await page.waitForFunction(()=>nFrames===7&&window.LWIR_LOADED);
   assert.deepEqual(await page.evaluate(()=>[cur,...frameNavigation().numbers]),[2,2,3,5,6]);
-  await page.waitForFunction(()=>$('fno').textContent.includes('2번'));
+  await page.waitForFunction(()=>$('fno').textContent.includes('1번 / 4장'));
+  assert.equal(await page.locator('#fno').getAttribute('title'),'원본 2번 프레임');
   await page.locator('#next').click();await page.locator('#next').click();
   assert.equal(await page.evaluate(()=>cur),5);
   await page.locator('#slider').evaluate(e=>{e.value=1;e.dispatchEvent(new Event('input'));});
@@ -111,9 +112,20 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
   assert.ok(imagePaths.length&&imagePaths.every(p=>!/(000001|000004|000007)[.]png$/.test(p)));
   await page.locator('#showdel').evaluate(e=>{e.checked=true;e.dispatchEvent(new Event('change'));});
   await page.evaluate(()=>go(4));assert.equal(await page.evaluate(()=>cur),4);
+  assert.ok((await page.locator('#fno').textContent()).startsWith('원본 4번 프레임'));
   await page.locator('#showdel').evaluate(e=>{e.checked=false;e.dispatchEvent(new Event('change'));});
   assert.equal(await page.evaluate(()=>cur),5);
   await page.evaluate(()=>{removed=new Set([1,2,3,4,5,6,7]);refresh();});
+  assert.equal(await page.evaluate(()=>cur),0);
+  fixtureFrames=700;fixtureReview={reviewed:[],removed:Array.from({length:199},(_,i)=>i+1)};
+  await page.reload();await page.waitForFunction(()=>nFrames===700&&window.LWIR_LOADED);
+  assert.ok((await page.locator('#fno').textContent()).startsWith('1번 / 501장'));
+  await page.locator('#slider').evaluate(e=>{e.value=331;e.dispatchEvent(new Event('input'));});
+  assert.ok((await page.locator('#fno').textContent()).startsWith('331번 / 501장'));
+  assert.equal(await page.locator('#fno').getAttribute('title'),'원본 530번 프레임');
+  assert.equal(await page.evaluate(()=>cur),530);
+  assert.equal(await page.evaluate(()=>reviewDocument().removed.length),199);
+  await page.evaluate(()=>{removed=new Set(Array.from({length:700},(_,i)=>i+1));refresh();});
   assert.equal(await page.evaluate(()=>cur),0);assert.equal(await page.locator('#slider').isDisabled(),true);
   assert.deepEqual(errors,[]);console.log('PASS: parts geometry, person count, ID, undo, copy/review, ignore/cancel, empty/ignored source, swap/delete, '+(web?'save/race/conflict/import guard, ':'')+'desktop/mobile');
  }finally{await browser.close();}
