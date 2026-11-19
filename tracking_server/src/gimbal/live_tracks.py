@@ -12,7 +12,7 @@ import numpy as np
 from ..camera import replay_link
 from ..common.state import APP
 from ..track.stabilizer import stab_people_real
-from . import follow_guard, predictive_lead, search_follow
+from . import bounded_seek, follow_guard, predictive_lead, search_follow
 from .gimbal_link import reset_lead, without_lead
 
 
@@ -328,7 +328,8 @@ SEEK_SWITCH = dict(path=None, checked=float('-inf'), on=True, said=None)
 
 
 def seek_enabled(gb):
-    if not getattr(gb, 'seek_control_supported', False):
+    if not (getattr(gb, 'seek_control_supported', False)
+            or getattr(gb, 'bounded_seek_supported', False)):
         return False
     path = os.environ.get('LWIR_SEEK_SWITCH')
     if not path:
@@ -448,7 +449,15 @@ def coast_mode():
 GUARD_PHASES = {'track': 0, 'risk': 1, 'lost': 2, 'masked': 3}
 
 
-def _guard_locked(gb, selected, frame_t):
+def _bridge_aim_screen_y(gb):
+    value = _bridge_option(gb, '--aim-screen-y')
+    try:
+        return float(value) if value is not None else .5
+    except ValueError:
+        return .5
+
+
+def _guard_locked(gb, selected, frame_t, correction=None):
     """Called with gb.wcond held, after gb.people is set for this frame. -> (id to hide from the bridge this frame or 0,
     predicted (cx, cy, w, h) in gb.people coordinates for the PRED suffix or None). follow_guard.py; off unless the bridge
     has --coast 1, LWIR_FOLLOW_GUARD=1 or LWIR_FOLLOW_PREDICT_LOG=1 (log only). The coast part also needs the runtime
@@ -457,10 +466,16 @@ def _guard_locked(gb, selected, frame_t):
     if sw is not None:
         gb.state['coast_sw'] = sw   # read by /gimbal/people (live A/B log)
     on_guard, on_coast = guard_enabled(), coast_enabled(gb) and coast_switch()[0]
-    on_seek = seek_enabled(gb)   # 11-16
-    gb.seek_out = None
+    seek_supported = seek_enabled(gb)
+    bounded = getattr(gb, 'bounded_seek_supported', False)
+    want_bounded = os.environ.get('LWIR_COAST_BOUNDED_SEEK') == '1'
+    on_seek = seek_supported and not bounded and not want_bounded
+    gb.seek_out = gb.seek_raw = None
     if (not (on_guard or on_coast or on_seek or predict_log_enabled()) or not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0)
             or getattr(gb, 'mover', None) or getattr(gb, 'selection_reset', False) or not getattr(gb, 'people_t', 0.0)):
+        previous = getattr(gb, 'fguard', None)
+        if previous is not None and previous.bounded_seek is not None:
+            previous.bounded_seek.cancel()
         if not selected or not gb.state.get('auto'):
             gb.fguard = None
             gb.fseek = None
@@ -476,15 +491,44 @@ def _guard_locked(gb, selected, frame_t):
     d = g.step(frame_t, gb.people, _motion)
     p = d['pred'] or g.pred
     kal = _kalman_box(selected) if d['mask'] or not any(int(q[0]) == selected for q in gb.people) else None
-    if d['pred'] is not None and on_coast and coast_mode() == 'fused':
-        sy = _bridge_option(gb, '--aim-screen-y')
-        try: sy = float(sy) if sy is not None else .5
-        except ValueError: sy = .5
+    fused = on_coast and coast_mode() == 'fused'
+    if fused and on_guard and os.environ.get('LWIR_COAST_UPPER_GUARD') == '1':
+        if g.upper_coast_view is None:
+            g.upper_coast_view = follow_guard.UpperCoastView()
+        if g.trust_t == frame_t and d['phase'] == 'track' and not d['mask'] and not d['reselect']:
+            cx, cy, width, height = g.trust
+            dx, dy = correction if correction is not None else (0., 0.)
+            g.upper_coast_view.observe(frame_t, (cx - dx, cy - dy, width, height), _motion,
+                                       (float(APP.LIVE_W), float(APP.LIVE_H)))
+    else:
+        g.upper_coast_view = None
+    if d['pred'] is not None and fused:
+        sy = _bridge_aim_screen_y(gb)
         ay = _bridge_aim_y(gb)
         ay = .5 if ay is None else ay
         k = kal if kal is not None and math.hypot(kal[0] - d['pred'][0], kal[1] - d['pred'][1]) <= follow_guard.COAST_MAX_H * d['pred'][3] else None
         d['pred'] = follow_guard.keep_in_view([d['pred'], k], g.age(frame_t), (APP.LIVE_W / 2., sy * APP.LIVE_H), ay,
                                               (float(APP.LIVE_W), float(APP.LIVE_H)))
+    if seek_supported and bounded and want_bounded and g.upper_coast_view is not None:
+        if g.bounded_seek is None:
+            g.bounded_seek = bounded_seek.BoundedSeek()
+        if gb.people or d['reselect']:
+            if g.trust_t == frame_t and d['phase'] == 'track' and not d['mask'] and not d['reselect']:
+                g.bounded_seek = bounded_seek.BoundedSeek()
+            else:
+                g.bounded_seek.cancel()
+        elif not d['mask']:
+            aim = _bridge_aim_y(gb)
+            dx, dy = correction if correction is not None else (0., 0.)
+            prediction = (p[0] - dx, p[1] - dy, p[2], p[3]) if p is not None else None
+            gb.seek_raw = g.bounded_seek.step(
+                frame_t, g.upper_coast_view, _motion, (float(APP.LIVE_W), float(APP.LIVE_H)),
+                (APP.LIVE_W / 2., _bridge_aim_screen_y(gb) * APP.LIVE_H), .5 if aim is None else aim,
+                prediction=prediction)
+        else:
+            g.bounded_seek.cancel()
+        if g.bounded_seek.first is not None:
+            d['pred'] = None
     if on_seek and not d['reselect']:   # 11-16: where to look once the prediction is no longer trusted (search_follow.py)
         gb.seek_out = _seek_locked(gb, g, d, selected, frame_t, kal, on_guard, v2)
         if gb.seek_out is not None:
@@ -597,7 +641,7 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         selected = 0 if gb.selection_reset else int(gb.state.get('id', 0))
         _handoff_locked(gb, selected, frame_t)   # 11-13: LWIR_FOLLOW_HANDOFF=1 only
         _recatch_locked(gb, selected, frame_t)   # 11-15: bridge --search 1 and LWIR_SEARCH_NEW_ID=1 only
-        hidden, pred = _guard_locked(gb, selected, frame_t)   # 11-15: bridge --coast 1 or LWIR_FOLLOW_GUARD=1 only
+        hidden, pred = _guard_locked(gb, selected, frame_t, correction)   # 11-15: bridge --coast 1 or LWIR_FOLLOW_GUARD=1 only
         real = stab_people_real([p for p in gb.people if not hidden or int(p[0]) != hidden], correction,
                                 float(APP.LIVE_W), float(APP.LIVE_H))
         rows = [' %d %.1f %.1f %.1f %.1f %.3f' %
@@ -639,9 +683,20 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
             q = stab_people_real([(selected, cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2., 1.0)], correction,
                                  float(APP.LIVE_W), float(APP.LIVE_H))[0]
             if all(map(math.isfinite, q[1:5])):
+                view = gb.fguard.upper_coast_view
+                if view is not None:
+                    aim = _bridge_aim_y(gb)
+                    cx, cy, width, height = view.limit(frame_t, follow_guard.cwh(q), _motion,
+                                                       float(APP.LIVE_H), .5 if aim is None else aim,
+                                                       _bridge_aim_screen_y(gb))
+                    q = (selected, cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2)
                 pr = ' PRED %d %.1f %.1f %.1f %.1f' % (selected, q[1], q[2], q[3] - q[1], q[4] - q[2])
                 text = text.replace(' LEAD ', pr + ' LEAD ', 1) if ' LEAD ' in text else text + pr
         seek = getattr(gb, 'seek_out', None)
+        if gb.seek_raw is not None:
+            sx, sy, sw, sh = gb.seek_raw
+            sk = ' SEEK %d %.1f %.1f %.1f %.1f' % (selected, sx, sy, sw, sh)
+            text = text.replace(' LEAD ', sk + ' LEAD ', 1) if ' LEAD ' in text else text + sk
         if seek is not None:   # 11-16: where to look while the person stays lost, for the bridge's --seek 1 (like PRED)
             cx, cy, w, h = seek
             q = stab_people_real([(selected, cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2., 1.0)], correction,

@@ -21,6 +21,7 @@
 //   --coast <0|1>               follow the server's predicted place when the followed ID is missing (default 0 = off). With 1:
 //     --coast-ms (800) at most this long from the loss, only on fresh healthy frames whose PRED suffix names the followed ID;
 //     then as without it (STOP, or --search). stdout: COAST_CONTROL 1 at start (the server sends PRED only then).
+//   --bounded-seek <0|1>        use short single-axis SEEK from the server (requires capped --seek-speed and --seek-ms).
 //   --seek <0|1>                look where the server points while the followed ID stays lost (default 0 = off). With 1: a fresh healthy
 //     frame whose SEEK suffix names the followed ID is followed with the normal controller, SPD at most --seek-speed (8), every change
 //     of direction through a full STOP, for at most --seek-ms (4500) from the loss; a coast (PRED) inside --coast-ms goes first.
@@ -295,6 +296,10 @@ Options parse(int argc, char** argv)
             if (value != "0" && value != "1") throw std::invalid_argument("--seek is 0 or 1");
             s.seek = value == "1";
         }
+        else if (name == "--bounded-seek") {
+            if (value != "0" && value != "1") throw std::invalid_argument("--bounded-seek is 0 or 1");
+            s.bounded_seek = value == "1";
+        }
         else if (name == "--seek-ms") s.seek_ms = std::stoi(value);
         else if (name == "--seek-speed") s.seek_speed = std::stoi(value);
         // v27 arrival control (default on in this program; SmoothingConfig keeps the team default off)
@@ -345,6 +350,8 @@ Options parse(int argc, char** argv)
     if (s.coast && (s.coast_ms <= 0 || s.coast_ms > 3000)) throw std::invalid_argument("--coast-ms must be within 1..3000");
     if (s.seek && (s.search || s.seek_ms <= 0 || s.seek_ms > 10000 || s.seek_speed < c.automatic.speed_min || s.seek_speed > c.automatic.speed_max))
         throw std::invalid_argument("--seek: not with --search 1, --seek-ms within 1..10000, --seek-speed within --speed-min..--speed-max");
+    if (s.bounded_seek && (!s.seek || s.seek_speed > 2 || s.seek_ms > 3600))
+        throw std::invalid_argument("--bounded-seek requires --seek 1, --seek-speed <= 2, and --seek-ms <= 3600");
     if (c.gimbal.speed < 1 || c.gimbal.speed > c.gimbal.speed_limit || c.automatic.speed_max < c.automatic.speed_min || c.automatic.speed_max > c.gimbal.speed_limit)
         throw std::invalid_argument("speed outside the device range");
     if ((c.gimbal.x_sign != 1 && c.gimbal.x_sign != -1) || (c.gimbal.y_sign != 1 && c.gimbal.y_sign != -1))
@@ -688,7 +695,8 @@ int main(int argc, char** argv) try {
     if (options.smoothing.search) say("SEARCH_CONTROL 1");
     if (gui) say(std::string("GUI_PICTURE ") + (gui_picture.load() ? "1" : "0"));   // 11-15: the server sends G lines (with the picture) only while 1
     bool reported_picture = gui_picture.load();
-    if (options.smoothing.seek) say("SEEK_CONTROL 1");   // v27: the server may send SEEK <id> <x> <y> <w> <h>
+    if (options.smoothing.bounded_seek) say("BOUNDED_SEEK_CONTROL 1");
+    else if (options.smoothing.seek) say("SEEK_CONTROL 1");   // v27: the server may send SEEK <id> <x> <y> <w> <h>
     if (options.smoothing.coast) say("COAST_CONTROL 1");   // v27: the server may send PRED <id> <x> <y> <w> <h>   // v27: the tracker may re-select a re-found person (SEARCH lines follow)
     int reported_search = 0;
     std::string pending, reported;

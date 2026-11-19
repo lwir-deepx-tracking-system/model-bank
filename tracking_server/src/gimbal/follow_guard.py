@@ -92,6 +92,8 @@ class FollowGuard:
         self.partners = set()      # ids whose box overlapped ours since it was last seen alone
         self.v_known = False       # the velocity was measured on boxes without overlap
         self.mask_from_risk = False
+        self.upper_coast_view = None
+        self.bounded_seek = None
 
     def age(self, t):
         return t - self.trust_t if self.trust_t is not None else float('inf')
@@ -280,6 +282,7 @@ class FollowGuard:
     def retarget(self, new_id, c, t, people):
         """Following moved to new_id (guard re-select, or a click/handoff for a new id): keep the velocity, trust its box."""
         self.sel = int(new_id)
+        self.upper_coast_view = self.bounded_seek = None
         self.trust, self.trust_t, self.pred, self.pred_t = c, t, c, t
         self.ids_at_trust = {int(p[0]) for p in people}
         self.phase, self.cand, self.cand_n = 'track', 0, 0
@@ -316,6 +319,99 @@ def keep_in_view(estimates, age, aim, aim_frac, size=(640., 480.)):
         shift.append(a + s)
     w = est[0][2]
     return (shift[0], shift[1] - aim_frac * h + h / 2, w, h)
+
+
+
+class UpperCoastView:
+    """Keep a last trusted box top and recent descent evidence in raw camera pixels."""
+
+    def __init__(self):
+        self.anchor = None
+        self.down_steps = 0
+        self.descent_t = None
+        self.direction = self.direction_at = None
+        self.motion_step = None
+
+    def observe(self, t, estimate, motion, size):
+        cx, cy, width, height = estimate
+        frame_w, frame_h = size
+        if not all(map(math.isfinite, estimate)) or min(width, height) <= 0:
+            self.down_steps = 0
+            return
+        if not (0 < cx - width / 2 and cx + width / 2 < frame_w
+                and 0 < cy - height / 2 and cy + height / 2 < frame_h):
+            self.down_steps = 0
+            return
+        previous = self.anchor
+        if previous is None or t - previous[0] > COAST_S:
+            self.anchor = t, estimate
+            self.down_steps = 0
+            self.descent_t = None
+            self.direction = self.direction_at = self.motion_step = None
+            return
+
+        previous_t, (old_x, old_y, _, old_h) = previous
+        dt = t - previous_t
+        if dt <= 0:
+            return
+        warp = motion(previous_t, t)
+        if warp is None:
+            self.down_steps = 0
+            return
+        expected_h = old_h * warp_scale(warp)
+        if not 0.75 * expected_h <= height <= 1.25 * expected_h:
+            self.down_steps = 0
+            return
+        _, old_top = warp_point(warp, old_x, old_y - old_h / 2)
+        moved_x, old_centre = warp_point(warp, old_x, old_y)
+        top_change = cy - height / 2 - old_top
+        dy = cy - old_centre
+        if dy * top_change > 0:
+            dy = math.copysign(min(abs(dy), abs(top_change)), dy)
+        else:
+            dy = 0.
+        dx = cx - moved_x
+        axis, distance = max(enumerate((dx, dy)), key=lambda step: abs(step[1]))
+        inferred = (axis, 1 if distance > 0 else -1) if abs(distance) >= max(1., .015 * height) and dt <= MAX_DT else None
+        self.direction = inferred if inferred == self.motion_step else None
+        self.direction_at = t if self.direction is not None else None
+        self.motion_step = inferred
+        least_descent = max(1., .015 * height)
+        if (dt <= MAX_DT and cy - height / 2 - old_top >= least_descent
+                and cy - old_centre >= least_descent):
+            self.down_steps += 1
+            if self.down_steps >= 2:
+                self.descent_t = t
+        else:
+            self.down_steps = 0
+            self.descent_t = None
+        self.anchor = t, estimate
+
+    def limit(self, t, prediction, motion, image_height, aim_fraction, aim_screen):
+        """Limit only ambiguous downward aim; preserve the pan and box size."""
+        if self.anchor is None:
+            return prediction
+        anchor_t, (anchor_x, anchor_y, _, anchor_h) = self.anchor
+        if not 0 < t - anchor_t <= COAST_S:
+            return prediction
+        if self.descent_t is not None and t - self.descent_t <= MAX_DT:
+            return prediction
+        cx, cy, width, height = prediction
+        aim_y = cy + (aim_fraction - .5) * height
+        requested = aim_y - aim_screen * image_height
+        if requested <= 0:
+            return prediction
+        warp = motion(anchor_t, t)
+        if warp is None:
+            return prediction
+        _, top = warp_point(warp, anchor_x, anchor_y - anchor_h / 2)
+        if not math.isfinite(top) or top >= image_height:
+            return prediction
+        room = max(0., top - KIV_MARGIN * image_height)
+        if requested <= room:
+            return prediction
+        return (cx, cy - (requested - room), width, height)
+
 
 
 # 11-15 GUARD v2 (LWIR_FOLLOW_GUARD=2): distractor-aware hand-back (KeepTrack / LTMU / DAM4SAM / Siam R-CNN style, see the
