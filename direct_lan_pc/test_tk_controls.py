@@ -144,6 +144,14 @@ class TkControlTests(unittest.TestCase):
         self.link.post.assert_called_once_with('/gimbal/stop', None)
         self.assertEqual(self.app.events.qsize(), self.app.events.maxsize)
 
+    def test_recording_bit_depth_label_keeps_original_replay_name(self):
+        self.app.replay_ids = ['측정/day/original']
+        self.app.replay_names = ['16비트 원본 · 측정/day/original']
+        self.app.replay_var.set(self.app.replay_names[0])
+        self.app.start_replay()
+        route = self.link.post.call_args.args[0]
+        self.assertIn('seq=%EC%B8%A1%EC%A0%95%2Fday%2Foriginal', route)
+
 
 if __name__ == '__main__':
     unittest.main()

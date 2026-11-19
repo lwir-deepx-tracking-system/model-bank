@@ -34,6 +34,7 @@ class App:
         self.root, self.link = root, link
         self.on_close = on_close
         self.stop = threading.Event()
+        self.refresh_replay = threading.Event()
         self.events = queue.Queue(maxsize=12)
         self.frame_lock = threading.Lock()
         self.frame_slot = None
@@ -55,6 +56,7 @@ class App:
         self.overlay_time = None
         self.quality_mode = 'default'
         self.replay_names = []
+        self.replay_ids = []
         self.seek_dragging = False
         self.model_ids = []
         self.reid_keys = []
@@ -329,7 +331,7 @@ class App:
         self.eval_text = self._text(box, 14)
 
     def _measure_tab(self):
-        p = self._tab('측정')
+        p = self._tab('녹화 · 측정')
         box = self._section(p, '실시간 측정 · 16비트 영상')
         self.measure_name = self._entry(box, '이름')
         self.measure_memo = self._entry(box, '메모')
@@ -343,6 +345,8 @@ class App:
                     body={'memo': self.measure_memo.get()})).pack(side='left', padx=3)
         self.measure_status = tk.StringVar(value='측정 대기 중')
         ttk.Label(box, textvariable=self.measure_status, wraplength=440).pack(anchor='w')
+        self.recording_status = tk.StringVar(value='영상 저장을 선택하고 측정을 시작하면 16비트 원본을 녹화합니다.')
+        ttk.Label(box, textvariable=self.recording_status, wraplength=440).pack(anchor='w', pady=3)
         box = self._section(p, '결과 · 지난 측정')
         self.measure_history_var, self.measure_history_box = self._combo(
             box, '지난 측정', [], self.show_measure_record)
@@ -388,6 +392,8 @@ class App:
             try:
                 result = self.link.post(path, body)
                 self._emit('command', result)
+                if path == '/measure/stop':
+                    self.refresh_replay.set()
             except Exception as exc:
                 self._emit('error', str(exc))
         self.controls.submit(work)
@@ -429,7 +435,10 @@ class App:
 
     def start_replay(self):
         self.eval_override = False
-        self.command('/replay/start', seq=self.replay_var.get(), fps=self.fps_var.get(),
+        chosen = self.replay_var.get()
+        try: chosen = self.replay_ids[self.replay_names.index(chosen)]
+        except (ValueError, IndexError): pass
+        self.command('/replay/start', seq=chosen, fps=self.fps_var.get(),
                      loop=int(self.loop_var.get()), backend=self.backend_var.get() or 'python')
 
     def seek(self):
@@ -505,10 +514,11 @@ class App:
                 start = time.time()
                 clock = self.link.get('/time')
                 end = time.time()
-                data = {name: self.link.get(path) for name, path in
+                data = {name: self.link.get('/replay?refresh=1' if name == 'replay' and self.refresh_replay.is_set() else path) for name, path in
                         [('rules', '/rules'), ('model', '/model'), ('replay', '/replay'),
                          ('measure', '/measure'), ('perf', '/perf'),
                          ('health', '/healthz'), ('people', '/gimbal/people')]}
+                self.refresh_replay.clear()
                 data['_clock'] = (end - start, clock.get('t', end) - (start + end) / 2)
                 self._emit('state', data)
             except Exception as exc:
@@ -772,9 +782,13 @@ class App:
         if mode in self.feed_box['values']: self.feed_var.set(mode)
         self.feed_label.set(pretty(feed)[:700])
         items = [it for it in rp.get('list', []) if it.get('usable')]
-        self.replay_names = [it['name'] for it in items]
+        self.replay_ids = [it['name'] for it in items]
+        self.replay_names = [
+            ('16비트 원본 · ' if it.get('bits') == 16 else '8비트 영상 · ' if it.get('bits') == 8 else '')
+            + it['name'] for it in items]
         self.replay_box['values'] = self.replay_names
-        if not self.replay_var.get() and self.replay_names: self.replay_var.set(self.replay_names[0])
+        if self.replay_var.get() not in self.replay_names and self.replay_names:
+            self.replay_var.set(self.replay_names[0])
         backends = [b for b in rp.get('backends', []) if not b.get('stored')]
         backend_ids = [b['id'] for b in backends]
         self.backend_box['values'] = backend_ids
@@ -794,6 +808,24 @@ class App:
         if not self.eval_override:
             self._set_text(self.eval_text, pretty(rp.get('eval') or rp.get('eval_last') or {}))
         self.measure_status.set(f"{'측정 중' if ms.get('on') else '측정 대기'} · {ms.get('frames', 0)}장 · {ms.get('seconds', 0):.1f}초")
+        if ms.get('on'):
+            if ms.get('video_frames') is not None:
+                self.recording_status.set(f"16비트 영상 녹화 중 · 저장 {ms.get('video_frames', 0)}장"
+                                          + (f" · 놓침 {ms['video_dropped']}장" if ms.get('video_dropped') else ''))
+            else:
+                self.recording_status.set('측정 중 · 영상 저장은 선택하지 않았습니다')
+        elif ms.get('last'):
+            latest = ms['last']
+            video = latest.get('video') or {}
+            folder = latest.get('folder') or latest.get('file') or ''
+            self.recording_status.set(
+                (f"최근 저장: 16비트 원본 {video.get('frames', 0)}장 · "
+                 f"{video.get('file', 'frames.raw.gz')}" if video else '최근 측정: 영상 저장 안 함')
+                + (f"\nOrange Pi 저장 위치: {folder}" if folder else '')
+                + '\n저장한 영상은 「녹화 재생」 탭에서도 선택할 수 있습니다.')
+        else:
+            self.recording_status.set('영상 저장을 선택하고 측정을 시작하면 16비트 원본을 녹화합니다. '
+                                      '이전 녹화는 「녹화 재생」 탭에서 찾으세요.')
         history = ms.get('history') or []
         self.measure_ids = [item['n'] for item in history]
         self.measure_history_box['values'] = [f"{item['n']}회 · {item.get('name') or '이름 없음'} · {item.get('frames', 0)}장" for item in history]
