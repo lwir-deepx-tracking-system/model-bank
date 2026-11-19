@@ -188,7 +188,7 @@ def finish_session(board, user, password=None, remote_root=''):
     try:
         root = find_root(client, remote_root)
         command = 'python3 ' + session_script(root) + ' finish'
-        code, out, error = remote_command(client, command, timeout=170)
+        code, out, error = remote_command(client, command, timeout=260)
         if code:
             raise StartupError('기존 서버 복구 실패: ' + error)
         return out
@@ -225,7 +225,9 @@ def launch_failure(client, root, pid):
     if code == 0:
         return ''
     log_q = shlex.quote(root + '/tracking_server/direct_lan_launch.out')
-    _, out, _ = remote_command(client, 'tail -n 12 ' + log_q + ' 2>/dev/null')
+    tracker_q = shlex.quote(root + '/tracking_server/real_gui_1.out')
+    _, out, _ = remote_command(client, 'tail -n 12 ' + tracker_q + ' 2>/dev/null; '
+                               'tail -n 12 ' + log_q + ' 2>/dev/null')
     return out or 'Orange Pi 직결 실행이 바로 종료되었습니다'
 
 

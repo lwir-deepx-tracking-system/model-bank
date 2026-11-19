@@ -17,4 +17,4 @@ else
     ipv4.method manual ipv4.addresses "$ADDRESS" ipv4.never-default yes \
     ipv6.method disabled connection.autoconnect yes
 fi
-echo "Prepared $PROFILE on $IFACE with $ADDRESS; it will activate when the cable has link."
+echo "Prepared $PROFILE on $IFACE with $ADDRESS. Verify the active interface has this address; another NetworkManager profile may own the cable."

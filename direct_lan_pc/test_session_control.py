@@ -42,8 +42,10 @@ class SessionTests(unittest.TestCase):
                  patch.object(session, 'direct_running', return_value=False), \
                  patch.object(session, 'web_running', return_value=False), \
                  patch.object(session, 'web_healthy', return_value=True), \
+                 patch.object(session, 'wait_npu_idle') as wait_npu, \
                  patch.object(session.subprocess, 'Popen') as launch:
                 session.restore_web(str(base), marker_created=False)
+                wait_npu.assert_called_once_with()
                 self.assertEqual(Path(launch.call_args.kwargs['cwd']), base / 'tracking_server')
                 self.assertTrue(pause.exists())
 

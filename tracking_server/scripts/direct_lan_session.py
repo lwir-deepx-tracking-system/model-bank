@@ -158,6 +158,20 @@ def record(root, pid, web_root, marker_created):
     os.replace(temp, STATE)
 
 
+def wait_npu_idle(timeout=60):
+    """A stopped tracker may leave DXRT allocated briefly after its PID exits."""
+    import dx_engine
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status = dx_engine.DeviceStatus.get_current_status(0)
+        if status.get_memory_used() < 1024**2 and all(
+                status.get_core_utilization(core) < 1 for core in range(3)):
+            return
+        time.sleep(.5)
+    raise RuntimeError('기존 서버 복구 전 NPU가 60초 안에 비워지지 않았습니다')
+
+
 def restore_web(web_root, marker_created):
     if direct_running():
         raise RuntimeError('직결 추적 프로그램이 아직 실행 중이라 기존 서버를 시작하지 않습니다')
@@ -165,6 +179,7 @@ def restore_web(web_root, marker_created):
         base = Path(web_root) / 'tracking_server'
         if not (base / 'scripts/run_real_gui.sh').is_file():
             raise RuntimeError('기존 서버 실행 파일이 없어 복구하지 못했습니다')
+        wait_npu_idle()
         with open(base / 'direct_lan_restore.out', 'ab', buffering=0) as output:
             subprocess.Popen(['bash', 'scripts/run_real_gui.sh'], cwd=base,
                              stdin=subprocess.DEVNULL, stdout=output,

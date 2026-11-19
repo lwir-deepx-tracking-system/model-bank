@@ -61,6 +61,26 @@ flock -n 9 || { echo "tracker launcher busy"; exit 4; }
 # 서버가 이미 떠 있으면 시작하지 않는다. 옛 이름(lwir_tracker_m1.py)으로 떠 있는 서버도 같은 NPU·카메라·짐벌을 쓰므로 함께 본다.
 pgrep -f 'python3 -B ([s]tart_tracking_server|[l]wir_tracker_m1)\.py' > /dev/null && { echo "NPU busy"; exit 4; }
 fuser "$GIMBAL_DEV" > /dev/null 2>&1 && { echo "gimbal busy"; exit 5; }
+if [ "$MODE" = direct ]; then
+  # The previous web process can exit before DXRT releases its NPU allocation.
+  # Wait for that release before the new Python process checks device status.
+  if ! timeout 90s python3 -B - <<'PYTHON'
+import time
+import dx_engine
+
+deadline = time.monotonic() + 85
+while time.monotonic() < deadline:
+    status = dx_engine.DeviceStatus.get_current_status(0)
+    if status.get_memory_used() < 1024**2 and all(status.get_core_utilization(core) < 1 for core in range(3)):
+        raise SystemExit(0)
+    time.sleep(0.5)
+raise SystemExit('NPU did not become idle within 85 seconds')
+PYTHON
+  then
+    echo "direct start stopped: NPU did not become idle" >&2
+    exit 6
+  fi
+fi
 echo "START $(date +%T) $mode_label gimbal=$GIMBAL_DEV speed_max=$SPEED_MAX reacquire_ms=$REACQUIRE_MS confirm_ms=$CONFIRM_MS"
 export LWIR_REAL_GUI_LAUNCH=1
 tracker_args=(
