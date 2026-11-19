@@ -136,6 +136,7 @@ def status():
     feed = state.get('FEED')
     result = dict(requested=mode, mode='normal', pending=False, active=False, tile_active=False,
                   tile_available=False, tile_reason=None, cores=[0, 0],
+                  tile_backend=None, tile_validation_frames=0, tile_native_error=None,
                   submitted=0, taken=0, order_errors=0, reason=state.get('FEED_REASON'))
     if feed is not None:
         with live.cond:
@@ -144,12 +145,17 @@ def status():
                 reason = '교대 검출 중 오류가 발생했습니다'
             elif feed.paused:
                 reason = '검출 모델을 바꾸고 있습니다'
+            tile = getattr(feed, 'tile_engine', None)
+            backend = getattr(tile, 'b', None)
             result.update(requested=feed.pending or APP.FEED_MODE, mode=feed.mode, pending=feed.pending is not None,
                           active=(feed.mode == 'arrival' and len(feed.eng) == 2 and not feed.paused
                                   and not feed.direct and not feed.closed and feed.err is None),
                           tile_active=(feed.mode == 'tile' and not feed.paused and not feed.direct and not feed.closed and feed.err is None),
-                          tile_available=bool(getattr(feed, 'tile_engine', None) and dual_tile.selected()),
+                          tile_available=bool(tile and dual_tile.selected()),
                           tile_reason=getattr(feed, 'tile_error', None),
+                          tile_backend=('cpp' if getattr(backend, 'using_native', False) else 'python') if backend is not None else None,
+                          tile_validation_frames=getattr(backend, 'native_checks', 0),
+                          tile_native_error=getattr(backend, 'native_error', None),
                           cores=list(feed.st['core']), submitted=feed.st['submitted'], taken=feed.st['taken'],
                           order_errors=feed.st['order_bad'], reason=reason)
             m_ = feed.mon   # 11-16: measured service time, deadline misses, automatic switches. Not after the feed turned itself off (nothing is measured then)
@@ -590,6 +596,9 @@ class Feed:
         if keep_:
             # The next input may reuse the engine's output buffer.
             output = [np.array(value, copy=True) if np.may_share_memory(value, e_.packed) else value for value in output]
+        profile = getattr(getattr(e_, 'b', None), 'profile', None)
+        if profile is not None and profile.completed is not None:
+            profile.finish_frame(r_.job, r_.t, done, time.perf_counter_ns())
         return output, started, done
 
     def _collect(self, r_, keep_):

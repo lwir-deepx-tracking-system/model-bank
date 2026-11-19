@@ -1,6 +1,8 @@
 __pycache__/
 # scripts/setup.sh 가 만드는 것 (빌드한 프로그램, 내부 이름 -> 모델 파일 링크)
 src/detect/post.so
+src/detect/liblwir_split_sdk.so
+src/detect/liblwir_split_sdk.so.*
 src/camera/cam_pipe
 src/gimbal/gimbal_bridge_v25
 models/links/

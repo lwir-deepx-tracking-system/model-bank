@@ -5,12 +5,16 @@ uses the ordinary tracker and KeepID downstream. It never changes the default
 detector or substitutes a different model when the verified asset is absent.
 """
 import ctypes as c
+import os
 from pathlib import Path
+import time
 
 import numpy as np
 
 from ..common.shared_values import HERE, sha
 from ..common.state import APP
+from .split_native import NativeTiles
+from .tile_job_profile import TileJobProfile
 
 
 KEY = 'yolo26m_pose_ft16v8_aug_e10_bodybox_provisional_kpt_640x480'
@@ -18,6 +22,8 @@ SOURCE_SHA = '220331cc79e4da0d3ba8909965d84474386fa93f4c03c5e7471cf260d8541df1'
 MODEL_SHA = '47fd961044bf18fdc3e5b8a90d74e499699a05ae2a114629cd9ee9751820e4a9'
 MODEL = HERE / 'models' / 'optimized' / 'E10_KPT_480x384.dxnn'
 TONE = HERE / 'src' / 'detect' / 'tone_map.so'
+NATIVE_SPLIT = HERE / 'src' / 'detect' / 'liblwir_split_sdk.so'
+NATIVE_CHECK_FRAMES = 4
 H, W, TW, RIGHT = 480, 640, 384, 256
 STRIDES = (8, 16, 32)
 N = sum((H // s) * (TW // s) for s in STRIDES)
@@ -73,24 +79,39 @@ class Tone:
 
 
 class PairBackend:
-    def __init__(self):
+    def __init__(self, model):
         self.engines, self.buffers, self.names = [], [], None
+        self.model = model
+        self.native = None
+        self.native_checks = 0
+        self.native_error = None
+        self.native_allowed = (vars(APP).get('LIVE') is not None and NATIVE_SPLIT.is_file()
+                               and os.environ.get('LWIR_CPP_SPLIT', '1') == '1')
+        self.profile = TileJobProfile(APP.out, APP.dx) if vars(APP).get('LIVE') is not None else None
+        self.profile_pending = None
         self.inputs = [np.empty((1, H, TW, 3), np.uint8) for _ in range(2)]
         self.shapes = {}
         for stride, box, cls, pose in zip(STRIDES, BOXES, CLASSES, POSES):
             h, w = H // stride, TW // stride
             self.shapes.update({box: (1, 4, h, w), cls: (1, 1, h, w), pose: (1, h, w, 51)})
+        cfg = APP.dx.Configuration()
+        if cfg.get_enable(cfg.ITEM.NFH_ACCELERATION):
+            raise RuntimeError('dual tile requires NFH acceleration disabled')
+        self.open_python()
+
+    @property
+    def using_native(self):
+        return self.native is not None and self.native_checks >= NATIVE_CHECK_FRAMES
+
+    def open_python(self):
         try:
-            cfg = APP.dx.Configuration()
-            if cfg.get_enable(cfg.ITEM.NFH_ACCELERATION):
-                raise RuntimeError('dual tile requires NFH acceleration disabled')
             for core in (0, 1):
                 opt = APP.dx.InferenceOption()
                 opt.devices = [0]
                 opt.bound_option = getattr(opt.BOUND_OPTION, f'NPU_{core}')
                 opt.use_ort = False
                 opt.buffer_count = 1
-                engine = APP.dx.InferenceEngine(str(MODEL), opt)
+                engine = APP.dx.InferenceEngine(str(self.model), opt)
                 self.engines.append(engine)
                 inputs = engine.get_input_tensors_info()
                 if len(inputs) != 1 or tuple(inputs[0]['shape']) != (1, H, TW, 3) or np.dtype(inputs[0]['dtype']) != np.uint8:
@@ -104,18 +125,86 @@ class PairBackend:
                 self.names = names
                 self.buffers.append(np.empty(sum(sizes)//4, np.float32))
         except BaseException:
-            self.dispose()
+            self.close_python()
             raise
+
+    def close_python(self):
+        for engine in self.engines:
+            try:
+                engine.dispose()
+            except Exception:
+                pass
+        self.engines.clear()
+        self.buffers.clear()
+
+    def disable_native(self, error):
+        if self.native is not None:
+            self.native.close()
+            self.native = None
+        self.native_allowed = False
+        self.native_error = str(error)[:180]
+        print(f"NATIVE_SPLIT fallback to Python SDK: {self.native_error}", flush=True)
+        if not self.engines:
+            self.open_python()
+
+    def check_native(self, original):
+        # Compare the two SDK paths sequentially on the same live frame.
+        # The existing result is published during this bounded verification.
+        try:
+            if self.native is None:
+                self.native = NativeTiles(NATIVE_SPLIT, self.model, (1, H, TW, 3), self.shapes)
+            jobs = self.native.submit(self.inputs)
+            candidate = self.native.wait(jobs, self.names)
+            for core, (before, after) in enumerate(zip(original, candidate, strict=True)):
+                for name, a, b in zip(self.names, before, after, strict=True):
+                    if not np.array_equal(np.asarray(a).view(np.uint32), b.view(np.uint32)):
+                        raise ValueError(f"raw tensor differs at core {core}, {name}")
+            self.native_checks += 1
+        except Exception as error:
+            self.disable_native(error)
+            return
+        if self.using_native:
+            self.close_python()
+            print(f"NATIVE_SPLIT active: {self.native_checks} live frames matched all 18 tensors, "
+                  f"{self.model.name}", flush=True)
 
     def run_async(self, gray, user_arg=None, output_buffer=None):
         if gray.dtype != np.uint8 or gray.shape != (H, W):
             raise ValueError(f'unexpected dual-tile input: {gray.shape}/{gray.dtype}')
+        trace = self.profile.begin((user_arg or {}).get('f')) if self.profile is not None else None
         APP.cv2.cvtColor(gray[:, :TW], APP.cv2.COLOR_GRAY2RGB, dst=self.inputs[0][0])
         APP.cv2.cvtColor(gray[:, RIGHT:], APP.cv2.COLOR_GRAY2RGB, dst=self.inputs[1][0])
+        jobs = None
+        if self.using_native:
+            try:
+                jobs = self.native.submit(self.inputs)
+            except Exception as error:
+                self.disable_native(error)
+            else:
+                if trace is not None:
+                    timing = self.native.timing
+                    trace["backend"] = "cpp"
+                    trace["tiles"] = [{"core": core, "job": job,
+                                       "submit_start_ns": timing.submit_start[core],
+                                       "submit_done_ns": timing.submit_done[core]}
+                                      for core, job in enumerate(jobs)]
+        if jobs is None:
+            jobs = self.submit_python(user_arg, trace)
+        if trace is not None:
+            self.profile_pending = (jobs, trace)
+        return jobs
+
+    def submit_python(self, user_arg, trace):
         jobs = []
         try:
-            for eng, image, out in zip(self.engines, self.inputs, self.buffers):
-                jobs.append(eng.run_async(image, user_arg=user_arg, output_buffer=out))
+            for core, (eng, image, out) in enumerate(zip(self.engines, self.inputs, self.buffers)):
+                submit_start = time.perf_counter_ns() if trace is not None else None
+                job = eng.run_async(image, user_arg=user_arg, output_buffer=out)
+                jobs.append(job)
+                if trace is not None:
+                    trace["tiles"].append({"core": core, "job": int(job),
+                                           "submit_start_ns": submit_start,
+                                           "submit_done_ns": time.perf_counter_ns()})
         except BaseException:
             for eng, job in zip(self.engines, jobs):
                 try:
@@ -126,18 +215,61 @@ class PairBackend:
         return jobs
 
     def wait(self, jobs):
-        # Always collect both submissions, even if one fails: an undrained
-        # second job must not be reused or disposed while it is still running.
+        pending = self.profile_pending
+        trace = pending[1] if pending is not None and pending[0] is jobs else None
+        if trace is not None:
+            self.profile_pending = None
+        native = self.using_native
+        if native:
+            try:
+                waited = self.native.wait(jobs, self.names)
+                results = self.pack(waited)
+            except Exception as error:
+                self.disable_native(error)
+                # Same input, newly recreated Python engines. The failed
+                # native jobs were drained before their buffers are reused.
+                jobs = self.submit_python(None, None)
+                trace = None
+                waited = self.wait_python(jobs, trace)
+                results = self.pack(waited)
+            else:
+                if trace is not None:
+                    timing = self.native.timing
+                    for core, tile in enumerate(trace["tiles"]):
+                        tile.update(wait_start_ns=timing.wait_start[core],
+                                    wait_done_ns=timing.wait_done[core],
+                                    wait_cpu_ns=timing.wait_cpu[core])
+        else:
+            waited = self.wait_python(jobs, trace)
+            results = self.pack(waited)
+        if trace is not None:
+            trace["packed_ns"] = time.perf_counter_ns()
+            self.profile.record_result(trace, jobs, self.metrics())
+        if not native and self.native_allowed:
+            self.check_native(waited)
+        return results
+
+    def wait_python(self, jobs, trace):
+        # Drain both submissions before their buffers may be reused.
         waited, failure = [], None
         for eng, job in zip(self.engines, jobs):
+            tile = trace["tiles"][len(waited)] if trace is not None else None
+            if tile is not None:
+                tile["wait_start_ns"] = time.perf_counter_ns()
             try:
                 waited.append(eng.wait(job))
             except BaseException as exc:
                 waited.append(None)
                 if failure is None:
                     failure = exc
+            finally:
+                if tile is not None:
+                    tile["wait_done_ns"] = time.perf_counter_ns()
         if failure is not None:
             raise failure
+        return waited
+
+    def pack(self, waited):
         results = []
         for raw in waited:
             if len(raw) != len(self.names):
@@ -156,19 +288,22 @@ class PairBackend:
             results.extend((boxes, scores, poses))
         return results
 
+    def metrics(self):
+        return self.native.engines if self.using_native else self.engines
+
     def get_npu_inference_time(self):
-        return max(e.get_npu_inference_time() for e in self.engines)
+        return max(e.get_npu_inference_time() for e in self.metrics())
 
     def get_latency(self):
-        return max(e.get_latency() for e in self.engines)
+        return max(e.get_latency() for e in self.metrics())
 
     def dispose(self):
-        for engine in self.engines:
-            try:
-                engine.dispose()
-            except Exception:
-                pass
-        self.engines.clear()
+        if self.profile is not None:
+            self.profile.close()
+        if self.native is not None:
+            self.native.close()
+            self.native = None
+        self.close_python()
 
 
 class Engine:
@@ -178,7 +313,7 @@ class Engine:
             raise RuntimeError(reason)
         self.name, self.core, self.cores, self.depth = 'E10#two-tiles', 0, (0, 1), 1
         self.in_shape, self.split6, self.kpt, self.n = (1, H, W, 3), True, True, N * 2
-        self.b = PairBackend()
+        self.b = PairBackend(MODEL)
         self.packed = np.empty(0, np.float32)
         self.names = list(self.b.names)
 

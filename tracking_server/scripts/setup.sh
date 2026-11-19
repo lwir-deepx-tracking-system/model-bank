@@ -16,6 +16,17 @@ echo "post.so built"
 gcc -O3 -shared -fPIC -ffp-contract=off -std=c11 -o src/detect/tone_map.so src/detect/tone_map.c
 echo "tone_map.so built"
 
+split_library=src/detect/liblwir_split_sdk.so
+if [ -r /usr/local/include/dxrt/dxrt_c_api.h ] && split_tmp=$(mktemp "$split_library.XXXXXX"); then
+  if g++ -O2 -std=c++17 -shared -fPIC -pthread -o "$split_tmp" src/detect/split_sdk.cpp -L/usr/local/lib -ldxrt && chmod 755 "$split_tmp"; then
+    mv -f "$split_tmp" "$split_library"
+    echo "liblwir_split_sdk.so built"
+  else
+    rm -f "$split_tmp"
+    echo "Optional C++ split SDK build failed. The Python split backend is available." >&2
+  fi
+fi
+
 if ! bash scripts/build_native_trackers.sh; then
   echo "Optional C++ tracker build failed; check the build log. Unsupported presets use Python." >&2
 fi

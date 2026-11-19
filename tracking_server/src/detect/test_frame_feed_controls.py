@@ -218,6 +218,8 @@ class FeedControlTests(unittest.TestCase):
         first = SimpleNamespace(wait=Mock(side_effect=RuntimeError('first failed')))
         second = SimpleNamespace(wait=Mock(return_value=[]))
         pair.engines = [first, second]
+        pair.profile_pending = None
+        pair.native = None
         with self.assertRaisesRegex(RuntimeError, 'first failed'):
             pair.wait(['first-job', 'second-job'])
         second.wait.assert_called_once_with('second-job')
