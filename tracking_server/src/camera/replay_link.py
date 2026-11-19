@@ -46,6 +46,7 @@ SEEK_GAP_S = 1.2                  # replay_cam.py 의 --gap 기본값과 같다 
 RETURN_MAX_S = 60.0               # '카메라로 돌아가는 중' 표시의 한도. 그 뒤에도 영상이 없으면 화면의 보통 카메라 안내가 대신한다
 NOTE_8BIT = '8비트 녹화: 온도 Filter 가 맞지 않아 사람이 걸러질 수 있음. 보려면 온도 Filter 를 잠시 끄세요'
 _C = dict(t=-1e9, items=[], root=None)
+_LIST_LOCK = threading.Lock()
 
 
 def root():   # 쓸 수 있는 녹화 폴더 (없으면 None)
@@ -121,15 +122,21 @@ def listing(refresh_=False):
     r_ = root(); m_ = mroot()
     if r_ is None and m_ is None: return []
     key_ = (r_, m_)
-    if refresh_ or _C['root'] != key_ or time.monotonic() - _C['t'] > LIST_TTL:
+    cache_ = _C.copy()
+    if not refresh_ and cache_['root'] == key_ and time.monotonic() - cache_['t'] <= LIST_TTL:
+        return cache_['items']
+    with _LIST_LOCK:
+        # A refresh that was already running serves callers that arrived during it, including manual refreshes.
+        if _C['root'] == key_ and _C['items'] is not cache_['items']:
+            return _C['items']
         items_ = []; td_ = stall_diag.mark()   # None unless LWIR_STALL_DIAG=1
         try: items_ += _scan(r_) if r_ else []
         except OSError: pass
         try: items_ += _scan_measure(m_) if m_ else []
         except OSError: pass
         _C.update(t=time.monotonic(), items=items_, root=key_)
-        stall_diag.span(td_, 'scan of the recordings list (GET /replay, at most once a minute per page)')
-    return _C['items']
+        stall_diag.span(td_, 'scan of the recordings list (GET /replay)')
+        return items_
 
 
 def find(name_):   # 이름 -> (목록 항목, images 폴더의 절대 경로) 또는 (None, 이유)
