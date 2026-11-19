@@ -60,7 +60,7 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 </header>
 <main>
   <section class="view">
-    <div class="cv"><canvas id="c"></canvas></div>
+    <div class="cv"><canvas id="c" tabindex="0" aria-label="라벨 편집 영상"></canvas></div>
     <div class="bar">
       <button id="prev" title="이전 프레임 (←)">◀</button>
       <button id="play" title="재생/정지 (Space)">▶ 재생</button>
@@ -183,6 +183,7 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
 const $=id=>document.getElementById(id);
 const C=$('c'),X=C.getContext('2d'),ST=$('st');
 const W0=640,H0=480;
+C.addEventListener('pointerdown',e=>{if(e.button===0)C.focus({preventScroll:true});},true);
 let dirHandle=null,files={},nFrames=0,cur=1,boxes=new Map(),reviewed=new Set(),removed=new Set(),purged=new Set(),sel=null,undo=[],dirty=false,playing=null,drawMode=false,drag=null,cache=new Map(),srcName='';
 let focusedTrackId=null,parkedPartTool=null;
 // boxes: frame -> [{id,x,y,w,h,c,m}]  (m = manual)
@@ -593,6 +594,23 @@ C.addEventListener('pointerup',e=>{if(zdrag){zdrag=null;return;}if(!drag)return;
 const clip=r=>{const x=Math.max(0,r.x),y=Math.max(0,r.y);return{x,y,w:Math.min(W0,r.x+r.w)-x,h:Math.min(H0,r.y+r.h)-y};};
 // ---------- edits ----------
 function selBox(){return sel&&(boxes.get(sel.f)||[])[sel.i];}
+const WASD_CODES={KeyA:[-1,0],KeyD:[1,0],KeyW:[0,-1],KeyS:[0,1]};
+const WASD_KEYS={a:WASD_CODES.KeyA,d:WASD_CODES.KeyD,w:WASD_CODES.KeyW,s:WASD_CODES.KeyS,
+                 'ㅁ':WASD_CODES.KeyA,'ㅇ':WASD_CODES.KeyD,'ㅈ':WASD_CODES.KeyW,'ㅉ':WASD_CODES.KeyW,'ㄴ':WASD_CODES.KeyS};
+let keyboardMoveTarget=null;
+function moveFromShortcut(direction,shift,repeating){
+  if(playing)togglePlay();
+  drag=null;partDrag=null;pointDrag=null;
+  const box=selBox();if(!box){status('먼저 움직일 사람 박스를 클릭하세요.');return;}
+  const step=direction.map(v=>v*(shift?10:1));
+  if(mayEdit([cur],true)){moveSelectedPerson(step,repeating);return;}
+  if(repeating)return;
+  if(!window.LWIR_CLAIM_FOR_SHORTCUT){mayEdit();return;}
+  const frame=cur,identity=box.id;
+  window.LWIR_CLAIM_FOR_SHORTCUT(frame).then(acquired=>{
+    if(acquired&&cur===frame&&selBox()?.id===identity)moveSelectedPerson(step,false);
+  });
+}
 function moveSelectedPerson(step,repeating){
   const box=selBox();if(!box||!mayEdit())return;
   const parts=partRecord(cur,box.id)?.parts||{};
@@ -603,13 +621,16 @@ function moveSelectedPerson(step,repeating){
     for(const {xy,point} of edges){
       const lower=-Math.max(0,xy[axis]);
       const right=xy[axis]+(point?0:xy[axis+2]);
-      const limit=(axis===0?W0:H0)-(point?.001:0);
+      const limit=(axis===0?W0:H0)-(point ? .001 : 0);
       const upper=Math.max(0,limit-right);
       delta=Math.max(lower,Math.min(upper,delta));
     }
     return delta;
   });
-  if(!offset.some(Boolean)||(!repeating&&!snapshot()))return;
+  if(!offset.some(Boolean)){if(!repeating)status('영상 경계에 닿아 이 방향으로 더 움직일 수 없습니다.');return;}
+  const target=partKey(cur,box.id);
+  if((!repeating||keyboardMoveTarget!==target||!undo.length)&&!snapshot())return;
+  keyboardMoveTarget=target;
   const [dx,dy]=offset;
   box.x+=dx;box.y+=dy;box.m=true;box.c=1;
   for(const {xy} of coordinates){xy[0]+=dx;xy[1]+=dy;}
@@ -713,13 +734,11 @@ addEventListener('keydown',e=>{if(e.target.tagName==='SELECT'||e.target.tagName=
   if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='c'){e.preventDefault();const b=selBox();cbuf=(b?[b]:(boxes.get(cur)||[])).map(x=>({...x}));cbufF=cur;cbufParts=Object.fromEntries(cbuf.map(b=>[b.id,clonePart(partRecord(cur,b.id))]));status(cbuf.length?`${cur}프레임의 박스 ${cbuf.length}개와 부위를 복사했습니다. Ctrl+V 로 붙여 넣으세요.`:'복사할 박스가 없습니다.');return;}
   if((e.ctrlKey||e.metaKey)&&k.toLowerCase()==='v'){e.preventDefault();if(!cur)return;if(!cbuf.length){status('먼저 Ctrl+C 로 복사하세요.');return;}if(!confirmPartCopy(cbuf.map(p=>[p.id,cbufParts[p.id],p.g]),cur))return;if(!snapshot())return;if(!boxes.has(cur))boxes.set(cur,[]);const bs=boxes.get(cur);let last=-1;for(const p of cbuf){copyPartTo(cbufParts[p.id],cur,p.id);const nb={...p,m:true,c:1};const i=bs.findIndex(x=>x.id===p.id);if(i>=0){bs[i]=nb;last=i;}else{bs.push(nb);last=bs.length-1;}}sel=cbuf.length===1?{f:cur,i:last}:null;status(`${cbufF}프레임에서 복사한 박스 ${cbuf.length}개와 부위를 붙여 넣었습니다. 부위 위치를 다시 확인하세요.`);refresh();return;}
   if(e.ctrlKey||e.metaKey||e.altKey||!cur)return;
-  if(k==='ArrowRight'){e.preventDefault();stepN(1,e.shiftKey?10:1);}else if(k==='ArrowLeft'){e.preventDefault();stepN(-1,e.shiftKey?10:1);}
-  else if('wasdWASD'.includes(k)&&k.length===1){
-    if(!selBox()){status('먼저 움직일 사람 박스를 클릭하세요.');return;}
-    e.preventDefault();
-    const steps={a:[-1,0],d:[1,0],w:[0,-1],s:[0,1]},scale=e.shiftKey?10:1;
-    moveSelectedPerson(steps[k.toLowerCase()].map(v=>v*scale),e.repeat);
+  const motion=WASD_CODES[e.code]||((!e.code||e.code==='Unidentified')?WASD_KEYS[k.toLowerCase()]:null);
+  if(motion){
+    e.preventDefault();moveFromShortcut(motion,e.shiftKey,e.repeat);return;
   }
+  if(k==='ArrowRight'){e.preventDefault();stepN(1,e.shiftKey?10:1);}else if(k==='ArrowLeft'){e.preventDefault();stepN(-1,e.shiftKey?10:1);}
   else if(k==='+'||k==='='){zoomBy(1.25);}else if(k==='-'||k==='_'){zoomBy(0.8);}else if(k==='0'){zoomReset();}
   else if(k==='m'||k==='M'){$('multi').checked=!$('multi').checked;$('multi').onchange();}
   else if(k===' '){e.preventDefault();togglePlay();}else if(k==='Delete'||k==='Backspace'){e.preventDefault();delBox();}
