@@ -3,6 +3,7 @@ the garbage collector. Run from tracking_server: python -m unittest src.common.t
 import gc
 import json
 import unittest
+from weakref import ref
 
 import numpy as np
 
@@ -66,6 +67,51 @@ class FewerObjects(unittest.TestCase):
         keep = [(new_pred(pc, i), new_tracks(rows, 16.0, i)) for i in range(200)]
         new_n = len(gc.get_objects()) - base
         self.assertGreater(old_n, 20 * new_n, (old_n, new_n))
+
+
+class LiveHistoryTrimTests(unittest.TestCase):
+    def test_matches_old_history_windows_and_snapshot_serialization(self):
+        trim = fr.LiveHistoryTrim()
+        live = ([], [], [], [], [])
+        baseline = ([], [], [], [], [])
+        boundaries = []
+        for frame in range(9300):
+            for index, (new, old) in enumerate(zip(live, baseline)):
+                # Relabel counts can be shorter than the output frame list.
+                if index < 4 or frame % 2:
+                    new.append({'frame': frame})
+                    old.append({'frame': frame})
+            trim.release()
+            if len(live[0]) > fr.HISTORY_LIMIT:
+                trim.trim(live)
+                for old in baseline:
+                    del old[:fr.HISTORY_TRIM]
+                boundaries.append(frame)
+                self.assertEqual(json.dumps(live), json.dumps(baseline))
+        self.assertEqual(boundaries, [6000, 9000])
+        self.assertEqual(live, baseline)
+
+    def test_trim_does_not_release_all_frames_on_the_boundary(self):
+        class Result:
+            pass
+
+        output = [Result() for _ in range(fr.HISTORY_LIMIT + 1)]
+        last_retired = ref(output[fr.HISTORY_TRIM - 1])
+        first_retired = ref(output[0])
+        first_kept = output[fr.HISTORY_TRIM]
+        trim = fr.LiveHistoryTrim()
+
+        trim.trim((output,))
+        self.assertIs(output[0], first_kept)
+        self.assertIsNotNone(last_retired())
+        self.assertIsNotNone(first_retired())
+        trim.release()
+        self.assertIsNone(last_retired())
+        self.assertIsNotNone(first_retired())
+        for _ in range(fr.HISTORY_TRIM // fr.RELEASE_PER_FRAME):
+            trim.release()
+        self.assertIsNone(first_retired())
+        self.assertIs(output[0], first_kept)
 
 
 if __name__ == '__main__':

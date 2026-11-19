@@ -9,6 +9,7 @@ import socket
 import time
 from urllib.parse import parse_qs, urlsplit
 import numpy as np
+from ..common import frame_records
 from ..common.state import APP
 from ..common.shared_values import HERE
 from ..gimbal.gimbal_link import gb_sample
@@ -434,11 +435,20 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
         APP.LIVE.rl_last = APP.relabeler.events[-1]
     if APP.relabeler is not None and time.monotonic() - getattr(APP.LIVE, 'rl_t', 0.0) > 20:
         APP.LIVE.rl_t = time.monotonic(); print('RLSTAT', json.dumps(dict(APP.relabeler.stats, last_event=(APP.relabeler.events[-1] if APP.relabeler.events else None), **({'ms': APP.relabeler.timing()} if APP.args.mamba else {}))), flush=True)
-    if len(APP.rows) > 6000:   # long live runs: keep only the recent records in memory
-        td_ = stall_diag.mark()   # None unless LWIR_STALL_DIAG=1
-        del APP.rows[:3000]; del APP.preds[:3000]; del APP.tracks_out[:3000]
-        if APP.relabeler is not None: del APP.tracks_base[:3000]; del APP.relabeler.per_frame[:3000]
-        stall_diag.span(td_, 'trim of the kept frame records (3000 frames freed)')
+    history_trim = getattr(APP.LIVE, 'history_trim', None)
+    if history_trim is not None:
+        history_trim.release()
+    if len(APP.rows) > frame_records.HISTORY_LIMIT:
+        if history_trim is None:
+            history_trim = APP.LIVE.history_trim = frame_records.LiveHistoryTrim()
+        histories = (APP.rows, APP.preds, APP.tracks_out)
+        if APP.relabeler is not None:
+            histories += (APP.tracks_base, APP.relabeler.per_frame)
+        started = stall_diag.mark()
+        history_trim.trim(histories)
+        if started is not None:
+            stall_diag.say('RECORD_TRIM', 'removed old frame records from the live view in %.2f ms; releasing up to %d per history per frame'
+                           % ((time.perf_counter() - started) * 1000, frame_records.RELEASE_PER_FRAME))
 
 
 def make_lv_Handler():
