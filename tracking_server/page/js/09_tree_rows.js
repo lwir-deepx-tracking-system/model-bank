@@ -21,7 +21,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'켬',note:thr+(now?' · '+now:''),sel:adOn,lock:adOn?'':miss,u:Q('auto_det=1'),
        ask:adOn?'':'검출 모델 자동 선택은 아직 장치에서 시험하지 않은 기능입니다.\n사람이 작게 보이면 먼 거리 모델로, 크게 보이면 근거리 모델로 바꿉니다.\n바꾸는 동안 화면이 잠깐 멈춥니다. 켤까요?'}]});}
   T.push({lab:'검출 모델',sub:'구조별 · YOLO26 안은 쓰는 곳별'+(adOn?' · 자동 선택 켜짐'+(ad.mode==='live'?' · 지금 '+({near:'근거리',far:'먼 거리',other:'다른 모델'}[ad.current]||'–')+' 모델':''):''),f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
-    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:REC.includes(c.det),note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1,ask:adOn?ADASK:''}))});
+    catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:c.det==='bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480'||REC.includes(c.det),latest:c.det===latestGeneralDetector((m&&m.catalog)||[]),note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1,ask:adOn?ADASK:''}))});
   T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});

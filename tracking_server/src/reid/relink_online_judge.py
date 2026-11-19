@@ -211,10 +211,11 @@ def load_spec(path):
 class OnlineJudge:
     """Drop-in for relabel_online.OnlineRelabel (same step / reset / stats / events / per_frame interface) with the learned judge.
     crops = per-frame crop budget on NPU core 2 (0 = unlimited: every eligible crop every frame; the PC replay uses it)."""
-    def __init__(self, spec_path, crops=2):
+    def __init__(self, spec_path, crops=2, *, compact_ids=False):
         self.spec, self.spec_sha = load_spec(spec_path)
         self.M, self.feats, self.thr = self.spec['model'], list(self.spec['features']), float(self.spec['decision']['threshold'])
         self.crops = int(crops)
+        self.compact_ids = bool(compact_ids)
         self.stats = dict(new_ids=0, births=0, births_with_candidates=0, pairs_scored=0, relabelled=0, retired_reappearances=0, frames=0,
                           crops_new=0, crops_refresh=0, crops_embedded=0, crops_new_births_with_candidates=0, births_with_candidates_no_feature=0,
                           decided_with_feature=0)
@@ -229,10 +230,22 @@ class OnlineJudge:
         if getattr(self, 'deferred', None) is not None: self.deferred[1]()
         self.deferred = None
         self.t = -1; self.fresh = 10 ** 6
+        self.next_public_id = 1
+        self.public_identity_token = object() if self.compact_ids else None
         self.hist = {}            # tracker id -> [obs] (time order), every output person row of the sequence
         self.id_map = {}          # tracker id -> output id (popped when retired)
         self.retired = set()      # tracker ids handed over; a fresh output id if output again
         self.last_emb = {}        # tracker id -> t of its last feature (refresh priority)
+
+    def _allocate_compact_public_id(self):
+        """Allocate per-sequence public IDs independently of raw tracker IDs.
+
+        Relinks keep the canonical old number. Spent provisional IDs are never
+        recycled, including when a retired raw tracker appears again.
+        """
+        public = self.next_public_id
+        self.next_public_id += 1
+        return public
 
     def _elig(self, prow, P):
         """tracker id -> detection k of the rows that can be cropped (k in P, detection height >= 32 px, any overlap)"""
@@ -295,9 +308,14 @@ class OnlineJudge:
         # ---- id bookkeeping (relabel_online): retired ids reappearing get a fresh id; births get their own id
         for b in now:
             if b in self.retired:
-                self.id_map[b] = self.fresh; self.fresh += 1; self.retired.discard(b); st['retired_reappearances'] += 1
+                if self.compact_ids:
+                    self.id_map[b] = self._allocate_compact_public_id()
+                else:
+                    self.id_map[b] = self.fresh; self.fresh += 1
+                self.retired.discard(b); st['retired_reappearances'] += 1
             if b not in self.id_map:
-                self.id_map[b] = b; st['new_ids'] += 1
+                self.id_map[b] = self._allocate_compact_public_id() if self.compact_ids else b
+                st['new_ids'] += 1
         out_ids = {self.id_map[x] for x in now}
         # ---- judge every birth with candidates (K = 0: features at t_now = t0, nobs = [the birth observation])
         st['births'] += len(births); pairs = []

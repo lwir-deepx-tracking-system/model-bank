@@ -32,3 +32,21 @@ function rdoc(k){if(BT_KEYS.includes(k))k='bytetrack';if(k===rdk)return;rdk=k;co
 // 11-16 (design review 4): the rows in three groups, the rest folded as '고급 설정' (its title says what is switched on inside). Rows keep their order; a row not named here is 'advanced'.
 const OTG=[['',['엔드투엔드']],['사람 찾기 (검출)',['검출 모델 자동 선택','검출 모델']],['번호 붙이기 (추적)',['Tracker','위치 기억 · 신뢰도','KeepID']],['짐벌 · 화면',['제어','화면 표시']]];
 let otadv=false;try{otadv=localStorage.getItem('lwir_live_otadv')==='1';}catch(_){}
+
+
+// Catalog version badge only: /model has no installation timestamp. This does not select a model.
+function latestGeneralDetector(catalog){
+  const rank=c=>{
+    const text=String(c.det||'')+' '+String(c.name||'')+' '+(DN[c.det]||'');
+    if(c.available===false||!/^bank:yolo26m(?:_|\b)/i.test(String(c.det||''))||!/범용|실내·실외 공통/.test(text))return null;
+    const dates=[...text.matchAll(/(20\d{2})[-/]?(0[1-9]|1[0-2])[-/]?([0-2]\d|3[01])/g)]
+      .map(m=>Number(m[1]+m[2]+m[3]));
+    const epochs=[...text.matchAll(/(?:^|[^a-z])e(?:poch)?[_ -]?(\d+)(?:\+(\d+))?/gi)]
+      .map(m=>Number(m[1])+Number(m[2]||0));
+    return {det:c.det,date:Math.max(0,...dates),epoch:Math.max(0,...epochs)};
+  };
+  const ranked=(catalog||[]).map(rank).filter(r=>r&&r.date);
+  ranked.sort((a,b)=>b.date-a.date||b.epoch-a.epoch||String(a.det).localeCompare(String(b.det)));
+  // Equal explicit versions are ambiguous: do not invent installation chronology from menu IDs.
+  return ranked.length&&!(ranked[1]&&ranked[0].date===ranked[1].date&&ranked[0].epoch===ranked[1].epoch)?ranked[0].det:null;
+}

@@ -22,6 +22,11 @@ def current_source():
     if source == ('python',):
         # Keep the actual object alive until the next publication, so an id()
         # reused by Python cannot make a new tracker look like the old one.
+        rl = APP.__dict__.get('relabeler')
+        if getattr(rl, 'compact_ids', False) and APP.__dict__.get('RULES', {}).get('relabel'):
+            # A toggle/reset changes which person the same number identifies.
+            # A stable token avoids comparing the mutable raw/public mapping.
+            return ('python', APP.tracker, rl.public_identity_token)
         return ('python', APP.tracker)
     return source
 

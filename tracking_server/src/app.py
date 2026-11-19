@@ -390,7 +390,7 @@ def main():
                 print('MAMBA', json.dumps(dict(folder=str(APP.args.mamba), crops=APP.args.mamba_crops, veto=APP.relabeler.veto, duplicates=APP.args.mamba_duplicates)), flush=True)
             elif APP.args.judge:   # v10: the learned judge takes OnlineRelabel's place (same step / reset / stats / events / per_frame interface)
                 from .reid.relink_online_judge import OnlineJudge
-                APP.relabeler = OnlineJudge(APP.args.judge, crops=APP.args.judge_crops)
+                APP.relabeler = OnlineJudge(APP.args.judge, crops=APP.args.judge_crops, compact_ids=bool(APP.args.live_port))
                 print('JUDGE', json.dumps(dict(spec=str(APP.args.judge), sha256=APP.relabeler.spec_sha, config=APP.relabeler.spec['config'], threshold=APP.relabeler.thr, features=len(APP.relabeler.feats), crops=APP.args.judge_crops)), flush=True)
             else:
                 APP.relabeler = OnlineRelabel(budget=True, every=APP.args.rl_every, k=APP.args.rl_k, new_k=APP.args.rl_new_k)
