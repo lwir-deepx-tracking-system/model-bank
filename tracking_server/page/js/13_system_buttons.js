@@ -5,6 +5,15 @@ const feedToggle=$('npu-feed'), feedAuto=$('npu-feed-auto'), feedTile=$('npu-fee
 const feedState=$('npu-feed-state'), feedCounts=$('npu-feed-counts'), feedHint=$('npu-feed-hint');
 let feedChoice=null;   // 11-16: the mode chosen on the page and not applied yet ('normal' / 'arrival' / 'auto'), null = as the server says
 
+function paintFeedMode(){
+  const label=$('pf-feed-mode'), feed=rlast?.npu_feed;
+  if(document.body.classList.contains('replay-mode'))label.textContent='녹화 재생';
+  else if(feed?.submitted){
+    const mode=feed.tile_active?'NPU 0·1 한 장 분할':feed.active?'NPU 0·1 교대':'NPU 0 단독';
+    label.textContent=(feed.pending?'전환 중 · ':feed.requested==='auto'?'자동 · ':'')+mode;
+  }else label.textContent='NPU 모드 확인 중';
+}
+
 function syncSystemButtons(){
   const pending=!!(rlast&&rlast.restart_pending);
   CR.disabled=SR.disabled=sysbusy||pending;
@@ -58,6 +67,7 @@ function syncSystemButtons(){
     ?feed.toggle_reason||(replay?'녹화 재생을 먼저 끝내세요.':'현재 설정을 변경할 수 없습니다.')
     :'';
   if(feedHint.textContent!==hint)feedHint.textContent=hint;
+  paintFeedMode();
 }
 
 function finishSystemRequest(){
@@ -103,6 +113,25 @@ async function waitForServer(previous){
   SM.textContent='90초 안에 새 서버의 응답을 확인하지 못했습니다';
 }
 
+async function waitForFeedMode(mode){
+  const deadline=performance.now()+1500;
+  while(!document.hidden&&performance.now()<deadline){
+    const remaining=Math.max(1,Math.ceil(deadline-performance.now()));
+    const state=await rtick(AbortSignal.timeout(remaining));
+    const feed=state?.npu_feed;
+    if(feed&&!feed.pending){
+      const active=mode==='tile'?feed.tile_active:mode==='arrival'?feed.active:feed.mode==='normal';
+      const applied=feed.requested===mode&&(mode==='auto'||active===true);
+      if(applied||feed.reason){
+        SM.textContent=applied?'검출 NPU 전환 완료':feed.reason;
+        return;
+      }
+    }
+    await new Promise(resolve=>setTimeout(resolve,60));
+  }
+  SM.textContent='검출 NPU 상태를 확인 중입니다';
+}
+
 feedToggle.addEventListener('change',()=>{
   feedChoice=feedToggle.checked?'arrival':'normal';
   syncSystemButtons();
@@ -119,8 +148,9 @@ feedApply.addEventListener('click',async()=>{
   if(feedApply.disabled)return;
   const mode=feedTile.checked?'tile':feedAuto.checked?'auto':(feedToggle.checked?'arrival':'normal');
   try{
-    const result=await syspost('/system/npu-feed?mode='+mode,'검출 NPU 사용 방식을 바꾸는 중…','');
-    if(result.ok)await rtick();
+    const changing='검출 NPU 사용 방식을 바꾸는 중…';
+    const result=await syspost('/system/npu-feed?mode='+mode,changing,changing);
+    if(result.ok)await waitForFeedMode(mode);
   }finally{
     finishSystemRequest();
   }

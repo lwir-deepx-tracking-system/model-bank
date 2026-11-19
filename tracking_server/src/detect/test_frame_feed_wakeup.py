@@ -11,6 +11,85 @@ from . import frame_feed
 
 
 class FeedWakeupTests(unittest.TestCase):
+    def test_manual_tile_switch_submits_before_previous_tracking_finishes(self):
+        for initial, target in (('tile', 'arrival'), ('arrival', 'tile')):
+            with self.subTest(initial=initial):
+                self.check_manual_switch(initial, target)
+
+    def check_manual_switch(self, initial, target):
+        target_submitted = threading.Event()
+        submitted = []
+        saved = []
+
+        class Engine:
+            def __init__(self, name, mode):
+                self.name = name
+                self.mode = mode
+                self.b = self
+                self.packed = np.zeros(1, dtype=np.float32)
+
+            def run_async(self, image, *, user_arg, output_buffer):
+                seq = user_arg['f']
+                submitted.append((seq, self.mode))
+                if self.mode == target:
+                    target_submitted.set()
+                return seq
+
+            def wait(self):
+                self.packed[0] = APP.pending.pop(self.name)
+                return [self.packed]
+
+        def submit_tiles(image, seq):
+            APP.a.submit(image, seq)
+            return seq
+
+        pixels = np.zeros((480, 640), dtype=np.uint8)
+        live = SimpleNamespace(
+            cond=threading.Condition(), q=deque([(1.0, pixels)]),
+            stopped=False, restart_pending=False, cam_hold=False, cam_lost=False, prev_t=None, last=None,
+            stabq=deque(), arr=deque(), rawq=deque(),
+        )
+        first, second, tile = Engine('0', 'arrival'), Engine('1', 'arrival'), Engine('tiles', 'tile')
+
+        with (patch.dict(vars(APP), dict(
+                LIVE=live, a=first, FEED_MODE=initial, FEED_READY=True, GB=None,
+                args=SimpleNamespace(pipeline=True, gmc_thread=False, live_wait=0),
+                pending={}, lv_to8=lambda raw: raw, FRAME_DY=[0.0],
+        ), clear=True), patch.dict(frame_feed.STAB, on=False),
+              patch.object(frame_feed.dual_tile, 'assets_reason', return_value=None),
+              patch.object(frame_feed.dual_tile, 'selected', return_value=True),
+              patch.object(frame_feed.dual_tile, 'Tone', return_value=lambda raw: raw),
+              patch.object(frame_feed.dual_tile, 'Engine', return_value=tile),
+              patch.object(frame_feed, 'save_mode', side_effect=lambda mode, **kwargs: saved.append(mode)),
+              patch.object(frame_feed, '_resident', return_value=None),
+              patch.object(frame_feed.camera_extra, 'say'),
+              patch.object(frame_feed.camera_extra.replay_eval, 'lossless', return_value=False),
+              patch.object(frame_feed.camera_extra.replay_eval, 'reset_first_input', return_value=False),
+              patch.object(frame_feed.detect_frame, 'submit_tiles', side_effect=submit_tiles)):
+            feed = APP.FEED = frame_feed.Feed(second, hot_switch=True)
+            try:
+                feed.read_frame(0)
+                first_result = feed.wait()[0]
+                self.assertIsNotNone(feed.mon.open)
+                self.assertTrue(feed.request_mode(target)[0])
+                with live.cond:
+                    live.q.append((1.03, pixels))
+                    live.cond.notify_all()
+                self.assertTrue(target_submitted.wait(2), 'new detector waited for old tracking')
+                self.assertEqual(feed.mon.open[1], 1.0, 'switch forgot the frame still being tracked')
+                frame_feed.sent(1.0)
+                self.assertIsNone(feed.mon.open)
+                feed.read_frame(1)
+                second_result = feed.wait()[0]
+                self.assertEqual((int(first_result[0]), int(second_result[0])), (0, 1))
+                self.assertEqual(submitted, [(0, initial), (1, target)])
+                self.assertEqual(saved, [target])
+                self.assertEqual((feed.mode, feed.pending, feed.st['order_bad']), (target, None, 0))
+                self.assertEqual(feed.st['drop_wait'], 0)
+                self.assertEqual(feed.mon.open[1], 1.03)
+            finally:
+                feed._stop_thread()
+
     def test_queued_frame_reaches_second_core_before_first_result(self):
         producer_parked = threading.Event()
         core0_waiting = threading.Event()

@@ -495,10 +495,8 @@ def _reader(p_, box_):   # 프레임을 줄에 넣는 부분은 lv_reader 와 �
                     cnt_ += 1; now_ = time.monotonic(); live.last_frame_t = now_; live.cam_fail_n = 0; live.cam_unrec_n = 0; live.frames_in += 1
                     if not tagged and getattr(live, 'cam_frozen', None) is not None: note('server', cam_frozen.on_frame(live))   # 11-15: a camera frame (not a replay frame): the camera answers again
                     if now_ - tl_ >= 1.0: live.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
-                    if scored_replay:
-                        live.cond.notify_all()
-                    else:
-                        live.cond.notify()
+                    # The feeder waits for raw input while the tracker may wait for a detector result.
+                    live.cond.notify_all()
                     enqueued = True
                     break
             # Wait outside the input condition. Release before retrying to preserve the lock order used by seek.

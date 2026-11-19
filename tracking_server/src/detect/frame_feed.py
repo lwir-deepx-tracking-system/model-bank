@@ -304,6 +304,7 @@ class Feed:
     auto_to = None   # 11-16: 'arrival' / 'normal' while pending is the automatic choice's own switch (the setting stays 'auto')
     auto_err = None  # 11-16: why the automatic choice stopped (an error in its rule), for /rules npu_feed.auto_error
     auto_live = False   # 11-16: the live switch is there because auto was asked for (not LWIR_NPU_HOT_SWITCH=1): a saved page choice records it
+    reset_monitor_on_take = False
     _clock = staticmethod(time.perf_counter)   # 11-16: the automatic choice's clock (tests put their own)
 
     def __init__(self, second_, *, hot_switch=False):
@@ -373,6 +374,8 @@ class Feed:
                 with L_.cond:
                     while True:
                         if self.quit or L_.stopped or getattr(L_, 'restart_stop', False): return
+                        if self.pending in ('arrival', 'tile') and self.mode in ('arrival', 'tile') and self.pending != self.mode:
+                            self._apply_mode(from_feeder=True)
                         if not self.paused and self.pending is None:
                             skip_ = e2e_live.skip_detector()   # 11-14: end-to-end model on -> the frame is queued without the detector (engine -1)
                             e_ = (-1 if skip_ else self._free()) if len(self.out) < AHEAD else None
@@ -492,10 +495,10 @@ class Feed:
             APP.LIVE.cond.notify_all()
         return True, 'NPU 검출 모드 변경을 요청했습니다'
 
-    def _apply_mode(self):
-        """Called by the frame loop while holding the condition, after previous jobs have been collected."""
+    def _apply_mode(self, *, from_feeder=False):
+        """Apply under the condition after collecting the previous detector jobs."""
         mode = self.pending
-        if mode is None or self.out or self.working or any(self.busy):
+        if mode is None or self.paused or self.out or self.working or any(self.busy):
             return
         to_ = self.auto_to
         if to_ is not None:   # 11-16: the automatic choice's own switch. The setting stays 'auto', nothing is saved
@@ -528,7 +531,10 @@ class Feed:
                     if mode != 'auto': self.mode = mode
                     elif was_tile_: self.mode = 'normal'
                 self.last_e = len(self.eng) - 1
-                if self.mon is not None: self.mon.reset()
+                if from_feeder:
+                    self.reset_monitor_on_take = True
+                elif self.mon is not None:
+                    self.mon.reset()
                 camera_extra.say('FEED mode changed to %s' % mode)
         self.pending = None
         APP.LIVE.cond.notify_all()
@@ -628,6 +634,12 @@ class Feed:
                     return None
                 r_ = self.out.popleft() if self.out else None
                 if r_ is not None:
+                    if self.reset_monitor_on_take:
+                        # The previous tracking result may have been published after the NPU switch.
+                        if self.mon is not None:
+                            self.mon.close(self._clock())
+                            self.mon.reset()
+                        self.reset_monitor_on_take = False
                     if r_.seq <= self.prev_seq:
                         self.st['order_bad'] += 1
                     self.prev_seq = r_.seq

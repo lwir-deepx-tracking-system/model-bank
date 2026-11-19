@@ -50,7 +50,7 @@ def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a ne
             pipeline_ = getattr(APP.LIVE, 'pipeline_perf', None)
             if pipeline_ is not None:
                 pipeline_.camera(ta_, dropped=dropped)
-            APP.LIVE.q.append((ta_, raw_)); APP.LIVE.cond.notify()
+            APP.LIVE.q.append((ta_, raw_)); APP.LIVE.cond.notify_all()
             cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
             if getattr(APP.LIVE, 'cam_frozen', None) is not None: camera_extra.note('server', cam_frozen.on_frame(APP.LIVE))   # 11-15: the camera answers again
             if now_ - tl_ >= 1.0: APP.LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
