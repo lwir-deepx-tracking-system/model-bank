@@ -15,6 +15,7 @@ struct LwirSplitTiming {
 
 void* lwir_split_open(const char* model, std::uint64_t* input_bytes, std::uint64_t* output_bytes);
 int lwir_split_metadata(void* handle, int core, int output, void* infos, int* count);
+int lwir_split_set_parallel_wait(void* handle, int enabled);
 int lwir_split_submit(void* handle, const void* left, const void* right, std::size_t input_bytes,
                       LwirSplitTiming* timing);
 int lwir_split_wait(void* handle, void* left_output, void* right_output, std::size_t output_bytes,

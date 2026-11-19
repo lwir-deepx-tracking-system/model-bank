@@ -707,6 +707,9 @@ def make_lv_Handler():
                               async_replay_preview=bool(worker_ and worker_.async_replay),
                               npu_feed=system_buttons.npu_feed_state())
                     h_.update(worker_.stats() if worker_ is not None else dict(preview_dropped=0, preview_errors=getattr(APP.LIVE, 'preview_errors', 0)))
+                    gc_policy = getattr(APP.LIVE, 'gc_policy', None)
+                    if gc_policy is not None:
+                        h_['live_gc'] = gc_policy.snapshot()
                     stamp_ = getattr(APP.LIVE, 'cam_stamp', None)
                     if stamp_ is not None:
                         h_['cam_stamp'] = {key: stamp_.get(key) for key in (

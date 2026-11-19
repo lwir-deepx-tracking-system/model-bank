@@ -149,17 +149,43 @@ def cos(a, b):
     return NAN if a is None or b is None else float(np.dot(a, b))
 
 
-def pair_features(nobs, cobs, t0, t_now, rows_now, coexist):
+def _gallery_summary(observations, key, *, clean=False):
+    entries = gallery(observations, key, clean=clean)
+    if not entries:
+        return 0, None, None, NAN
+    return (len(entries), entries[-1], unit(np.mean([o[key] for o in entries], 0)),
+            max(o['miou'] for o in entries))
+
+
+def _candidate_summary(observations):
+    if isinstance(observations, _LiveObservationHistory):
+        count, first = observations.total, observations.first_t
+    else:
+        count, first = len(observations), observations[0]['t']
+    return (count, first, float(np.mean([o['conf'] for o in observations[-5:]])),
+            {key: _gallery_summary(observations, key) for key in ('m1', 'fp')},
+            _gallery_summary(observations, 'm1', clean=True))
+
+
+def _birth_summary(observations):
+    appearance = {}
+    for key in ('m1', 'fp'):
+        values = [o[key] for o in observations if o[key] is not None]
+        appearance[key] = len(values), unit(np.mean(values, 0)) if values else None
+    return float(np.mean([o['conf'] for o in observations])), appearance
+
+
+def pair_features(nobs, cobs, t0, t_now, rows_now, coexist, *,
+                  candidate=None, birth=None, velocity=None):
     """nobs = the new ID's observations t0..t_now (time order), cobs = the candidate's observations before t0; rows_now = output person
     rows of frame t_now. Returns a dict of causal features (no GT)."""
     n, c = nobs[-1], cobs[-1]
-    if isinstance(cobs, _LiveObservationHistory):
-        candidate_count, candidate_first_t = cobs.total, cobs.first_t
-    else:
-        candidate_count, candidate_first_t = len(cobs), cobs[0]['t']
+    candidate_count, candidate_first_t, conf_last5, galleries, clean = (
+        _candidate_summary(cobs) if candidate is None else candidate)
+    conf_new, appearance = _birth_summary(nobs) if birth is None else birth
     gap = n['t'] - c['t']; hl, wl = max(c['h'], 1e-6), max(c['w'], 1e-6)
     dx, dy = n['cx'] - c['cx'], n['cy'] - c['cy']; d = math.hypot(dx, dy)
-    vx, vy, nv = cv_velocity(cobs)
+    vx, vy, nv = cv_velocity(cobs) if velocity is None else velocity
     px, py = c['cx'] + vx * gap, c['cy'] + vy * gap
     pbox = (px - c['w'] / 2, py - c['h'] / 2, px + c['w'] / 2, py + c['h'] / 2)
     sp = math.hypot(vx, vy)
@@ -172,8 +198,7 @@ def pair_features(nobs, cobs, t0, t_now, rows_now, coexist):
              cv_out_view=int(not (VIEW[0] <= px <= VIEW[2] and VIEW[1] <= py <= VIEW[3])),
              hr=n['h'] / hl, wr=n['w'] / wl, log_hr=math.log(max(n['h'], 1e-6) / hl), log_wr=math.log(max(n['w'], 1e-6) / wl),
              h_new=n['h'], w_new=n['w'], h_last=c['h'], w_last=c['w'], aspect_new=n['w'] / max(n['h'], 1e-6), aspect_last=c['w'] / hl,
-             conf_new=n['conf'], conf_new_mean=float(np.mean([o['conf'] for o in nobs])), conf_last=c['conf'],
-             conf_last5=float(np.mean([o['conf'] for o in cobs[-5:]])),
+             conf_new=n['conf'], conf_new_mean=conf_new, conf_last=c['conf'], conf_last5=conf_last5,
              edge_x_new=n['ex'], edge_y_new=n['ey'], edge_new_h=min(n['ex'], n['ey']) / max(n['h'], 1e-6),
              edge_x_last=c['ex'], edge_y_last=c['ey'], edge_last_h=min(c['ex'], c['ey']) / hl,
              miou_new=n['miou'], n_ovl_new=n['n_ovl'], n_near_det_new=n['n_near_det'], n_near_trk_new=n['n_near_trk'],
@@ -184,18 +209,30 @@ def pair_features(nobs, cobs, t0, t_now, rows_now, coexist):
              cand_len=candidate_count, cand_age=c['t'] - candidate_first_t, cand_born_first_frame=int(candidate_first_t == 0),
              new_crop_h=n['crop_h'], new_in_P=int(n['in_P']))
     for s in ('m1', 'fp'):
-        g = gallery(cobs, s); nf = [o for o in nobs if o[s] is not None]
-        fl = n[s]; fm = unit(np.mean([o[s] for o in nf], 0)) if nf else None
-        g1 = g[-1][s] if g else None; g5 = unit(np.mean([o[s] for o in g], 0)) if g else None
-        f.update({s + '_new_avail': int(fl is not None), s + '_new_n': len(nf), s + '_cand_n5': len(g),
+        count, last, g5, miou_max = galleries[s]
+        n_features, fm = appearance[s]
+        fl = n[s]; g1 = last[s] if last is not None else None
+        f.update({s + '_new_avail': int(fl is not None), s + '_new_n': n_features, s + '_cand_n5': count,
                   s + '_cos_last1': cos(fl, g1), s + '_cos_mean5': cos(fl, g5), s + '_cos_nmean_last1': cos(fm, g1), s + '_cos_nmean_mean5': cos(fm, g5),
-                  s + '_cand_feat_age': (n['t'] - g[-1]['t']) if g else NAN, s + '_cand_last1_h': g[-1]['crop_h'] if g else NAN,
-                  s + '_cand_last1_miou': g[-1]['miou'] if g else NAN, s + '_cand_mean5_miou_max': max(o['miou'] for o in g) if g else NAN,
+                  s + '_cand_feat_age': (n['t'] - last['t']) if last is not None else NAN,
+                  s + '_cand_last1_h': last['crop_h'] if last is not None else NAN,
+                  s + '_cand_last1_miou': last['miou'] if last is not None else NAN, s + '_cand_mean5_miou_max': miou_max,
                   s + '_new_feat_h': n['crop_h'] if fl is not None else NAN, s + '_new_feat_miou': n['miou'] if fl is not None else NAN})
         if s == 'm1':
-            gc = gallery(cobs, s, clean=True); gc5 = unit(np.mean([o[s] for o in gc], 0)) if gc else None
-            f.update(m1_cand_nclean=len(gc), m1_cos_clean5=cos(fl, gc5), m1_new_clean=int(fl is not None and n['crop_h'] >= CLEAN_H and n['miou'] == 0.0))
+            clean_count, _, clean_mean, _ = clean
+            f.update(m1_cand_nclean=clean_count, m1_cos_clean5=cos(fl, clean_mean),
+                     m1_new_clean=int(fl is not None and n['crop_h'] >= CLEAN_H and n['miou'] == 0.0))
     return f
+
+
+def _other_extreme(values, choose):
+    indices = [i for i, value in enumerate(values) if value == value]
+    if not indices:
+        return [NAN] * len(values)
+    best = choose(indices, key=values.__getitem__)
+    second = choose((i for i in indices if i != best), key=values.__getitem__, default=None)
+    return [values[best] if i != best else values[second] if second is not None else NAN
+            for i in range(len(values))]
 
 
 def group_features(fs):
@@ -203,13 +240,16 @@ def group_features(fs):
     for key, rk in (('d_last_h', 'rank_d'), ('d_cv_h', 'rank_cv')):
         order = sorted(range(len(fs)), key=lambda i: (fs[i][key], fs[i]['cand_tid']))
         for r_, i in enumerate(order): fs[i][rk] = r_ + 1
-    for i, f in enumerate(fs):
-        oth = [g for j, g in enumerate(fs) if j != i]
-        f['d_cv_h_min_other'] = min((g['d_cv_h'] for g in oth), default=NAN)
-        f['d_last_h_min_other'] = min((g['d_last_h'] for g in oth), default=NAN)
-        for s in ('m1', 'fp'):
-            v = [g[s + '_cos_mean5'] for g in oth if g[s + '_cos_mean5'] == g[s + '_cos_mean5']]
-            f[s + '_cos_mean5_max_other'] = max(v) if v else NAN
+    for key, choose in (('d_cv_h', min), ('d_last_h', min), ('m1_cos_mean5', max), ('fp_cos_mean5', max)):
+        values = [f[key] for f in fs]
+        if choose is min and any(value != value for value in values):
+            # Python min retains NaN if it is the first remaining value.
+            result = [min((v for j, v in enumerate(values) if j != i), default=NAN)
+                      for i in range(len(values))]
+        else:
+            result = _other_extreme(values, choose)
+        for f, value in zip(fs, result):
+            f[key + ('_min_other' if choose is min else '_max_other')] = value
 
 
 # ---------------------------------------------------------------- relink_judge.py (verbatim): exported-model inference in numpy
@@ -332,16 +372,18 @@ class OnlineJudge:
         births = [b for b in now if b not in self.hist]
         # candidates of every birth (frozen at t0): tracker ids output before, not output now, lost <= WINDOW frames
         cands = {}
+        velocities = {}
         if births:
             cl = [(c, co) for c, co in self.hist.items() if c not in now_set and t - co[-1]['t'] <= WINDOW]
             for b in births: cands[b] = cl
             if self.pred_gate:   # 11-14: candidate kept only if the birth centre lies in its growing search range around the predicted place
                 from .relabel_online import SR_BASE, SR_GROW, SR_MAX, SR_VMAX
                 rb = {int(r[4]): r for r in prow_r}
+                velocities = {c: cv_velocity(co) for c, co in cl}
                 for b in births:
                     bx, by = (rb[b][0] + rb[b][2]) / 2, (rb[b][1] + rb[b][3]) / 2; keep = []
                     for c, co in cl:
-                        last = co[-1]; hl = max(last['h'], 1e-6); gap = t - last['t']; vx, vy, _ = cv_velocity(co); sp = math.hypot(vx, vy)
+                        last = co[-1]; hl = max(last['h'], 1e-6); gap = t - last['t']; vx, vy, _ = velocities[c]; sp = math.hypot(vx, vy)
                         if sp > SR_VMAX * hl: vx, vy = vx * SR_VMAX * hl / sp, vy * SR_VMAX * hl / sp
                         if math.hypot(bx - (last['cx'] + vx * gap), by - (last['cy'] + vy * gap)) <= hl * min(SR_BASE + SR_GROW * gap, SR_MAX): keep.append((c, co))
                     cands[b] = keep
@@ -380,6 +422,7 @@ class OnlineJudge:
         out_ids = {self.id_map[x] for x in now}
         # ---- judge every birth with candidates (K = 0: features at t_now = t0, nobs = [the birth observation])
         st['births'] += len(births); pairs = []
+        summaries = {}
         for b in births:
             cl = cands.get(b)
             if not cl: continue
@@ -387,8 +430,14 @@ class OnlineJudge:
             if obs[b]['m1'] is None: st['births_with_candidates_no_feature'] += 1
             else: st['decided_with_feature'] += 1
             t1 = time.perf_counter_ns(); fs = []
+            birth = _birth_summary([obs[b]])
             for c, cb in cl:
-                f = pair_features([obs[b]], cb, t, t, prow_r, False)
+                if c not in summaries:
+                    summaries[c] = _candidate_summary(cb)
+                if c not in velocities:
+                    velocities[c] = cv_velocity(cb)
+                f = pair_features([obs[b]], cb, t, t, prow_r, False,
+                                  candidate=summaries[c], birth=birth, velocity=velocities[c])
                 f.update(cand_tid=c, n_cand=len(cl), n_births_frame=len(births), n_out_frame=len(now_set)); fs.append(f)
             group_features(fs)
             X = np.asarray([[float(f[c_]) for c_ in self.feats] for f in fs], np.float64)

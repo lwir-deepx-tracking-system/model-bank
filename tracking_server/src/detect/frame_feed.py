@@ -156,6 +156,9 @@ def status():
                           tile_backend=('cpp' if getattr(backend, 'using_native', False) else 'python') if backend is not None else None,
                           tile_post_backend=('cpp' if getattr(backend, 'native_post', None) else 'legacy') if backend is not None else None,
                           tile_validation_frames=getattr(backend, 'native_checks', 0),
+                          tile_validation_source=getattr(backend, 'validation_source', None),
+                          tile_wait_mode=('parallel' if getattr(getattr(backend, 'native', None),
+                                                               'parallel_wait', False) else 'sequential'),
                           tile_native_error=getattr(backend, 'native_error', None),
                           cores=list(feed.st['core']), submitted=feed.st['submitted'], taken=feed.st['taken'],
                           order_errors=feed.st['order_bad'], reason=reason)
@@ -272,7 +275,10 @@ def start():
             camera_extra.say('FEED %s refused: %s. The normal path is used.' % ('auto' if auto else 'arrival', why_))
             return None
         camera_extra.say('FEED: %s. Core 0 remains available.' % why_)
-    f_ = Feed(second_, hot_switch=hot_switch)
+    if APP.FEED_MODE == 'tile':
+        f_ = Feed(second_, hot_switch=hot_switch, warm_before_camera=True)
+    else:
+        f_ = Feed(second_, hot_switch=hot_switch)
     if second_ is None and APP.FEED_MODE == 'arrival':
         f_.reason = 'NPU 1에 검출 모델을 올리지 못했습니다. NPU 0에서 실행 중입니다'
     sw_ = _switch_interval()
@@ -315,7 +321,7 @@ class Feed:
     reset_monitor_on_take = False
     _clock = staticmethod(time.perf_counter)   # 11-16: the automatic choice's clock (tests put their own)
 
-    def __init__(self, second_, *, hot_switch=False):
+    def __init__(self, second_, *, hot_switch=False, warm_before_camera=False):
         self.eng = [APP.a] + ([second_] if second_ is not None else [])
         self.regular_eng = list(self.eng)
         self.tile_engine = None; self.tile_tone = None; self.tile_error = None
@@ -325,7 +331,11 @@ class Feed:
                 try:
                     self.tile_tone = dual_tile.Tone()
                     self.tile_engine = dual_tile.Engine()
+                    if warm_before_camera and APP.FEED_MODE == 'tile':
+                        self.tile_engine.b.warm_before_camera()
                 except Exception as error:
+                    if self.tile_engine is not None:
+                        self.tile_engine.b.dispose()
                     self.tile_engine = self.tile_tone = None
                     self.tile_error = '분할 검출기를 준비하지 못했습니다: %s' % str(error)[:120]
         self.busy = [False] * len(self.eng)
@@ -612,7 +622,8 @@ class Feed:
         if native is not None and backend.using_native and backend.native is native:
             timing = native.timing
             r_.deadline_tiles = tuple((timing.submit_start[core], timing.submit_done[core],
-                                       timing.wait_start[core], timing.wait_done[core], timing.wait_cpu[core])
+                                       timing.wait_start[core], timing.wait_done[core], timing.wait_cpu[core],
+                                       timing.npu_us[core], timing.latency_us[core])
                                       for core in range(2))
         if keep_ and not isinstance(output, dual_tile.TileHeads):
             # The next input may reuse the engine's output buffer.

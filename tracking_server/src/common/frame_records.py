@@ -36,14 +36,31 @@ class LiveHistoryTrim:
             self._retired.clear()
 
 
-def pred_arrays(pc):
-    """pc = detections [N, >=6] (x1, y1, x2, y2, score, class) already in file coordinates -> the three arrays of a PRED record."""
-    return np.round(pc[:, :4], 2), np.round(pc[:, 4], 5), pc[:, 5].astype(int)
+def pred_arrays(pc, *, dy=0.0):
+    """Pack detections [N, >=6] into a PRED record with the optional y shift."""
+    boxes = pc[:, :4]
+    if dy:
+        boxes = boxes.copy()
+        boxes[:, 1] += dy
+        boxes[:, 3] += dy
+        np.round(boxes, 2, out=boxes)
+    else:
+        boxes = np.round(boxes, 2)
+    return boxes, np.round(pc[:, 4], 5), pc[:, 5].astype(int)
 
 
 def track_array(rows, dy):
     """rows = track rows (x1, y1, x2, y2, id, score, class, detection index); y1 and y2 are shifted by -dy, nothing is rounded here."""
     out = np.empty((len(rows), 8), np.float64)
+    if not len(rows):
+        return out
+    if isinstance(rows, np.ndarray) or all(len(row) == 8 for row in rows):
+        packed = np.asarray(rows, dtype=np.float64)
+        if packed.ndim == 2 and packed.shape[1] >= 8:
+            out[:] = packed[:, :8]
+            out[:, 1] -= dy
+            out[:, 3] -= dy
+            return out
     for k, r in enumerate(rows):
         out[k, :4] = [float(v) - (dy if j in (1, 3) else 0.0) for j, v in enumerate(r[:4])]
         out[k, 4:] = [float(r[4]), float(r[5]), float(r[6]), float(r[7])]

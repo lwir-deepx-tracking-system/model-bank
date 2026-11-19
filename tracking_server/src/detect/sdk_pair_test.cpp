@@ -3,7 +3,10 @@
 
 #include <array>
 #include <cassert>
+#include <chrono>
+#include <condition_variable>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -15,6 +18,10 @@ struct FakeEngine {
 };
 std::vector<int> events;
 int submit_failure = -1, wait_failure = -1, destroyed = 0;
+std::mutex event_lock;
+std::condition_variable both_waiting;
+bool require_overlap = false;
+int waits_started = 0;
 
 FakeEngine& get(dxrt_engine_t handle) { return *reinterpret_cast<FakeEngine*>(handle); }
 }
@@ -83,7 +90,15 @@ dxrt_status_t dxrt_engine_run_async(dxrt_engine_t handle, const void* input, voi
 dxrt_status_t dxrt_engine_wait(dxrt_engine_t handle, int job, void* output) {
     auto& engine = get(handle);
     assert(job == 7 && engine.busy);
-    events.push_back(engine.core + 2);
+    {
+        std::unique_lock lock(event_lock);
+        events.push_back(engine.core + 2);
+        if (require_overlap) {
+            ++waits_started;
+            both_waiting.notify_one();
+            assert(both_waiting.wait_for(lock, std::chrono::seconds(2), [] { return waits_started >= 2; }));
+        }
+    }
     engine.busy = false;
     if (output) std::memset(output, engine.first_input + engine.core, 8);
     return engine.core == wait_failure ? DXRT_ERR_INVALID_ARG : DXRT_OK;
@@ -149,5 +164,26 @@ int main() {
     assert(run(pair) == -1 && std::string(lwir_split_error()) == "DX-RT wait failed on core 0");
     assert((events == std::vector<int>{0, 1, 2, 3}));
     lwir_split_close(pair);
-    assert(destroyed == 6);
+
+    events.clear();
+    wait_failure = -1;
+    pair = opened();
+    assert(run(pair) == 0);
+    const auto expected_left = a, expected_right = b;
+    assert(lwir_split_set_parallel_wait(pair, 1) == 0);
+    for (int i = 0; i < 12; ++i) {
+        events.clear();
+        waits_started = 0;
+        require_overlap = true;
+        a.fill(0); b.fill(0);
+        assert(run(pair) == 0);
+        assert(a == expected_left && b == expected_right);
+        assert(waits_started == 2 && events.size() == 4 && events[2] != events[3]);
+    }
+    waits_started = 0;
+    wait_failure = 1;
+    assert(run(pair) == -1 && std::string(lwir_split_error()) == "DX-RT wait failed on core 1");
+    require_overlap = false;
+    lwir_split_close(pair);
+    assert(destroyed == 8);
 }

@@ -2,8 +2,23 @@
 
 import ctypes as c
 import math
+import os
+from pathlib import Path
 
 import numpy as np
+
+from ..common.shared_values import HERE
+
+
+def parallel_wait_requested():
+    try:
+        with (HERE / 'scripts' / 'split_wait_mode').open('rb') as setting:
+            mode = setting.read(16).strip()
+        if mode in (b'sequential', b'parallel'):
+            return mode == b'parallel'
+    except OSError:
+        pass
+    return os.environ.get('LWIR_SPLIT_PARALLEL_WAIT') == '1'
 
 
 class TensorInfo(c.Structure):
@@ -46,12 +61,18 @@ class NativeTiles:
         if not self.handle:
             raise RuntimeError(self.error())
         self.timing = Timing()
+        self.parallel_wait = False
         self.input_size, self.output_size = input_size.value, output_size.value
         try:
             self.layout = self.layouts(input_shape, shapes)
             self.buffers = [np.empty(self.output_size, np.uint8) for _ in range(2)]
             self.views = [self.tensor_views(buffer) for buffer in self.buffers]
             self.engines = [CoreMetrics(self, core) for core in (0, 1)]
+            if parallel_wait_requested():
+                set_mode = getattr(self.lib, 'lwir_split_set_parallel_wait', None)
+                if set_mode is not None:
+                    set_mode.argtypes, set_mode.restype = (ptr, c.c_int), c.c_int
+                    self.parallel_wait = set_mode(self.handle, 1) == 0
         except BaseException:
             self.close()
             raise

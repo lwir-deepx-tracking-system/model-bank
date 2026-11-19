@@ -54,6 +54,20 @@ class SameText(unittest.TestCase):
         r = new_pred(pc, 'x'); r['zoom'] = [1]
         self.assertEqual(fr.plain(r)['zoom'], [1])
 
+    def test_detection_shift_keeps_archived_order_precision_and_input_ownership(self):
+        pc = np.array([[0.125, 1.005, 2.675, 100.0, .123455, 2],
+                       [1e-7, 639.995, 0, 1, .222225, 0]], dtype=np.float32)
+        source = pc.copy()
+        shifted = pc.copy()
+        shifted[:, 1] += 48
+        shifted[:, 3] += 48
+        want = old_pred(shifted, 'test')
+        boxes, conf, classes = fr.pred_arrays(pc, dy=48.0)
+        got = dict(image_id='test', xyxy=boxes, conf=conf, cls=classes)
+        self.assertEqual(dumps(fr.plain(got)), dumps(want))
+        np.testing.assert_array_equal(pc, source)
+        self.assertFalse(np.shares_memory(pc, boxes))
+
 
 class FewerObjects(unittest.TestCase):
     def test_the_collector_has_far_less_to_walk(self):

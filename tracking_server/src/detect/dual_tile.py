@@ -100,6 +100,7 @@ class PairBackend:
         self.model = model
         self.native = None
         self.native_checks = 0
+        self.validation_source = 'live'
         self.native_error = None
         self.native_post = getattr(getattr(APP, 'native_post', None), 'prepare_split_heads', None)
         self.native_allowed = (vars(APP).get('LIVE') is not None and NATIVE_SPLIT.is_file()
@@ -183,8 +184,19 @@ class PairBackend:
             return
         if self.using_native:
             self.close_python()
-            print(f"NATIVE_SPLIT active: {self.native_checks} live frames matched all 18 tensors, "
+            print(f"NATIVE_SPLIT active: {self.native_checks} {self.validation_source} inputs matched all 18 tensors, "
                   f"{self.model.name}", flush=True)
+
+    def warm_before_camera(self):
+        # Run both backends on the same deterministic full-frame stimuli before
+        # opening the source. No camera timestamps or tracker state exist yet.
+        self.validation_source = 'startup'
+        rng = np.random.default_rng(1779)
+        for _ in range(NATIVE_CHECK_FRAMES if self.native_allowed else 1):
+            image = rng.integers(0, 256, (H, W), dtype=np.uint8)
+            self.wait(self.run_async(image, user_arg={'f': -1}))
+            if not self.native_allowed:
+                break
 
     def run_async(self, gray, user_arg=None, output_buffer=None):
         if gray.dtype != np.uint8 or gray.shape != (H, W):

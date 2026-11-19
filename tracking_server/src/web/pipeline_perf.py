@@ -191,5 +191,5 @@ class PipelinePerf:
                         botsort_overlap_frames=self._overlap_count,
                         clock='perf_counter_ns',
                         tile_fields=['submit_start_ns', 'submit_done_ns', 'wait_start_ns',
-                                     'wait_done_ns', 'wait_cpu_ns'],
+                                     'wait_done_ns', 'wait_cpu_ns', 'sdk_npu_us', 'sdk_latency_us'],
                         gc_fields=['start_ns', 'stop_ns', 'generation'])

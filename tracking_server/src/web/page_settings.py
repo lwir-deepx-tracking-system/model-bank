@@ -368,6 +368,51 @@ def det_has_kpt():
     return bool(req_ and req_.get('det') in KPT_DETS)
 
 
+def queue_startup_detector(detector):
+    """Resolve a previously saved selection using the normal catalog checks."""
+    if not isinstance(detector, str) or detector == APP.args.det:
+        return
+    if detector.startswith('bank:') and not any(c['det'] == detector for c in APP.MODEL['catalog']):
+        APP.bank_refresh(force=True)
+    item = next((c for c in APP.MODEL['catalog'] if c['det'] == detector), None)
+    if item is None:
+        print('LAST selection model %s -> not installed or still being copied' % detector, flush=True)
+    else:
+        APP.model_request(item['id'])
+
+
+def open_startup_detector():
+    """Build the saved detector while the previous detector and camera are absent."""
+    request = APP.MODEL['req']
+    if request is None:
+        return
+    detector = request['det']
+    item = next(c for c in APP.MODEL['catalog'] if c['det'] == detector)
+    result = 3
+    if not swap_refused(detector):
+        key = item['key']
+        try:
+            engine = APP.Engine(key, CORE[key], APP.args.npu_depth)
+        except Exception as error:
+            print('MODEL saved detector failed:', repr(error)[:200], flush=True)
+        else:
+            APP.eng[key] = engine
+            det_changed(detector, key)
+            APP.sel_save(det=detector)
+            result = 0
+    if result != 0 and APP.args.det not in KPT_DETS:
+        pending = APP.RULES['pending'] or {}
+        if pending.get('predictor', '').endswith('_kpt'):
+            pending.pop('predictor')
+            APP.SEL.pop('predictor', None)
+            APP.sel_save()
+    APP.MODEL['req'] = None
+    APP.MODEL['last'] = dict(id=request['id'], result=result, text=APP.MODEL_TEXT[result],
+                             at=time.strftime('%H:%M:%S'), seconds=round(time.time() - request['t'], 1))
+    APP.MODEL['history'].append(dict(APP.MODEL['last'], det=detector, frame=None))
+    print('MODEL startup %s: %s' % (detector, 'ready' if result == 0 else 'using default'), flush=True)
+
+
 def swap_refused(new_det):
     """True (with the log line) when the file of new_det is missing or its sha is not the listed one: do_model_swap then answers 3 without touching an engine.
     11-15: the frame loop asks this before the old path, so a refused change pauses, releases and rebuilds nothing (resident_det) and the frames ahead stay valid."""

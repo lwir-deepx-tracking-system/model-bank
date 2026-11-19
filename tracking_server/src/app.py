@@ -16,6 +16,7 @@ from .detect import spec_proposals   # 11-14 research switch prop_fuse
 from .common import settings
 from .common.state import APP
 from .common import frame_records   # 11-13: compact per-frame records (fewer objects for the garbage collector)
+from .common.live_gc import for_live as live_gc_policy
 from .common.shared_values import (
     HERE, ROOT, SHAPE, SHAPE_TT, SHAPE_RT480, SHAPE_W480, CORE, DET, PERSON_CLS, TARGET, sha, anchors, LOST, REMOVED)
 from .detect.model_scan import BANK_T
@@ -329,6 +330,10 @@ def main():
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
         if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
+        # An engine which kills the process during construction must not be retried on restart.
+        saved_detector = APP.SEL.pop('det', None)
+        APP.sel_save()
+        page_settings.queue_startup_detector(saved_detector)
         try:   # v40
             if isinstance(sv_, dict) and isinstance(sv_.get('warm_prev'), list) and len(sv_['warm_prev']) == 2: APP.CTL['warm_prev'] = (int(sv_['warm_prev'][0]), int(sv_['warm_prev'][1])); APP.SEL['warm_prev'] = list(APP.CTL['warm_prev'])
         except (ValueError, TypeError): pass
@@ -360,18 +365,14 @@ def main():
             try: ok_, tx_ = APP.rules_request({'predictor': [page_settings.AUTO_KPT_POS]})
             except Exception as e_: ok_, tx_ = False, repr(e_)[:120]
             print('POS predictor %s at start for keypoint detector %s: %s' % (page_settings.AUTO_KPT_POS, APP.args.det, tx_ if not ok_ else 'queued'), flush=True)
-        dv_ = APP.SEL.pop('det', None)
-        APP.sel_save()   # the model name is written back only after the change worked: a model that breaks the start is not tried again
-        if dv_ and dv_ != APP.args.det:
-            c_ = next((x_ for x_ in APP.MODEL['catalog'] if x_['det'] == dv_), None)
-            if c_ is None and isinstance(dv_, str) and dv_.startswith('bank:') and APP.MODEL['catalog'] and not APP.args.no_bank_auto:   # fix 11-11: a model file the scan lists by itself is not in the list yet at this point (listed at the second scan): wait for it beside the frame loop
-                md_th.Thread(target=page_settings.sel_det_late, args=(dv_,), daemon=True).start(); print('LAST selection model %s -> waiting for the model scan' % dv_, flush=True)
-            else:
-                r_ = APP.model_request(c_['id']) if c_ is not None else 1
-                print('LAST selection model %s -> %s' % (dv_, 'queued' if r_ == -1 else 'not taken (%s)' % APP.MODEL_TEXT.get(r_, '?')), flush=True)
+        if saved_detector == APP.args.det:
+            APP.sel_save(det=APP.args.det)
     APP.pending, APP.eng = {}, {}
     APP.Engine = npu_engine.Engine
     failed = False; APP.rows = []; APP.preds = []; util = []; APP.tracks_out = []; rebind_log = []
+    if APP.args.live_port:
+        util = collections.deque(maxlen=1200)
+    live_gc = None
     vit_queue = []           # pending crop requests: dict(kind, track_id, frame, idx, box(frame xyxy), src('cur'|'prev'))
     inflight = None          # (job meta, submit_ns)
     delivered = 0; vit_wait_total = 0.0; vit_lat = []; crops_queued = 0; dropped = 0; reb_tot = dict(motion=0, appearance=0, cand_frames=0, cand_crops=0, sync_frames=0, sync_crops=0)
@@ -383,7 +384,10 @@ def main():
     zoom_eng = None; zoom_inflight = None; zoom_log = []; zoom_fates = {}                                            # v9 --zoom
     zoom_st = dict(candidates=0, windows=0, windows_skipped=0, canvases=0, raw_canvas_boxes=0, accepted=0, frames_with_candidates=0)
     try:
-        for n in APP.det_names: APP.eng[n] = APP.Engine(n, CORE[n], APP.args.npu_depth)
+        page_settings.open_startup_detector()
+        for n in APP.det_names:
+            if n not in APP.eng:
+                APP.eng[n] = APP.Engine(n, CORE[n], APP.args.npu_depth)
         if APP.args.zoom:   # v9: the SAME tile-A DXNN loaded again, bound to NPU_2 (depth 1); one 480x384 canvas per frame; own Decoder (dec480[0] is busy in detect)
             zoom_eng = APP.Engine('ZOOM', 2, 1, model=APP.det_names[0]); zoom_x = np.zeros((1,) + ZOOM_HW + (3,), np.uint8); zoom_canvas = np.zeros(ZOOM_HW, np.uint8); dec_zoom = Decoder(*ZOOM_HW)
             zoom_gate = None
@@ -461,6 +465,8 @@ def main():
         APP.FRAME_DY = [0.0]; APP.FRAME_ROWS = [None]   # FRAME_DY: output y shift (16.0 for 640x480 inputs, 0.0 for 640x512 frames)
         APP.to_canvas = detect_frame.to_canvas
         APP.mem = None
+        read_frame = detect_frame.read_frame
+        submit_tiles = detect_frame.submit_tiles
         if APP.args.live_port:
             import threading as lv_th, subprocess as lv_sp, http.server as lv_http, collections as lv_col, socket as lv_sock; APP.lv_th = lv_th; APP.lv_sp = lv_sp; APP.lv_http = lv_http; APP.lv_col = lv_col; APP.lv_sock = lv_sock
             APP.TILE_BUFS = [[np.zeros((1, 480, 384, 3), np.uint8), np.zeros((1, 480, 384, 3), np.uint8)] for _ in range(APP.args.npu_depth + 3)]   # ring of input buffers: the DXRT binding keeps every submitted input array alive (about 0.55 MB per tile and frame leaked), so live mode reuses fixed buffers
@@ -475,6 +481,8 @@ def main():
             APP.LIVE.restart_stop = False
             APP.LIVE.instance = str(time.monotonic_ns())
             APP.LIVE.pipeline_perf = PipelinePerf(observe_gc=True)
+            live_gc = live_gc_policy() if not APP.args.mock else None
+            APP.LIVE.gc_policy = live_gc
             APP.LIVE.jpeg = b''; APP.LIVE.seq = 0; APP.LIVE.viewers = 0; APP.LIVE.pic_t = -1e9; APP.LIVE.pic_n = 0; APP.LIVE.snap_t = -1e9; APP.LIVE.jcond = APP.lv_th.Condition(); APP.LIVE.t0 = time.monotonic(); APP.LIVE.cam_fps = 0.0; APP.LIVE.done_ts = APP.lv_col.deque(maxlen=40)
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
             APP.LIVE.lo = None; APP.LIVE.hi = None; APP.LIVE.last = None; APP.LIVE.log = open(APP.out / 'cam_pipe.log', 'w'); APP.LIVE.raws = APP.lv_col.deque(); APP.LIVE.rawq = APP.lv_col.deque(); APP.LIVE.warm_dropped = 0; APP.LIVE.last_frame_t = time.monotonic(); APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.cam_next_spawn = None; APP.LIVE.cam_hold = False; APP.LIVE.cam_reset = None; APP.LIVE.sys_lock = APP.lv_th.Lock(); APP.LIVE.cam_lock = APP.lv_th.Lock(); APP.LIVE.frames_in = 0; APP.LIVE.q_drop = 0; APP.LIVE.prev_t = None; APP.LIVE.upd_t = None; APP.LIVE.gap_n = 0; APP.LIVE.delays = APP.lv_col.deque(maxlen=2000); APP.LIVE.dlock = APP.lv_th.Lock(); APP.LIVE.perf = APP.lv_col.deque(maxlen=900); APP.LIVE.perf_acc = [time.perf_counter(), 0, 0.0, 0.0, 0.0]   # v26b: q_drop = camera frames thrown away because the tracker was 3 frames behind, gap_n = input gaps over 1 s, delays = (time, capture-to-picture ms) of the last frames. v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)
@@ -484,7 +492,6 @@ def main():
             APP.lv_reader = camera_link.lv_reader
             APP.lv_spawn = camera_link.lv_spawn
             temp_ring.apply_cli(APP.args.cam_temp)   # 11-14: --cam-temp N > 0 -> LWIR_CAM_TEMP=N for every cam_pipe start; 0 = environment unchanged
-            APP.lv_spawn()
             APP.lv_cam_wait = camera_link.lv_cam_wait
             APP.GB = None
             if APP.args.gimbal:   # v19
@@ -564,6 +571,16 @@ def main():
             APP.cam_reset_work = camera_link.cam_reset_work
             APP.cam_reset_request = camera_link.cam_reset_request
             APP.sys_reboot = system_buttons.sys_reboot
+            APP.FEED_INCOMPATIBLE = frame_feed.refuse_reason()
+            APP.FEED = frame_feed.start()
+            APP.FEED_READY = True
+            if APP.FEED is not None:
+                ready_prefetch = False
+                read_frame, submit_tiles = APP.FEED.read_frame, APP.FEED.submit_time
+            elif APP.LIVE.restart_supported:
+                def read_frame(_):
+                    return APP.live_next(fresh_only=True), 0.0
+            APP.lv_spawn()
             lv_Handler = page_handler.make_lv_Handler()
             lv_Server = page_handler.make_lv_Server()
             APP.lv_srv = lv_Server((APP.args.live_bind, APP.args.live_port), lv_Handler); APP.lv_srv.daemon_threads = True
@@ -581,18 +598,8 @@ def main():
         if APP.args.preload:         # --preload: decode once, outside every timed interval
             t_pl = time.perf_counter(); APP.mem = [APP.to_canvas(APP.cv2.imread(str(APP.DATA / im_['file_name']), APP.cv2.IMREAD_GRAYSCALE | APP.cv2.IMREAD_ANYDEPTH), im_['file_name']) for im_ in APP.images]
             print('PRELOAD %d frames %.1f s' % (len(APP.mem), time.perf_counter() - t_pl), flush=True)
-        read_frame = detect_frame.read_frame
-        submit_tiles = detect_frame.submit_tiles
         APP.TIMING = stage_timing.start()   # None unless LWIR_STAGE_TIMING=1
-        APP.FEED_INCOMPATIBLE = frame_feed.refuse_reason()
-        APP.FEED = frame_feed.start()
         APP.FEED_READY = True
-        if APP.FEED is not None:
-            ready_prefetch = False
-            read_frame, submit_tiles = APP.FEED.read_frame, APP.FEED.submit_time
-        elif APP.LIVE is not None and APP.LIVE.restart_supported:
-            def read_frame(_):
-                return APP.live_next(fresh_only=True), 0.0
         def sync_embed(idxs, g_cur, arr_cur, frame_no):
             """--vit-sync: embed the candidate detections (arr rows) now, batch 1, one after another; a pending asynchronous job is collected first."""
             nonlocal inflight, delivered, vit_wait_total
@@ -967,16 +974,6 @@ def main():
                 # period = time between consecutive frame completions minus the JPEG read done inside the interval (a camera delivers frames in memory)
                 row['period_ms'] = ((t5 - t_prev_emit) / 1e6 - read_ms) if t_prev_emit is not None else None
                 t_prev_emit = t5
-            APP.rows.append(row)
-            pc = p.copy(); pc[:, 1] += 64.0 - APP.FRAME_DY[0]; pc[:, 3] += 64.0 - APP.FRAME_DY[0]
-            xyxy_, conf_, cls_ = frame_records.pred_arrays(pc)   # 11-13: arrays, turned into the old lists only when the file is written
-            APP.preds.append(dict(image_id=row['image_id'], xyxy=xyxy_, conf=conf_, cls=cls_))
-            if zoom_eng is not None: APP.preds[-1]['zoom'] = zoom_flags if zoom_flags is not None else [0] * len(p)   # v9: 1 = zoom re-detection (appended rows)
-            APP.tracks_out.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
-                                   tracks_xyxy_id_conf_class_detectionindex=frame_records.track_array(tr_rows, APP.FRAME_DY[0])))
-            if APP.relabeler is not None:
-                APP.tracks_base.append(dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset,
-                                        tracks_xyxy_id_conf_class_detectionindex=frame_records.track_array(base_rows, APP.FRAME_DY[0])))
             if APP.LIVE is not None:
                 live_publish(g, tr_rows, row, detections=p, tracker_detections=arr,
                              click_raw_ids=click_raw_ids, click_raw_to_public=click_raw_to_public,
@@ -984,6 +981,17 @@ def main():
                              deadline_marks=(t0, t1, t2, t4, keepid_start_ns, keepid_done_ns, t5,
                                              reid_submit_ns, reid_collect_ns, APP.reid_wait_ns,
                                              len(arr), len(tr_rows)))
+            APP.rows.append(row)
+            xyxy_, conf_, cls_ = frame_records.pred_arrays(p, dy=64.0 - APP.FRAME_DY[0])
+            APP.preds.append(dict(image_id=row['image_id'], xyxy=xyxy_, conf=conf_, cls=cls_))
+            if zoom_eng is not None: APP.preds[-1]['zoom'] = zoom_flags if zoom_flags is not None else [0] * len(p)
+            archive = dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset)
+            track_values = frame_records.track_array(tr_rows, APP.FRAME_DY[0])
+            APP.tracks_out.append(dict(archive, **{frame_records.TRACK_KEY: track_values}))
+            if APP.relabeler is not None:
+                base_values = (track_values if tr_rows is base_rows else
+                               frame_records.track_array(base_rows, APP.FRAME_DY[0]))
+                APP.tracks_base.append(dict(archive, **{frame_records.TRACK_KEY: base_values}))
             if APP.TIMING is not None: APP.TIMING.frame(i, t0, t1, t2, t4, rl_ms, t5)
             prev_gray = g
             if budget: prev_arr = arr
@@ -993,6 +1001,8 @@ def main():
                 frame_feed.feed_auto.npu_note(s_)   # 11-16: NPU clock and temperature from the same answer, for /rules npu_feed.auto.npu (never raises)
                 stall_diag.span(td_, 'NPU status query (DeviceStatus, every 50 frames)')
             if stall_diag.ON: stall_diag.loop_frame(row, t5)
+            if live_gc is not None and i % 32 == 0:
+                live_gc.frame(i)
             if (i + 1) % 500 == 0: print('FRAMES', i + 1, round(time.monotonic() - t_start, 1), 'vit delivered', delivered, flush=True)
         if APP.LIVE is not None and APP.LIVE.restart_pending:
             for a_ in ahead:
@@ -1013,7 +1023,7 @@ def main():
             for r in APP.tracks_out: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
         with (APP.out / ({'rt480': 'PRED_NEWMRT480.jsonl', 'w480': 'PRED_NEWMRW480.jsonl', 's640': 'PRED_S640.jsonl', 'm640': 'PRED_M640.jsonl', 's6': 'PRED_S6.jsonl', 's480': 'PRED_S480.jsonl', 'ft1': 'PRED_FT1.jsonl', 'ft9': 'PRED_FT9.jsonl'}.get(APP.args.det, 'PRED_DRT512.jsonl'))).open('w', encoding='utf-8', newline='\n') as fh:
             for r in APP.preds: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
-        (APP.out / 'RAW_TIMINGS.json').write_text(json.dumps(APP.rows)); (APP.out / 'UTIL_SAMPLES.json').write_text(json.dumps(util)); (APP.out / 'REBIND_LOG.json').write_text(json.dumps(rebind_log))
+        (APP.out / 'RAW_TIMINGS.json').write_text(json.dumps(APP.rows)); (APP.out / 'UTIL_SAMPLES.json').write_text(json.dumps(list(util))); (APP.out / 'REBIND_LOG.json').write_text(json.dumps(rebind_log))
         if APP.relabeler is not None:
             with (APP.out / 'TRACKS_BASE.jsonl').open('w', encoding='utf-8', newline='\n') as fh:
                 for r in APP.tracks_base: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
@@ -1162,6 +1172,8 @@ def main():
             except BaseException: pass
         (APP.out / 'FAILURE.txt').write_text(traceback.format_exc()); raise
     finally:
+        if live_gc is not None:
+            live_gc.close()
         if not failed and not APP.pending:
             for e in list(APP.eng.values()) + ([vit] if (use_vit and 'vit' in dir()) and vit is not None else []) + ([APP.bench_eng] if APP.bench_eng is not None else []) + ([APP.rl_eng] if APP.rl_eng is not None else []) + ([APP.rl_async] if APP.rl_async is not None else []) + ([zoom_eng] if zoom_eng is not None else []): e.b.dispose()
 

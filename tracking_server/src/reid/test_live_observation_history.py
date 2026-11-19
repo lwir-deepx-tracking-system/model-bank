@@ -11,6 +11,18 @@ from . import relink_online_judge as judge
 
 
 class LiveObservationHistoryTests(unittest.TestCase):
+    def test_group_extrema_preserve_nan_order_and_candidate_id_ties(self):
+        a = [
+            dict(d_last_h=float('nan'), d_cv_h=1.0, cand_tid=99, m1_cos_mean5=float('nan'), fp_cos_mean5=-1.),
+            dict(d_last_h=5.0, d_cv_h=1.0, cand_tid=9, m1_cos_mean5=.5, fp_cos_mean5=float('nan')),
+            dict(d_last_h=1.0, d_cv_h=2.0, cand_tid=4, m1_cos_mean5=.5, fp_cos_mean5=float('inf')),
+        ]
+        judge.group_features(a)
+        self.assertEqual([r['rank_cv'] for r in a], [2, 1, 3])
+        np.testing.assert_array_equal([r['d_last_h_min_other'] for r in a], [1.0, np.nan, np.nan])
+        np.testing.assert_array_equal([r['m1_cos_mean5_max_other'] for r in a], [.5, .5, .5])
+        np.testing.assert_array_equal([r['fp_cos_mean5_max_other'] for r in a], [np.inf, np.inf, -1.])
+
     def test_long_gaps_in_appearance_keep_old_clean_gallery_and_original_age(self):
         full = []
         live = judge._LiveObservationHistory()

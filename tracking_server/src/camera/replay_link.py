@@ -572,6 +572,9 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
             replay_eval.activate(ev_, L_.replay_src_t, 'switched' if tgt_ is not None else 'stopped')
             installed = True   # 옛 재생의 채점은 파일로 쓰고 끝낸다
             _gimbal_stop()
+            policy = getattr(L_, 'gc_policy', None)
+            if policy is not None and L_.cam_lost and old_proc_.poll() is not None:
+                policy.between_sources()
             APP.lv_spawn()
         if tgt_ is not None:
             if APP.LIVE.meas is not None:
@@ -609,5 +612,8 @@ def on_cam_lost(now_):   # lv_cam_wait (cam_lock 안, 주 스레드): 재생 프
     L_.cam_fail_n = 0; L_.cam_unrec_n = 0; L_.cam_next_spawn = None
     _gimbal_stop()
     _msg(('재생 끝: %s. 카메라로 돌아감 (영상은 보통 5초 안)' % r_['name']) if rc_ == 0 else ('재생 프로그램이 코드 %s 로 끝남 (%s). 카메라로 돌아감' % (rc_, r_['name'])))
+    policy = getattr(L_, 'gc_policy', None)
+    if policy is not None:
+        policy.between_sources()
     APP.lv_spawn()
     return True
