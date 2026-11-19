@@ -43,6 +43,8 @@ import math
 
 import numpy as np
 
+from . import native_control
+
 FPS = 30.0
 SR_BASE, SR_GROW, SR_MAX = 0.5, 0.05, 4.0   # the displayed circle = reid.relabel_online.search_range
 PREDICT_S = 0.8        # s after the last trusted box: the prediction itself is followed (bridge --coast-ms)
@@ -62,6 +64,7 @@ EDGE_PX = 8.0          # the point sent to the bridge stays this far inside the 
 BOX_W, BOX_H = 16.0, 32.0   # the box sent is only a carrier of that point (small, so no clipping at the picture edge can move it)
 
 PHASES = {'idle': 0, 'predict': 1, 'sweep': 2, 'return': 3, 'wait': 4, 'crowd': 5, 'blind': 6, 'fits': 7, 'hold': 8}
+PHASE_NAMES = {index: name for name, index in PHASES.items()}
 
 
 def radius(h0, age):
@@ -73,6 +76,15 @@ def amplitude(r, w0, width):
     """how far (px) the camera may look to either side of the circle's centre: to the circle's edge, the centre staying in view"""
     m = MARGIN * width
     return max(0.0, min(r - (width / 2.0 - m), width / 2.0 - m - w0 / 2.0))
+
+
+def count_near(people, selected, cx, cy, distance, ignored=()):
+    if native_control.native is not None:
+        return native_control.native.search_crowd(people, selected, cx, cy, distance, ignored or None)
+    others = [q for q in people if int(q[0]) != selected and int(q[0]) not in ignored]
+    near = sum(1 for q in others
+               if math.hypot((q[1] + q[3]) / 2.0 - cx, (q[2] + q[4]) / 2.0 - cy) <= distance)
+    return near, len(others)
 
 
 class Seek:
@@ -100,9 +112,7 @@ class Seek:
         """The followed box (cx, cy, w, h) was trusted in this frame; people = every box of the frame (id, x1, y1, x2, y2, ..);
         partners = ids whose box overlaps ours (often a second box on the same person: not counted here)."""
         cx, cy, w, h = box
-        others = [q for q in people if int(q[0]) != self.sel and int(q[0]) not in partners]
-        self.others = len(others)
-        self.near = sum(1 for q in others if math.hypot((q[1] + q[3]) / 2.0 - cx, (q[2] + q[4]) / 2.0 - cy) <= NEAR_H * h)
+        self.near, self.others = count_near(people, self.sel, cx, cy, NEAR_H * h, partners)
         if self.phase != 'idle':
             self._clear()
 
@@ -137,49 +147,58 @@ class Seek:
             if m is None:
                 self.blind = True   # the camera's turning is unknown from here on: no search for this loss
             self.c_t = t
-        r = radius(self.h0, age)
-        a = amplitude(r, self.w0, W)
-        pan = aim[0] - self.c[0]   # how far right of the centre the camera looks now
-        target, lead = None, 0.0
-        others = [q for q in people if int(q[0]) != self.sel]
-        self.now_others = len(others)
-        self.now_near = sum(1 for q in others if math.hypot((q[1] + q[3]) / 2.0 - self.c[0], (q[2] + q[4]) / 2.0 - self.c[1]) <= NEAR_H * self.h0)
+        self.now_near, self.now_others = count_near(people, self.sel, *self.c, NEAR_H * self.h0)
         self.near_run = self.near_run + 1 if (self.now_near or self.now_others > MAX_OTHERS) else 0
-        if age < PREDICT_S:
-            self.phase = 'predict'
-        elif self.crowd() or (self.near_run >= NEAR_FRAMES and age < SWEEP_END_S):
-            if self.phase != 'crowd': self.skipped += 1
-            self.phase = 'crowd'
-        elif hidden or not can_reaccept:
-            self.phase = 'hold'   # the number has a box the guard does not trust, or could not be taken back far away
-        elif self.blind:
-            self.phase = 'blind'
-        elif age < SWEEP_END_S:
-            if a < MIN_A and not self.swept:
-                self.phase = 'fits'
-            else:
-                if not self.swept:
-                    self.swept, self.leg, self.leg_t = True, 0, t
-                    self.sweeps += 1
-                    vx = float(vel[0]) if vel is not None else 0.0
-                    self.dir0 = ((1 if vx > 0 else -1) if abs(vx) >= V_MIN_H * self.h0
-                                 else (1 if self.c[0] >= aim[0] else -1))
-                self.phase = 'sweep'
-                for _ in range(2):
-                    d = self.dir0 if self.leg % 2 == 0 else -self.dir0
-                    target = d * a
-                    if d * (target - pan) > LEG_STOP and t - self.leg_t <= LEG_MAX_S:
-                        break
-                    self.leg += 1; self.leg_t = t   # this turn's end is reached (or given up): the other side
-                lead = d * LEG_LEAD
-        elif self.swept and not self.returned and age < SWEEP_END_S + RETURN_S:
-            self.phase = 'return'
-            target = 0.0
-            if abs(pan) <= LEG_TOL:
-                self.returned = True
-                self.phase, target = 'wait', None
+        if native_control.native is not None:
+            vx = float(vel[0]) if vel is not None else 0.
+            phase, self.dir0, self.leg, self.sweeps, self.skipped, leg_time, self.swept, self.returned, r, a, target, lead, pan = (
+                native_control.native.sweep_step(
+                    t, age, W, self.h0, self.w0, self.c[0], aim[0], vx, SWEEP_END_S,
+                    self.crowd() or (self.near_run >= NEAR_FRAMES and age < SWEEP_END_S),
+                    hidden or not can_reaccept, self.blind, PHASES[self.phase], self.dir0, self.leg,
+                    self.sweeps, self.skipped, self.leg_t or 0., self.swept, self.returned))
+            self.phase = PHASE_NAMES[phase]
+            self.leg_t = leg_time if self.swept else None
         else:
-            self.phase = 'wait'
+            r = radius(self.h0, age)
+            a = amplitude(r, self.w0, W)
+            pan = aim[0] - self.c[0]   # how far right of the centre the camera looks now
+            target, lead = None, 0.0
+            if age < PREDICT_S:
+                self.phase = 'predict'
+            elif self.crowd() or (self.near_run >= NEAR_FRAMES and age < SWEEP_END_S):
+                if self.phase != 'crowd': self.skipped += 1
+                self.phase = 'crowd'
+            elif hidden or not can_reaccept:
+                self.phase = 'hold'   # the number has a box the guard does not trust, or could not be taken back far away
+            elif self.blind:
+                self.phase = 'blind'
+            elif age < SWEEP_END_S:
+                if a < MIN_A and not self.swept:
+                    self.phase = 'fits'
+                else:
+                    if not self.swept:
+                        self.swept, self.leg, self.leg_t = True, 0, t
+                        self.sweeps += 1
+                        vx = float(vel[0]) if vel is not None else 0.0
+                        self.dir0 = ((1 if vx > 0 else -1) if abs(vx) >= V_MIN_H * self.h0
+                                     else (1 if self.c[0] >= aim[0] else -1))
+                    self.phase = 'sweep'
+                    for _ in range(2):
+                        d = self.dir0 if self.leg % 2 == 0 else -self.dir0
+                        target = d * a
+                        if d * (target - pan) > LEG_STOP and t - self.leg_t <= LEG_MAX_S:
+                            break
+                        self.leg += 1; self.leg_t = t   # this turn's end is reached (or given up): the other side
+                    lead = d * LEG_LEAD
+            elif self.swept and not self.returned and age < SWEEP_END_S + RETURN_S:
+                self.phase = 'return'
+                target = 0.0
+                if abs(pan) <= LEG_TOL:
+                    self.returned = True
+                    self.phase, target = 'wait', None
+            else:
+                self.phase = 'wait'
         box = None
         if target is not None:
             x = min(max(self.c[0] + target + lead, EDGE_PX), W - EDGE_PX)

@@ -41,6 +41,8 @@
 //   G <frame id> <capture time ns> <width> <height> <n> then n times: <id> <x> <y> <w> <h> <confidence>     same, followed (after the newline) by width*height*2 bytes:
 //                  the 16-bit camera frame, row major, native byte order. The people go to the gimbal executor as soon as the header line is read
 //                  (the executor uses only the size of the picture); the picture with the people goes to the PC GUI (video + metadata)
+//   O <same fields as G>  observation with image dimensions, without pixel bytes; negotiated PICTURE_LANE 1 only.
+//   LWIR_GUI_PICTURE_FD: optional inherited read pipe for GUI-only G packets, on its own thread. Without it, legacy F/G is unchanged.
 //   F/G headers may carry optional LEAD <track id> <dx px> <dy px> <control epoch>,
 //   PRED <track id> <x> <y> <w> <h> (--coast 1), SEEK <track id> <x> <y> <w> <h> (--seek 1), VEL <track id> <vx> <vy> (--search 1)
 //   and OBS <0|1> suffixes in either order. OBS 1 indicates a validated live observation.
@@ -74,6 +76,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <future>
+#include <fcntl.h>
 #include <map>
 #include <csignal>
 #include <cstdlib>
@@ -438,6 +441,89 @@ bool parse_token(const std::string& token, T& field)
     return static_cast<bool>(value >> field) && value.eof();
 }
 
+// Optional inherited pipe: pictures never occupy the control stdin stream.
+// This parser has no executor reference; delayed/damaged GUI packets cannot
+// publish observations, change selection, or defer STOP. Every image carries
+// its own measured rows and frame ID (no cross-thread pairing by latest frame).
+class PictureLane {
+    int fd_;
+    GuiLink& gui_;
+    const std::atomic<bool>& wanted_;
+    std::atomic<bool> closing_{false};
+    std::thread worker_;
+    void run() noexcept
+    {
+        try {
+            std::string pending;
+            std::vector<char> buffer(65536);
+            std::shared_ptr<TrackingResult> result;
+            int width = 0, height = 0;
+            std::size_t need = 0;
+            while (!closing_) {
+                pollfd input{fd_, POLLIN, 0};
+                const int ready = ::poll(&input, 1, 50);
+                if (ready < 0) { if (errno == EINTR) continue; break; }
+                if (!ready) continue;
+                const auto count = ::read(fd_, buffer.data(), buffer.size());
+                if (count <= 0) { if (count < 0 && errno == EINTR) continue; break; }
+                pending.append(buffer.data(), static_cast<std::size_t>(count));
+                for (;;) {
+                    if (need) {
+                        if (pending.size() < need) break;
+                        if (wanted_) {
+                            auto context = std::make_shared<FrameContext>(*result->frame);
+                            context->image = cv::Mat(height, width, CV_16UC1);
+                            std::memcpy(context->image.data, pending.data(), need);
+                            result->frame = context;
+                            gui_.publish(result);
+                        }
+                        pending.erase(0, need);
+                        need = 0;
+                        result.reset();
+                        continue;
+                    }
+                    const auto end = pending.find('\n');
+                    if (end == std::string::npos) {
+                        if (pending.size() > 65536) return;
+                        break;
+                    }
+                    std::istringstream header(pending.substr(0, end));
+                    pending.erase(0, end + 1);
+                    std::string kind;
+                    std::uint64_t id = 0, stamp = 0;
+                    std::size_t tracks = 0;
+                    if (!(header >> kind >> id >> stamp >> width >> height >> tracks) ||
+                        kind != "G" || !id || width <= 0 || height <= 0 || width > 4096 || height > 4096 || tracks > 4096)
+                        return; // Lose only the optional lane when framing is unknown.
+                    auto context = std::make_shared<FrameContext>();
+                    context->metadata.frame_id = id;
+                    if (stamp <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max()))
+                        context->metadata.captured_at = std::chrono::steady_clock::time_point(std::chrono::nanoseconds(stamp));
+                    result = std::make_shared<TrackingResult>();
+                    result->frame = context;
+                    result->aim_y = g_aim_y;
+                    result->enqueued_at = std::chrono::steady_clock::now();
+                    for (std::size_t i = 0; i < tracks; ++i) {
+                        Track track;
+                        if (!(header >> track.track_id >> track.x >> track.y >> track.width >> track.height >> track.confidence)) return;
+                        track.class_id = 0;
+                        result->tracks.push_back(track);
+                    }
+                    // Control suffixes have already gone on stdin; they do not
+                    // alter the measured rows the PC GUI displays.
+                    need = static_cast<std::size_t>(width) * height * 2;
+                }
+            }
+        } catch (const std::exception& error) {
+            std::cerr << "gimbal_bridge: picture lane: " << error.what() << std::endl;
+        }
+    }
+public:
+    PictureLane(int fd, GuiLink& gui, const std::atomic<bool>& wanted)
+        : fd_(fd), gui_(gui), wanted_(wanted), worker_(&PictureLane::run, this) {}
+    ~PictureLane() { closing_ = true; worker_.join(); ::close(fd_); }
+};
+
 class Bridge {
     GimbalCommandExecutor& executor_;
     GuiLink* gui_;
@@ -554,7 +640,7 @@ public:
             executor_.publish(result, healthy_live);
     }
 
-    void frame_with_picture(std::istringstream& in)
+    void frame_with_picture(std::istringstream& in, bool has_picture = true)
     {
         std::uint64_t id = 0, captured_ns = 0;
         int w = 0, h = 0;
@@ -591,6 +677,7 @@ public:
             executor_.publish(waiting_, waiting_healthy_);
         }
         else waiting_ = std::make_shared<TrackingResult>(); // Consume the picture without publishing it.
+        if (!has_picture) waiting_.reset();
     }
 
     void picture(const char* bytes)
@@ -622,6 +709,7 @@ public:
         in >> kind;
         if (kind == "F") frame(in);
         else if (kind == "G") frame_with_picture(in);
+        else if (kind == "O") frame_with_picture(in, false);
         else if (kind == "P") heartbeat();
         else if (kind == "A") {
             long long id = -1;
@@ -683,11 +771,18 @@ int main(int argc, char** argv) try {
     // that a PC is there). Without a command listener, or with --gui-video-always 1, always (as before).
     const bool gui_gated = gui && receiver && !options.gui.video_always;
     std::atomic<bool> gui_picture{gui && !gui_gated};
+    std::unique_ptr<PictureLane> pictures;
+    if (const char* inherited = std::getenv("LWIR_GUI_PICTURE_FD")) {
+        int fd = -1;
+        if (gui && parse_token(std::string(inherited), fd) && fd > 2 && ::fcntl(fd, F_GETFD) >= 0)
+            pictures = std::make_unique<PictureLane>(fd, *gui, gui_picture);
+    }
     Bridge bridge(executor, gui.get(), session_changes,
                   options.smoothing.observation_grace_ms > 0 || options.smoothing.catchup_speed > 0 ||
                   options.smoothing.predictive_brake || options.smoothing.search || options.smoothing.coast || options.smoothing.seek,
                   gui ? &gui_picture : nullptr);
     say("READY");
+    if (pictures) say("PICTURE_LANE 1");
     say("TRACK_CONTROL 1");
     say("HOME_CONTROL 1");
     say("LEAD_CONTROL 1");
@@ -748,9 +843,10 @@ int main(int argc, char** argv) try {
         }
         if (gui && std::chrono::steady_clock::now() >= next_status) { say(gui->status(gui_client.load())); next_status += std::chrono::seconds(1); }
     }
+    executor.shutdown();                                  // STOP before waiting for any optional GUI work
     if (receiver) { receiver->stop(); receiver_thread.join(); }
+    pictures.reset();
     if (gui) gui->close();
-    executor.shutdown();                                  // cancels following and sends STOP when it was moving
     say(state_line(executor.snapshot()));
     return 0;
 } catch (const std::exception& error) {

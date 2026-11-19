@@ -299,7 +299,7 @@ def _switch_interval():
 
 
 class _Rec:
-    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc', 'grp', 'result')
+    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc', 'grp', 'result', 'handoff')
 
 
 class Feed:
@@ -413,12 +413,13 @@ class Feed:
                 else: r_.t_sub = time.perf_counter_ns(); self._job = None; e2e_live.prefetch(r_.gg)   # 11-15: the end-to-end AE starts on arrival
                 r_.e = e_; r_.job = self._job; r_.grp = grp_ if e_ >= 0 else None; self._tgt_e = None
                 r_.result = None
+                r_.handoff = None
                 eager_tile = self.mode == 'tile' and e_ >= 0
                 if eager_tile:
                     # The pair has one slot. Read both tiles while the main
                     # loop finishes tracking the previous frame.
                     try:
-                        r_.result = self._wait_result(r_, keep_=True)
+                        r_.result = self._wait_result(r_, keep_=True, handoff=True)
                     except BaseException:
                         # The tile backend drains both jobs before raising.
                         self._job = None
@@ -427,6 +428,10 @@ class Feed:
                     if eager_tile:
                         grp_[1][e_] = False
                     self.out.append(r_); self.working = False
+                    if r_.handoff is not None:
+                        trace_ = r_.handoff[1]
+                        trace_['feed_publish_ns'] = time.perf_counter_ns()
+                        trace_['feed_publish_cpu_ns'] = time.thread_time_ns()
                     if e_ >= 0:
                         self.last_e = e_; self.st['submitted'] += 1; self.st['core'][e_] += 1
                         if self.mode == 'tile': self.st['core'][1] += 1
@@ -586,7 +591,7 @@ class Feed:
         if self.on_take is not None: self.on_take(r_, g_)   # 11-15 resident_det: the result is in hand (timing of the first detection of the new model after an instant switch)
         return o_
 
-    def _wait_result(self, r_, keep_):
+    def _wait_result(self, r_, keep_, *, handoff=False):
         eng_ = r_.grp[0] if r_.grp is not None else self.eng
         e_ = eng_[r_.e]
         APP.pending[e_.name] = r_.job
@@ -598,7 +603,9 @@ class Feed:
             output = [np.array(value, copy=True) if np.may_share_memory(value, e_.packed) else value for value in output]
         profile = getattr(getattr(e_, 'b', None), 'profile', None)
         if profile is not None and profile.completed is not None:
-            profile.finish_frame(r_.job, r_.t, done, time.perf_counter_ns())
+            trace = profile.finish_frame(r_.job, r_.t, done, time.perf_counter_ns(), handoff=handoff)
+            if trace is not None:
+                r_.handoff = profile, trace
         return output, started, done
 
     def _collect(self, r_, keep_):
@@ -620,14 +627,25 @@ class Feed:
         # The monitor has one open frame until tracking publishes it. Open
         # that frame here, even if the feeder already collected its tiles.
         if not keep_:
+            if getattr(r_, 'handoff', None) is not None:
+                r_.handoff[0].finish_handoff(r_.handoff[1], discarded=True)
+                r_.handoff = None
             return None
         if self.mon is not None:
             self.mon.result(r_.e, r_.t, r_.t_sub, started, done)
+        if getattr(r_, 'handoff', None) is not None:
+            r_.handoff[0].finish_handoff(r_.handoff[1])
+            r_.handoff = None
         return output
 
     def _next(self):   # camera_link.live_next 와 같은 일을 한다. 다른 점: 줄 대신 "검출기에 넣어 둔 프레임"에서 꺼내고, 8 비트 바꾸기·흔들림 보정은 넣는 스레드가 이미 했다
         L_ = APP.LIVE
+        profile_ = getattr(getattr(vars(self).get('tile_engine'), 'b', None), 'profile', None)
+        tracing_ = profile_ is not None and profile_.capture is not None
+        read_start_ = time.perf_counter_ns() if tracing_ else None
+        read_cpu_ = time.thread_time_ns() if tracing_ else None
         first_ = True
+        wait_start_ = wait_cpu_ = wake_ = wake_cpu_ = None
         while True:
             with L_.cond:
                 if first_: first_ = False; self._auto()   # 11-16
@@ -636,13 +654,27 @@ class Feed:
                     if self.err is not None or L_.stopped: break
                     if L_.cam_lost and APP.args.live_wait and not L_.q and not self.working: break
                     wait_s_ = (APP.args.live_wait or 10) if L_.last is None else 10
-                    if L_.cond.wait(timeout=wait_s_): continue
+                    profile_ = getattr(getattr(vars(self).get('tile_engine'), 'b', None), 'profile', None)
+                    tracing_ = profile_ is not None and profile_.capture is not None
+                    if tracing_:
+                        wait_start_ = time.perf_counter_ns(); wait_cpu_ = time.thread_time_ns()
+                    notified_ = L_.cond.wait(timeout=wait_s_)
+                    if tracing_:
+                        wake_ = time.perf_counter_ns(); wake_cpu_ = time.thread_time_ns()
+                    if notified_: continue
                     if APP.args.live_wait: raise RuntimeError('no camera frame for %d s' % wait_s_)
                     break
                 if getattr(L_, 'restart_stop', False):
                     return None
                 r_ = self.out.popleft() if self.out else None
                 if r_ is not None:
+                    if getattr(r_, 'handoff', None) is not None:
+                        r_.handoff[1].update(
+                            tracker_take_ns=time.perf_counter_ns(),
+                            tracker_take_cpu_ns=time.thread_time_ns(),
+                            tracker_read_start_ns=read_start_, tracker_read_cpu_ns=read_cpu_,
+                            tracker_wait_start_ns=wait_start_, tracker_wait_cpu_ns=wait_cpu_,
+                            tracker_wake_ns=wake_, tracker_wake_cpu_ns=wake_cpu_)
                     if self.reset_monitor_on_take:
                         # The previous tracking result may have been published after the NPU switch.
                         if self.mon is not None:

@@ -1,5 +1,8 @@
 """짐벌 연결: 짐벌 프로그램(gimbal_bridge) 띄우기와 지켜보기, 명령·프레임 보내기, 따라갈 사람의 예측 제어."""
 import math
+import os
+import select
+from threading import Condition
 import time
 import numpy as np
 from ..common.state import APP
@@ -94,6 +97,8 @@ def without_lead(frame):
 
 
 def _reset_bridge_lead(gb):
+    gb.picture_lane_supported = False
+    gb.state['picture_transport'] = 'shared'
     gb.home_control_supported = False
     gb.lead_control_supported = False
     gb.lead_pending = 0
@@ -130,10 +135,61 @@ def gb_send(line_):
 
 
 def gb_send_frame(header_, picture_):
+    lane = None
     with APP.GB.wcond:
         if not APP.GB.wopen: return
         if APP.GB.wframe is not None: APP.GB.skipped += 1
-        APP.GB.wframe = (header_ + '\n').encode() + picture_; APP.GB.wcond.notify()
+        lane = getattr(APP.GB.proc, '_picture_lane', None) if getattr(APP.GB, 'picture_lane_supported', False) else None
+        if lane is not None and header_.startswith('G '):
+            # Only the small observation header shares stdin with STOP/selection.
+            APP.GB.wframe = ('O' + header_[1:] + '\n').encode()
+            with lane.condition:
+                if not lane.closed:
+                    lane.frame = ((header_ + '\n').encode(), picture_)
+                    lane.condition.notify()
+        else:
+            APP.GB.wframe = (header_ + '\n').encode() + picture_
+        APP.GB.wcond.notify()
+
+
+def _close_picture_lane(p):
+    lane = getattr(p, '_picture_lane', None)
+    if lane is not None:
+        with lane.condition:
+            lane.closed = True
+            lane.frame = None
+            lane.condition.notify_all()
+
+
+def _picture_writer(lane):
+    """One in-flight image and one replaceable image; never holds the control lock."""
+    try:
+        os.set_blocking(lane.fd, False)
+        while True:
+            with lane.condition:
+                lane.condition.wait_for(lambda: lane.closed or lane.frame is not None)
+                if lane.closed: return
+                frame, lane.frame = lane.frame, None
+            # Finish a partial packet before the next one: raw pixels may contain newlines.
+            for chunk in frame:
+                remaining = memoryview(chunk)
+                while remaining:
+                    if lane.closed: return
+                    try:
+                        remaining = remaining[os.write(lane.fd, remaining):]
+                    except BlockingIOError:
+                        # select() cannot wait for Windows pipe descriptors; POSIX poll
+                        # also handles large fd numbers without FD_SETSIZE restrictions.
+                        poller = select.poll()
+                        poller.register(lane.fd, select.POLLOUT)
+                        poller.poll(50)
+    except (OSError, ValueError):
+        pass   # GUI video failure must not take the control writer down.
+    finally:
+        with lane.condition:
+            lane.closed = True
+            lane.frame = None
+        os.close(lane.fd)
 
 
 def gb_writer(p_):
@@ -151,6 +207,7 @@ def gb_writer(p_):
             for c_ in chunks_: p_.stdin.write(c_)
             p_.stdin.flush()
     except (OSError, ValueError): pass
+    _close_picture_lane(p_)
     with APP.GB.wcond:
         if APP.GB.proc is p_:
             APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None
@@ -194,6 +251,11 @@ def gb_reader(p_):
         if not f_: continue
         if p_ is not APP.GB.proc: continue   # v26: lines of a bridge that was replaced
         if f_[0] == 'READY': APP.GB.state['ready'] = True; print('GIMBAL ready', APP.GB.dev, flush=True)
+        elif f_[0] == 'PICTURE_LANE' and f_[1:] == ['1']:
+            with APP.GB.wcond:
+                if p_ is APP.GB.proc and APP.GB.wopen and getattr(p_, '_picture_lane', None) is not None:
+                    APP.GB.picture_lane_supported = True
+                    APP.GB.state['picture_transport'] = 'separate'
         elif f_[0] in ('TRACK_CONTROL', 'HOME_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS', 'SEARCH_CONTROL',
                        'COAST_CONTROL', 'SEEK_CONTROL', 'BOUNDED_SEEK_CONTROL') and f_[1:] == ['1']:
             with APP.GB.wcond:
@@ -273,6 +335,7 @@ def gb_reader(p_):
                 print('GUI client', 'connected' if client_ else 'disconnected', flush=True)
             g_.update(client=client_, given=int(f_[2]), sent=int(f_[3]), encoded=int(f_[4]), rtp_bytes=int(f_[5]), failed=int(f_[6]))
     # the bridge ended. After a normal end it has sent STOP itself; after a crash the last move would go on, so this stop is sent in any case
+    _close_picture_lane(p_)
     with APP.GB.wcond:
         if p_ is APP.GB.proc:
             _reset_bridge_lead(APP.GB)
@@ -297,8 +360,29 @@ def gb_spawn():   # v26: start (or start again) the bridge. A new bridge sends S
         if sig_ is None: return False
         APP.GB.busy = APP.gb_in_use(dev_)
         if APP.GB.busy: return False
-        p_ = APP.lv_sp.Popen([APP.args.gimbal_bridge or str(HERE / 'src' / 'gimbal' / 'gimbal_bridge_v25'), '--device', dev_, '--manual-speed', str(APP.args.gimbal_speed), '--speed-max', str(APP.args.gimbal_speed), '--kp', str(APP.args.gimbal_kp), '--aim-y', str(APP.args.gimbal_aim_y),
-                          '--x-sign', str(APP.args.gimbal_x_sign), '--y-sign', str(APP.args.gimbal_y_sign), '--model-count', str(len(APP.MODEL['catalog'])), *APP.shlex.split(APP.args.gimbal_opts), *APP.gui_opts_], stdin=APP.lv_sp.PIPE, stdout=APP.lv_sp.PIPE, stderr=APP.GB.log)
+        # An old bridge ignores this environment variable and never negotiates the
+        # lane, so v25/custom executables retain their original stdin protocol.
+        child_options = {}
+        read_fd = write_fd = None
+        if os.name == 'posix' and APP.GB.gui:
+            try:
+                read_fd, write_fd = os.pipe()
+                child_options = dict(pass_fds=(read_fd,), env=dict(os.environ, LWIR_GUI_PICTURE_FD=str(read_fd)))
+            except OSError:
+                pass   # Optional video transport cannot prevent control startup.
+        try:
+            p_ = APP.lv_sp.Popen([APP.args.gimbal_bridge or str(HERE / 'src' / 'gimbal' / 'gimbal_bridge_v25'), '--device', dev_, '--manual-speed', str(APP.args.gimbal_speed), '--speed-max', str(APP.args.gimbal_speed), '--kp', str(APP.args.gimbal_kp), '--aim-y', str(APP.args.gimbal_aim_y),
+                          '--x-sign', str(APP.args.gimbal_x_sign), '--y-sign', str(APP.args.gimbal_y_sign), '--model-count', str(len(APP.MODEL['catalog'])), *APP.shlex.split(APP.args.gimbal_opts), *APP.gui_opts_], stdin=APP.lv_sp.PIPE, stdout=APP.lv_sp.PIPE, stderr=APP.GB.log, **child_options)
+        except BaseException:
+            if write_fd is not None: os.close(write_fd)
+            raise
+        finally:
+            if read_fd is not None: os.close(read_fd)
+        if write_fd is not None:
+            lane = _Gimbal()
+            lane.fd, lane.condition, lane.frame, lane.closed = write_fd, Condition(), None, False
+            p_._picture_lane = lane
+            APP.lv_th.Thread(target=_picture_writer, args=(lane,), daemon=True).start()
         APP.GB.dev = dev_; APP.GB.dev_sig = sig_; APP.GB.spawn_t = time.monotonic(); APP.GB.restarts += 1
         APP.GB.state.update(running=True, ready=False, auto=0, lost=0, moving=0, error=0, id=0); APP.GB.state['gui'].update(client=0, picture=int(bool(APP.GB.gui)))
         with APP.GB.wcond:
@@ -318,6 +402,7 @@ def gb_end(p_, why_):   # ask a bridge to end (on SIGTERM it sends STOP and leav
         if APP.GB.proc is p_:
             APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.wcond.notify_all()
             _reset_bridge_lead(APP.GB)
+    _close_picture_lane(p_)
     p_.terminate()
     try: p_.wait(5)
     except Exception:

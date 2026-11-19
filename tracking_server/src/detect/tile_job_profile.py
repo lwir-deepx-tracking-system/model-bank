@@ -1,4 +1,13 @@
-"""One requested split-camera capture, measured in the existing feed process."""
+"""One requested split-camera capture, measured in the existing feed process.
+
+Split-feed samples include copy -> queue publication -> consumer read/wait/
+take -> collection boundaries. Wall and per-thread CPU clocks have different
+origins: compare CPU deltas only within the same named producer or consumer.
+Condition.wait returns after the consumer has reacquired its lock and the GIL;
+its wall interval cannot distinguish OS scheduling from GIL/lock contention.
+Read/wait fields can be None when the request armed after the read began, or
+the consumer took an already queued result without waiting.
+"""
 
 import json
 from pathlib import Path
@@ -68,6 +77,10 @@ class TileJobProfile:
             self._arm()
             if self.capture is None:
                 return None
+        if len(self.capture["frames"]) >= SAMPLE_FRAMES:
+            # The last result is waiting for its consumer boundary. Do not
+            # enlarge the requested capture while the tracker is occupied.
+            return None
         return {"frame": frame, "prep_start_ns": time.perf_counter_ns(), "tiles": []}
 
     def record_result(self, trace, job_ids, engines):
@@ -85,7 +98,7 @@ class TileJobProfile:
         trace["metrics_done_ns"] = time.perf_counter_ns()
         self.completed = (job_ids, trace)
 
-    def finish_frame(self, job_ids, arrival, ready_ns, copied_ns):
+    def finish_frame(self, job_ids, arrival, ready_ns, copied_ns, *, handoff=False):
         if self.completed is None or self.completed[0] is not job_ids:
             return
         _, trace = self.completed
@@ -94,7 +107,17 @@ class TileJobProfile:
         trace["feed_ready_ns"] = ready_ns
         trace["feed_copy_done_ns"] = copied_ns
         self.capture["frames"].append(trace)
-        if len(self.capture["frames"]) >= SAMPLE_FRAMES:
+        if not handoff and len(self.capture["frames"]) >= SAMPLE_FRAMES:
+            self.close()
+        return trace if handoff else None
+
+    def finish_handoff(self, trace, *, discarded=False):
+        """Finish before writing, so the last frame has the same boundaries."""
+        trace["tracker_collect_done_ns"] = time.perf_counter_ns()
+        trace["tracker_collect_cpu_ns"] = time.thread_time_ns()
+        trace["handoff_discarded"] = discarded
+        if (self.capture is not None and len(self.capture["frames"]) >= SAMPLE_FRAMES
+                and self.capture["frames"][-1] is trace):
             self.close()
 
     def close(self):

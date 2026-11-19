@@ -12,9 +12,8 @@ import numpy as np
 from ..camera import replay_link
 from ..common.state import APP
 from ..track.stabilizer import stab_people_real
-from . import bounded_seek, follow_guard, predictive_lead, search_follow
+from . import bounded_seek, follow_guard, native_control, predictive_lead, search_follow
 from .gimbal_link import reset_lead, without_lead
-from .reentry_tilt import ReentryTilt, limit_downward
 
 
 def current_source():
@@ -563,7 +562,7 @@ def _guard_locked(gb, selected, frame_t, correction=None):
     return (selected if d['mask'] else 0), (d['pred'] if on_coast else None)
 
 
-def _search_velocity_locked(gb, selected, real, rows, frame_t, correction, tilt_hold=False):
+def _search_velocity_locked(gb, selected, observed, frame_t, correction, tilt_hold=False):
     """11-15: ' VEL <id> <vx> <vy>' for a bridge that said SEARCH_CONTROL 1: the followed person's velocity against the
     background (picture px/s) from the predictive-control estimator (predictive_lead.estimate, the same one LEAD uses; when
     LEAD is on its own sample of this frame is reused). The bridge uses it only to keep turning where the person should be
@@ -573,23 +572,13 @@ def _search_velocity_locked(gb, selected, real, rows, frame_t, correction, tilt_
         return ''
     lv = APP.CTL.get('lv')
     if not (APP.CTL.get('lead') and lv is not None and getattr(lv, 'track_id', 0) == selected and getattr(lv, 'time', None) == frame_t):
-        matches = [row for person, row in zip(real, rows) if person[0] == selected]
-        observed = None
-        if len(matches) == 1:
-            x, y, w, h = map(float, matches[0].split()[1:5])
-            observed = (selected, x, y, x + w, y + h)
         why = predictive_lead.LAST.get('why')
         lv, _ = predictive_lead.estimate(getattr(gb, 'search_lv', None), selected, observed, frame_t,
                                          APP.CTL.get('lead_motion'), 0, aim_y=_bridge_aim_y(gb) if _bridge_aim_y(gb) is not None else .5,
                                          correction=correction)
         predictive_lead.LAST['why'] = why   # the lead counters stay those of the lead path
         gb.search_lv = lv
-    if lv is None or lv.time != frame_t or not (math.isfinite(lv.vx) and math.isfinite(lv.vy)):
-        return ''
-    vy = min(0., lv.vy) if tilt_hold else lv.vy
-    if lv.vx == 0 and vy == 0:
-        return ''
-    return ' VEL %d %.1f %.1f' % (selected, lv.vx, vy)
+    return '' if lv is None or lv.time != frame_t else native_control.velocity(selected, lv.vx, lv.vy, tilt_hold)
 
 
 def _record_click_owners(gb, raw_owners, namespace):
@@ -647,33 +636,23 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         _handoff_locked(gb, selected, frame_t)   # 11-13: LWIR_FOLLOW_HANDOFF=1 only
         _recatch_locked(gb, selected, frame_t)   # 11-15: bridge --search 1 and LWIR_SEARCH_NEW_ID=1 only
         hidden, pred = _guard_locked(gb, selected, frame_t, correction)   # 11-15: bridge --coast 1 or LWIR_FOLLOW_GUARD=1 only
-        real = stab_people_real([p for p in gb.people if not hidden or int(p[0]) != hidden], correction,
-                                float(APP.LIVE_W), float(APP.LIVE_H))
+        width, height = APP.LIVE_W, APP.LIVE_H
+        real, seen = native_control.prepare(gb.people, hidden, correction, selected, float(width), float(height))
         aim_y = _bridge_aim_y(gb)
         aim_screen = _bridge_aim_screen_y(gb) * APP.LIVE_H
         tilt_hold = False
         if APP.CTL['lead'] and selected and gb.state.get('auto') and aim_y is not None:
             tilt = getattr(gb, 'reentry_tilt', None)
             if tilt is None or tilt.selected != selected:
-                tilt = gb.reentry_tilt = ReentryTilt(selected)
-            seen = [follow_guard.cwh(person) for person in real if person[0] == selected]
+                tilt = gb.reentry_tilt = native_control.reentry(selected)
             raw_correction = (0., 0.) if correction is None else correction
-            tilt_hold = tilt.step(frame_t, seen[0] if len(seen) == 1 else None, raw_correction, _motion)
+            tilt_hold = tilt.step(frame_t, seen, raw_correction, _motion)
         else:
             gb.reentry_tilt = None
         gb.state['reentry_tilt_hold'] = tilt_hold
-        observed_rows = [' %d %.1f %.1f %.1f %.1f %.3f' %
-                         (p[0], p[1], p[2], p[3]-p[1], p[4]-p[2], p[5]) for p in real]
-        rows = observed_rows
-        if tilt_hold:
-            rows = observed_rows.copy()
-            for index, person in enumerate(real):
-                if person[0] == selected:
-                    x1, y1, x2, y2 = limit_downward(person[1:5], aim_y, aim_screen)
-                    rows[index] = ' %d %.1f %.1f %.1f %.1f %.3f' % (selected, x1, y1, x2-x1, y2-y1, person[5])
-        text = ''.join(rows)
-        if marked:
-            text += ' OBS %d' % bool(healthy)  # Before LEAD: without_lead must preserve this.
+        gb.state['control_backend'] = 'cpp' if native_control.native is not None else 'python'
+        text, observed = native_control.observations(real, selected, tilt_hold, aim_y, aim_screen)
+        lead = ''
         epoch = getattr(gb, 'control_epoch', None)
         if APP.CTL['lead'] and gb.state.get('auto'):   # 11-13: counters for /rules lead_stats (why prediction did or did not reach the bridge)
             why_ = ('bridge has no LEAD support' if not getattr(gb, 'lead_control_supported', False) else 'no control epoch yet' if epoch is None
@@ -682,12 +661,7 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         if (APP.CTL['lead'] and getattr(gb, 'lead_control_supported', False) and epoch is not None
                 and not getattr(gb, 'lead_pending', 0) and gb.state.get('auto')
                 and not gb.state.get('lost') and not gb.state.get('error')):
-            matches = [row for person, row in zip(real, observed_rows) if person[0] == selected]
-            observed = None
-            if len(matches) == 1:
-                # Estimate motion from the actual observation before the tilt limit.
-                x, y, w, h = map(float, matches[0].split()[1:5])
-                observed = (selected, x, y, x + w, y + h)
+            # Use the rounded actual observation before the tilt limit.
             previous = APP.CTL['lv']
             sample, (dx, dy) = predictive_lead.estimate(
                 previous, selected, observed, frame_t, APP.CTL.get('lead_motion'), APP.CTL['lead_ms'],
@@ -702,10 +676,11 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                 APP.CTL['lv'] = sample
                 APP.CTL['lead_px'] = math.hypot(dx, dy)
                 if APP.CTL['lead_px']:
-                    text += f' LEAD {selected} {dx!r} {dy!r} {epoch}'
+                    lead = f' LEAD {selected} {dx!r} {dy!r} {epoch}'
         else:
             reset_lead()
-        if pred is not None:   # 11-15: where the followed person should be, for the bridge's coast (before LEAD, like VEL)
+        prediction = ''
+        if pred is not None:   # Where to coast while the followed person is missing.
             cx, cy, w, h = pred
             q = stab_people_real([(selected, cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2., 1.0)], correction,
                                  float(APP.LIVE_W), float(APP.LIVE_H))[0]
@@ -717,38 +692,23 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                                                        float(APP.LIVE_H), .5 if aim is None else aim,
                                                        _bridge_aim_screen_y(gb))
                     q = (selected, cx - width / 2, cy - height / 2, cx + width / 2, cy + height / 2)
-                x1, y1, x2, y2 = limit_downward(q[1:5], aim_y, aim_screen) if tilt_hold else q[1:5]
-                pr = ' PRED %d %.1f %.1f %.1f %.1f' % (selected, x1, y1, x2 - x1, y2 - y1)
-                text = text.replace(' LEAD ', pr + ' LEAD ', 1) if ' LEAD ' in text else text + pr
+                prediction = native_control.target_suffix('PRED', selected, q[1:5], False, tilt_hold, aim_y, aim_screen)
         seek = getattr(gb, 'seek_out', None)
-        if gb.seek_raw is not None:
-            sx, sy, sw, sh = gb.seek_raw
-            # This seek is single-axis. Keep horizontal and upward steps.
-            if not tilt_hold or sy + aim_y * sh <= aim_screen + .05:
-                sk = ' SEEK %d %.1f %.1f %.1f %.1f' % (selected, sx, sy, sw, sh)
-                text = text.replace(' LEAD ', sk + ' LEAD ', 1) if ' LEAD ' in text else text + sk
+        bounded = '' if gb.seek_raw is None else native_control.target_suffix(
+            'SEEK', selected, gb.seek_raw, True, tilt_hold, aim_y, aim_screen)
+        sweep = ''
         if seek is not None:   # 11-16: where to look while the person stays lost, for the bridge's --seek 1 (like PRED)
             cx, cy, w, h = seek
             q = stab_people_real([(selected, cx - w / 2., cy - h / 2., cx + w / 2., cy + h / 2., 1.0)], correction,
                                  float(APP.LIVE_W), float(APP.LIVE_H))[0]
-            if all(map(math.isfinite, q[1:5])):
-                x1, y1, x2, y2 = limit_downward(q[1:5], aim_y, aim_screen) if tilt_hold else q[1:5]
-                sk_ = ' SEEK %d %.1f %.1f %.1f %.1f' % (selected, x1, y1, x2 - x1, y2 - y1)
-                text = text.replace(' LEAD ', sk_ + ' LEAD ', 1) if ' LEAD ' in text else text + sk_
-        vel = _search_velocity_locked(gb, selected, real, observed_rows, frame_t, correction, tilt_hold)
-        if vel:   # before LEAD: without_lead() cuts from LEAD to the end of the line
-            text = text.replace(' LEAD ', vel + ' LEAD ', 1) if ' LEAD ' in text else text + vel
-        # 11-15 (latency audit finding 3): the 614 KB picture goes to the bridge only while a PC GUI is connected
-        # (bridge line GUI_PICTURE 1). Otherwise the short people line: no pipe copy, no video encoding in the bridge.
-        if (gb.gui and getattr(gb, 'gui_picture', None) is not False
-                and raw16 is not None and raw16.shape == (APP.LIVE_H, APP.LIVE_W)):
-            APP.gb_send_frame('G %d %d %d %d %d' %
-                              (gb.frame, captured_ns, APP.LIVE_W, APP.LIVE_H, len(real)) + text,
-                              np.ascontiguousarray(raw16, dtype=np.uint16).tobytes())
-        else:
-            # Use the latest-frame slot for F too. A frame backlog must not
-            # delay a new STOP or selection behind dozens of old positions.
-            APP.gb_send_frame('F %d %d %d' % (gb.frame, captured_ns, len(real)) + text, b'')
+            sweep = native_control.target_suffix('SEEK', selected, q[1:5], False, tilt_hold, aim_y, aim_screen)
+        vel = _search_velocity_locked(gb, selected, observed, frame_t, correction, tilt_hold)
+        picture = (gb.gui and getattr(gb, 'gui_picture', None) is not False
+                   and raw16 is not None and raw16.shape == (height, width))
+        # LEAD stays last because STOP and selection can strip it from a queued frame.
+        header = native_control.header(gb.frame, captured_ns, len(real), bool(picture), width, height,
+                                       text, marked, healthy, (prediction, bounded, sweep, vel, lead))
+        APP.gb_send_frame(header, np.ascontiguousarray(raw16, dtype=np.uint16).tobytes() if picture else b'')
         return selected
 
 

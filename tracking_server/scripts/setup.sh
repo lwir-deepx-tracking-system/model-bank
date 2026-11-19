@@ -31,6 +31,10 @@ if ! bash scripts/build_native_trackers.sh; then
   echo "Optional C++ tracker build failed; check the build log. Unsupported presets use Python." >&2
 fi
 
+if ! bash scripts/build_native_control.sh; then
+  echo "Optional C++ gimbal control build failed. The Python path is available." >&2
+fi
+
 mkdir -p models/links
 python3 - <<'EOF'
 import hashlib, json, os
@@ -117,6 +121,9 @@ if pkg-config --exists opencv4 gstreamer-1.0 gstreamer-app-1.0; then
     $G/team/src/common/logger.cpp $(pkg-config --libs gstreamer-1.0 gstreamer-app-1.0) -lopencv_core -lopencv_imgproc -o $G/gimbal_bridge_v25.next
   mv -f "$G/gimbal_bridge_v25.next" "$G/gimbal_bridge_v25"
   echo "gimbal_bridge_v25 built"
+  if ! bash scripts/build_gimbal_v27.sh; then
+    echo "Optional gimbal_bridge_v27 build failed; check the build output." >&2
+  fi
 else
   echo "OpenCV (opencv4) or GStreamer not found: gimbal_bridge_v25 not built, --gimbal and --gui-host will not start"
 fi

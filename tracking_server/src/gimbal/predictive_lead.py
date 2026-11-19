@@ -5,6 +5,8 @@ import math
 
 import numpy as np
 
+from . import native_control
+
 
 MIN_INTERVAL = 0.010
 MAX_INTERVAL = 0.250
@@ -83,6 +85,12 @@ def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms, *,
         # Experimental delay compensation: predict where the observation moves
         # in the raw image, including camera motion. Still require valid GMC.
         px, py = previous.x, previous.y
+    if native_control.native is not None:
+        state, vx, vy, dx, dy = native_control.native.filter_velocity(
+            dt, previous.vx, previous.vy, x - px, y - py, lead_ms)
+        LAST['why'] = ('bad speed', 'slower than 15 px/s', 'sent')[state]
+        sample = Sample(track_id, frame_time, x, y, vx, vy, aim_y, (cx, cy)) if state else seed
+        return sample, (dx, dy)
     alpha = -math.expm1(-dt / TIME_CONSTANT)
     vx = (1.0 - alpha) * previous.vx + alpha * (x - px) / dt
     vy = (1.0 - alpha) * previous.vy + alpha * (y - py) / dt

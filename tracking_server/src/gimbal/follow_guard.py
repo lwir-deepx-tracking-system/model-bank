@@ -26,6 +26,8 @@ import math
 
 import numpy as np
 
+from . import native_control
+
 CANVAS_Y = 16.0     # GMC warps work on the padded canvas: people rows are 16 px higher
 TAU = 0.25          # s, velocity smoothing
 VMAX_H = 1.5        # body heights per second at most
@@ -52,6 +54,12 @@ def iou(a, b):
     if w <= 0 or h <= 0: return 0.
     i = w * h; u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i
     return i / u if u > 0 else 0.
+
+
+def overlaps(reference, others):
+    if native_control.native is not None:
+        return native_control.native.overlaps(reference, others)
+    return [iou(reference[1:5], person[1:5]) for person in others]
 
 
 def cwh(p):
@@ -138,6 +146,8 @@ class FollowGuard:
         return math.hypot(c[0] - self.pred[0], c[1] - self.pred[1]) / max(1., self.pred[3])
 
     def fits(self, c, t):
+        if native_control.native is not None:
+            return native_control.native.guard_geometry(c, self.pred, self.gate(t))[1]
         hr = max(c[3], self.pred[3]) / max(1e-6, min(c[3], self.pred[3]))
         wr = max(c[2], self.pred[2]) / max(1e-6, min(c[2], self.pred[2]))
         return self.dist(c) <= self.gate(t) and hr <= HR_MAX and wr <= WR_MAX
@@ -159,7 +169,7 @@ class FollowGuard:
         others = [p for p in people if int(p[0]) != self.sel]
         if mine is not None:
             c = cwh(mine)
-            near = max((iou(mine[1:5], q[1:5]) for q in others), default=0.) > RISK_IOU
+            near = max(overlaps(mine, others), default=0.) > RISK_IOU
             if self.pred is None or self.trust is None:   # first box, or the prediction was broken: start again from this box
                 if not near or not self.guard or self.trust is None:
                     self._accept(t, c, people, motion, velocity=not near)
@@ -211,7 +221,7 @@ class FollowGuard:
 
     def _guard_seen(self, t, mine, c, people, others, motion, out):
         """guard decision for a frame in which the followed id has one box"""
-        ovs = [(iou(mine[1:5], q[1:5]), int(q[0])) for q in others]
+        ovs = list(zip(overlaps(mine, others), (int(q[0]) for q in others)))
         ov = max((o for o, _ in ovs), default=0.)
         self.partners |= {i for o, i in ovs if o > RISK_IOU}
         ok, d = self.fits(c, t), self.dist(c)
@@ -226,7 +236,7 @@ class FollowGuard:
         better = None
         if self.phase in ('risk', 'masked', 'lost') or not ok:
             for q in others:
-                if max((iou(q[1:5], r[1:5]) for r in people if r is not q and r is not mine), default=0.) > MERGE_IOU: continue
+                if max(overlaps(q, [r for r in others if r is not q]), default=0.) > MERGE_IOU: continue
                 qc = cwh(q); dq = self.dist(qc)
                 if (self.fits(qc, t) and (not ok or (d >= MIN_SWAP_H and dq < BETTER * d)) and
                         (self._allowed(int(q[0])) or self.phase == 'risk') and (better is None or dq < better[1])):
@@ -500,7 +510,7 @@ class FollowGuardV2(FollowGuard):
     def _remember(self, mine, people):
         """target memory (alone) and distractor memory (near, not overlapping ours)"""
         if mine is not None:
-            alone = max((iou(mine[1:5], q[1:5]) for q in people if int(q[0]) != self.sel), default=0.) <= RISK_IOU
+            alone = max(overlaps(mine, [q for q in people if int(q[0]) != self.sel]), default=0.) <= RISK_IOU
             f = self._feat(self.sel)
             if alone and f is not None and self.phase == 'track':
                 self.tmpl = (self.tmpl + [f])[-APP_KEEP:]
@@ -545,9 +555,11 @@ class FollowGuardV2(FollowGuard):
         f = self._feat(self.sel) if mine is not None else None
         if mine is not None and self.pred is not None and self.trust is not None and f is not None and self.tmpl:
             c = cwh(mine)
-            ov = max((iou(mine[1:5], q[1:5]) for q in people if int(q[0]) != self.sel), default=0.)
+            others = [q for q in people if int(q[0]) != self.sel]
+            overlap_values = overlaps(mine, others)
+            ov = max(overlap_values, default=0.)
             if ov > RISK_IOU:
-                self.partners |= {int(q[0]) for q in people if int(q[0]) != self.sel and iou(mine[1:5], q[1:5]) > RISK_IOU}
+                self.partners |= {int(q[0]) for q, value in zip(others, overlap_values) if value > RISK_IOU}
             if self.phase in ('risk', 'masked', 'lost') or ov > RISK_IOU:
                 look = self._looks(f)
                 gate = self._in_gate(c, t)

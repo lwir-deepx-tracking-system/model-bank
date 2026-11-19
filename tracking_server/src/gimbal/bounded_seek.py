@@ -2,6 +2,7 @@
 
 import math
 
+from . import native_control
 from .follow_guard import KIV_MARGIN, MAX_DT, warp_point
 
 START_S = .82
@@ -74,6 +75,12 @@ class BoundedSeek:
                 self.first = (1, -1) if top < KIV_MARGIN * height else (0, 1 if centre[0] >= aim[0] else -1)
         self.projected = centre, top_point
         axis, direction = self.first
+        if native_control.native is not None:
+            cancel, target = native_control.native.bounded_action(
+                elapsed, centre, self.origin, size, aim, axis, direction, top, self.motion == (1, 1), aim_fraction)
+            if cancel:
+                self.cancel()
+            return target
         span = size[axis]
         shift = centre[axis] - self.origin[axis]
         if elapsed >= RETURN_BEGIN_S:
