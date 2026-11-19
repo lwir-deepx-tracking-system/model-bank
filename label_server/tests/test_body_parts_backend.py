@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import patch
 
 from label_server.src import file_ops, handler, sequences, state, transactions
-from label_server.src.body_parts import POINT_PARTS, empty_parts, validate_parts
+from label_server.src.body_parts import COCO_KEYPOINTS, LEGACY_POINT_PARTS, POINT_PARTS, empty_parts, validate_parts
 
 
 MOT_ONE = '1,1,5,6,10,11,1,0,-1,-1\n'
@@ -35,6 +35,32 @@ def parts_for(*rows):
 
 
 class PartsValidationTest(unittest.TestCase):
+    def test_exact_coco_points_and_legacy_sidecar_compatibility(self):
+        expected = {'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
+                    'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+                    'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
+                    'left_knee', 'right_knee', 'left_ankle', 'right_ankle'}
+        self.assertEqual(len(COCO_KEYPOINTS), 17)
+        self.assertEqual(POINT_PARTS, expected)
+        self.assertEqual(len(LEGACY_POINT_PARTS), 8)
+        legacy = parts_for((1, 1))
+        for name in LEGACY_POINT_PARTS:
+            legacy['annotations'][0]['parts'].setdefault(name, {'state': 'unknown', 'xy': None})
+        normalized = validate_parts(legacy, [MOT_ONE.strip()], 2)
+        self.assertEqual(normalized['schema_version'], 1)
+        self.assertEqual(normalized['annotations'][0]['parts'], legacy['annotations'][0]['parts'])
+        self.assertFalse(set(normalized['annotations'][0]['parts']) & (POINT_PARTS - LEGACY_POINT_PARTS))
+        full = copy.deepcopy(legacy)
+        for name in COCO_KEYPOINTS:
+            full['annotations'][0]['parts'][name] = {'state': 'visible', 'xy': [100, 120]}
+        self.assertEqual(validate_parts(full, [MOT_ONE.strip()], 2)['annotations'][0]['parts'],
+                         full['annotations'][0]['parts'])
+        for name in ('neck', 'pelvis', 'left_toe', 'confidence'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                bad = copy.deepcopy(full)
+                bad['annotations'][0]['parts'][name] = {'state': 'unknown', 'xy': None}
+                validate_parts(bad, [MOT_ONE.strip()], 2)
+
     def test_states_and_geometry(self):
         good = parts_for((1, 1))
         valid_parts = good['annotations'][0]['parts']
@@ -141,7 +167,7 @@ class LabelPartsHttpTest(unittest.TestCase):
         initial = self.snapshot()
         self.assertEqual(initial['mot'], self.original)
         self.assertEqual(initial['parts'], empty_parts())
-        self.assertEqual((initial['parts_supported'], initial['editor_schema'], initial['frames']), (True, 2, 2))
+        self.assertEqual((initial['parts_supported'], initial['editor_schema'], initial['frames']), (True, 3, 2))
         code, meta = self.request('/api/meta' + QUERY)
         self.assertEqual(code, 200)
         self.assertEqual(meta['version'], initial['version'])
@@ -169,6 +195,37 @@ class LabelPartsHttpTest(unittest.TestCase):
         self.assertEqual(self.save(MOT_ONE, {}, base=saved['version'], force=True)[0], 428)
         self.assertEqual(self.save(MOT_ONE, {}, base=initial['version'], force=True, parts=parts)[0], 409)
         self.assertEqual(self.snapshot(), saved)
+
+    def test_coco_roundtrip_conflicts_and_old_editor_cannot_drop_new_fields(self):
+        before = self.snapshot()
+        parts = parts_for((1, 1))
+        for name in COCO_KEYPOINTS:
+            parts['annotations'][0]['parts'][name] = {'state': 'visible', 'xy': [100, 120]}
+        for capability in (None, 2, True, '3'):
+            with self.subTest(capability=capability):
+                extra = {} if capability is None else {'editor_schema': capability}
+                self.assertEqual(self.save(self.original, {}, base=before['version'], parts=parts, **extra)[0], 428)
+                self.assertEqual(self.snapshot(), before)
+        self.assertFalse(self.backup.exists())
+        code, _ = self.save(self.original, {}, base=before['version'], parts=parts, editor_schema=3)
+        self.assertEqual(code, 200)
+        saved = self.snapshot()
+        self.assertEqual(saved['parts']['annotations'][0]['parts'], parts['annotations'][0]['parts'])
+        # Stale requests keep conflict semantics even if force is requested.
+        self.assertEqual(self.save(self.original, {}, base=before['version'], force=True,
+                                   parts=parts_for((1, 1)), editor_schema=3)[0], 409)
+        # An old tab with the current base still cannot silently omit all new points.
+        self.assertEqual(self.save(self.original, {}, base=saved['version'], force=True,
+                                   parts=parts_for((1, 1)))[0], 428)
+        self.assertEqual(self.snapshot(), saved)
+        # A capable editor may intentionally delete the added points.
+        self.assertEqual(self.save(self.original, {}, base=saved['version'],
+                                   parts=parts_for((1, 1)), editor_schema=3)[0], 200)
+        legacy_saved = self.snapshot()
+        self.assertEqual(legacy_saved['parts']['annotations'][0]['parts'], parts_for((1, 1))['annotations'][0]['parts'])
+        # Legacy-only files remain writable without the new capability.
+        self.assertEqual(self.save(self.original, {}, base=legacy_saved['version'],
+                                   parts=parts_for((1, 1)))[0], 200)
 
     def test_version_covers_same_size_review_and_parts_changes(self):
         saved = self.assert_saved()

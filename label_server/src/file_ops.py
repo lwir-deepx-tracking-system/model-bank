@@ -9,7 +9,7 @@ save       편집 화면의 MOT, 검수 상태, 신체부위 데이터를 함께
 import json, os, re, shutil, sys, tempfile, time
 from uuid import uuid4
 
-from .body_parts import validate_parts
+from .body_parts import requires_coco_editor, validate_parts
 from .state import EDITED_MOT, HERE, LOCK, MOT_LINE, PARTS_FILE, PRESENCE, RESCAN, REVIEW_FILE, SAVE_NAMES, SEQS
 from .sequences import mot_name, read_json, scan, version
 from .transactions import finish_transaction, publish_journal, purge_paths, recover_transaction, transfer_image, write_durable
@@ -226,6 +226,7 @@ class FileOps:
 
             try:
                 old = read_json(d, REVIEW_FILE, {})
+                old_parts = read_json(d, PARTS_FILE, {})
                 purged = frame_numbers(old.get('purged', []))
                 old_done = frame_numbers(old.get('reviewed', [])) | frame_numbers(old.get('removed', []))
             except (OSError, ValueError):
@@ -233,6 +234,10 @@ class FileOps:
 
             if (has_parts and base != cur) or (not has_parts and not body.get('force') and base not in (None, cur)):
                 return self.send(409, {'error': 'conflict', 'version': cur, 'by': old.get('saved_by', '')})
+
+            if (requires_coco_editor(old_parts) or requires_coco_editor(body.get('parts'))):
+                if type(body.get('editor_schema')) is not int or body['editor_schema'] != 3:
+                    return self.send(428, {'error': '17관절을 지원하는 최신 편집기로 다시 열어 주세요.', 'version': cur})
 
             try:
                 kept = []

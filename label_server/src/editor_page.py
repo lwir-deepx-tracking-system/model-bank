@@ -27,7 +27,7 @@ INJECT = """
       const sent=toMot(),rv=reviewDocument(),parts=partsDocument();rv.saved_by=user;
       const sig=()=>JSON.stringify([[...reviewed].sort((a,b)=>a-b),[...removed].sort((a,b)=>a-b),partsDocument()]);
       const sentR=sig();
-      const r=await fetch(api('/api/save'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mot:sent,review:rv,parts,base:window.LWIR_BASE})});
+      const r=await fetch(api('/api/save'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mot:sent,review:rv,parts,base:window.LWIR_BASE,editor_schema:3})});
       const j=await r.json();
       if(r.status===409||r.status===428){autoOff=true;status((r.status===409?'다른 곳에서 먼저 저장했습니다. ':'편집기를 업데이트해야 합니다. ')+'작업 내려받기로 현재 작업을 보관한 뒤 새로 고침하세요. 기존 라벨은 덮어쓰지 않았습니다.');return;}
       if(!r.ok)throw Error(j.error||r.status);

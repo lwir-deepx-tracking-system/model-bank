@@ -15,7 +15,7 @@ button.danger{background:#3a1416;border-color:#6e2328;color:#ffb3ad}button:disab
 main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:12px;padding:12px}
 .view{display:flex;flex-direction:column;min-height:0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}
 .cv{flex:1;min-height:0;position:relative}
-canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair}
+canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;touch-action:none}
 .bar{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
 .bar input[type=range]{flex:1;min-width:200px}
 .side{display:flex;flex-direction:column;gap:12px;min-height:0;overflow-y:auto}
@@ -62,6 +62,7 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
       <input type="range" id="slider" min="1" max="1" value="1">
       <span id="fno" class="st">-</span>
       <span id="rev" class="badge">미확인</span>
+      <label class="st"><input id="show-pose" type="checkbox" checked> 관절 표시</label>
     </div>
   </section>
   <div class="side">
@@ -75,9 +76,9 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
       <div class="row"><button id="copyprev" title="선택 번호의 이전 프레임 박스를 이 프레임에 복사 (C)">이전 프레임에서 복사 <kbd>C</kbd></button></div>
     </section>
     <section class="card" id="parts-card">
-      <h2>사람별 신체 부위</h2>
+      <h2>사람별 신체 부위 · 키포인트 17개</h2>
       <div class="st" id="parts-parent">먼저 사람 박스를 선택하세요.</div>
-      <div class="part-hint st">사람 한 명 = ID 하나. 머리·몸통·팔은 그 ID에 속하며 사람 수에 더하지 않습니다. 왼쪽·오른쪽은 <b>사람 본인 기준</b>입니다.</div>
+      <div class="part-hint st">사람 박스를 선택하면 영상의 관절 점을 직접 끌어 옮길 수 있습니다. 빈 관절은 아래에서 고른 뒤 위치를 찍으세요. 왼쪽·오른쪽은 <b>사람 본인 기준</b>입니다.</div>
       <div id="part-tools" class="part-tools"></div>
       <label class="st" for="part-state">선택 부위의 상태</label>
       <select id="part-state" class="part-state"><option value="visible">보임 — 위치 표시</option><option value="occluded">가림 — 위치는 아는 경우만</option><option value="out_of_frame">화면 밖 — 좌표 없음</option><option value="unknown">확인 불가 — 좌표 없음</option></select>
@@ -156,15 +157,32 @@ function snapshot(){undo.push(JSON.stringify([[...boxes],[...reviewed],[...remov
 function persistDraft(){if(!dirty)return;try{localStorage.setItem('lwir_edit_'+srcName,JSON.stringify({boxes:[...boxes],reviewed:[...reviewed],removed:[...removed],parts:[...partRecords],base:window.LWIR_BASE??null,t:Date.now()}));}catch(e){}}
 function doUndo(){const s=undo.pop();if(!s)return;const [b,r,x,p]=JSON.parse(s);boxes=new Map(b);reviewed=new Set(r);removed=new Set(x||[]);partRecords=new Map(p||[]);for(const f of purged)removed.add(f);sel=null;cancelPart();dirty=true;$('save').disabled=false;refresh();}
 // Parts are image coordinates attached to a person, never additional MOT rows.
-const PART_DEFS=[['head','머리','xywh'],['torso','몸통','xywh'],['left_shoulder','왼쪽 어깨','xy'],['right_shoulder','오른쪽 어깨','xy'],['left_hip','왼쪽 골반','xy'],['right_hip','오른쪽 골반','xy'],['left_elbow','왼쪽 팔꿈치','xy'],['right_elbow','오른쪽 팔꿈치','xy'],['left_wrist','왼쪽 손목','xy'],['right_wrist','오른쪽 손목','xy'],['phone','휴대폰 (선택)','xywh']];
+const PART_DEFS=[
+  ['head','머리','xywh'],['torso','몸통','xywh'],
+  ['nose','코','xy'],['left_eye','왼쪽 눈','xy'],['right_eye','오른쪽 눈','xy'],['left_ear','왼쪽 귀','xy'],['right_ear','오른쪽 귀','xy'],
+  ['left_shoulder','왼쪽 어깨','xy'],['right_shoulder','오른쪽 어깨','xy'],
+  ['left_elbow','왼쪽 팔꿈치','xy'],['right_elbow','오른쪽 팔꿈치','xy'],
+  ['left_wrist','왼쪽 손목','xy'],['right_wrist','오른쪽 손목','xy'],
+  ['left_hip','왼쪽 골반','xy'],['right_hip','오른쪽 골반','xy'],
+  ['left_knee','왼쪽 무릎','xy'],['right_knee','오른쪽 무릎','xy'],
+  ['left_ankle','왼쪽 발목','xy'],['right_ankle','오른쪽 발목','xy'],
+  ['phone','휴대폰 (선택)','xywh']
+];
+const POSE_LINKS=[
+  ['nose','left_eye'],['nose','right_eye'],['left_eye','left_ear'],['right_eye','right_ear'],
+  ['left_shoulder','right_shoulder'],['left_hip','right_hip'],
+  ...['left','right'].flatMap(side=>[
+    ['shoulder','elbow'],['elbow','wrist'],['shoulder','hip'],['hip','knee'],['knee','ankle']
+  ].map(pair=>pair.map(joint=>side+'_'+joint)))
+];
 const PART_BY_KEY=Object.fromEntries(PART_DEFS.map(p=>[p[0],p]));
 const PART_STATES={visible:'보임',occluded:'가림',out_of_frame:'화면 밖',unknown:'확인 불가'};
-let partRecords=new Map(),activePart='head',partTool=null,partDrag=null;
+let partRecords=new Map(),activePart='head',partTool=null,partDrag=null,pointDrag=null;
 const partKey=(f,id)=>`${f}:${id}`;
 const clonePart=a=>a?JSON.parse(JSON.stringify(a)):null;
 function partParent(){const b=selBox();return b&&!b.g&&!removed.has(cur)&&(boxes.get(cur)||[]).filter(x=>x.id===b.id&&!x.g).length===1?b:null;}
 function partRecord(f,id){return partRecords.get(partKey(f,id));}
-function cancelPart(){partTool=null;partDrag=null;}
+function cancelPart(){partTool=null;partDrag=null;pointDrag=null;}
 function needsPartReview(f,id){const p=partRecord(f,id);if(p)p.needs_review=true;}
 function pruneParts(){for(const [key,r] of partRecords)if(purged.has(r.frame)||!(boxes.get(r.frame)||[]).some(b=>b.id===r.id&&!b.g))partRecords.delete(key);}
 function checkPartRecord(r){
@@ -195,13 +213,13 @@ function changePartState(){
 }
 function partPanel(){
   const b=partParent(),r=b?partRecord(cur,b.id):null;
-  $('parts-parent').textContent=b?`선택: 사람 ID ${b.id} · 이 프레임의 부위 ${Object.keys(r?.parts||{}).length}개${r?.needs_review?' · 복사/박스 변경 후 검수 필요':''}`:'먼저 무시하지 않은 사람 박스 하나를 선택하세요.';
+  $('parts-parent').textContent=b?`선택: 사람 ID ${b.id} · 이 프레임의 부위 ${Object.keys(r?.parts||{}).length}개${r?.needs_review?' · 부위 검수 필요':''}`:'먼저 무시하지 않은 사람 박스 하나를 선택하세요.';
   $('parts-parent').className='st'+(r?.needs_review?' part-warn':'');
   $('part-tools').innerHTML=PART_DEFS.map(([key,name,kind])=>{const p=r?.parts[key];return `<button type="button" data-part="${key}" class="${key===activePart?'active':''}" ${b?'':'disabled'}>${name}<small>${p?PART_STATES[p.state]+(p[kind]?' · 위치 있음':' · 좌표 없음'):'미지정'} · ${kind==='xy'?'점':'박스'}</small></button>`;}).join('');
   for(const el of $('part-tools').querySelectorAll('button'))el.onclick=()=>{activePart=el.dataset.part;cancelPart();partPanel();render();};
   for(const id of ['part-place','part-clear','parts-copy','parts-confirm','part-state'])$(id).disabled=!b;
   const p=r?.parts[activePart];$('part-state').value=partTool?.state||p?.state||'visible';
-  $('part-help').textContent=partTool?(PART_BY_KEY[activePart][2]==='xy'?'영상에서 관절 위치를 클릭하세요.':'영상에서 부위의 사각형을 드래그하세요.')+' Esc로 취소합니다.':(r?.needs_review?'복사한 위치를 확인·수정한 뒤 「부위 검수 완료」를 누르세요.':'부위를 고르고 「위치 표시」를 누르세요. 가려진 위치를 모르면 상태만 지정합니다.');
+  $('part-help').textContent=partTool?(PART_BY_KEY[activePart][2]==='xy'?'영상에서 관절 위치를 클릭하세요.':'영상에서 부위의 사각형을 드래그하세요.')+' Esc로 취소합니다.':(r?.needs_review?'표시된 위치를 확인·수정한 뒤 「부위 검수 완료」를 누르세요.':'부위를 고르고 「위치 표시」를 누르세요. 가려진 위치를 모르면 상태만 지정합니다.');
   C.style.cursor=partTool?'crosshair':drawMode?'copy':'default';
 }
 function movePartId(f,from,to){const r=partRecord(f,from);partRecords.delete(partKey(f,to));partRecords.delete(partKey(f,from));if(r){r.id=to;partRecords.set(partKey(f,to),r);}}
@@ -209,23 +227,86 @@ function swapPartIds(f,a,b){const ra=partRecord(f,a),rb=partRecord(f,b);partReco
 function copyPartTo(record,f,id){const key=partKey(f,id);if(record){const r=clonePart(record);r.frame=f;r.id=id;r.needs_review=true;partRecords.set(key,r);}else needsPartReview(f,id);}
 function confirmPartCopy(records,f){const affected=records.filter(([id,r,ignored])=>(r||ignored)&&partRecord(f,id));return !affected.length||confirm('대상 프레임의 부위 '+affected.length+'건이 바뀝니다. 무시 박스를 복사하면 연결된 부위가 제거되고, 그 외에는 복사한 부위로 바뀝니다. 계속할까요? 되돌리기(Ctrl+Z)로 복원할 수 있습니다.');}
 function renderParts(){
-  const b=partParent();if(!b)return;const r=partRecord(cur,b.id);if(!r)return;
-  const pt=(xy)=>[view.ox+xy[0]*view.s,view.oy+xy[1]*view.s];
-  X.save();X.lineWidth=Math.max(1.5,1.5*view.dpr);X.font=`${12*view.dpr}px sans-serif`;
-  for(const [a,z] of [['left_shoulder','right_shoulder'],['left_shoulder','left_hip'],['right_shoulder','right_hip'],['left_hip','right_hip'],['left_shoulder','left_elbow'],['left_elbow','left_wrist'],['right_shoulder','right_elbow'],['right_elbow','right_wrist']]){
-    const p=r.parts[a],q=r.parts[z];if(!p?.xy||!q?.xy)continue;X.strokeStyle='#c3e7fa';X.setLineDash(p.state==='occluded'||q.state==='occluded'?[4,4]:[]);X.beginPath();X.moveTo(...pt(p.xy));X.lineTo(...pt(q.xy));X.stroke();
-  }
-  for(const [key,p] of Object.entries(r.parts)){const def=PART_BY_KEY[key],g=p[def[2]];if(!g)continue;const [x,y]=pt(g);X.strokeStyle=key===activePart?'#fff':'#65d6f7';X.fillStyle='#65d6f7';X.setLineDash(p.state==='occluded'?[4,4]:[]);
-    if(def[2]==='xy'){X.beginPath();X.arc(x,y,4*view.dpr,0,2*Math.PI);if(p.state==='visible')X.fill();else X.stroke();}
-    else{X.strokeRect(x,y,g[2]*view.s,g[3]*view.s);X.fillText(def[1],x+3,y+13*view.dpr);}
-  }X.restore();
+  if(!$('show-pose').checked||removed.has(cur))return;
+  const selected=partParent();
+  const otherIds=new Set((boxes.get(cur)||[]).filter(b=>!b.g&&b!==selected).map(b=>b.id));
+  for(const id of otherIds){const record=partRecord(cur,id);if(record)drawPersonParts(record,false);}
+  const record=selected&&partRecord(cur,selected.id);
+  if(record)drawPersonParts(record,true);
 }
+function drawPersonParts(record,selected){
+  const pt=xy=>[view.ox+xy[0]*view.s,view.oy+xy[1]*view.s];
+  const joint=(key,item)=>selected&&pointDrag?.key===key?pointDrag.position:item?.xy;
+  X.save();X.globalAlpha=selected?1:.72;X.lineWidth=Math.max(1.5,1.5*view.dpr);X.font=`${12*view.dpr}px sans-serif`;
+  for(const [a,z] of POSE_LINKS){
+    const p=record.parts[a],q=record.parts[z],from=joint(a,p),to=joint(z,q);
+    if(!from||!to)continue;
+    X.strokeStyle=selected?'#c3e7fa':col(record.id);X.setLineDash(p.state==='occluded'||q.state==='occluded'?[4,4]:[]);
+    X.beginPath();X.moveTo(...pt(from));X.lineTo(...pt(to));X.stroke();
+  }
+  for(const [key,p] of Object.entries(record.parts)){
+    const def=PART_BY_KEY[key],isPoint=def[2]==='xy';
+    const g=isPoint?joint(key,p):p.xywh;
+    if(!g||(!selected&&!isPoint))continue;
+    const [x,y]=pt(g),active=selected&&key===activePart;
+    const color=selected?(key.startsWith('right_')?'#ffc171':'#65d6f7'):col(record.id);
+    X.strokeStyle=active?'#fff':color;X.fillStyle=color;X.setLineDash(p.state==='occluded'?[4,4]:[]);
+    if(isPoint){
+      X.beginPath();X.arc(x,y,(active?5:4)*view.dpr,0,2*Math.PI);
+      if(p.state==='visible'){X.fill();if(active)X.stroke();}else X.stroke();
+    }else{X.strokeRect(x,y,g[2]*view.s,g[3]*view.s);X.fillText(def[1],x+3,y+13*view.dpr);}
+  }
+  X.restore();
+}
+$('show-pose').onchange=()=>{cancelPart();partPanel();render();};
 $('part-place').onclick=armPart;$('part-state').onchange=changePartState;
 $('part-clear').onclick=()=>{const b=partParent(),r=b&&partRecord(cur,b.id);if(!r?.parts[activePart])return;snapshot();delete r.parts[activePart];if(!Object.keys(r.parts).length)partRecords.delete(partKey(cur,b.id));cancelPart();refresh();};
 $('parts-confirm').onclick=()=>{const b=partParent(),r=b&&partRecord(cur,b.id);if(!r||!r.needs_review)return;snapshot();r.needs_review=false;refresh();};
 $('parts-copy').onclick=()=>{const b=partParent();if(!b)return;let r;for(let f=cur-1;f>=1;f--){r=partRecord(f,b.id);if(r)break;}if(!r){status('같은 사람의 이전 부위 기록이 없습니다.');return;}if(partRecord(cur,b.id)&&!confirm('현재 프레임의 부위를 이전 기록으로 바꿀까요? 되돌릴 수 있습니다.'))return;snapshot();copyPartTo(r,cur,b.id);refresh();};
 const boundedPoint=p=>({x:Math.max(0,Math.min(W0-0.001,p.x)),y:Math.max(0,Math.min(H0-0.001,p.y))});
 // Capture handlers isolate anatomical editing from person-box editing.
+// Moving a visible point uses its stored anatomical key, including in screen-basis mode.
+function closestJoint(point,record){
+  let distance=10*view.dpr/view.s,key=null;
+  for(const [name,item] of Object.entries(record.parts)){
+    if(!item.xy)continue;
+    const d=Math.hypot(item.xy[0]-point.x,item.xy[1]-point.y);
+    if(d<distance||(d===distance&&name===activePart)){key=name;distance=d;}
+  }
+  return key;
+}
+C.addEventListener('pointerdown',e=>{
+  if(e.button!==0||partTool||drawMode||playing||!$('show-pose').checked)return;
+  const parent=partParent(),record=parent&&partRecord(cur,parent.id);
+  if(!record)return;
+  const point=toImg(e),key=closestJoint(point,record);
+  if(!key)return;
+  e.preventDefault();e.stopImmediatePropagation();
+  try{C.setPointerCapture(e.pointerId);}catch(_){}
+  activePart=key;
+  const original=record.parts[key].xy;
+  pointDrag={key,frame:cur,id:parent.id,pointer:e.pointerId,original,position:original,start:point,moved:false};
+  partPanel();render();
+},true);
+C.addEventListener('pointermove',e=>{
+  if(!pointDrag||pointDrag.pointer!==e.pointerId)return;
+  e.preventDefault();e.stopImmediatePropagation();
+  const p=toImg(e),dx=p.x-pointDrag.start.x,dy=p.y-pointDrag.start.y;
+  if(!pointDrag.moved&&Math.hypot(dx,dy)*view.s<2*view.dpr)return;
+  const next=boundedPoint({x:pointDrag.original[0]+dx,y:pointDrag.original[1]+dy});
+  pointDrag.position=[next.x,next.y];pointDrag.moved=true;render();
+},true);
+C.addEventListener('pointerup',e=>{
+  if(!pointDrag||pointDrag.pointer!==e.pointerId)return;
+  e.preventDefault();e.stopImmediatePropagation();
+  const moved=pointDrag,parent=partParent();pointDrag=null;
+  if(moved.moved&&parent?.id===moved.id&&cur===moved.frame){
+    snapshot();
+    const old=partRecord(cur,parent.id).parts[moved.key];
+    writePart({...old,xy:moved.position});
+  }
+  refresh();
+},true);
 C.addEventListener('pointerdown',e=>{if(!partTool||e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();const b=partParent();if(!b||b.id!==partTool.id||cur!==partTool.frame){cancelPart();return;}const raw=toImg(e);if(raw.x<0||raw.y<0||raw.x>=W0||raw.y>=H0)return;const p=boundedPoint(raw);try{C.setPointerCapture(e.pointerId);}catch(_){}
   if(PART_BY_KEY[activePart][2]==='xy'){snapshot();writePart({state:partTool.state,xy:[p.x,p.y]});cancelPart();refresh();}
   else partDrag={x0:p.x,y0:p.y,x1:p.x,y1:p.y};
@@ -476,7 +557,7 @@ addEventListener('drop',async e=>{e.preventDefault();$('drop').style.display='no
 // test hook: ?src=<url of the folder> loads over http (read only, saves download)
 (async()=>{const q=new URLSearchParams(location.search),u=q.get('src');if(window.LWIR_SERVER_MODE?!q.get('seq'):!u)return;
   const base=window.LWIR_SERVER_MODE?'/data/'+(q.get('seq')||'').split('/').map(encodeURIComponent).join('/')+'/':u.replace(/\/?$/,'/');let n;
-  if(window.LWIR_SERVER_MODE){const resp=await fetch('/api/annotations?seq='+encodeURIComponent(q.get('seq')||''));if(!resp.ok)throw Error('라벨을 불러오지 못했습니다 ('+resp.status+').');const data=await resp.json();if(!data.parts_supported)throw Error('서버를 신체 부위 지원 버전으로 업데이트해야 합니다.');window.LWIR_BASE=data.version;n=data.frames;files={};for(const [nm,obj] of [['tracks_edited_mot.txt',data.mot],['review_state.json',JSON.stringify(data.review)],['person_parts.json',JSON.stringify(data.parts)]])files[nm]={text:async()=>obj};}
+  if(window.LWIR_SERVER_MODE){const resp=await fetch('/api/annotations?seq='+encodeURIComponent(q.get('seq')||''));if(!resp.ok)throw Error('라벨을 불러오지 못했습니다 ('+resp.status+').');const data=await resp.json();if(!data.parts_supported||data.editor_schema<3||!data.editor_schema)throw Error('17개 키포인트를 지원하는 서버가 필요합니다.');window.LWIR_BASE=data.version;n=data.frames;files={};for(const [nm,obj] of [['tracks_edited_mot.txt',data.mot],['review_state.json',JSON.stringify(data.review)],['person_parts.json',JSON.stringify(data.parts)]])files[nm]={text:async()=>obj};}
   else{const res=await(await fetch(base+'RESULT.json')).json();n=res.frames;files={};for(const nm of ['tracks_mot.txt','tracks_edited_mot.txt','review_state.json','person_parts.json']){const r=await fetch(base+nm);if(r.ok){const t=await r.text();files[nm]={text:async()=>t};}}}
   for(let i=1;i<=n;i++){const nm='images/'+String(i).padStart(6,'0')+'.png';files[nm]={getFile:async()=>await (await fetch(base+nm)).blob()};}
   srcName='http';await afterLoad(n);window.LWIR_LOADED=true;})().catch(e=>{window.LWIR_LOAD_FAILED=true;$('save').disabled=true;status('불러오기 실패: '+e.message+' 기존 파일은 바뀌지 않았습니다.');});

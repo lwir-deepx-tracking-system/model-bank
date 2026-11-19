@@ -12,7 +12,7 @@ from .state import EDITED_MOT, PARTS_FILE, PRESENCE, REVIEW_FILE, SEQS, SOURCE_M
 from .transactions import JOURNAL, TransactionError, recover_transaction
 
 
-EDITOR_CAPABILITIES = {'parts_supported': True, 'editor_schema': 2}
+EDITOR_CAPABILITIES = {'parts_supported': True, 'editor_schema': 3}
 
 
 def scan(root):

@@ -18,7 +18,7 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
    const u=new URL(route.request().url());let body;
    if(u.pathname==='/edit')return route.fulfill({contentType:'text/html',body:html});
    if(u.pathname.includes('/images/')){imagePaths.push(u.pathname);return route.fulfill({contentType:'image/png',body:png});}
-   if(u.pathname==='/api/annotations')body={version,frames:fixtureFrames,mot,review:fixtureReview,parts:empty,parts_supported:true};
+   if(u.pathname==='/api/annotations')body={version,frames:fixtureFrames,mot,review:fixtureReview,parts:empty,parts_supported:true,editor_schema:3};
    else if(u.pathname==='/api/meta')body={version,open_by:[]};
    else if(u.pathname==='/api/save'){
     const req=route.request().postDataJSON();saves.push(req);
@@ -43,6 +43,17 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
   await page.mouse.move(a.x,a.y);await page.mouse.down();await page.mouse.move(b.x,b.y);await page.mouse.up();
   let doc=await page.evaluate(()=>partsDocument());assert.equal(doc.annotations.length,1);assert.equal(doc.annotations[0].parts.head.state,'visible');assert.ok(Math.abs(doc.annotations[0].parts.head.xywh[2]-80)<1);
   await selectPart('left_shoulder');await page.locator('#part-place').click();await clickAt(120,155);
+  const jointKeys=await page.evaluate(()=>PART_DEFS.filter(part=>part[2]==='xy').map(part=>part[0]));
+  assert.equal(jointKeys.length,17);
+  for(const key of ['nose','left_eye','right_eye','left_ear','right_ear','left_knee','right_knee','left_ankle','right_ankle'])
+   assert.ok(jointKeys.includes(key),key);
+  await selectPart('left_knee');await page.locator('#part-place').click();await clickAt(130,310);
+  await selectPart('left_ankle');await page.locator('#part-place').click();await clickAt(131,380);
+  assert.ok(await page.evaluate(()=>POSE_LINKS.some(([a,b])=>a==='left_knee'&&b==='left_ankle')));
+  const ankle=await xy(131,380),movedAnkle=await xy(150,402);
+  await page.mouse.move(ankle.x,ankle.y);await page.mouse.down();await page.mouse.move(movedAnkle.x,movedAnkle.y);await page.mouse.up();
+  doc=await page.evaluate(()=>partsDocument());assert.ok(Math.abs(doc.annotations[0].parts.left_ankle.xy[0]-150)<1);
+  assert.ok(Math.abs(doc.annotations[0].parts.left_ankle.xy[1]-402)<1);
   await selectPart('torso');await page.locator('#part-state').selectOption('occluded');
   doc=await page.evaluate(()=>partsDocument());assert.equal(doc.annotations[0].parts.torso.xywh,null);assert.equal(doc.annotations[0].parts.torso.state,'occluded');
   await selectPart('left_hip');await page.locator('#part-state').selectOption('out_of_frame');
@@ -73,7 +84,7 @@ const img='<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480"><rec
    await page.evaluate(async()=>{await loadFromFiles([]);await loadFromDir({name:'wrong-sequence'});});
    assert.equal(await page.evaluate(()=>JSON.stringify([srcName,toMot(),partsDocument()])),beforeImport,'server editor must not import another sequence');
    assert.ok(imagePaths.length&&imagePaths.every(p=>p.startsWith('/data/demo/')),'seq must determine image source');
-   await page.locator('#save').click();await page.waitForFunction(()=>!dirty);assert.equal(saves[0].parts.annotations.length,2);assert.equal(saves[0].base,'v1');
+   await page.locator('#save').click();await page.waitForFunction(()=>!dirty);assert.equal(saves[0].parts.annotations.length,2);assert.equal(saves[0].base,'v1');assert.equal(saves[0].editor_schema,3);assert.ok(saves[0].parts.annotations[0].parts.left_ankle.xy[1]>400);
    // Changes made during an in-flight save remain dirty and retain the new base.
    await page.evaluate(()=>{go(1);sel={f:1,i:0};refresh();});await selectPart('right_hip');await page.locator('#part-state').selectOption('unknown');
    holdSave=new Promise(r=>releaseSave=r);await page.locator('#save').click();await page.waitForTimeout(50);
