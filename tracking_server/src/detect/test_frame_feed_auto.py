@@ -787,6 +787,67 @@ class LiveTests(unittest.TestCase):
             time.sleep(0.02)
         return what()
 
+    def test_tile_results_are_collected_before_the_previous_track_is_published(self):
+        APP.FEED_MODE = 'tile'
+        tile = Engine(0, self.service, self.cores)
+        tile.cores = (0, 1)
+        tile.dispose = Mock()
+        self.e1.dispose = Mock()
+
+        def enqueue():
+            with self.live.cond:
+                stamp = time.perf_counter()
+                self.live.q.append((stamp, self.pixels))
+                self.live.cond.notify_all()
+            return stamp
+
+        def has_result():
+            with self.live.cond:
+                return len(feed.out) == 1 and feed.out[0].result is not None and not feed.busy[0]
+
+        with patch.object(frame_feed.dual_tile, 'assets_reason', return_value=None), \
+                patch.object(frame_feed.dual_tile, 'Tone', return_value=lambda raw: raw), \
+                patch.object(frame_feed.dual_tile, 'Engine', return_value=tile), \
+                patch.object(frame_feed.dual_tile, 'selected', return_value=True):
+            feed = frame_feed.Feed(self.e1, hot_switch=True)
+            APP.FEED = feed
+            try:
+                first = enqueue()
+                self.assertTrue(self.until(has_result, 2), feed.err)
+                feed.read_frame(0)
+                self.assertEqual(feed.wait()[0].tolist(), [0])
+                self.assertEqual(feed.mon.open[1], first)
+                self.assertEqual(feed.mon.n_frames, 1)
+
+                second = enqueue()
+                self.assertTrue(self.until(has_result, 2), feed.err)
+                self.assertEqual(feed.mon.open[1], first)
+                self.assertEqual(feed.mon.n_frames, 1)
+                frame_feed.sent(first)
+
+                feed.read_frame(1)
+                self.assertEqual(feed.wait()[0].tolist(), [1])
+                self.assertEqual(feed.mon.open[1], second)
+                frame_feed.sent(second)
+                self.assertEqual(len(feed.mon.outs), 2)
+                self.assertEqual((tile.jobs, tile.over, self.live.q_drop, feed.st['order_bad']), (2, 0, 0, 0))
+                self.assertEqual(feed.st['core'], [2, 2])
+                self.assertFalse(APP.pending)
+
+                enqueue()
+                self.assertTrue(self.until(has_result, 2), feed.err)
+                with patch.object(frame_feed, 'make_second', return_value=self.e1):
+                    feed.pause()
+                    self.assertIsNone(feed.redo[0].result)
+                    self.assertFalse(APP.pending)
+                    feed.resume(0)
+                self.assertTrue(self.until(has_result, 2), feed.err)
+                feed.read_frame(2)
+                self.assertEqual(feed.wait()[0].tolist(), [2])
+                self.assertEqual((tile.jobs, feed.st['redo'], feed.st['order_bad']), (4, 1, 0))
+            finally:
+                feed.close()
+
     def test_slow_then_fast_detection_on_the_running_feed(self):
         taken = []; errors = []
         feed = frame_feed.Feed(self.e1, hot_switch=True); APP.FEED = feed
