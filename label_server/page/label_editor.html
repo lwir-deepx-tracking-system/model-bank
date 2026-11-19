@@ -91,6 +91,7 @@ kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;paddi
       <div class="row"><button class="danger" id="deltrack" disabled>이 번호 전체 지우기</button></div>
       <div class="row" style="align-items:center">번호를 <input type="number" id="newid" min="1"> 로 <button id="relabel" disabled>바꾸기</button> <button id="swapid" disabled title="두 번호를 서로 맞바꿉니다 (번호가 뒤바뀐 경우)">맞바꾸기</button></div>
       <label class="st" for="id-scope">번호 변경 범위</label>
+      <div id="id-feedback" class="st" aria-live="polite" hidden></div>
       <select id="id-scope" class="part-state">
         <option value="current" selected>현재 프레임만</option><option value="rest">현재 프레임부터 끝까지</option><option value="range">시작·끝 프레임 지정</option><option value="all">전체 프레임</option>
       </select>
@@ -675,18 +676,48 @@ function idTargetFrames(){
   }
   return original?numbers.filter(f=>first<=f&&f<=last):numbers.slice(first-1,last);
 }
-function changeIds(swap){
+let idActionBusy=false;
+function idFeedback(message){
+  const panel=$('id-feedback');panel.textContent=message;panel.hidden=false;status(message);
+}
+function originalFrameSummary(frames){
+  const first=frames.slice(0,5).join(', ');
+  return '원본 '+first+'번'+(frames.length>5?' 외 '+(frames.length-5)+'장':'');
+}
+function idChangeTargets(frames,from,to,swap){
+  const targets=frames.filter(f=>!removed.has(f)&&!purged.has(f)).map(f=>[f,boxes.get(f)||[]])
+    .filter(([,bs])=>bs.some(x=>x.id===from||(swap&&x.id===to)));
+  if(!targets.length){idFeedback('지정한 범위에 바꿀 번호가 없습니다.');return null;}
+  const conflicts=swap?[]:targets.filter(([,bs])=>bs.some(x=>x.id===to)).map(([f])=>f);
+  if(conflicts.length){
+    idFeedback(originalFrameSummary(conflicts)+'에 '+to+'번이 이미 있습니다. 두 사람의 번호를 교환하려면 「맞바꾸기」를 쓰세요.');
+    return null;
+  }
+  return targets;
+}
+async function changeIds(swap){
+  if(idActionBusy)return;
   const b=selBox(),to=$('newid').valueAsNumber;
-  if(!b||!Number.isSafeInteger(to)||to<1||to===b.id){status('바꿀 번호를 다른 양의 정수로 넣으세요.');return;}
+  if(!b||!Number.isSafeInteger(to)||to<1||to===b.id){idFeedback('바꿀 번호를 다른 양의 정수로 넣으세요.');return;}
   const frames=idTargetFrames();
   if(!frames)return;
-  const from=b.id;
-  const targets=frames.map(f=>[f,boxes.get(f)||[]]).filter(([,bs])=>bs.some(x=>x.id===from||(swap&&x.id===to)));
-  if(!targets.length){status('지정한 범위에 바꿀 번호가 없습니다.');return;}
-  if(!swap&&targets.some(([,bs])=>bs.some(x=>x.id===to))){
-    status('같은 프레임에 대상 번호가 이미 있습니다. 두 사람을 서로 바꾸려면 「맞바꾸기」를 쓰세요.');return;
+  const from=b.id,original=cur;
+  let targets=idChangeTargets(frames,from,to,swap);
+  if(!targets)return;
+  const affected=targets.map(([f])=>f);
+  if(!mayEdit(affected,true)){
+    if(!window.LWIR_CLAIM_FOR_IDS){mayEdit(affected);return;}
+    idActionBusy=true;
+    try{
+      idFeedback('번호를 바꿀 작업 범위를 확인하는 중입니다.');
+      const got=await window.LWIR_CLAIM_FOR_IDS(affected[0],affected.at(-1));
+      if(!got){idFeedback(ST.textContent);return;}
+    }finally{idActionBusy=false;}
+    if(cur!==original||selBox()?.id!==from){idFeedback('선택이 바뀌었습니다. 번호 변경을 다시 눌러 주세요.');return;}
+    targets=idChangeTargets(frames,from,to,swap);
+    if(!targets)return;
   }
-  if(!snapshot(targets.map(([f])=>f)))return;
+  if(!snapshot(targets.map(([f])=>f))){idFeedback(ST.textContent);return;}
   let n=0;
   for(const [f,bs] of targets){
     if(swap)swapPartIds(f,from,to);else movePartId(f,from,to);
@@ -696,7 +727,7 @@ function changeIds(swap){
     }
   }
   cancelPart();const verb=swap?'맞바꿨습니다':'바꿨습니다';
-  status(from+'번과 '+to+'번 · '+targets.length+'장, 박스 '+n+'개를 '+verb+'.');
+  idFeedback(from+'번과 '+to+'번 · '+targets.length+'장, 박스 '+n+'개를 '+verb+'.');
   refresh();
 }
 function relabel(){changeIds(false);}

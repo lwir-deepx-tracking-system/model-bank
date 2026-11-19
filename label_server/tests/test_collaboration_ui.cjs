@@ -27,8 +27,9 @@ const html=fs.readFileSync(process.env.LWIR_EDITOR_HTML,'utf8');
       if(path==='/api/claims')return reply(route,{claims:claimList(url.searchParams.get('owner'))});
       if(path==='/api/claim'){
         const {owner,user,first,last}=route.request().postDataJSON();
-        if([...leases].some(([token,c])=>token!==owner&&first<=c.last&&last>=c.first))
-          return reply(route,{error:'frame range is already claimed'},409);
+        const collision=[...leases].filter(([token,c])=>token!==owner&&first<=c.last&&last>=c.first)
+          .flatMap(([,c])=>Array.from({length:Math.min(last,c.last)-Math.max(first,c.first)+1},(_,i)=>i+Math.max(first,c.first)));
+        if(collision.length)return reply(route,{error:'frame range is already claimed',frames:collision},409);
         const claim={user,first,last,lease_seconds:90};leases.set(owner,claim);
         return reply(route,{ok:true,claim,claims:claimList(owner)});
       }
@@ -104,6 +105,22 @@ const html=fs.readFileSync(process.env.LWIR_EDITOR_HTML,'utf8');
     await c.waitForFunction(()=>boxes.get(2)[0].x===31&&$('collab-state').textContent.includes('내 범위 2~2'));
     assert.ok(mot.includes('3,1,36.00,'));
     await c.locator('#save').click();await c.waitForFunction(()=>!dirty);
+    // An old manual claim on frame 1 does not prevent a whole-sequence ID change elsewhere.
+    // Pending edits to the previous range are saved before attempting to claim the new range.
+    await a.evaluate(()=>{go(1);sel={f:1,i:0};activePart='nose';snapshot();writePart({state:'visible',xy:[95,32]});refresh();});
+    await a.evaluate(()=>{go(3);sel={f:3,i:0};refresh();});
+    await a.locator('#id-scope').selectOption('all');await a.locator('#newid').fill('9');await a.locator('#relabel').click();
+    await a.waitForFunction(()=>$('id-feedback').textContent.includes('원본 2번'));
+    assert.deepEqual(await a.evaluate(()=>boxes.get(3).map(b=>b.id)),[1]);
+    assert.ok(annotations.some(row=>row.frame===1&&row.id===7&&row.parts.nose));
+    await c.locator('#claim-release').click();
+    await c.waitForFunction(()=>!$('collab-state').textContent.includes('내 범위'));
+    await a.locator('#relabel').click();
+    await a.waitForFunction(()=>boxes.get(3)[0].id===9&&$('collab-state').textContent.includes('내 범위 2~3'));
+    assert.equal(await a.evaluate(()=>cur),3);
+    assert.deepEqual(await a.evaluate(()=>[boxes.get(1)[0].id,boxes.get(2)[0].id,partRecord(2,9).parts.left_ankle.xy]),[7,9,[91,200]]);
+    await a.locator('#save').click();await a.waitForFunction(()=>!dirty);
+    assert.ok(annotations.some(row=>row.frame===2&&row.id===9));
     assert.deepEqual(errors,[]);
     console.log('PASS: current frame ID scope, overlap rejected, disjoint saves merged and read-only outside the claimed range');
   }finally{await browser.close();}

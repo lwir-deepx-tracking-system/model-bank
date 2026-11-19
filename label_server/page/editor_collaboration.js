@@ -122,7 +122,7 @@
     expires=Date.now()+response.claim.lease_seconds*1000;
     if(response.claims)claims=response.claims;
   }
-  async function claimRange(first,last,fromShortcut=false){
+  async function claimRange(first,last,{fromShortcut=false,keepFrame=false}={}){
     if(claimBusy||renewBusy||saveBusy)return false;
     if(!Number.isSafeInteger(first)||!Number.isSafeInteger(last)||first<1||last>nFrames||first>last){
       status('원본 시작과 끝을 1~'+nFrames+' 사이의 정수로 입력하세요.');return;
@@ -151,9 +151,13 @@
       adopt(acquired);keyboardClaim=fromShortcut;autoOff=false;
       $('claim-first').value=first;$('claim-last').value=last;
       status('원본 '+first+'~'+last+'번을 맡았습니다.');
-      if(cur<first||cur>last)go(first);else refresh();
+      if(!keepFrame&&(cur<first||cur>last))go(first);else refresh();
       return true;
-    }catch(error){status(error.code===409?'다른 사람이 이미 맡은 프레임입니다.':'범위를 맡지 못했습니다. '+error.message);await listClaims().catch(()=>{});}
+    }catch(error){
+      const affected=error.frames?.length?' '+originalFrameSummary(error.frames):'';
+      status(error.code===409?'다른 사람이 이미 맡은 프레임입니다.'+affected:'범위를 맡지 못했습니다. '+error.message);
+      await listClaims().catch(()=>{});
+    }
     finally{claimBusy=false;panel();}
   }
   window.LWIR_CLAIM_FOR_SHORTCUT=async frame=>{
@@ -162,7 +166,15 @@
     shortcutBusy=true;
     try{
       if(own()&&dirty){await window.LWIR_COLLAB_SAVE(false);if(dirty)return false;}
-      return Boolean(await claimRange(frame,frame,true));
+      return Boolean(await claimRange(frame,frame,{fromShortcut:true}));
+    }finally{shortcutBusy=false;}
+  };
+  window.LWIR_CLAIM_FOR_IDS=async(first,last)=>{
+    if(!enabled||claimBusy||renewBusy||saveBusy||shortcutBusy){status('저장 또는 작업 범위를 확인 중입니다. 잠시 후 다시 눌러 주세요.');return false;}
+    shortcutBusy=true;
+    try{
+      if(own()&&dirty){await window.LWIR_COLLAB_SAVE(false);if(dirty)return false;}
+      return Boolean(await claimRange(first,last,{keepFrame:true}));
     }finally{shortcutBusy=false;}
   };
   $('claim-current').onclick=()=>claimRange(cur,cur);
