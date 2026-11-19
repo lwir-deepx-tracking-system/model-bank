@@ -59,30 +59,49 @@ def same_frame_keepid(gray, boxes, embed, submit, tracked_boxes, tracked_feature
     return synchronous, asynchronous if submit is not None else None
 
 
-def _embed_slot_batch(engine, keys, gray, boxes, got, base=0):
-    start = time.perf_counter_ns()
-    jobs = deque()
-    try:
-        for slot, key in enumerate(keys, base):
-            if not _crop_into(gray, boxes[key], engine.ins[slot], engine.W, engine.H):
-                continue
-            jobs.append((key, engine._submit_slot(slot), engine.outs[slot].size))
-        count = len(jobs)
-        while jobs:
-            key, job, size = jobs.popleft()
-            outputs = engine._wait_slot(job)
-            e = np.asarray(outputs[0]).ravel()
-            if e.size != size or not np.isfinite(e).all():
-                raise AssertionError(('re-ID output', e.shape, size))
-            # Division allocates a feature independent of the reusable NPU output slot.
-            got[key] = e / max(np.linalg.norm(e), 1e-12)
-    except BaseException:
-        engine._drain_known(job for _, job, _ in jobs)
-        raise
-    if count:
-        if not engine.birth_pipeline_batches:
-            print('REID same-frame pipeline active: max %d jobs, shared KeepID/BoT-SORT/refresh-overflow path' % (fast_path.EMBED_MAX if fast_path.FAST['embed'] else 2), flush=True)
-        engine.birth_pipeline_batches.append((count, (time.perf_counter_ns() - start) / 1e6))
+class _SlotBatch:
+    def __init__(self, engine, keys, gray, boxes, base):
+        self.engine = engine
+        self.base = base
+        self.start_ns = time.perf_counter_ns()
+        self.jobs = deque()
+        try:
+            for slot, key in enumerate(keys, base):
+                if _crop_into(gray, boxes[key], engine.ins[slot], engine.W, engine.H):
+                    self.jobs.append((key, engine._submit_slot(slot), engine.outs[slot].size))
+        except BaseException:
+            self.drain()
+            raise
+
+    def drain(self):
+        if self.jobs:
+            self.engine._drain_known(job for _, job, _ in self.jobs)
+            self.jobs.clear()
+
+    def collect(self):
+        engine = self.engine
+        count = len(self.jobs)
+        got = {}
+        try:
+            while self.jobs:
+                key, job, size = self.jobs.popleft()
+                outputs = engine._wait_slot(job)
+                e = np.asarray(outputs[0]).ravel()
+                if e.size != size or not np.isfinite(e).all():
+                    raise AssertionError(('re-ID output', e.shape, size))
+                # Division allocates a feature independent of the reusable NPU output slot.
+                got[key] = e / max(np.linalg.norm(e), 1e-12)
+        finally:
+            self.drain()
+        if count:
+            if not hasattr(engine, 'birth_pipeline_batches'):
+                engine.birth_pipeline_batches = deque(maxlen=512)
+            if not engine.birth_pipeline_batches:
+                print('REID same-frame pipeline active: max %d jobs, shared KeepID/BoT-SORT/refresh-overflow path' % (fast_path.EMBED_MAX if fast_path.FAST['embed'] else 2), flush=True)
+            engine.birth_pipeline_batches.append((count, (time.perf_counter_ns() - self.start_ns) / 1e6))
+        fast_path.STAT['embed_batches'] += 1
+        fast_path.STAT['embed_beside_refresh'] += int(self.base > 0)
+        return got
 
 
 def _free_slots(engine):
@@ -98,6 +117,35 @@ def _free_slots(engine):
     return held[0], min(fast_path.EMBED_MAX, engine.n - held[0])
 
 
+def start_botsort_batch(keys, gray, boxes):
+    if len(keys) < 2 or os.environ.get('LWIR_REID_OVERLAP') == '0':
+        return None
+    engine = vars(APP).get('rl_async')
+    if (os.environ.get('LWIR_REID_BIRTH_PIPELINE') != '1' or engine is None or
+            engine.quarantined or engine.n <= 1):
+        return None
+    free = _free_slots(engine)
+    if free is None or len(keys) > free[1]:
+        return None
+    return _SlotBatch(engine, keys, gray, boxes, free[0])
+
+
+def submit_keepid_refresh(keys, gray, boxes):
+    engine = APP.rl_async
+    collect = engine.submit(keys, gray, boxes)
+
+    def collect_refresh():
+        try:
+            return collect()
+        except RuntimeError as error:
+            if not engine.quarantined:
+                raise
+            print('KeepID refresh skipped:', repr(error)[:120], flush=True)
+            return {}
+
+    return collect_refresh
+
+
 def rl_embed(ks, g_, boxes):
     """Return features within this call for KeepID, BoT-SORT, and refresh overflow.
 
@@ -110,19 +158,23 @@ def rl_embed(ks, g_, boxes):
         if free is not None:
             ks = tuple(ks)
             if len(ks) > 1:
-                if not hasattr(engine, 'birth_pipeline_batches'):
-                    engine.birth_pipeline_batches = deque(maxlen=512)
                 got = {}; base, step = free
                 for start in range(0, len(ks), step):
-                    _embed_slot_batch(engine, ks[start:start + step], g_, boxes, got, base)
-                    fast_path.STAT['embed_batches'] += 1; fast_path.STAT['embed_beside_refresh'] += int(base > 0)
+                    got.update(_SlotBatch(engine, ks[start:start + step], g_, boxes, base).collect())
                 return got
 
     got = {}
     for k_ in ks:
         t0_ = time.perf_counter_ns()
         if not _crop_into(g_, boxes[k_], APP.rl_x, APP.rl_eng.W, APP.rl_eng.H): continue
-        APP.rl_eng.submit(APP.rl_x, -1); e = APP.rl_eng.wait()[0].ravel(); got[k_] = e / max(np.linalg.norm(e), 1e-12)
+        APP.rl_eng.submit(APP.rl_x, -1)
+        wait_ns = time.perf_counter_ns()
+        try:
+            e = APP.rl_eng.wait()[0].ravel()
+        finally:
+            if 'reid_wait_ns' in vars(APP):
+                APP.reid_wait_ns += time.perf_counter_ns() - wait_ns
+        got[k_] = e / max(np.linalg.norm(e), 1e-12)
         APP.rl_crop_ms.append((time.perf_counter_ns() - t0_) / 1e6)
         if not APP.args.mock: APP.rl_npu.append(APP.rl_eng.b.get_npu_inference_time() / 1000)
     return got

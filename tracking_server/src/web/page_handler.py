@@ -259,7 +259,7 @@ def _raw_click_owners(raw_ids, raw_to_public=None):
 
 
 def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
-                 click_raw_ids=(), click_raw_to_public=None, click_namespace=None):
+                 click_raw_ids=(), click_raw_to_public=None, click_namespace=None, deadline_marks=None):
     paired_stamp_ = bool(APP.LIVE.arr)
     now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if paired_stamp_ else now_
     if not isinstance(t_in, (int, float)) or not math.isfinite(t_in) or not 0 < t_in <= now_:
@@ -340,7 +340,10 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
                                     click_owners=click_owners_, click_namespace=click_namespace)
     pipeline_ = getattr(APP.LIVE, 'pipeline_perf', None)
     if pipeline_ is not None and paired_stamp_:
-        pipeline_.tracked(t_in, time.perf_counter())
+        tracked_at_ = time.perf_counter()
+        feed_ = getattr(APP, 'FEED', None)
+        pipeline_.tracked(t_in, tracked_at_, app_marks=deadline_marks,
+                          feed_marks=feed_.deadline_marks(t_in) if feed_ is not None else None)
     frame_feed.sent(t_in)   # 11-16 period monitor (feed_auto): this frame's result is out (gimbal); its deadline is arrival + one camera period
     marks_ = _lost_marks(t_in, display_rows, gb_id_, fps_, own_pool=camera_rows is None)   # 11-16: every frame, so the kept marks follow the camera motion
     seek_ = APP.GB.state.get('seek') if has_gimbal_ and gb_id_ else None   # 11-16: the gimbal's search while the followed person is lost (bridge --seek 1)
@@ -679,6 +682,9 @@ def make_lv_Handler():
                 elif self.path.startswith('/rules'):   # v24g
                     b_ = json.dumps(auto_det.dry_log() if self.path.startswith('/rules/auto_det_log') else APP.rules_state(), ensure_ascii=False).encode()   # 11-15: every kept "would-have switch" of a replay (read only)
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                elif self.path.split('?', 1)[0] == '/perf/deadlines':
+                    b_ = json.dumps(APP.LIVE.pipeline_perf.deadline_snapshot()).encode()
+                    self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/perf'):   # v26c: read only. Per-second history for the graph: t (unix s), track fps, cam fps, delay mean ms, delay max ms, compute mean ms
                     from urllib.parse import urlsplit as us3_, parse_qs as pq3_
                     try: since_ = float(pq3_(us3_(self.path).query).get('since', ['0'])[0])   # the page asks only for the samples after the last one it has
@@ -701,6 +707,11 @@ def make_lv_Handler():
                               async_replay_preview=bool(worker_ and worker_.async_replay),
                               npu_feed=system_buttons.npu_feed_state())
                     h_.update(worker_.stats() if worker_ is not None else dict(preview_dropped=0, preview_errors=getattr(APP.LIVE, 'preview_errors', 0)))
+                    stamp_ = getattr(APP.LIVE, 'cam_stamp', None)
+                    if stamp_ is not None:
+                        h_['cam_stamp'] = {key: stamp_.get(key) for key in (
+                            'on', 'transport', 'seq', 'frames', 'missed', 'hdr_bad', 'resync',
+                            'ring_late', 'ring_torn', 'age_bad', 'fallback', 'age_ms', 'last60')}
                     cut_ = time.perf_counter() - 30.0
                     with APP.LIVE.dlock: dl_ = [d_ for t_, d_ in APP.LIVE.delays if t_ >= cut_]   # arrival -> successfully published JPEG, last 30 s
                     if dl_: dl_.sort(); h_.update(delay_n=len(dl_), delay_p50=round(dl_[len(dl_) // 2], 1), delay_p95=round(dl_[min(len(dl_) - 1, int(len(dl_) * 0.95))], 1), delay_max=round(dl_[-1], 1))

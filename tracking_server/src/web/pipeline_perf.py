@@ -1,6 +1,7 @@
 """Live camera, decoded boxes and final track output, independent of JPEG delivery."""
 
 from collections import deque
+import gc
 from math import floor, isfinite
 from threading import Lock
 import time
@@ -12,6 +13,13 @@ _MAX_SAMPLES = 8192  # comfortably over 60 s of frames at the supported camera r
 _SCHEDULE_SIZE = 3
 _SCHEDULE_FRESH_S = 2.5
 _PENDING_LIMIT = 128
+_TRACK_GOAL_MS = 33
+_GOAL_NS = _TRACK_GOAL_MS * 1_000_000
+_APP_MARKS = ('detector_prep_start_ns', 'detector_result_seen_ns', 'detector_decode_done_ns',
+              'tracker_update_done_ns', 'keepid_start_ns', 'keepid_done_ns', 'frame_bookkeeping_ns',
+              'reid_submit_done_ns', 'reid_collect_start_ns', 'reid_wait_ns', 'detections', 'tracks')
+_FEED_MARKS = ('sequence', 'sdk_wait_start_ns', 'sdk_result_ready_ns', 'feed_publish_ns',
+               'tracker_take_ns', 'tiles')
 
 
 def _delay_ms(received, finished):
@@ -20,17 +28,21 @@ def _delay_ms(received, finished):
     return None
 
 
-def _p95(values):
+def _percentile_sorted(values, fraction):
     if not values:
         return None
-    values.sort()
-    pos = 0.95 * (len(values) - 1)
+    pos = fraction * (len(values) - 1)
     lo = int(pos)
     return round(values[lo] + (pos - lo) * (values[min(lo + 1, len(values) - 1)] - values[lo]), 2)
 
 
+def _p95(values):
+    values.sort()
+    return _percentile_sorted(values, 0.95)
+
+
 class PipelinePerf:
-    def __init__(self, clock=time.perf_counter):
+    def __init__(self, clock=time.perf_counter, *, observe_gc=False):
         self._clock = clock
         self._start = clock()
         self._lock = Lock()
@@ -39,6 +51,27 @@ class PipelinePerf:
         self._samples = [deque(maxlen=_MAX_SAMPLES) for _ in range(3)]
         self._pending = {}
         self._completed = []
+        self._deadline_count = 0
+        self._overlap_count = 0
+        self._deadline_recent = deque(maxlen=64)
+        self._gc_events = deque(maxlen=128)
+        self._gc_start_ns = None
+        self._observe_gc = observe_gc
+        if observe_gc:
+            gc.callbacks.append(self._gc_event)
+
+    def close(self):
+        if self._observe_gc:
+            gc.callbacks.remove(self._gc_event)
+            self._observe_gc = False
+
+    def _gc_event(self, phase, info):
+        now = time.perf_counter_ns()
+        if phase == 'start':
+            self._gc_start_ns = now
+        elif self._gc_start_ns is not None:
+            self._gc_events.append((self._gc_start_ns, now, info['generation']))
+            self._gc_start_ns = None
 
     def camera(self, arrived, transport_ms=None, *, dropped=False):
         self._record(0, arrived, transport_ms, dropped=dropped)
@@ -51,12 +84,13 @@ class PipelinePerf:
         if delay is not None:
             self._record(1, finished, delay, arrived, cores)
 
-    def tracked(self, arrived, finished):
+    def tracked(self, arrived, finished, *, app_marks=None, feed_marks=None):
         delay = _delay_ms(arrived, finished)
         if delay is not None:
-            self._record(2, finished, delay, arrived)
+            self._record(2, finished, delay, arrived, app_marks=app_marks, feed_marks=feed_marks)
 
-    def _record(self, stage, finished, delay, arrived=None, cores=(), *, dropped=False):
+    def _record(self, stage, finished, delay, arrived=None, cores=(), *, dropped=False,
+                app_marks=None, feed_marks=None):
         bucket = floor(finished - self._start)
         with self._lock:
             if bucket > self._latest_bin:
@@ -78,6 +112,19 @@ class PipelinePerf:
                 samples.append((finished, delay))
             if stage < 3:
                 self._pair(stage, finished, delay, arrived, cores)
+            if stage == 2 and app_marks is not None and app_marks[8] is not None:
+                self._overlap_count += 1
+            if stage == 2 and round(finished * 1e9) - round(arrived * 1e9) > _GOAL_NS:
+                start_ns, end_ns = round(arrived * 1e9), round(finished * 1e9)
+                detail = dict(arrival_ns=start_ns, tracking_done_ns=end_ns, delay_ms=round(delay, 3),
+                              gc=[event for event in self._gc_events.copy()
+                                  if event[0] < end_ns and event[1] > start_ns])
+                if app_marks is not None:
+                    detail.update(zip(_APP_MARKS, app_marks))
+                if feed_marks is not None:
+                    detail.update(zip(_FEED_MARKS, feed_marks))
+                self._deadline_count += 1
+                self._deadline_recent.append(detail)
 
     def _pair(self, stage, finished, delay, arrived, cores):
         if stage == 0:
@@ -127,9 +174,22 @@ class PipelinePerf:
         first = frames[0][0] if frames else 0
         schedule = [[round((stamp - first) * 1000, 3) for stamp in row[:3]] for row in frames]
         intervals = [(after - before) * 1000 for before, after in zip(output_times, output_times[1:])]
+        t_ms.sort()
         return dict(camera_fps=camera, det_fps=det, track_fps=track,
                     camera_fps_5s=rate_fps[0], det_fps_5s=rate_fps[1], track_fps_5s=rate_fps[2],
                     output_interval_p95_ms=_p95(intervals), queue_drops_5s=drops,
-                    camera_p95_ms=_p95(c_ms), det_p95_ms=_p95(d_ms), track_p95_ms=_p95(t_ms),
-                    camera_count=len(c_ms), det_count=len(d_ms), sample_count=len(t_ms), goal_ms=33,
+                    camera_p95_ms=_p95(c_ms), det_p95_ms=_p95(d_ms), track_p95_ms=_percentile_sorted(t_ms, 0.95),
+                    track_p99_ms=_percentile_sorted(t_ms, 0.99),
+                    track_max_ms=round(t_ms[-1], 3) if t_ms else None,
+                    track_over_goal=sum(round(value * 1e6) > _GOAL_NS for value in t_ms),
+                    camera_count=len(c_ms), det_count=len(d_ms), sample_count=len(t_ms), goal_ms=_TRACK_GOAL_MS,
                     frame_schedule_ms=schedule, frame_schedule_npu=[list(row[3]) for row in frames])
+
+    def deadline_snapshot(self):
+        with self._lock:
+            return dict(goal_ms=_TRACK_GOAL_MS, count=self._deadline_count, frames=list(self._deadline_recent),
+                        botsort_overlap_frames=self._overlap_count,
+                        clock='perf_counter_ns',
+                        tile_fields=['submit_start_ns', 'submit_done_ns', 'wait_start_ns',
+                                     'wait_done_ns', 'wait_cpu_ns'],
+                        gc_fields=['start_ns', 'stop_ns', 'generation'])

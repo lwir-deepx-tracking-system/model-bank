@@ -773,6 +773,30 @@ static bool read_feat_object(PyObject* o, Feat& f)
     return true;
 }
 
+static bool attach_detection_feature(TrackObj* track, PyObject* features)
+{
+    Ref key(PyLong_FromLong(track->d->idx));
+    if (!key) return false;
+    Ref feature(PyObject_GetItem(features, key));
+    if (feature) return feature.p == Py_None || read_feat_object(feature, track->d->det_feat);
+    if (!PyErr_ExceptionMatches(PyExc_KeyError) && !PyErr_ExceptionMatches(PyExc_IndexError)) return false;
+    PyErr_Clear();
+    return true;
+}
+
+static bool attach_frame_features(const Frame& frame, PyObject* features)
+{
+    if (features == Py_None) return true;
+    auto high = frame.hi.begin();
+    auto low = frame.lo.begin();
+    while (high != frame.hi.end() || low != frame.lo.end()) {
+        TrackObj* track = (low == frame.lo.end() ||
+                           (high != frame.hi.end() && (*high)->d->idx < (*low)->d->idx)) ? *high++ : *low++;
+        if (!attach_detection_feature(track, features)) return false;
+    }
+    return true;
+}
+
 static bool parse_detections(TrackerData* T, PyObject* arr_in, PyObject* det_feats, Frame& fr)
 {
     Ref keep;
@@ -806,17 +830,7 @@ static bool parse_detections(TrackerData* T, PyObject* arr_in, PyObject* det_fea
         t->d->xywh0[0] = static_cast<float>((r[0] + r[2]) / 2); t->d->xywh0[1] = static_cast<float>((r[1] + r[3]) / 2);
         t->d->xywh0[2] = w; t->d->xywh0[3] = h;
         t->d->score = r[4]; t->d->cls = static_cast<long>(r[5]); t->d->idx = static_cast<long>(i);
-        if (det_feats && det_feats != Py_None) {
-            Ref key(PyLong_FromSsize_t(i));
-            if (!key) { good = false; break; }
-            Ref f(PyObject_GetItem(det_feats, key));
-            if (!f) {
-                if (PyErr_ExceptionMatches(PyExc_KeyError) || PyErr_ExceptionMatches(PyExc_IndexError)) PyErr_Clear();
-                else good = false;
-            } else if (f.p != Py_None) {
-                good = read_feat_object(f, t->d->det_feat);
-            }
-        }
+        if (det_feats && det_feats != Py_None) good = attach_detection_feature(t, det_feats);
     }
     PyBuffer_Release(&b);
     return good;
@@ -852,7 +866,7 @@ static PyObject* output_rows(const TrackerData* T)
 }
 
 // ByteTrackTracker.update (mode 'bytetrack', BoT-SORT cost) and AltTracker.update (SORT, OC-SORT)
-static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* det_feats)
+static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* det_feats, PyObject* collect = nullptr)
 {
     TrackerData* T = self->d;
     T->frame_id += 1;
@@ -874,6 +888,10 @@ static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* 
                 pool.push_back(t);
     }
     if (!predict_pool(self, pool)) return nullptr;
+    if (collect) {
+        Ref features(PyObject_CallNoArgs(collect));
+        if (!features || !attach_frame_features(fr, features)) return nullptr;
+    }
 
     // first association
     Assign as;
@@ -1275,6 +1293,18 @@ static PyObject* tracker_update(PyObject* self, PyObject* args, PyObject* kwargs
     return tracker_update_impl(reinterpret_cast<TrackerObj*>(self), arr, det_feats);   // feat_fn serves rebind only
 }
 
+static PyObject* tracker_update_with_features(PyObject* self, PyObject* args)
+{
+    PyObject *arr, *collect;
+    if (!PyArg_ParseTuple(args, "OO", &arr, &collect)) return nullptr;
+    auto* tracker = reinterpret_cast<TrackerObj*>(self);
+    if (tracker->d->kind != K_BOTSORT || !PyCallable_Check(collect)) {
+        PyErr_SetString(PyExc_TypeError, "update_with_features requires BoT-SORT and a callable feature collector");
+        return nullptr;
+    }
+    return tracker_update_impl(tracker, arr, nullptr, collect);
+}
+
 static TrackObj* find_track(const TrackerData* T, long track_id)
 {
     for (int pass = 0; pass < 2; ++pass)
@@ -1311,6 +1341,7 @@ static PyObject* tracker_attach_embedding(PyObject* self, PyObject* args)
 static PyMethodDef tracker_methods[] = {
     {"update", reinterpret_cast<PyCFunction>(reinterpret_cast<void (*)(void)>(tracker_update)), METH_VARARGS | METH_KEYWORDS,
      "update(arr[N,6] x1,y1,x2,y2,conf,cls, det_feats=None, feat_fn=None) -> rows [x1,y1,x2,y2,id,conf,cls,det_idx]"},
+    {"update_with_features", tracker_update_with_features, METH_VARARGS, "BoT-SORT update collecting appearance after motion prediction."},
     {"find", tracker_find, METH_O, "Track with this ID in the tracked or lost list, else None."},
     {"attach_embedding", tracker_attach_embedding, METH_VARARGS, "Store a late appearance feature on a track."},
     {nullptr, nullptr, 0, nullptr}

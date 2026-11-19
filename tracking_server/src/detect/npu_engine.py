@@ -109,11 +109,15 @@ class AsyncEmbedder:
 
     def _wait_slot(self, job):
         self._require_usable()
+        started = time.perf_counter_ns()
         try:
             outputs = self.b.wait(job)
         except BaseException:
             self.quarantined = True
             raise
+        finally:
+            if 'reid_wait_ns' in vars(APP):
+                APP.reid_wait_ns += time.perf_counter_ns() - started
         self.inflight -= 1
         return outputs
 
@@ -145,8 +149,13 @@ class AsyncEmbedder:
         self.sub_ms.append((time.perf_counter_ns() - t_) / 1e6)
 
         def collect():
-            self._require_usable()
             t2 = time.perf_counter_ns(); got = dict(extra); self.reserved = None
+            if self.quarantined:
+                # A BoT-SORT batch can fail while this previous-frame refresh
+                # still owns slots. Finish only the refresh's known jobs.
+                self._drain_known(job for _, job in jobs)
+                jobs.clear()
+                self._require_usable()
             try:
                 while jobs:
                     k_, job = jobs.popleft()

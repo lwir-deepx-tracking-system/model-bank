@@ -190,8 +190,8 @@ def log_start():   # lv_spawn 이 cam_pipe 를 띄운 뒤에 부른다. 오류�
             _ring_once()
         if _S['thread'] is None and _S['path']:
             _S['t_sum'] = time.monotonic()
-            note('server', 'server started (pid %d): camera log on, time stamps %s, shared memory %s' % (os.getpid(), 'on' if wanted() else 'off', 'on' if wanted() and os.environ.get('LWIR_CAM_SHM') == '1' else 'off'))
-            if not wanted() and os.environ.get('LWIR_CAM_SHM') == '1': note('server', 'LWIR_CAM_SHM=1 is ignored: it needs LWIR_CAM_STAMP=1')
+            note('server', 'server started (pid %d): camera log on, time stamps %s, shared memory %s' % (os.getpid(), 'on' if wanted() else 'off', 'on' if wanted() and shm_requested() else 'off'))
+            if not wanted() and shm_requested(): note('server', 'Shared memory needs LWIR_CAM_STAMP=1')
             _S['thread'] = threading.Thread(target=_loop, daemon=True); _S['thread'].start()
             atexit.register(_last)
         APP.LIVE.cam_stamp['log_errors'] = _S['log_err']
@@ -214,6 +214,19 @@ assert HDR.size == HDR_N and RING_HDR.size == 40
 
 def wanted():   # 시간표를 쓰라고 했는가 (정확히 "1" 일 때만. cam_pipe 도 같은 규칙으로 읽는다)
     return os.environ.get('LWIR_CAM_STAMP') == '1'
+
+
+def shm_requested():
+    # The running shell launcher retains its environment across web restarts.
+    # Read the board setting each time Python spawns the camera.
+    try:
+        with (HERE / 'scripts' / 'cam_transport').open('rb') as config:
+            mode = config.read(16).strip()
+        if mode in (b'pipe', b'shm'):
+            return mode == b'shm'
+    except OSError:
+        pass
+    return os.environ.get('LWIR_CAM_SHM') == '1'
 
 
 def stamped(p_):   # 이 cam_pipe 는 머리를 붙여 보내도록 띄운 것인가
@@ -330,7 +343,7 @@ def install_producer(process):
 
 
 def spawn():   # lv_spawn 의 시간표 판: cam_pipe 에 같은 설정을 환경 변수로 넘겨 양쪽이 항상 같게 한다
-    stamp_ = not _S['stamp_off']; shm_ = stamp_ and os.environ.get('LWIR_CAM_SHM') == '1' and not _S['shm_off']
+    stamp_ = not _S['stamp_off']; shm_ = stamp_ and shm_requested() and not _S['shm_off']
     env_ = dict(os.environ); env_['LWIR_CAM_STAMP'] = '1' if stamp_ else '0'; env_['LWIR_CAM_SHM'] = '1' if shm_ else '0'
     _ring_once()
     from .replay_link import cam_argv   # 11-12: the same command as lv_spawn (the replay program while a recording is played)

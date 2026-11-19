@@ -474,7 +474,7 @@ def main():
             APP.LIVE.restart_pending = False
             APP.LIVE.restart_stop = False
             APP.LIVE.instance = str(time.monotonic_ns())
-            APP.LIVE.pipeline_perf = PipelinePerf()
+            APP.LIVE.pipeline_perf = PipelinePerf(observe_gc=True)
             APP.LIVE.jpeg = b''; APP.LIVE.seq = 0; APP.LIVE.viewers = 0; APP.LIVE.pic_t = -1e9; APP.LIVE.pic_n = 0; APP.LIVE.snap_t = -1e9; APP.LIVE.jcond = APP.lv_th.Condition(); APP.LIVE.t0 = time.monotonic(); APP.LIVE.cam_fps = 0.0; APP.LIVE.done_ts = APP.lv_col.deque(maxlen=40)
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
             APP.LIVE.lo = None; APP.LIVE.hi = None; APP.LIVE.last = None; APP.LIVE.log = open(APP.out / 'cam_pipe.log', 'w'); APP.LIVE.raws = APP.lv_col.deque(); APP.LIVE.rawq = APP.lv_col.deque(); APP.LIVE.warm_dropped = 0; APP.LIVE.last_frame_t = time.monotonic(); APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.cam_next_spawn = None; APP.LIVE.cam_hold = False; APP.LIVE.cam_reset = None; APP.LIVE.sys_lock = APP.lv_th.Lock(); APP.LIVE.cam_lock = APP.lv_th.Lock(); APP.LIVE.frames_in = 0; APP.LIVE.q_drop = 0; APP.LIVE.prev_t = None; APP.LIVE.upd_t = None; APP.LIVE.gap_n = 0; APP.LIVE.delays = APP.lv_col.deque(maxlen=2000); APP.LIVE.dlock = APP.lv_th.Lock(); APP.LIVE.perf = APP.lv_col.deque(maxlen=900); APP.LIVE.perf_acc = [time.perf_counter(), 0, 0.0, 0.0, 0.0]   # v26b: q_drop = camera frames thrown away because the tracker was 3 frames behind, gap_n = input gaps over 1 s, delays = (time, capture-to-picture ms) of the last frames. v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)
@@ -853,6 +853,9 @@ def main():
                 if APP.tracker is not None and APP.LIVE is not None: APP.tracker = mk_tracker_(APP.RULES['tracker'])
                 print('E2E: server detector + tracker %s at frame %d' % ('skipped' if own_ else 'back on', i), flush=True)
             bs_feats, bs_boxes = None, None
+            reid_submit_ns = reid_collect_ns = None
+            if APP.LIVE is not None:
+                APP.reid_wait_ns = 0
             if own_:   # 11-14: the end-to-end model (or the stored result) makes the rows; the server tracker is not run
                 tr_rows = []; t4 = time.perf_counter_ns(); vs = 0.0; POSP['boxes'] = []
             elif budget:   # lost-first: P1 through feat_fn inside update, P2/P4 on this frame and P3 on the previous frame right after the association
@@ -865,20 +868,43 @@ def main():
                 feat_fn = (lambda idxs, g_=g, arr_=arr, f_=i: sync_embed(idxs, g_, arr_, f_)) if (vit is not None and APP.args.vit_sync and APP.args.app_first) else None
                 if GATE_FN is not None: APP.tracker.gray = g   # v11: the gate's local-contrast / texture features read the current gray frame
                 is_botsort = isinstance(APP.tracker, BotSortTracker) or (APP.LIVE is not None and APP.RULES['tracker'] == 'botsort')
+                batch = None
                 if is_botsort and APP.rl_eng is not None and len(arr) and APP.CTL['app'] == 'repvgg':
                     bk_ = [int(j) for j in np.argsort(-arr[:, 4]) if int(arr[j, 5]) == PERSON_CLS and arr[j, 4] >= 0.25 and arr[j, 3] - arr[j, 1] >= 32.0][:4]
                     try:
                         if bk_:
                             bs_boxes = {j: arr[j, :4].tolist() for j in bk_}
-                            bs_feats = APP.rl_embed(bk_, g, bs_boxes)
+                            if APP.LIVE is not None and hasattr(APP.tracker, 'update_with_features'):
+                                batch = reid_embed.start_botsort_batch(bk_, g, bs_boxes)
+                            if batch is None:
+                                bs_feats = APP.rl_embed(bk_, g, bs_boxes)
                     except Exception as e_:
                         bs_feats = None; print('BOTSORT embed failed', repr(e_)[:120], flush=True)
-                tr_rows = APP.tracker.update(arr, bs_feats, feat_fn); t4 = time.perf_counter_ns()
+                if batch is None:
+                    tr_rows = APP.tracker.update(arr, bs_feats, feat_fn)
+                else:
+                    reid_submit_ns = time.perf_counter_ns()
+
+                    def collect_botsort():
+                        nonlocal bs_feats, reid_collect_ns
+                        reid_collect_ns = time.perf_counter_ns()
+                        try:
+                            bs_feats = batch.collect()
+                        except Exception as error:
+                            print('BOTSORT embed failed', repr(error)[:120], flush=True)
+                        return bs_feats
+
+                    try:
+                        tr_rows = APP.tracker.update_with_features(arr, collect_botsort)
+                    finally:
+                        batch.drain()
+                t4 = time.perf_counter_ns()
                 vs = sync_lat[-1] if len(sync_lat) > n_sync0 else 0.0
             if getattr(APP, 'dx', None) is not None and not APP.args.mock:   # 11-14 (user): live end-to-end FastTrackTr replaces the tracker rows when chosen on the page
                 er_ = e2e_live.step(g)
                 if er_ is not None: tr_rows = er_
             base_rows = tr_rows; rl_ms = 0.0
+            keepid_start_ns = keepid_done_ns = None
             click_relabel_namespace = None
             click_raw_to_public = None
             click_raw_ids = (tuple(int(r[4]) for r in base_rows if int(r[6]) == PERSON_CLS)
@@ -887,12 +913,15 @@ def main():
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
                 mamba_kw_ = dict(warp=W_, ts_ns=None if APP.args.live_port else (i + 1) * 33333333) if APP.args.mamba else {}
-                submit = APP.rl_async.submit if APP.rl_async is not None else None
+                keepid_start_ns = tr0_
+                submit = (reid_embed.submit_keepid_refresh
+                          if APP.rl_async is not None and not APP.rl_async.quarantined else None)
                 keep_embed, keep_submit = reid_embed.same_frame_keepid(
                     g, P_, APP.rl_embed, submit, bs_boxes, bs_feats if APP.LIVE is not None and bs_feats else {})
                 tr_rows = APP.relabeler.step(tr_rows, P_, keep_embed, frame=Path(im['file_name']).name,
                                          embed_async=keep_submit, **mamba_kw_)
-                rl_ms = (time.perf_counter_ns() - tr0_) / 1e6
+                keepid_done_ns = time.perf_counter_ns()
+                rl_ms = (keepid_done_ns - tr0_) / 1e6
                 if APP.LIVE is not None:
                     click_relabel_namespace = getattr(APP.relabeler, 'id_map', None)
                     click_raw_to_public = ({raw: click_relabel_namespace.get(raw) for raw in click_raw_ids}
@@ -951,7 +980,10 @@ def main():
             if APP.LIVE is not None:
                 live_publish(g, tr_rows, row, detections=p, tracker_detections=arr,
                              click_raw_ids=click_raw_ids, click_raw_to_public=click_raw_to_public,
-                             click_namespace=click_relabel_namespace)
+                             click_namespace=click_relabel_namespace,
+                             deadline_marks=(t0, t1, t2, t4, keepid_start_ns, keepid_done_ns, t5,
+                                             reid_submit_ns, reid_collect_ns, APP.reid_wait_ns,
+                                             len(arr), len(tr_rows)))
             if APP.TIMING is not None: APP.TIMING.frame(i, t0, t1, t2, t4, rl_ms, t5)
             prev_gray = g
             if budget: prev_arr = arr
@@ -971,7 +1003,9 @@ def main():
         if APP.FEED is not None: APP.FEED.close()
         resident_det.close()   # 11-15: the other resident pair (after the feed has taken its last frames)
         if APP.TIMING is not None: APP.TIMING.close()
-        if APP.LIVE is not None: live_close()
+        if APP.LIVE is not None:
+            APP.LIVE.pipeline_perf.close()
+            live_close()
         if vit is not None and inflight is not None: vit_sync(None, None, len(APP.images))
         if APP.relabeler is not None: APP.relabeler.reset()          # v7: drains an asynchronous refresh still in flight
         if APP.gmc_pool is not None: APP.gmc_pool.shutdown(wait=True)

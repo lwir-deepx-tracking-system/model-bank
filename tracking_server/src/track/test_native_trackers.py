@@ -128,7 +128,7 @@ class NativeTrackerComparison(unittest.TestCase):
             self.assertEqual(x.last_det[:2], y.last_det[:2], where)
             np.testing.assert_allclose(y.last_det[2], x.last_det[2], rtol=0, atol=TOL, err_msg=where)
 
-    def run_pair(self, py, native, frames, camera=False, gap_at=(), n_init_at=None, requests=False):
+    def run_pair(self, py, native, frames, camera=False, gap_at=(), n_init_at=None, requests=False, lazy=False):
         rows_total = 0
         if camera:
             py.kf = GKF(); native.kf = GKF()
@@ -141,7 +141,27 @@ class NativeTrackerComparison(unittest.TestCase):
             if n_init_at and i in n_init_at:
                 py.n_init = native.n_init = n_init_at[i]
             a = py.update(arr, feats, None)
-            b = native.update(arr, feats, None)
+            if lazy:
+                calls = []
+
+                def collect():
+                    calls.append(native.frame_id)
+                    if feats is None:
+                        return None
+                    return LoggedFeatures(feats)
+
+                keys = []
+
+                class LoggedFeatures(dict):
+                    def __getitem__(self, key):
+                        keys.append(key)
+                        return super().__getitem__(key)
+
+                b = native.update_with_features(arr, collect)
+                self.assertEqual(calls, [i + 1])
+                self.assertEqual(keys, sorted(set(keys)))
+            else:
+                b = native.update(arr, feats, None)
             self.assertEqual(len(a), len(b), where)
             for ra, rb in zip(a, b):
                 self.assertEqual(ra[4:5] + ra[6:], rb[4:5] + rb[6:], where)             # ID, class, detection row
@@ -159,6 +179,12 @@ class NativeTrackerComparison(unittest.TestCase):
             rows_total += len(a)
         self.assertGreater(rows_total, 0)
         return rows_total
+
+    def test_botsort_deferred_features_match_synchronous_native(self):
+        _, reference = self.pair('botsort', n_init=3, class_gate=True, radius=2.0)
+        _, candidate = self.pair('botsort', n_init=3, class_gate=True, radius=2.0)
+        self.run_pair(reference, candidate, scenario(701, frames=400, camera=True, features=True),
+                      camera=True, gap_at=(90, 200), lazy=True)
 
     def test_assignment_matches_python(self):
         made = self.pair('sort', n_init=3, class_gate=False, radius=2.0)

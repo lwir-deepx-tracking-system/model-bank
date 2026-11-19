@@ -113,6 +113,25 @@ class ReidBirthPipelineTests(unittest.TestCase):
             for key, feature in output.items():
                 np.testing.assert_array_equal(feature, expected[key])
 
+    def test_botsort_collects_only_after_the_prediction_boundary(self):
+        with patch.dict(os.environ, {'LWIR_REID_BIRTH_PIPELINE': '1'}, clear=True):
+            batch = reid_embed.start_botsort_batch([8, 2], self.gray, self.boxes)
+        events = self.async_engine.b.events
+        self.assertEqual(events, [('submit', 0), ('submit', 1)])
+        events.append(('predict', None))
+        self.assertEqual(list(batch.collect()), [8, 2])
+        batch.drain()
+        self.assertEqual(events[2:], [('predict', None), ('wait', 0), ('wait', 1)])
+        self.assertEqual(self.async_engine.inflight, 0)
+
+    def test_botsort_early_exit_drains_an_uncollected_batch_once(self):
+        with patch.dict(os.environ, {'LWIR_REID_BIRTH_PIPELINE': '1'}, clear=True):
+            batch = reid_embed.start_botsort_batch([8, 2], self.gray, self.boxes)
+        batch.drain()
+        batch.drain()
+        self.assertEqual(self.async_engine.b.events, [('submit', 0), ('submit', 1), ('wait', 0), ('wait', 1)])
+        self.assertEqual(self.async_engine.inflight, 0)
+
     def test_bounded_batches_preserve_crops_order_embeddings_and_ownership(self):
         keys = [8, 2, 5, 6, 9, 8]
         expected = self.embed(keys, enabled=False)

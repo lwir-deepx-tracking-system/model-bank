@@ -12,6 +12,27 @@ class PipelinePerfTests(unittest.TestCase):
         data = self.perf.snapshot()
         return tuple(data[key] for key in ('camera_fps', 'det_fps', 'track_fps'))
 
+    def test_deadlines_use_the_published_tracking_timestamp(self):
+        marks = (100_002_000_000, 100_017_000_000, 100_020_000_000, 100_028_000_000,
+                 100_028_000_000, 100_030_000_000, 100_031_000_000,
+                 100_021_000_000, 100_023_000_000, 700_000, 3, 2)
+        feed = (7, 100_004_000_000, 100_015_000_000, 100_016_000_000, 100_017_000_000, None)
+        self.perf.tracked(100, 100.033, app_marks=marks, feed_marks=feed)
+        self.assertEqual(self.perf.deadline_snapshot()['count'], 0)
+        self.perf._gc_events.append((99_999_000_000, 100_002_500_000, 1))
+        self.perf.tracked(100, 100.034, app_marks=marks, feed_marks=feed)
+        result = self.perf.deadline_snapshot()
+        self.assertEqual((result['count'], result['botsort_overlap_frames']), (1, 2))
+        self.assertEqual(len(result['frames']), 1)
+        record = result['frames'][0]
+        self.assertEqual((record['delay_ms'], record['sequence'], record['reid_wait_ns']), (34.0, 7, 700_000))
+        self.assertEqual(record['gc'], [(99_999_000_000, 100_002_500_000, 1)])
+        for i in range(100):
+            self.perf.tracked(101 + i, 101.05 + i)
+        result = self.perf.deadline_snapshot()
+        self.assertEqual(result['count'], 101)
+        self.assertEqual(len(result['frames']), 64)
+
     def test_stage_counts_share_one_completed_interval_and_zero_when_idle(self):
         self.perf.camera(100.9)
         self.perf.camera(100.95)  # received and then dropped; still counts as input

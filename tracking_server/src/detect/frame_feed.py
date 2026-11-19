@@ -300,7 +300,8 @@ def _switch_interval():
 
 
 class _Rec:
-    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc', 'grp', 'result', 'handoff')
+    __slots__ = ('seq', 't', 'raw', 'g8', 'gg', 'stab', 'e', 'job', 't_sub', 'gmc', 'grp', 'result', 'handoff',
+                 'deadline_publish_ns', 'deadline_take_ns', 'deadline_tiles')
 
 
 class Feed:
@@ -415,6 +416,8 @@ class Feed:
                 r_.e = e_; r_.job = self._job; r_.grp = grp_ if e_ >= 0 else None; self._tgt_e = None
                 r_.result = None
                 r_.handoff = None
+                r_.deadline_tiles = None
+                r_.deadline_publish_ns = r_.deadline_take_ns = None
                 eager_tile = self.mode == 'tile' and e_ >= 0
                 if eager_tile:
                     # The pair has one slot. Read both tiles while the main
@@ -429,6 +432,7 @@ class Feed:
                     if eager_tile:
                         grp_[1][e_] = False
                     self.out.append(r_); self.working = False
+                    r_.deadline_publish_ns = time.perf_counter_ns()
                     if r_.handoff is not None:
                         trace_ = r_.handoff[1]
                         trace_['feed_publish_ns'] = time.perf_counter_ns()
@@ -592,13 +596,24 @@ class Feed:
         if self.on_take is not None: self.on_take(r_, g_)   # 11-15 resident_det: the result is in hand (timing of the first detection of the new model after an instant switch)
         return o_
 
+    def deadline_marks(self, arrival):
+        current = getattr(self, '_deadline_result', None)
+        return current[1] if current is not None and current[0] == arrival else None
+
     def _wait_result(self, r_, keep_, *, handoff=False):
         eng_ = r_.grp[0] if r_.grp is not None else self.eng
         e_ = eng_[r_.e]
+        backend = getattr(e_, 'b', None) if handoff else None
+        native = backend.native if getattr(backend, 'using_native', False) else None
         APP.pending[e_.name] = r_.job
         started = time.perf_counter_ns()
         output = e_.wait()
         done = time.perf_counter_ns()
+        if native is not None and backend.using_native and backend.native is native:
+            timing = native.timing
+            r_.deadline_tiles = tuple((timing.submit_start[core], timing.submit_done[core],
+                                       timing.wait_start[core], timing.wait_done[core], timing.wait_cpu[core])
+                                      for core in range(2))
         if keep_ and not isinstance(output, dual_tile.TileHeads):
             # The next input may reuse the engine's output buffer.
             output = [np.array(value, copy=True) if np.may_share_memory(value, e_.packed) else value for value in output]
@@ -634,6 +649,8 @@ class Feed:
             return None
         if self.mon is not None:
             self.mon.result(r_.e, r_.t, r_.t_sub, started, done)
+        self._deadline_result = (r_.t, (r_.seq, started, done, getattr(r_, 'deadline_publish_ns', None),
+                                        getattr(r_, 'deadline_take_ns', None), getattr(r_, 'deadline_tiles', None)))
         if getattr(r_, 'handoff', None) is not None:
             r_.handoff[0].finish_handoff(r_.handoff[1])
             r_.handoff = None
@@ -669,6 +686,7 @@ class Feed:
                     return None
                 r_ = self.out.popleft() if self.out else None
                 if r_ is not None:
+                    r_.deadline_take_ns = time.perf_counter_ns()
                     if getattr(r_, 'handoff', None) is not None:
                         r_.handoff[1].update(
                             tracker_take_ns=time.perf_counter_ns(),

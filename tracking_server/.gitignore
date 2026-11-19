@@ -8,6 +8,7 @@ src/gimbal/gimbal_bridge_v25
 models/links/
 # 장치마다 다른 설정 (scripts/live.env.example 을 복사해 만든다). 셔터 설정 파일 src/camera/cam_shutter.txt 는 11-15 부터 저장소에 있다 (T120, cam_pipe 옆)
 scripts/live.env
+scripts/cam_transport
 /npu_feed.json
 /.npu_feed.*.tmp
 # 서버와 scripts/keepalive.sh 가 실행 중에 만드는 것
