@@ -58,10 +58,10 @@ function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLas
 // 11-12: 정답과 비교 — numbers of the two scorings (새 채점 = with ignore regions, 옛 채점 = without), false boxes first
 const EVMSG=$('rpevmsg'),EVT=$('rpevt'),EVSW=$('rpevids'),EVDR=$('rpevdraw');let evDrawT=0;
 function evN(v,p){return v==null?'–':p?Number(v).toFixed(1)+'%':String(v);}
-function evPhase(e){return ({scoring:'첫 재생 채점 중',interrupted:'중단됨 · 완주 결과 아님',complete:'한 번 완주함',incomplete:'불완전한 재생'})[e.phase]||'';}
+function evPhase(e){return ({scoring:'채점 중',interrupted:'재생 중단 · 평가 미완료',complete:'재생 완료',incomplete:'불완전한 재생'})[e.phase]||'';}
 function evUnavailableMetric(e){
-  if(e.scoring&&e.phase==='scoring')return '완주 후 계산';
-  if(e.scoring&&(e.phase==='interrupted'||e.phase==='incomplete'))return '처음부터 완주 필요';
+  if(e.scoring&&e.phase==='scoring')return '재생 완료 후 계산';
+  if(e.scoring&&(e.phase==='interrupted'||e.phase==='incomplete'))return '전체 재생 필요';
   return '계산 불가';
 }
 function evMetricStatus(e){return e.metric_status==='unavailable'?evUnavailableMetric(e):({pending:'계산 중',ready:'계산 완료',error:'계산 오류'})[e.metric_status]||'미제공';}
@@ -93,13 +93,13 @@ function rpRenderEval(r){const live=r.eval||{},pos=rpEvalPrefixPos;let shown=nul
   rpEvalRefreshButtons();
   if(rpEvalMode==='slider'){
     if(rpEvalPending){note='프레임 '+(pos==null?'–':pos+1)+'까지의 누적 결과를 불러오는 중…';}
-    else if(rpEvalPrefix){shown=rpEvalPrefix;note='슬라이더 위치 '+(rpEvalPrefix.prefix_pos==null?(pos==null?'–':pos+1):rpEvalPrefix.prefix_pos+1)+'장까지의 누적 채점 결과입니다. 재생 위치는 바뀌지 않았습니다.';}
-    else note=rpEvalError||'슬라이더 결과를 보려면 슬라이더 위치를 확정하거나 “슬라이더 결과”를 누르세요.';
+    else if(rpEvalPrefix){shown=rpEvalPrefix;note=(rpEvalPrefix.prefix_pos==null?(pos==null?'–':pos+1):rpEvalPrefix.prefix_pos+1)+'프레임까지 누적 결과 · 재생 위치 유지';}
+    else note=rpEvalError||'슬라이더 위치 선택 후 확인 가능';
   }else if(rpEvalMode==='final'){
     if(rpEvalPending)note='저장된 최종 결과를 불러오는 중…';
-    else if(rpEvalFinal){shown=rpEvalFinal;note=rpEvalFinal.final_previous?'이전 완주 결과입니다. 현재 재생과 다른 실행일 수 있습니다. 슬라이더 위치는 바뀌지 않았습니다.':'저장된 최종 결과입니다. 슬라이더 위치는 바뀌지 않았습니다.';}
-    else note=live.final_ready?'최종 결과를 불러오지 못했습니다. 다시 “최종 보기”를 눌러 주세요.':'끝까지 완주한 최종 결과가 없습니다. 현재 재생 진행 결과를 표시합니다.';
-  }else {shown=live;note=live.final_ready?'현재 진행 결과입니다. 완주 결과는 최종 보기를 누르면 확인할 수 있습니다.':'현재 재생 진행 결과입니다. 한 번 끝까지 재생해야 최종 결과가 확정됩니다.';}
+    else if(rpEvalFinal){shown=rpEvalFinal;note=rpEvalFinal.final_previous?'이전 실행의 최종 결과 · 재생 위치 유지':'저장된 최종 결과 · 재생 위치 유지';}
+    else note=live.final_ready?'최종 결과 로드 실패 · 다시 시도':'최종 결과 없음 · 진행 결과 표시';
+  }else {shown=live;note=live.final_ready?'진행 결과 · 최종 결과 확인 가능':'진행 중 · 전체 재생 후 최종 결과 제공';}
   EVBAR.hidden=!(r.result_views&&rpHasRecording(r.state));
   EVVIEW.textContent=note;evShow(shown,shown?null:(rpEvalMode==='live'&&!live.name?'재생을 시작하면 검수된 정답 라벨과 비교합니다.':note));barShow(r,rpEvalMode==='live'?undefined:shown);}
 function rpBeginPrefix(pos){const st=rpLast&&rpLast.state;if(!st||!st.on||!Number.isFinite(pos))return null;pos=Math.min(Math.max(0,Math.round(pos)),Math.max(0,st.total-1));rpEvalSetMode('slider');rpEvalPrefixPos=pos;rpEvalPending=true;const token=rpEvalToken,runId=(rpLast.eval||{}).run_id;rpRenderEval(rpLast);return {pos,token,runId};}
@@ -149,7 +149,7 @@ function barShow(r,viewEval){
   if(!replay||!e.name||(!on&&viewEval===undefined)||(!e.on&&viewEval===undefined)){RNUM.hidden=true;}
   else{RNUM.hidden=false;
     RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+(e.backend_label||rpBackendLabel(e.backend,r)):'');
-    if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';rpIdsHtml='';}
+    if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'전체 재생 후 평가 완료':'전체 재생 후 평가 완료';RIDS.textContent='';rpIdsHtml='';}
     else{const n=e.new||{},o=e.old||{},c=e.counts||{};
       const big=(k,v,sub,cls)=>'<span class="rpbig'+(cls?' '+cls:'')+'"><small>'+esc(k)+'</small><b>'+esc(v)+'</b>'+(sub?'<i>'+esc(sub)+'</i>':'')+'</span>';   // 11-13 (design review)
       const x=(k,v,cls)=>nchip(k,v,cls).replace('class="rpc','class="rpx rpc');
@@ -159,7 +159,7 @@ function barShow(r,viewEval){
       const same=['false','found','gt','missed','idsw'].every(k=>o[k]===n[k]);
       if(same)ROLD.textContent='';else ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
       const total=e.sequence_frames,pass=e.pass_frames,scorable=e.scorable_frames;
-      RFOOT.textContent=(evPhase(e)||'재생 채점')+' · 첫 재생 채점 '+(c.scored==null?'–':c.scored)+'장'+(pass!=null&&total!=null?' · 진행 '+pass+' / '+total+'장':'')+(scorable!=null?' · 정답 비교 가능 '+scorable+'장':'')+' · HOTA / mAP '+evMetricStatus(e)+(e.phase==='interrupted'?' · 다시 처음부터 재생해야 완주 결과가 나옵니다.':'');
+      RFOOT.textContent=(evPhase(e)||'재생 채점')+' · 첫 재생 채점 '+(c.scored==null?'–':c.scored)+'장'+(pass!=null&&total!=null?' · 진행 '+pass+' / '+total+'장':'')+(scorable!=null?' · 정답 비교 가능 '+scorable+'장':'')+' · HOTA / mAP '+evMetricStatus(e)+(e.phase==='interrupted'?' · 처음부터 재생 필요':'');
       rpIdsDraw(e);
     }
   }
@@ -173,7 +173,7 @@ function rpSeek(pos){const st=rpLast&&rpLast.state;if(!st||!st.on)return;pos=Mat
   rpctl('/replay/seek?pos='+pos+'&pause=1').then(d=>{if(request.token!==rpEvalToken)return;if(!d.ok){rpEvalPending=false;rpEvalError='프레임 이동에 실패해 결과를 불러오지 않았습니다.';rpRenderEval(rpLast||{});return;}rpWaitForSeek(request);});}
 function rpWaitForSeek(request){if(request.token!==rpEvalToken||rpEvalMode!=='slider')return;const st=rpLast&&rpLast.state;
   if(st&&st.pos===request.pos&&!st.seeking){rpLoadPrefix(request.pos,request.token,request.runId);return;}
-  if(Date.now()-rpHoldT>8000){rpEvalPending=false;rpEvalError='이동한 프레임이 아직 표시되지 않아 결과를 불러오지 않았습니다.';rpRenderEval(rpLast||{});return;}
+  if(Date.now()-rpHoldT>8000){rpEvalPending=false;rpEvalError='프레임 표시 대기 · 결과 로드 보류';rpRenderEval(rpLast||{});return;}
   setTimeout(()=>rptick(true),100);setTimeout(()=>rpWaitForSeek(request),250);}
 RSL.addEventListener('pointerdown',()=>{rpDrag=true;});
 RSL.addEventListener('input',()=>{const st=rpLast&&rpLast.state;if(st&&st.on)RTM.textContent=fmtT(Number(RSL.value)/(st.fps||25))+' / '+fmtT((st.total-1)/(st.fps||25))+' · '+(Number(RSL.value)+1)+' / '+st.total+'번째 장 (놓으면 건너뜀)';});
@@ -245,7 +245,7 @@ RPBACK.addEventListener('change',()=>{const b=RPBACK.value,o=RPBACK.selectedOpti
 EVLIVE.addEventListener('click',()=>{rpEvalSetMode('live');rpRenderEval(rpLast||{});});
 EVSLIDER.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on||st.pos==null){EVVIEW.textContent='재생 중인 영상에서 슬라이더 위치를 선택할 수 있습니다.';return;}if(st.seeking){EVVIEW.textContent='프레임 이동이 끝난 뒤 결과를 다시 요청해 주세요.';return;}rpLoadPrefix(st.pos);});
 EVFINAL.addEventListener('click',rpLoadFinal);
-EVRESET.addEventListener('click',()=>{if(rpBusy||!rpHasRecording(rpLast?.state))return;if(!confirm('현재 녹화를 처음부터 한 번 끝까지 재생해 최종 결과를 다시 계산할까요? 재생은 반복하지 않습니다.'))return;rpEvalSetMode('live');EVRESET.disabled=true;rpctl('/replay/eval/reset').finally(()=>{EVRESET.disabled=false;});});
+EVRESET.addEventListener('click',()=>{if(rpBusy||!rpHasRecording(rpLast?.state))return;if(!confirm('처음부터 재생하고 최종 결과를 다시 계산할까요? 반복 재생은 해제됩니다.'))return;rpEvalSetMode('live');EVRESET.disabled=true;rpctl('/replay/eval/reset').finally(()=>{EVRESET.disabled=false;});});
 RPFPS.addEventListener('change',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}rpctl('/replay/speed?fps='+f);});
 RPST.addEventListener('click',()=>{const n=RPSEL.value;if(!n)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}
   // 11-13 (user): '재생 시작' just plays (no confirm box). The note under the button already says the camera stops and the gimbal stays.

@@ -103,8 +103,8 @@ function pfSchedule(pipeline){
   chart.hidden=replay||!valid;
   status.hidden=!chart.hidden;
   if(chart.hidden){
-    status.textContent=replay ? '녹화 재생 중에는 실시간 시간표를 표시하지 않습니다.'
-      : Array.isArray(data) ? '실시간 프레임 측정 대기 중' : '프레임별 실측 데이터 없음';
+    status.textContent=replay ? '녹화 재생 중'
+      : Array.isArray(data) ? '측정 대기' : '측정 데이터 없음';
     return;
   }
   // Keep the wire timestamps intact; each row starts at its own server receipt.
@@ -141,11 +141,11 @@ function pfpipe(){
   const tracked=liveData&&Number.isFinite(p.track_p95_ms);
   const target=$('pf-goal-status');
   $('pf-track-p95').textContent=tracked?fmt(p.track_p95_ms,'ms'):'–';
-  target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms · 집계 대기 중';
+  target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms · 집계 대기';
   target.dataset.met=String(tracked&&p.track_p95_ms<=goal);
   const samples=Number.isFinite(p.sample_count)?p.sample_count:0;
-  $('pf-pipe-samples').textContent=samples?'p95 표본 '+samples.toLocaleString()+'장':'p95 표본 집계 중';
-  $('pf-p95-samples').textContent=tracked?'추적 완료 '+samples.toLocaleString()+'장 표본':'표본 집계 중';
+  $('pf-pipe-samples').textContent=samples?'표본 '+samples.toLocaleString()+'장':'표본 집계 중';
+  $('pf-p95-samples').textContent=tracked?'표본 '+samples.toLocaleString()+'장':'표본 집계 중';
   $('pf-input-label').textContent=replay?'재생 입력':'카메라 입력';
   $('pf-input-fps').textContent=liveData?fmt(p.camera_fps_5s,'FPS'):'–';
   $('pf-track-fps').textContent=liveData?fmt(p.track_fps_5s,'FPS'):'–';

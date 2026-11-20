@@ -490,7 +490,6 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         <div class="pf-main-result">
           <div><span>서버 수신 → 추적 완료 <b>p95 · 최근 1분</b></span><span id="pf-goal-status" title="최근 1분 동안 서버가 프레임을 받은 때부터 최종 추적까지 걸린 시간">목표 33 ms</span></div>
           <strong id="pf-track-p95" class="num">–</strong><small id="pf-p95-samples">표본 집계 중</small>
-          <p>p95는 프레임 100장 중 95장이 이 시간 안에 끝났다는 뜻입니다.</p>
         </div>
         <h3 class="pf-recent-title">최근 5초</h3>
         <div class="pf-recent" id="pf-recent" aria-label="최근 5초 성능">
@@ -503,7 +502,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
           <h3 id="pf-schedule-title">최근 3장 처리 시간표</h3>
           <p id="pf-schedule-status">실시간 프레임 측정 대기 중</p>
           <div id="pf-schedule-data" hidden>
-            <p class="pf-schedule-caption">각 장의 서버 수신을 0 ms로 맞췄습니다 · 점선은 33.3 ms (30 FPS 기준)</p>
+            <p class="pf-schedule-caption">기준선 33.3 ms · 30 FPS</p>
             <div class="pf-schedule-axis num" id="pf-schedule-axis" aria-hidden="true"></div>
             <ol class="pf-schedule-frames" id="pf-schedule-frames"></ol>
           </div>
@@ -518,29 +517,27 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         <details class="pfdetail" id="pfdetail"><summary>상세 그래프</summary>
           <div class="pfb"><span id="pf-pipe-samples">최근 1분 추적 집계 중</span><button id="pfspan" title="그래프 시간 범위 1분, 5분, 15분">1분</button></div>
           <div class="pfx">
-            <p class="pfgraph-note">FPS는 각 1초 구간의 입력·완료 장수, p95는 최근 1분의 프레임별 처리 시간입니다. 두 값은 다른 지표입니다.</p>
             <section class="pfchart" aria-labelledby="pf-rate-title">
               <div class="pft"><b id="pf-rate-title">초당 프레임</b><span>FPS</span></div>
-              <p class="pfdesc">1초 동안 서버에 들어온 장 수와 추적을 마친 장 수</p>
               <div class="pfh"><span class="pfl pf-dash" style="--series:var(--c2)">카메라 입력 <b id="pfv1">–</b></span><span class="pfl" style="--series:var(--c1)">추적 완료 <b id="pfv0">–</b></span></div>
               <canvas id="pfc0" aria-label="시간대별 카메라 입력 FPS와 추적 완료 FPS"></canvas>
               <div class="pfaxis"><span data-pf-ago>1분 전</span><span>지금</span></div>
             </section>
             <section class="pfchart" aria-labelledby="pf-latency-title">
               <div class="pft"><b id="pf-latency-title">추적 지연</b><span>ms</span></div>
-              <p class="pfdesc">서버 수신부터 추적 완료까지. 최대는 그 1초에 가장 늦었던 한 장이에요.</p>
+              <p class="pfdesc">서버 수신 → 추적 완료</p>
               <div class="pfh"><span class="pfl" style="--series:var(--c1)">대기 포함 평균 <b id="pfv2">–</b></span><span class="pfl pf-dash" style="--series:var(--c3)">최대 <b id="pfv3">–</b></span><span class="pfl" style="--series:var(--c4)">계산만 평균 <b id="pfv4">–</b></span></div>
               <canvas id="pfc1" aria-label="시간대별 추적 지연 평균, 최대, 계산 시간 및 목표선"></canvas>
               <div class="pfaxis" id="pf-track-axis"><span data-pf-ago>1분 전</span><span>지금</span></div>
-              <p class="pfdesc pfchart-goal"><span class="pfl pf-dash" style="--series:var(--warn)">목표 <b id="pf-graph-goal">33 ms</b></span> <span>달성 여부는 위 p95로 판단해요.</span></p>
+              <p class="pfdesc pfchart-goal"><span class="pfl pf-dash" style="--series:var(--warn)">목표 <b id="pf-graph-goal">33 ms</b></span></p>
             </section>
             <section class="pfchart" aria-labelledby="pf-screen-title">
               <div class="pft"><b id="pf-screen-title">화면 지연</b><span>ms</span></div>
-              <p class="pfdesc">서버 수신부터 JPEG 준비까지와 지금 보는 기기에 표시되기까지예요.</p>
+              <p class="pfdesc">서버 수신 → JPEG 준비 / 화면 표시</p>
               <div class="pfh"><span class="pfl" style="--series:var(--c5)">JPEG 준비 <b id="pfv5">–</b></span><span class="pfl" style="--series:var(--c6)"><span id="pft6">내 화면</span> <b id="pfv6">–</b></span></div>
               <canvas id="pfc2" aria-label="시간대별 서버 JPEG 준비와 이 기기 화면 지연"></canvas>
               <div class="pfaxis"><span data-pf-ago>1분 전</span><span>지금</span></div>
-              <p class="pfdesc" id="pf-screen-note" hidden>‘기기 도착(추정)’은 화면에 그리기 전, 영상이 기기에 도착할 때까지의 서버 추정값이에요.</p>
+              <p class="pfdesc" id="pf-screen-note" hidden>기기 도착 추정값 · 렌더링 시간 제외</p>
             </section>
           </div>
         </details>
@@ -559,7 +556,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         <div class="rpevbar adv-only" id="rpevbar" hidden>
           <div class="row"><button class="btn" id="rpevallive" aria-pressed="true">현재 진행</button><button class="btn" id="rpevalslider" aria-pressed="false">슬라이더 결과</button><button class="btn" id="rpevalfinal" aria-pressed="false">최종 보기</button></div>
           <div class="row"><button class="btn" id="rpevalreset">끝까지 다시 계산</button></div>
-          <div class="minfo" id="rpevalview" style="margin-top:0">현재 재생 진행 결과입니다.</div>
+          <div class="minfo" id="rpevalview" style="margin-top:0">진행 중</div>
         </div>
         <div class="rpnum" id="rpnum" hidden>
           <div class="rphd"><b id="rpnhd"></b></div>
@@ -654,10 +651,10 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
               <dt>IDF1</dt><dd>사람마다 번호를 얼마나 끝까지 지켰는지. 채점한 모든 프레임에 걸쳐 정답 번호와 서버 번호를 하나씩 짝지어 셈 (Ristani 외 2016). 100 이 가장 좋음.</dd>
               <dt>MOTA</dt><dd>1 − (놓침 + 잘못 그린 상자 + 번호 바뀜) ÷ 정답 사람 (CLEAR MOT). 100 이 가장 좋고, 0 보다 작을 수도 있음.</dd>
               <dt>무시 구역 상자</dt><dd>새 채점에서 무시 구역 안이라 세지 않은 서버 상자 수.</dd>
-              <dt>완주 기준</dt><dd>녹화 한 편을 처음부터 끝까지 연속으로 한 번 재생한 결과를 기준으로 씁니다. 중간에 멈추거나 건너뛰면 완주 점수로 확정하지 않습니다. 다시 확인하려면 처음부터 새 재생을 시작합니다.</dd>
+              <dt>완주 기준</dt><dd>처음부터 끝까지 연속 재생한 결과. 중단·건너뛰기 시 처음부터 다시 재생해야 합니다.</dd>
               <dt>채점한 장</dt><dd>검수된 정답 라벨이 있고 서버 출력과 프레임 번호가 맞는 장면만 셉니다. 결과 아래에 전체 영상 진행량과 정답 비교 가능 장 수를 따로 보여 줍니다.</dd>
-              <dt>HOTA</dt><dd>사람 검출과 추적 ID 연결을 함께 평가하는 점수입니다. 한 번 완주한 뒤 계산 상태가 완료되면 표시합니다.</dd>
-              <dt>사람 mAP50:95 · AP50</dt><dd>저장된 사람 검출 후보를 정답 상자와 비교한 검출 점수입니다. 추적이 끝난 뒤 별도로 계산하며, 계산 중·계산 불가 상태를 구분해 표시합니다.</dd>
+              <dt>HOTA</dt><dd>사람 검출과 추적 ID 연결을 함께 평가하는 점수입니다. 재생 완료 후 계산합니다.</dd>
+              <dt>사람 mAP50:95 · AP50</dt><dd>저장된 사람 검출 후보를 정답 상자와 비교한 검출 점수입니다. 추적 완료 후 별도 계산합니다.</dd>
               <dt>ID 변경</dt><dd>정답 사람과 연결된 추적 번호가 바뀐 장면을 영상 아래에 프레임 번호와 함께 표시합니다.</dd>
             </dl></details>
             <details class="fold"><summary>채점 규칙</summary><dl class="legend">
@@ -681,7 +678,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
             <dt>영상 아래 막대</dt><dd>재생 중에는 영상 바로 아래에 재생 위치 막대, 재생·일시정지, −10초·+10초, 장 번호로 이동이 나옵니다. 막대는 놓을 때 건너뜁니다. 시간은 위의 "초당 장 수" 기준입니다. 장 번호는 1부터 셉니다 (1 = 녹화의 첫 장면).</dd>
             <dt>건너뛰면</dt><dd>건너뛴 뒤 약 1.2초는 영상이 멈춘 듯 보이고, 그 사이 추적은 새로 시작합니다 (사람 번호가 새로 붙음). 짐벌은 건너뛰는 중에도 움직이지 않습니다. 먼 곳이나 뒤로 건너뛰면 PNG 녹화는 이 1.2초 안쪽, 측정 녹화(raw.gz)는 파일을 앞에서부터 다시 풀어야 해서 몇 초 더 걸릴 수 있습니다.</dd>
             <dt>일시정지</dt><dd>멈춘 동안 같은 장면을 초당 5장 되풀이해 보냅니다 (서버가 카메라가 죽었다고 보지 않게, 화면이 살아 있게). 되풀이한 장면은 정답과 비교에 세지 않습니다.</dd>
-            <dt>점수 비교 재생</dt><dd>새 재생은 처음부터 한 번 완주하는 것을 기준으로 합니다. 반복은 기본으로 꺼져 있습니다. 완료 전에 건너뛰거나 재생을 멈추면 해당 회차는 중단으로 표시되며, 처음부터 새로 재생해야 완주 기준 결과를 얻습니다.</dd>
+            <dt>점수 비교 재생</dt><dd>처음부터 끝까지 연속 재생해야 평가가 완료됩니다. 중단·건너뛰기 시 재시작이 필요하며, 반복 재생은 기본으로 꺼져 있습니다.</dd>
           </dl></details>
         </div>
       </details>
@@ -2114,8 +2111,8 @@ function pfSchedule(pipeline){
   chart.hidden=replay||!valid;
   status.hidden=!chart.hidden;
   if(chart.hidden){
-    status.textContent=replay ? '녹화 재생 중에는 실시간 시간표를 표시하지 않습니다.'
-      : Array.isArray(data) ? '실시간 프레임 측정 대기 중' : '프레임별 실측 데이터 없음';
+    status.textContent=replay ? '녹화 재생 중'
+      : Array.isArray(data) ? '측정 대기' : '측정 데이터 없음';
     return;
   }
   // Keep the wire timestamps intact; each row starts at its own server receipt.
@@ -2152,11 +2149,11 @@ function pfpipe(){
   const tracked=liveData&&Number.isFinite(p.track_p95_ms);
   const target=$('pf-goal-status');
   $('pf-track-p95').textContent=tracked?fmt(p.track_p95_ms,'ms'):'–';
-  target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms · 집계 대기 중';
+  target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms · 집계 대기';
   target.dataset.met=String(tracked&&p.track_p95_ms<=goal);
   const samples=Number.isFinite(p.sample_count)?p.sample_count:0;
-  $('pf-pipe-samples').textContent=samples?'p95 표본 '+samples.toLocaleString()+'장':'p95 표본 집계 중';
-  $('pf-p95-samples').textContent=tracked?'추적 완료 '+samples.toLocaleString()+'장 표본':'표본 집계 중';
+  $('pf-pipe-samples').textContent=samples?'표본 '+samples.toLocaleString()+'장':'표본 집계 중';
+  $('pf-p95-samples').textContent=tracked?'표본 '+samples.toLocaleString()+'장':'표본 집계 중';
   $('pf-input-label').textContent=replay?'재생 입력':'카메라 입력';
   $('pf-input-fps').textContent=liveData?fmt(p.camera_fps_5s,'FPS'):'–';
   $('pf-track-fps').textContent=liveData?fmt(p.track_fps_5s,'FPS'):'–';
@@ -2255,10 +2252,10 @@ function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLas
 // 11-12: 정답과 비교 — numbers of the two scorings (새 채점 = with ignore regions, 옛 채점 = without), false boxes first
 const EVMSG=$('rpevmsg'),EVT=$('rpevt'),EVSW=$('rpevids'),EVDR=$('rpevdraw');let evDrawT=0;
 function evN(v,p){return v==null?'–':p?Number(v).toFixed(1)+'%':String(v);}
-function evPhase(e){return ({scoring:'첫 재생 채점 중',interrupted:'중단됨 · 완주 결과 아님',complete:'한 번 완주함',incomplete:'불완전한 재생'})[e.phase]||'';}
+function evPhase(e){return ({scoring:'채점 중',interrupted:'재생 중단 · 평가 미완료',complete:'재생 완료',incomplete:'불완전한 재생'})[e.phase]||'';}
 function evUnavailableMetric(e){
-  if(e.scoring&&e.phase==='scoring')return '완주 후 계산';
-  if(e.scoring&&(e.phase==='interrupted'||e.phase==='incomplete'))return '처음부터 완주 필요';
+  if(e.scoring&&e.phase==='scoring')return '재생 완료 후 계산';
+  if(e.scoring&&(e.phase==='interrupted'||e.phase==='incomplete'))return '전체 재생 필요';
   return '계산 불가';
 }
 function evMetricStatus(e){return e.metric_status==='unavailable'?evUnavailableMetric(e):({pending:'계산 중',ready:'계산 완료',error:'계산 오류'})[e.metric_status]||'미제공';}
@@ -2290,13 +2287,13 @@ function rpRenderEval(r){const live=r.eval||{},pos=rpEvalPrefixPos;let shown=nul
   rpEvalRefreshButtons();
   if(rpEvalMode==='slider'){
     if(rpEvalPending){note='프레임 '+(pos==null?'–':pos+1)+'까지의 누적 결과를 불러오는 중…';}
-    else if(rpEvalPrefix){shown=rpEvalPrefix;note='슬라이더 위치 '+(rpEvalPrefix.prefix_pos==null?(pos==null?'–':pos+1):rpEvalPrefix.prefix_pos+1)+'장까지의 누적 채점 결과입니다. 재생 위치는 바뀌지 않았습니다.';}
-    else note=rpEvalError||'슬라이더 결과를 보려면 슬라이더 위치를 확정하거나 “슬라이더 결과”를 누르세요.';
+    else if(rpEvalPrefix){shown=rpEvalPrefix;note=(rpEvalPrefix.prefix_pos==null?(pos==null?'–':pos+1):rpEvalPrefix.prefix_pos+1)+'프레임까지 누적 결과 · 재생 위치 유지';}
+    else note=rpEvalError||'슬라이더 위치 선택 후 확인 가능';
   }else if(rpEvalMode==='final'){
     if(rpEvalPending)note='저장된 최종 결과를 불러오는 중…';
-    else if(rpEvalFinal){shown=rpEvalFinal;note=rpEvalFinal.final_previous?'이전 완주 결과입니다. 현재 재생과 다른 실행일 수 있습니다. 슬라이더 위치는 바뀌지 않았습니다.':'저장된 최종 결과입니다. 슬라이더 위치는 바뀌지 않았습니다.';}
-    else note=live.final_ready?'최종 결과를 불러오지 못했습니다. 다시 “최종 보기”를 눌러 주세요.':'끝까지 완주한 최종 결과가 없습니다. 현재 재생 진행 결과를 표시합니다.';
-  }else {shown=live;note=live.final_ready?'현재 진행 결과입니다. 완주 결과는 최종 보기를 누르면 확인할 수 있습니다.':'현재 재생 진행 결과입니다. 한 번 끝까지 재생해야 최종 결과가 확정됩니다.';}
+    else if(rpEvalFinal){shown=rpEvalFinal;note=rpEvalFinal.final_previous?'이전 실행의 최종 결과 · 재생 위치 유지':'저장된 최종 결과 · 재생 위치 유지';}
+    else note=live.final_ready?'최종 결과 로드 실패 · 다시 시도':'최종 결과 없음 · 진행 결과 표시';
+  }else {shown=live;note=live.final_ready?'진행 결과 · 최종 결과 확인 가능':'진행 중 · 전체 재생 후 최종 결과 제공';}
   EVBAR.hidden=!(r.result_views&&rpHasRecording(r.state));
   EVVIEW.textContent=note;evShow(shown,shown?null:(rpEvalMode==='live'&&!live.name?'재생을 시작하면 검수된 정답 라벨과 비교합니다.':note));barShow(r,rpEvalMode==='live'?undefined:shown);}
 function rpBeginPrefix(pos){const st=rpLast&&rpLast.state;if(!st||!st.on||!Number.isFinite(pos))return null;pos=Math.min(Math.max(0,Math.round(pos)),Math.max(0,st.total-1));rpEvalSetMode('slider');rpEvalPrefixPos=pos;rpEvalPending=true;const token=rpEvalToken,runId=(rpLast.eval||{}).run_id;rpRenderEval(rpLast);return {pos,token,runId};}
@@ -2346,7 +2343,7 @@ function barShow(r,viewEval){
   if(!replay||!e.name||(!on&&viewEval===undefined)||(!e.on&&viewEval===undefined)){RNUM.hidden=true;}
   else{RNUM.hidden=false;
     RNHD.textContent=(e.phase==='complete'?'첫 회차 완주 결과':'정답과 비교')+' · '+e.name+(e.backend?' · '+(e.backend_label||rpBackendLabel(e.backend,r)):'');
-    if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.':'재생을 끝까지 한 번 완료해야 비교 결과가 확정됩니다.';RIDS.textContent='';rpIdsHtml='';}
+    if(!e.scoring){RMAIN.innerHTML='<span class="rpc">'+esc((evPhase(e)?evPhase(e)+' · ':'')+(e.why||'채점하지 않음').replace(/정답 라벨\([^)]*\)이/,'정답 라벨이'))+'</span>';ROLD.textContent='';RFOOT.textContent=e.on?'전체 재생 후 평가 완료':'전체 재생 후 평가 완료';RIDS.textContent='';rpIdsHtml='';}
     else{const n=e.new||{},o=e.old||{},c=e.counts||{};
       const big=(k,v,sub,cls)=>'<span class="rpbig'+(cls?' '+cls:'')+'"><small>'+esc(k)+'</small><b>'+esc(v)+'</b>'+(sub?'<i>'+esc(sub)+'</i>':'')+'</span>';   // 11-13 (design review)
       const x=(k,v,cls)=>nchip(k,v,cls).replace('class="rpc','class="rpx rpc');
@@ -2356,7 +2353,7 @@ function barShow(r,viewEval){
       const same=['false','found','gt','missed','idsw'].every(k=>o[k]===n[k]);
       if(same)ROLD.textContent='';else ROLD.innerHTML='<b>옛 채점</b> · 오검출 '+evN(o.false)+' · 찾음 '+evN(o.found)+' / '+evN(o.gt)+' · 놓침 '+evN(o.missed)+' (작은 사람 '+evN(o.missed_small)+') · recall '+evN(o.recall,1)+' · precision '+evN(o.precision,1)+' · 번호 바뀜 '+evN(o.idsw)+' · IDF1 '+evN(o.idf1,1)+' · MOTA '+evN(o.mota,1);
       const total=e.sequence_frames,pass=e.pass_frames,scorable=e.scorable_frames;
-      RFOOT.textContent=(evPhase(e)||'재생 채점')+' · 첫 재생 채점 '+(c.scored==null?'–':c.scored)+'장'+(pass!=null&&total!=null?' · 진행 '+pass+' / '+total+'장':'')+(scorable!=null?' · 정답 비교 가능 '+scorable+'장':'')+' · HOTA / mAP '+evMetricStatus(e)+(e.phase==='interrupted'?' · 다시 처음부터 재생해야 완주 결과가 나옵니다.':'');
+      RFOOT.textContent=(evPhase(e)||'재생 채점')+' · 첫 재생 채점 '+(c.scored==null?'–':c.scored)+'장'+(pass!=null&&total!=null?' · 진행 '+pass+' / '+total+'장':'')+(scorable!=null?' · 정답 비교 가능 '+scorable+'장':'')+' · HOTA / mAP '+evMetricStatus(e)+(e.phase==='interrupted'?' · 처음부터 재생 필요':'');
       rpIdsDraw(e);
     }
   }
@@ -2370,7 +2367,7 @@ function rpSeek(pos){const st=rpLast&&rpLast.state;if(!st||!st.on)return;pos=Mat
   rpctl('/replay/seek?pos='+pos+'&pause=1').then(d=>{if(request.token!==rpEvalToken)return;if(!d.ok){rpEvalPending=false;rpEvalError='프레임 이동에 실패해 결과를 불러오지 않았습니다.';rpRenderEval(rpLast||{});return;}rpWaitForSeek(request);});}
 function rpWaitForSeek(request){if(request.token!==rpEvalToken||rpEvalMode!=='slider')return;const st=rpLast&&rpLast.state;
   if(st&&st.pos===request.pos&&!st.seeking){rpLoadPrefix(request.pos,request.token,request.runId);return;}
-  if(Date.now()-rpHoldT>8000){rpEvalPending=false;rpEvalError='이동한 프레임이 아직 표시되지 않아 결과를 불러오지 않았습니다.';rpRenderEval(rpLast||{});return;}
+  if(Date.now()-rpHoldT>8000){rpEvalPending=false;rpEvalError='프레임 표시 대기 · 결과 로드 보류';rpRenderEval(rpLast||{});return;}
   setTimeout(()=>rptick(true),100);setTimeout(()=>rpWaitForSeek(request),250);}
 RSL.addEventListener('pointerdown',()=>{rpDrag=true;});
 RSL.addEventListener('input',()=>{const st=rpLast&&rpLast.state;if(st&&st.on)RTM.textContent=fmtT(Number(RSL.value)/(st.fps||25))+' / '+fmtT((st.total-1)/(st.fps||25))+' · '+(Number(RSL.value)+1)+' / '+st.total+'번째 장 (놓으면 건너뜀)';});
@@ -2442,7 +2439,7 @@ RPBACK.addEventListener('change',()=>{const b=RPBACK.value,o=RPBACK.selectedOpti
 EVLIVE.addEventListener('click',()=>{rpEvalSetMode('live');rpRenderEval(rpLast||{});});
 EVSLIDER.addEventListener('click',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on||st.pos==null){EVVIEW.textContent='재생 중인 영상에서 슬라이더 위치를 선택할 수 있습니다.';return;}if(st.seeking){EVVIEW.textContent='프레임 이동이 끝난 뒤 결과를 다시 요청해 주세요.';return;}rpLoadPrefix(st.pos);});
 EVFINAL.addEventListener('click',rpLoadFinal);
-EVRESET.addEventListener('click',()=>{if(rpBusy||!rpHasRecording(rpLast?.state))return;if(!confirm('현재 녹화를 처음부터 한 번 끝까지 재생해 최종 결과를 다시 계산할까요? 재생은 반복하지 않습니다.'))return;rpEvalSetMode('live');EVRESET.disabled=true;rpctl('/replay/eval/reset').finally(()=>{EVRESET.disabled=false;});});
+EVRESET.addEventListener('click',()=>{if(rpBusy||!rpHasRecording(rpLast?.state))return;if(!confirm('처음부터 재생하고 최종 결과를 다시 계산할까요? 반복 재생은 해제됩니다.'))return;rpEvalSetMode('live');EVRESET.disabled=true;rpctl('/replay/eval/reset').finally(()=>{EVRESET.disabled=false;});});
 RPFPS.addEventListener('change',()=>{const st=rpLast&&rpLast.state;if(!st||!st.on)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}rpctl('/replay/speed?fps='+f);});
 RPST.addEventListener('click',()=>{const n=RPSEL.value;if(!n)return;const f=Math.round(Number(RPFPS.value));if(!(f>=5&&f<=30)){RPMSG.textContent='초당 장 수는 5~30';return;}
   // 11-13 (user): '재생 시작' just plays (no confirm box). The note under the button already says the camera stops and the gimbal stays.
