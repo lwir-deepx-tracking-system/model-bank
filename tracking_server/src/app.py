@@ -42,6 +42,7 @@ from .detect import model_scan, npu_engine, detect_frame
 from .web import system_buttons, page_handler, page_settings, measure
 from .web.pipeline_perf import PipelinePerf
 from .track import camera_motion
+from .camera import replay_tracks
 from .reid import reid_embed
 from .camera import camera_link, replay_eval, stall_diag
 from .camera import temp_ring   # 11-14: --cam-temp (camera temperature map for the skin-temperature labels; off by default)
@@ -988,6 +989,7 @@ def main():
             archive = dict(image_id=row['image_id'], coco_image_id=im['id'], video_id=vid, tracker_reset=reset)
             track_values = frame_records.track_array(tr_rows, APP.FRAME_DY[0])
             APP.tracks_out.append(dict(archive, **{frame_records.TRACK_KEY: track_values}))
+            replay_tracks.frame(eval_pos, tr_rows, arr, APP.FRAME_DY[0], APP.RULES['tracker'])
             if APP.relabeler is not None:
                 base_values = (track_values if tr_rows is base_rows else
                                frame_records.track_array(base_rows, APP.FRAME_DY[0]))
@@ -1019,6 +1021,7 @@ def main():
         if vit is not None and inflight is not None: vit_sync(None, None, len(APP.images))
         if APP.relabeler is not None: APP.relabeler.reset()          # v7: drains an asynchronous refresh still in flight
         if APP.gmc_pool is not None: APP.gmc_pool.shutdown(wait=True)
+        replay_tracks.close()
         with (APP.out / 'TRACKS.jsonl').open('w', encoding='utf-8', newline='\n') as fh:
             for r in APP.tracks_out: fh.write(json.dumps(frame_records.plain(r), separators=(',', ':')) + '\n')
         with (APP.out / ({'rt480': 'PRED_NEWMRT480.jsonl', 'w480': 'PRED_NEWMRW480.jsonl', 's640': 'PRED_S640.jsonl', 'm640': 'PRED_M640.jsonl', 's6': 'PRED_S6.jsonl', 's480': 'PRED_S480.jsonl', 'ft1': 'PRED_FT1.jsonl', 'ft9': 'PRED_FT9.jsonl'}.get(APP.args.det, 'PRED_DRT512.jsonl'))).open('w', encoding='utf-8', newline='\n') as fh:
