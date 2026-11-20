@@ -438,10 +438,6 @@
       }
     },
     {
-      "model": "reid/repvgg_ft_otp2_20261113_reid.dxnn",
-      "registered_sha256": "92cf064b3dc627b5ddc6360b7e693e2ca973b519e7696cf207d5dd710f178d31"
-    },
-    {
       "model": "reid/repvgg_ft_reviewed264_20261117_reid.dxnn",
       "registered_sha256": "944747d7fe0d9cf56b3401b557dc73ce9412d7db3868c2c2346b4608343752fb",
       "weight": {

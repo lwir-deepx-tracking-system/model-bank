@@ -2,7 +2,7 @@
 
 기준일은 2026-11-20입니다.
 
-운영 등록 DXNN 36개 중 27개는 원본 가중치와 최종 컴파일 ONNX를 모두 보관했습니다. 팀 보관소의 고유 파일 49개를 SHA256으로 다시 읽어 확인했습니다.
+운영 등록 DXNN 35개(11-20에 지운 OTP2 외형 모델 제외) 중 27개는 원본 가중치와 최종 컴파일 ONNX를 모두 보관했습니다. 팀 보관소의 고유 파일 49개를 SHA256으로 다시 읽어 확인했습니다.
 
 ## 내려받기
 
@@ -46,7 +46,6 @@
 | `optimized/LWIR650_TEMPORAL_E13_480x384.dxnn` | 보관 · epoch03.pt | 보관 · LWIR650_TEMPORAL_E13_NHWC_PERSON_480x384.onnx |
 | `reid/repvgg_distill_inside_20261110_reid.dxnn` | 보관 · ep5.pt | 보관 · REPVGG_DISTILL_INSIDE_20261110.onnx |
 | `reid/repvgg_ft_inside_20261110_reid.dxnn` | 보관 · ep6.pt | 보관 · REPVGG_FT_INSIDE_20261110.onnx |
-| `reid/repvgg_ft_otp2_20261113_reid.dxnn` | 미확보 | 미확보 |
 | `reid/repvgg_ft_reviewed264_20261117_reid.dxnn` | 보관 · FINAL.pt | 보관 · REPVGG_REVIEWED264_20261117.onnx |
 | `reid/repvgg_tmot_camel_reid.dxnn` | 보관 · final_ema.pt | 보관 · RVGGA0_REID2.onnx |
 | `reid/vit_lite_distill_inside_20261111_reid.dxnn` | 보관 · student_folded.pt | 보관 · VIT_FT7IN_S.onnx |
