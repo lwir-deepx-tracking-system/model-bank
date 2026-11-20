@@ -1,7 +1,7 @@
 const DETECTOR_UPPER_650='bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480';
 const DETECTOR_TEMPORAL_650='bank:yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480';
 // names shown on the nodes (the server's long preset names are not printed)
-const OLDSRV='서버를 다시 켜야 열립니다',LK='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+const OLDSRV='서버 재시작 필요',LK='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 const BT_KEYS=['bytetrack','confirm3','rebind'];
 const TN={bytetrack:['ByteTrack','가볍고 빠름 · 기본'],botsort:['BoT-SORT','외형·카메라 움직임까지 봄 · 무거움 · 시험 안 함'],ocsort:['OC-SORT','가려졌다 나와도 번호를 잘 이어감 · 시험 안 함'],sort:['SORT','가장 단순 · 시험 안 함']};   // 11-13: one line on what each is for
 const PN={kalman:['Kalman filter','기본 · 학습 모델 없음'],gru:['GRU_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음'],mamba:['Mamba_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음'],gru_kpt:['GRU_위치기억+관절_(PoseTrack18)_20261114','관절 17개 + 움직임으로 놓친 뒤 15프레임 보정 · [관절] 검출 모델과 함께 · 시험에서 Kalman보다 21% 정확 · 장치 미확인'],mamba_kpt:['Mamba_위치기억+관절_(PoseTrack18)_20261114','관절 17개 + 움직임으로 놓친 뒤 15프레임 보정 · [관절] 검출 모델과 함께 · 시험에서 Kalman보다 19% 정확 · 장치 미확인']};   // 11-14: 관절 판
@@ -9,7 +9,7 @@ const DN={'bank:yolo26m_flir_outside_20261110_patch_640x480':'YOLO26m 실외 · 
 const AN={off:'끔',repvgg:'RepVGG_distillation_(TMOT,CAMEL)_20261103',vit:'ViT-lite_distillation_(TMOT,CAMEL)_202610'};
 // folders (user 11-11): one big node per architecture, pressing it shows the models inside
 const FD='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 3.2a1 1 0 0 1 1-1h2.6l1.2 1.3H10a1 1 0 0 1 1 1V9.3a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z" fill="currentColor"/></svg>';
-const DNOTE={'bank:yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480':'범용 판 + 관절 출력 · 공개 시험 전부에서 가장 좋음, 작은 사람 훨씬 잘 찾음 · 우리 실내 반 넘게 가려진 사람은 11-14 판보다 덜 찾음 · 자동 선택의 먼 거리 모델 · AIM_Y 0.37','bank:yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_640x480':'범용 · OTP2+COCO+MOT17 + LLVIP-Pose(밤 열화상) · 공개 시험 전부에서 가장 좋음, 작은 사람 훨씬 잘 찾음 · 우리 실내 반 넘게 가려진 사람은 11-14 판보다 덜 찾음 · AIM_Y 0.37',w480:'FLIR 공개 열화상으로 학습 · 카메라 크기 그대로 · 기본',m640:'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 비교용',s480:'작은 모델 · 카메라 크기 그대로',s6:'작은 모델 · 정사각형 입력(위아래 빈 띠) · 비교용','bank:yolo26m_flir_inside_20261110_2020_640x480':'우리 카메라 실내로 fine-tuning · 2026-11-10 20:20','bank:yolo26s_nmsfree_npu_640x640':'NMS 없이 바로 상자 출력','bank:yolo26m_pose_otp2cocomot_20261114_bodybox_occl_kpt_640x480':'OTP2+COCO+MOT17 판 + 관절 출력 · GRU/Mamba 위치 기억 + 관절과 함께 · 근거리 시험용 · AIM_Y 0.37','bank:yolo26m_pose_otp2cocomot_20261114_bodybox_occl_640x480':'공개 열화상 자세(OTP2) + COCO·MOT17 흑백(실제 가림, 사람끼리 겹침)으로 학습 · 몸 네모(머리~골반, 화면 밖까지) + 강한 물체 가림·흐림·잡음 증강 · 근거리 시험용 · AIM_Y 0.37','bank:yolov8n_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolov8s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_nano_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정'};
+const DNOTE={'bank:yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480':'범용 판 + 관절 출력 · 공개 시험 전부에서 가장 좋음, 작은 사람 훨씬 잘 찾음 · 우리 실내 반 넘게 가려진 사람은 11-14 판보다 덜 찾음 · 자동 선택의 먼 거리 모델 · AIM_Y 0.37','bank:yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_640x480':'범용 · OTP2+COCO+MOT17 + LLVIP-Pose(밤 열화상) · 공개 시험 전부에서 가장 좋음, 작은 사람 훨씬 잘 찾음 · 우리 실내 반 넘게 가려진 사람은 11-14 판보다 덜 찾음 · AIM_Y 0.37',w480:'FLIR 공개 열화상으로 학습 · 카메라 크기 그대로 · 기본',m640:'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 비교용',s480:'작은 모델 · 카메라 크기 그대로',s6:'작은 모델 · 정사각형 입력(위아래 빈 띠) · 비교용','bank:yolo26m_flir_inside_20261110_2020_640x480':'우리 카메라 실내로 fine-tuning · 2026-11-10 20:20','bank:yolo26s_nmsfree_npu_640x640':'NMS 없이 바로 박스 출력','bank:yolo26m_pose_otp2cocomot_20261114_bodybox_occl_kpt_640x480':'OTP2+COCO+MOT17 판 + 관절 출력 · GRU/Mamba 위치 예측 + 관절과 함께 · 근거리 시험용 · AIM_Y 0.37','bank:yolo26m_pose_otp2cocomot_20261114_bodybox_occl_640x480':'공개 열화상 자세(OTP2) + COCO·MOT17 흑백(실제 가림, 사람끼리 겹침)으로 학습 · 상체 박스(머리~골반, 화면 밖까지) + 강한 물체 가림·흐림·잡음 증강 · 근거리 시험용 · AIM_Y 0.37','bank:yolov8n_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolov8s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_nano_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정'};
 const dfold=s=>/yolox/i.test(s)?'YOLOX':/yolo ?v?8/i.test(s)?'YOLOv8':/yolo ?26/i.test(s)?'YOLO26':'기타';
 // 11-13 (design review): detector folders by use (the close-range body-box model is an indoor model, user). Names stay the team's full names; the folder says where the model is for.
 const DUSE=['범용','실내','실외','기본 (공개 데이터)','다른 구조 (비교용)'];   // 11-15 (user): the general pose model has its own folder, first
@@ -19,7 +19,7 @@ const REC=['bank:yolo26m_flir_inside_20261110_2020_640x480'];   // 11-13: models
 const dsub=s=>{let m=/yolo ?26 ?([nsmlx])(?![a-z])/i.exec(s);if(m)return 'YOLO26'+m[1].toLowerCase();m=/yolox[-_ ]?(nano|tiny|s|m|l|x)(?![a-z])/i.exec(s);if(m)return 'YOLOX-'+m[1].toLowerCase();m=/yolo ?v?8 ?([nsmlx])(?![a-z])/i.exec(s);return m?'YOLOv8'+m[1].toLowerCase():'';};
 /* 11-13 (user): size sub-folders are listed smallest first. A name that does not end in a size keeps its place after the sized ones. */
 // 11-13 (user): YOLO26 models together; inside YOLO26 one sub-folder per use
-const dname=c=>DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim();   // 11-13: one display name for a detector (tree, top bar, 지금 적용된 값)
+const dname=c=>DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim();   // 11-13: one display name for a detector (tree, top bar, 현재 설정)
 const wn=s=>esc(s).replace(/_/g,'_<wbr>');   // 11-13: long names break after '_', not inside a Korean word
 const DSTR=['YOLO26','YOLOv8','YOLOX','기타'],SGO=['범용','실내','실외','기본 (공개 데이터)','비교용'];
 const duse26=s=>{const u=duse(s);return u==='다른 구조 (비교용)'?'비교용':u;};
@@ -27,12 +27,12 @@ const szRank=q=>{const u=SGO.indexOf(q);if(u>=0)return u;const m=/(nano|tiny|[ns
 const AFOLD={repvgg:'RepVGG',vit:'ViT-lite'},PFOLD={kalman:'Kalman filter',gru:'GRU',mamba:'Mamba',gru_kpt:'GRU',mamba_kpt:'Mamba'};
 const otsub={};    // 'row|folder|size' -> opened (true) or closed (false) by the user; not set = open only when it holds the chosen node
 const otopen={};   // row index -> folder the user opened ('' = closed by the user); not set = the folder holding the chosen node
-const tname=k=>BT_KEYS.includes(k)?'ByteTrack':TN[k]?TN[k][0]:(k==='gate'?'없앤 이전 설정 (다른 Tracker를 고르세요)':String(k));
+const tname=k=>BT_KEYS.includes(k)?'ByteTrack':TN[k]?TN[k][0]:(k==='gate'?'지원 종료된 설정':String(k));
 const pend=(r,k)=>(r.pending&&r.pending[k]!=null)?r.pending[k]:r[k];   // a choice waiting for the next frame is shown as chosen
 function rdoc(k){if(BT_KEYS.includes(k))k='bytetrack';if(k===rdk)return;rdk=k;const dl=a=>'<dl class="legend">'+a.map(x=>'<dt>'+esc(x[0])+'</dt><dd>'+esc(x[1])+'</dd>').join('')+'</dl>';
   RD.innerHTML='<h4>'+esc(tname(k))+'</h4>'+(TD[k]?dl(TD[k]):'<dl class="legend"><dt>설명</dt><dd>아직 적어 두지 않았습니다.</dd></dl>')+'<h4>모든 추적기에 공통</h4>'+dl(TDC);}
 // 11-16 (design review 4): the rows in three groups, the rest folded as '고급 설정' (its title says what is switched on inside). Rows keep their order; a row not named here is 'advanced'.
-const OTG=[['',['엔드투엔드']],['사람 찾기 (검출)',['검출 모델 자동 선택','검출 모델']],['번호 붙이기 (추적)',['Tracker','위치 기억 · 신뢰도','KeepID']],['짐벌 · 화면',['제어','화면 표시']]];
+const OTG=[['',['엔드투엔드']],['검출',['검출 모델 자동 선택','검출 모델']],['추적',['추적기','위치 예측','KeepID']],['짐벌 · 화면',['제어','화면 표시']]];
 let otadv=false;try{otadv=localStorage.getItem('lwir_live_otadv')==='1';}catch(_){}
 
 

@@ -542,7 +542,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
           </div>
         </details>
       </section>
-      <label class="hint camera-only" style="display:block;margin:6px 0"><input id="overlay-center-switch" type="checkbox"> 박스 떨림 보정 (JPEG 화면 표시만 · 상자 중앙 클릭)</label>
+      <label class="hint camera-only" style="display:block;margin:6px 0"><input id="overlay-center-switch" type="checkbox"> 박스 떨림 보정 (JPEG 화면 표시만 · 박스 중앙 클릭)</label>
       <div class="rpseek" id="rpseek" hidden>
         <label for="replayZoom">추적 확대</label>
         <input id="replayZoom" type="range" min="1" max="4" step=".1" value="2" aria-label="녹화 가상 추종 확대 배율">
@@ -580,7 +580,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
     <section class="st replay-only"><div class="status" id="rpstatus" role="status">녹화 재생</div></section>
     <div class="secs">
       <details class="sec" data-k="tree">
-        <summary><span class="sec-t">트래커 · 모델<small id="ot-now"></small></span></summary>
+        <summary><span class="sec-t">모델 · 추적기<small id="ot-now"></small></span></summary>
         <!-- v40: one tree for everything that used to be three sections (검출 모델 / Filter / Tracker). Rows run top to bottom in processing order; what is picked above opens or locks the nodes below. A click on a node is sent at once, the choice is kept on the server, and every open page reads it again each second. -->
         <div class="body stack">
           <div class="ot-leg"><span class="ot-n sel">선택됨</span><span class="ot-n">고를 수 있음</span><span class="ot-n lock"><svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg> 잠김</span><span>누르면 바로 적용 · 접속한 모든 화면이 같이 바뀝니다</span></div>
@@ -595,28 +595,28 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
             </div>
             <div class="minfo" id="rconf-msg" role="status" style="margin-top:0">0이면 추가 확인 시간을 끕니다.</div>
           </div>
-          <details class="fold" style="margin-top:0"><summary>지금 적용된 값</summary><div class="minfo" id="minfo">모델 목록을 불러오는 중…</div><div class="minfo" id="finfo">불러오는 중…</div><div class="minfo" id="rinfo">불러오는 중…</div></details>
+          <details class="fold" style="margin-top:0"><summary>현재 설정</summary><div class="minfo" id="minfo">모델 목록을 불러오는 중…</div><div class="minfo" id="finfo">불러오는 중…</div><div class="minfo" id="rinfo">불러오는 중…</div></details>
           <details class="fold" style="margin-top:0"><summary>검출 모델 설명</summary><dl class="legend">
             <dt>고르기</dt><dd>"검출 모델" 줄에서 누르면 재시작 없이 다음 프레임부터 그 모델로 검출합니다. 실패하면 이전 모델로 되돌립니다.</dd>
             <dt>640x480 · 640x640</dt><dd>모델 입력 크기. 카메라 영상(640x512)에서 가운데 480줄을 씁니다. 640x480 모델은 그대로 넣고, 640x640 모델은 위아래에 회색 띠를 붙여 넣습니다(계산량이 더 큼).</dd>
             <dt>(자동 등록)</dt><dd>코드에 미리 적어 둔 모델이 아니라, 서버가 models/detect/ 폴더에서 스스로 찾아 올린 파일. 파일 이름과 상관없이 parse_model 로 입력 크기와 출력 모양을 읽어 맞는 검출 모델만 올립니다. 10초 넘게 변하지 않은 파일만 받습니다(복사 중인 파일 제외). 이름은 같은 이름 json 의 display_name, 없으면 파일 이름 그대로입니다.</dd>
-            <dt>[NMS-free]</dt><dd>후처리 경로 표시. 표시 없는 모델은 출력이 6개(상자 3 + 분류 3)라서 오렌지파이 CPU 가 상자를 복원하고 NMS(겹친 상자 지우기)를 합니다. NMS-free 모델은 출력 1개 [1,300,6] (x1,y1,x2,y2,점수,종류)이 이미 완성된 목록이라 그대로 씁니다. 서버가 파일의 출력 모양을 보고 경로를 자동으로 고릅니다.</dd>
-            <dt>YOLOv8 · YOLOX</dt><dd>표시는 없지만 출력이 1개입니다 (YOLOv8 [1,20,8400], YOLOX [1,8400,21]). 상자는 파일 안에서 이미 풀려 나오고, 오렌지파이 CPU 는 다른 모델과 같은 규칙으로 NMS 만 합니다. 장치에서 정확도와 속도를 아직 재지 않았습니다.</dd>
+            <dt>[NMS-free]</dt><dd>후처리 경로 표시. 표시 없는 모델은 출력이 6개(박스 3 + 분류 3)라서 오렌지파이 CPU 가 박스를 복원하고 NMS(겹친 박스 지우기)를 합니다. NMS-free 모델은 출력 1개 [1,300,6] (x1,y1,x2,y2,점수,종류)이 이미 완성된 목록이라 그대로 씁니다. 서버가 파일의 출력 모양을 보고 경로를 자동으로 고릅니다.</dd>
+            <dt>YOLOv8 · YOLOX</dt><dd>표시는 없지만 출력이 1개입니다 (YOLOv8 [1,20,8400], YOLOX [1,8400,21]). 박스는 파일 안에서 이미 풀려 나오고, 오렌지파이 CPU 는 다른 모델과 같은 규칙으로 NMS 만 합니다. 장치에서 정확도와 속도를 아직 재지 않았습니다.</dd>
             <dt>주의</dt><dd>자동 등록 모델은 우리 카메라에서 오검출 검사를 거치지 않은 것일 수 있습니다. 기준 모델은 YOLO26m_(FLIR) 640x480 입니다.</dd>
           </dl></details>
-          <details class="fold" style="margin-top:0"><summary>위치 기억 · 신뢰도 설명 (Kalman filter · GRU · Mamba)</summary><dl class="legend">
-            <dt>하는 일</dt><dd>사람을 놓친 동안(검출이 끊긴 프레임) 그 사람이 어디 있을지 추정합니다. 다시 검출되면 이 추정 위치와 겹치는 상자에 같은 번호를 잇습니다. 검출이 이어지는 동안의 상자와 Kalman filter 는 건드리지 않습니다.</dd>
+          <details class="fold" style="margin-top:0"><summary>위치 예측 설명 (Kalman filter · GRU · Mamba)</summary><dl class="legend">
+            <dt>하는 일</dt><dd>사람을 놓친 동안(검출이 끊긴 프레임) 그 사람이 어디 있을지 추정합니다. 다시 검출되면 이 추정 위치와 겹치는 박스에 같은 번호를 잇습니다. 검출이 이어지는 동안의 박스와 Kalman filter 는 건드리지 않습니다.</dd>
             <dt>Kalman filter (기본)</dt><dd>등속 모델 + 카메라 움직임 보정. 학습 모델 없음. 지금까지 쓰던 것과 완전히 같습니다.</dd>
-            <dt>GRU · Mamba + 관절</dt><dd>사람이 보이는 동안 최근 20프레임의 몸 네모 움직임과 관절 17개(몸 네모 안의 위치, 보이는지)를 읽고, 놓치면 보정 없는 Kalman 경로(등속)에 보정값(중심 x,y · 폭 · 높이)을 더합니다. 보정값 0 이면 Kalman 과 같습니다. 놓친 뒤 15프레임까지 고치고, 그 뒤는 고친 자리에서 Kalman 만 이어 갑니다. 카메라 움직임은 경로에 적용합니다.</dd>
-            <dt>입력 (프레임당 68개)</dt><dd>Kalman 속도 2 · 직전 검출과 예측의 차이 4 · 상자 변화 4 · log 높이 1 · 가로세로 비 1 · 화면 네 가장자리까지 거리 4 · 관절 17개 × (상자 중심 기준 x, y, 보임) 51 · 놓침 표시 1. 길이는 상자 높이로 나눈 값. 관절은 검출 파일의 관절 출력에서 그 사람 상자와 겹치는 것(겹침 0.5 이상)을 씁니다.</dd>
-            <dt>출력</dt><dd>보정값 4개. 중심은 마지막으로 본 상자 높이의 ±1배, 크기는 ±50% 안. 고친 상자를 Kalman 상태의 위치·크기에 덮어씀(속도, 공분산은 그대로).</dd>
+            <dt>GRU · Mamba + 관절</dt><dd>사람이 보이는 동안 최근 20프레임의 상체 박스 움직임과 관절 17개(상체 박스 안의 위치, 보이는지)를 읽고, 놓치면 보정 없는 Kalman 경로(등속)에 보정값(중심 x,y · 폭 · 높이)을 더합니다. 보정값 0 이면 Kalman 과 같습니다. 놓친 뒤 15프레임까지 고치고, 그 뒤는 고친 자리에서 Kalman 만 이어 갑니다. 카메라 움직임은 경로에 적용합니다.</dd>
+            <dt>입력 (프레임당 68개)</dt><dd>Kalman 속도 2 · 직전 검출과 예측의 차이 4 · 박스 변화 4 · log 높이 1 · 가로세로 비 1 · 화면 네 가장자리까지 거리 4 · 관절 17개 × (박스 중심 기준 x, y, 보임) 51 · 놓침 표시 1. 길이는 박스 높이로 나눈 값. 관절은 검출 파일의 관절 출력에서 그 사람 박스와 겹치는 것(겹침 0.5 이상)을 씁니다.</dd>
+            <dt>출력</dt><dd>보정값 4개. 중심은 마지막으로 본 박스 높이의 ±1배, 크기는 ±50% 안. 고친 박스를 Kalman 상태의 위치·크기에 덮어씀(속도, 공분산은 그대로).</dd>
             <dt>구조</dt><dd>GRU: GRU cell(은닉 64) → linear 4. Mamba: Mamba block 1개(d_model 48, expand 2, d_state 8, d_conv 4, Gu &amp; Dao 2023) → linear 4. 둘 다 numpy 로 오렌지파이 CPU 에서 계산(NPU 안 씀).</dd>
             <dt>쓰는 조건</dt><dd>놓치기 전에 4프레임 이상 본 사람만. 계산 오류가 20번 넘으면 자동으로 Kalman filter 로 돌아갑니다.</dd>
             <dt>학습</dt><dd>PoseTrack18 라벨(영상·사람 번호·관절 좌표) 30 epoch, 사라짐 합성(가리개가 몸을 덮으며 관절이 하나씩 사라짐)·움직임 증강. 이 판은 관절 순서가 PoseTrack 이라 1·2번(머리 아래·위, 우리 검출은 두 눈)은 0 으로 넣습니다. 가중치 파일은 models/track/pos_gru_kpt_*.npz, pos_mamba_kpt_*.npz. 새 파일을 넣으면 재시작 없이 목록에 뜹니다.</dd>
             <dt>성능</dt><dd>관절 판(PoseTrack18 시험, 중심 오차 / 키): GRU 일반 0.119 · 사라지는 장면 0.181, Mamba 0.121 · 0.184, Kalman 0.150 · 0.231 (낮을수록 좋음). 장치·실카메라 미확인. 관절 없는 GRU·Mamba 판은 11-14 지웠습니다.</dd>
-            <dt>관절 판 (11-14)</dt><dd>"GRU/Mamba 위치 기억 + 관절" 은 검출 모델이 관절 점도 내는 파일(목록 이름에 [관절])일 때 사람마다 관절 17개를 함께 읽습니다. 놓친 뒤 15프레임까지 보정 없는 Kalman 경로를 고치고 그 뒤는 Kalman 만 씁니다. PoseTrack18 시험에서 Kalman 보다 일반 21%, 가려져 사라지는 장면 22% 정확했습니다. 장치·실카메라 미확인. 관절 없는 검출 모델과 쓰면 관절 입력이 0 이 되어 효과가 줄어듭니다.</dd>
+            <dt>관절 판 (11-14)</dt><dd>"GRU/Mamba 위치 예측 + 관절" 은 검출 모델이 관절 점도 내는 파일(목록 이름에 [관절])일 때 사람마다 관절 17개를 함께 읽습니다. 놓친 뒤 15프레임까지 보정 없는 Kalman 경로를 고치고 그 뒤는 Kalman 만 씁니다. PoseTrack18 시험에서 Kalman 보다 일반 21%, 가려져 사라지는 장면 22% 정확했습니다. 장치·실카메라 미확인. 관절 없는 검출 모델과 쓰면 관절 입력이 0 이 되어 효과가 줄어듭니다.</dd>
             <dt>지금 상태</dt><dd id="pstat">서버 정보를 불러오는 중…</dd>
-            <dt>예측 상자 표시</dt><dd>"제어" 줄에서 켜면 짐벌이 따라가는 사람을 놓쳤을 때 그 사람의 추정 위치만, 같은 색 점선 상자로 화면에 그립니다(Kalman filter 일 때도 됨). 11-14부터: 마지막으로 본 자리(위치 기억)를 가는 점선 상자와 원·"last seen" 으로, 그 뒤의 예측 이동 경로를 선과 화살표로 같이 그리고, 상자 위 글자는 "번호 예측기 놓친프레임"(예: 7 GRU 12f)입니다. 예측 상자 둘레의 원은 다시 나타날 수 있는 범위로, 놓친 시간이 길수록 커집니다(마지막 키의 0.5배 + 프레임당 0.05배, 최대 4배). "KeepID 찾는 범위"를 "예측 이동 + 커지는 범위"로 고르면 KeepID 가 이 범위 안에서만 예전 번호를 찾습니다(기본, 녹화 재생 3개에서 번호 바뀜 8→4, 0→0, 2→2). 다른 사람의 추정 위치는 그리지 않습니다. 화면에만 그리고 짐벌에는 보내지 않습니다.</dd>
+            <dt>예측 박스 표시</dt><dd>"제어" 줄에서 켜면 짐벌이 따라가는 사람을 놓쳤을 때 그 사람의 추정 위치만, 같은 색 점선 박스로 화면에 그립니다(Kalman filter 일 때도 됨). 11-14부터: 마지막으로 본 자리(위치 예측)를 가는 점선 박스와 원·"last seen" 으로, 그 뒤의 예측 이동 경로를 선과 화살표로 같이 그리고, 박스 위 글자는 "번호 예측기 놓친프레임"(예: 7 GRU 12f)입니다. 예측 박스 둘레의 원은 다시 나타날 수 있는 범위로, 놓친 시간이 길수록 커집니다(마지막 키의 0.5배 + 프레임당 0.05배, 최대 4배). "재식별 범위"를 "예측 이동 + 커지는 범위"로 고르면 KeepID 가 이 범위 안에서만 예전 번호를 찾습니다(기본, 녹화 재생 3개에서 번호 바뀜 8→4, 0→0, 2→2). 다른 사람의 추정 위치는 그리지 않습니다. 화면에만 그리고 짐벌에는 보내지 않습니다.</dd>
             <dt>주의</dt><dd>추정 위치가 틀리면 다른 사람에게 번호가 넘어갈 수 있습니다. 장치에서 확인되기 전에는 기본값(Kalman filter)을 권합니다. 코드: pos_predict · pos_predict_kpt 함수, PosKpt 클래스.</dd>
           </dl></details>
           <details class="fold" style="margin-top:0"><summary>Tracker 설명 (고른 것)</summary><div id="rdoc"></div></details>
@@ -638,41 +638,41 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
             <div class="minfo" id="rpevmsg" style="margin-top:0">재생을 시작하면, 검수한 정답 라벨이 있는 녹화는 여기에 1초마다 점수가 나옵니다.</div>
             <table id="rpevt"></table>
             <div class="rpids" id="rpevids"></div>
-            <div class="row adv-only"><label class="chk"><input type="checkbox" id="rpevdraw"> 정답 상자 그리기</label></div>
+            <div class="row adv-only"><label class="chk"><input type="checkbox" id="rpevdraw"> 정답 박스 그리기</label></div>
             <details class="fold"><summary>숫자 설명</summary><dl class="legend">
-              <dt>새 채점 · 옛 채점</dt><dd>같은 프레임을 두 규칙으로 셉니다. 새 채점은 무시 구역(라벨의 무시 상자, 가장자리에 걸친 좁은 사람)을 빼고, 옛 채점은 빼지 않습니다.</dd>
-              <dt>잘못 그린 상자</dt><dd>정답 사람과 짝이 없는 서버의 사람 상자 수. 있으면 안 되는 상자라 맨 위에 둡니다. 새 채점에서는 무시 구역 안에 반 넘게 든 상자는 세지 않습니다.</dd>
-              <dt>정답 사람</dt><dd>채점한 프레임들의 정답 사람 상자 수 (프레임마다 셈).</dd>
-              <dt>찾음</dt><dd>서버 상자와 짝이 된 정답 사람 수 (겹침 IoU 0.5 이상).</dd>
+              <dt>새 채점 · 옛 채점</dt><dd>같은 프레임을 두 규칙으로 셉니다. 새 채점은 무시 구역(라벨의 무시 박스, 가장자리에 걸친 좁은 사람)을 빼고, 옛 채점은 빼지 않습니다.</dd>
+              <dt>잘못 그린 박스</dt><dd>정답 사람과 짝이 없는 서버의 사람 박스 수. 있으면 안 되는 박스라 맨 위에 둡니다. 새 채점에서는 무시 구역 안에 반 넘게 든 박스는 세지 않습니다.</dd>
+              <dt>정답 사람</dt><dd>채점한 프레임들의 정답 사람 박스 수 (프레임마다 셈).</dd>
+              <dt>찾음</dt><dd>서버 박스와 짝이 된 정답 사람 수 (겹침 IoU 0.5 이상).</dd>
               <dt>놓침</dt><dd>짝이 없는 정답 사람 수. "작은 사람"은 높이 32 px 미만 (놓쳐도 받아들일 수 있음), "그 밖"은 나머지.</dd>
               <dt>찾은 비율</dt><dd>찾음 ÷ 정답 사람.</dd>
-              <dt>맞은 비율</dt><dd>찾음 ÷ (찾음 + 잘못 그린 상자).</dd>
+              <dt>맞은 비율</dt><dd>찾음 ÷ (찾음 + 잘못 그린 박스).</dd>
               <dt>번호 바뀜</dt><dd>정답 사람 하나에 붙은 서버 번호가 그 사람의 앞 번호와 달라진 횟수 (CLEAR MOT, Bernardin &amp; Stiefelhagen 2008).</dd>
               <dt>IDF1</dt><dd>사람마다 번호를 얼마나 끝까지 지켰는지. 채점한 모든 프레임에 걸쳐 정답 번호와 서버 번호를 하나씩 짝지어 셈 (Ristani 외 2016). 100 이 가장 좋음.</dd>
-              <dt>MOTA</dt><dd>1 − (놓침 + 잘못 그린 상자 + 번호 바뀜) ÷ 정답 사람 (CLEAR MOT). 100 이 가장 좋고, 0 보다 작을 수도 있음.</dd>
-              <dt>무시 구역 상자</dt><dd>새 채점에서 무시 구역 안이라 세지 않은 서버 상자 수.</dd>
+              <dt>MOTA</dt><dd>1 − (놓침 + 잘못 그린 박스 + 번호 바뀜) ÷ 정답 사람 (CLEAR MOT). 100 이 가장 좋고, 0 보다 작을 수도 있음.</dd>
+              <dt>무시 구역 박스</dt><dd>새 채점에서 무시 구역 안이라 세지 않은 서버 박스 수.</dd>
               <dt>완주 기준</dt><dd>처음부터 끝까지 연속 재생한 결과. 중단·건너뛰기 시 처음부터 다시 재생해야 합니다.</dd>
               <dt>채점한 장</dt><dd>검수된 정답 라벨이 있고 서버 출력과 프레임 번호가 맞는 장면만 셉니다. 결과 아래에 전체 영상 진행량과 정답 비교 가능 장 수를 따로 보여 줍니다.</dd>
               <dt>HOTA</dt><dd>사람 검출과 추적 ID 연결을 함께 평가하는 점수입니다. 재생 완료 후 계산합니다.</dd>
-              <dt>사람 mAP50:95 · AP50</dt><dd>저장된 사람 검출 후보를 정답 상자와 비교한 검출 점수입니다. 추적 완료 후 별도 계산합니다.</dd>
+              <dt>사람 mAP50:95 · AP50</dt><dd>저장된 사람 검출 후보를 정답 박스와 비교한 검출 점수입니다. 추적 완료 후 별도 계산합니다.</dd>
               <dt>ID 변경</dt><dd>정답 사람과 연결된 추적 번호가 바뀐 장면을 영상 아래에 프레임 번호와 함께 표시합니다.</dd>
             </dl></details>
             <details class="fold"><summary>채점 규칙</summary><dl class="legend">
-              <dt>사람만</dt><dd>정답 클래스 0 과 서버가 내보낸 사람 상자 (화면에 보이고 짐벌에 가는 상자, 640x480 좌표).</dd>
+              <dt>사람만</dt><dd>정답 클래스 0 과 서버가 내보낸 사람 박스 (화면에 보이고 짐벌에 가는 박스, 640x480 좌표).</dd>
               <dt>짝짓기</dt><dd>CLEAR MOT 방식 (Bernardin &amp; Stiefelhagen 2008, py-motmetrics 와 같음): 겹침(IoU) 0.5 이상만, 하나는 하나와만. 앞 프레임에서 짝이었던 정답 사람과 서버 번호가 아직 IoU 0.5 이상이면 그대로 짝짓고, 나머지만 헝가리안 방법으로 짝짓습니다.</dd>
-              <dt>무시 구역</dt><dd>새 채점만: 라벨의 클래스 1 상자, 그리고 왼쪽·오른쪽 가장자리 4 px 안에 닿고 보이는 폭이 24 px 보다 좁은 사람. 짝이 없는 서버 상자가 무시 구역 하나 안에 반 이상 들어가면 잘못 그린 상자가 아님. 무시 구역은 놓침이 아님.</dd>
+              <dt>무시 구역</dt><dd>새 채점만: 라벨의 클래스 1 박스, 그리고 왼쪽·오른쪽 가장자리 4 px 안에 닿고 보이는 폭이 24 px 보다 좁은 사람. 짝이 없는 서버 박스가 무시 구역 하나 안에 반 이상 들어가면 잘못 그린 박스가 아님. 무시 구역은 놓침이 아님.</dd>
               <dt>정답 라벨</dt><dd>tracks_edited_mot.txt (검수한 라벨)만 씁니다. 라벨에 있고 검수했다고 적힌 프레임만 채점. 자동 라벨(tracks_mot.txt)만 있는 녹화는 채점하지 않습니다.</dd>
               <dt>프레임 짝</dt><dd>재생 카메라가 프레임마다 PNG 번호를 함께 보내고, 서버는 그 번호로 정답을 찾습니다.</dd>
               <dt>그대로</dt><dd>재생 시작 직후 추적 기록이 없는 프레임도 넣어 셉니다. 숫자를 좋게 하려고 바꾼 것은 없습니다.</dd>
-              <dt>정답 상자</dt><dd>"정답 상자 그리기"는 이 화면 그림에만 그립니다 (흰 점선 = 사람, 분홍 점선 = 무시 구역). 짐벌에는 가지 않습니다.</dd>
+              <dt>정답 박스</dt><dd>"정답 박스 그리기"는 이 화면 그림에만 그립니다 (흰 점선 = 사람, 분홍 점선 = 무시 구역). 짐벌에는 가지 않습니다.</dd>
               <dt>결과 파일</dt><dd>재생을 멈추거나 바꾸면 서버 결과 폴더에 replay_eval_&lt;이름&gt;_&lt;시각&gt;.json 으로 남습니다. 파일에는 비교용으로 앞 프레임 짝을 보지 않고 프레임마다 헝가리안만으로 센 숫자(per_frame_hungarian)도 함께 적습니다.</dd>
             </dl></details>
           </div>
           <details class="fold" style="margin-top:0"><summary>녹화 재생 설명</summary><dl class="legend">
             <dt>하는 일</dt><dd>라벨 사이트의 녹화 폴더 하나를 카메라 대신 서버에 넣습니다. 검출·추적은 카메라 영상과 똑같이 돌고, 영상 맨 위 줄에 REPLAY 와 녹화 이름이 나옵니다.</dd>
-            <dt>녹화 확대 추적</dt><dd>사람 상자를 누르면 설정한 배율로 확대해 따라갑니다. 가려지면 최대 10초 동안 위치를 추정합니다. 빈 곳을 누르면 전체 화면으로 돌아갑니다. 실제 짐벌에는 명령을 보내지 않습니다. 재생을 멈춘 뒤에는 사람을 다시 누를 때까지 따라가지 않습니다.</dd>
+            <dt>녹화 확대 추적</dt><dd>사람 박스를 누르면 설정한 배율로 확대해 따라갑니다. 가려지면 최대 10초 동안 위치를 추정합니다. 빈 곳을 누르면 전체 화면으로 돌아갑니다. 실제 짐벌에는 명령을 보내지 않습니다. 재생을 멈춘 뒤에는 사람을 다시 누를 때까지 따라가지 않습니다.</dd>
             <dt>카메라로</dt><dd>영상 아래의 카메라로 돌아가기 또는 Esc를 누르세요. 반복을 끄면 한 번 끝까지 재생한 뒤 마지막 장면에서 멈춥니다.</dd>
-            <dt>8비트 녹화</dt><dd>값이 0~255 를 늘린 것이라 온도 Filter(16비트 값)가 맞지 않아 사람이 걸러질 수 있습니다. 볼 때만 설정의 "온도 Filter"를 잠시 끄세요. 서버가 Filter 를 스스로 바꾸지는 않습니다.</dd>
+            <dt>8비트 녹화</dt><dd>값이 0~255 를 늘린 것이라 온도 필터(16비트 값)가 맞지 않아 사람이 걸러질 수 있습니다. 볼 때만 설정의 "온도 필터"를 잠시 끄세요. 서버가 Filter 를 스스로 바꾸지는 않습니다.</dd>
             <dt>측정</dt><dd>재생 중에도 측정할 수 있습니다. 측정 결과(summary.json, README_KO.txt)에 재생한 녹화 이름이 적힙니다.</dd>
             <dt>길이</dt><dd>길이 제한이 없습니다. 장면은 필요할 때 하나씩 읽습니다.</dd>
             <dt>영상 아래 막대</dt><dd>재생 중에는 영상 바로 아래에 재생 위치 막대, 재생·일시정지, −10초·+10초, 장 번호로 이동이 나옵니다. 막대는 놓을 때 건너뜁니다. 시간은 위의 "초당 장 수" 기준입니다. 장 번호는 1부터 셉니다 (1 = 녹화의 첫 장면).</dd>
@@ -720,22 +720,22 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         </div>
       </details>
       <details class="sec" data-k="rules">
-        <summary>Filter 값</summary>
+        <summary>필터 설정</summary>
         <div class="body stack">
-          <div class="row"><label class="lbl" for="rwarm" style="flex:1">Warmth range</label><input id="rwarm" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최소 (원시값)"><span class="lbl" style="flex:none">~</span><input id="rwarmx" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최대 (원시값, 0 = 제한 없음)"></div>
+          <div class="row"><label class="lbl" for="rwarm" style="flex:1">온도 범위</label><input id="rwarm" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최소 (원시값)"><span class="lbl" style="flex:none">~</span><input id="rwarmx" type="number" min="0" max="65535" step="500" style="width:84px;flex:none" aria-label="Warmth 최대 (원시값, 0 = 제한 없음)"></div>
           <div class="minfo" id="fhintw" style="margin-top:0">기본값 <b>45000 ~ 0</b> (위쪽 제한 없음). 이 카메라 측정(11-10): 천장 조명 43,397 이하 · 방 안 사람 47,749 이상 · 가까운 사람 60,170 이상 → 그 사이인 45000. 주의: 화면 끝에 잘린 사람은 40,387까지 내려가 버려질 수 있고, 따뜻한 벽 물체(49,155 이하)는 이 값으로 못 거릅니다.</div>
-          <div class="row"><label class="lbl" for="redge" style="flex:1">Edge confidence (0 = 제한 없음)</label><input id="redge" type="number" min="0" max="1" step="0.05" style="width:104px;flex:none" aria-label="Edge confidence"></div>
+          <div class="row"><label class="lbl" for="redge" style="flex:1">가장자리 신뢰도 (0 = 제한 없음)</label><input id="redge" type="number" min="0" max="1" step="0.05" style="width:104px;flex:none" aria-label="Edge confidence"></div>
           <div class="minfo" id="fhinte" style="margin-top:0">기본값 <b>0.5</b>. 측정으로 정한 값은 아닙니다(경험값, 검출 기본 점수 0.25의 두 배). 올리면 가장자리 오검출이 줄고, 화면에 들어오는 사람을 조금 늦게 잡습니다.</div>
-          <div class="row"><div class="minfo" id="fmsg" style="margin-top:0;flex:1"></div><button class="btn accent small" id="rapply2">Apply</button></div>
-          <details class="fold" style="margin-top:0"><summary>Filter 설명</summary><dl class="legend">
-            <dt>Warmth range</dt><dd>상자 안의 따뜻한 부분(원시값 상위 5% 지점)이 최소 ~ 최대 안에 있을 때만 사람으로 인정합니다. 최소보다 차갑거나 최대보다 뜨거우면 버립니다. 카메라 16비트 원시값(0~65535) 기준. 최소 0 = 아래쪽 검사 끔, 최대 0 = 위쪽 제한 없음.</dd>
-            <dt>Edge confidence</dt><dd>화면 가장자리에 걸친 상자는 검출 점수가 이 값 이상일 때만 새 궤적으로 시작합니다. 이미 추적 중인 사람에게는 적용하지 않습니다. 0 이면 제한 없음.</dd>
-            <dt>온도 Filter 끄기</dt><dd>설정의 "검출 뒤 Filter" 줄에서 "온도 Filter"를 끄면 Warmth 검사만 꺼지고 숫자는 서버가 기억합니다. 다시 켜면 그 숫자로 돌아옵니다. Edge confidence 는 그대로 적용됩니다.</dd>
+          <div class="row"><div class="minfo" id="fmsg" style="margin-top:0;flex:1"></div><button class="btn accent small" id="rapply2">적용</button></div>
+          <details class="fold" style="margin-top:0"><summary>필터 설명</summary><dl class="legend">
+            <dt>온도 범위</dt><dd>박스 안의 따뜻한 부분(원시값 상위 5% 지점)이 최소 ~ 최대 안에 있을 때만 사람으로 인정합니다. 최소보다 차갑거나 최대보다 뜨거우면 버립니다. 카메라 16비트 원시값(0~65535) 기준. 최소 0 = 아래쪽 검사 끔, 최대 0 = 위쪽 제한 없음.</dd>
+            <dt>Edge confidence</dt><dd>화면 가장자리에 걸친 박스는 검출 점수가 이 값 이상일 때만 새 궤적으로 시작합니다. 이미 추적 중인 사람에게는 적용하지 않습니다. 0 이면 제한 없음.</dd>
+            <dt>온도 필터 끄기</dt><dd>설정의 "검출 필터" 줄에서 "온도 필터"를 끄면 Warmth 검사만 꺼지고 숫자는 서버가 기억합니다. 다시 켜면 그 숫자로 돌아옵니다. Edge confidence 는 그대로 적용됩니다.</dd>
           </dl></details>
         </div>
       </details>
       <details class="sec" data-k="sys">
-        <summary>System</summary>
+        <summary>시스템</summary>
         <!-- v35: reset also power-cycles USB 5 V. v30: camera reset and board reboot. Both ask before doing anything. -->
         <div class="body stack">
           <div class="row"><button class="btn" id="camreset">카메라 초기화</button><button class="btn" id="serverrestart" disabled>서버 재시작</button><button class="btn" id="sysreboot" style="background:var(--stop);border-color:var(--stop);color:#fff">오렌지파이 재부팅</button></div>
@@ -1337,42 +1337,42 @@ const MIN=$('minfo'),RW=$('rwarm'),RE=$('redge'),RWX=$('rwarmx'),RC=$('rconf'),R
 let rdirty=false,rdt=0,rlast=null,mlast=null,othtml='',otbusy=false,rdk=null,OTT=[],othint=null;   // othint (v41): [hint shown after an appearance-model pick, reid_last when the tile was pressed] -> the hint is cleared when reid_last moves
 for(const el of [RW,RWX,RE])el.addEventListener('input',()=>{rdirty=true;clearTimeout(rdt);rdt=setTimeout(()=>{rdirty=false;},15000);});   // a number being typed is not overwritten by the 1 s refresh (until 15 s after the last key, or Apply)
 // v26: what each tracker preset is and how it is built here (text only; keys = /rules preset keys)
-/* v27 */ const TDC=[['입력 (매 프레임)','① 검출 모델이 낸 상자 목록: x1,y1,x2,y2,점수,종류 ② 앞 프레임 대비 화면 이동(optical flow 로 구한 2x3 행렬)'],
- ['출력 (매 프레임)','확인된 궤적만: 상자 x1,y1,x2,y2 + 번호(ID) + 점수 + 종류. 확인 전 궤적은 내부에서만 유지하고 화면에 내지 않음'],
- ['점수 기준','.10 이하는 버림 · .25 이상 = 높은 점수 상자 · .10~.25 = 낮은 점수 상자'],
- ['위치 기억 · 신뢰도','Kalman filter (등속 모델. 상태 8개 = 중심 x,y · 폭 · 높이와 각각의 속도). 매 프레임 모든 궤적의 다음 위치를 예측. 놓친 사람의 위치는 "위치 기억 · 신뢰도" 줄에서 GRU 나 Mamba 를 고르면 그 모델이 보정 (어느 추적기에나 똑같이 붙음, 설명은 위 "위치 기억 · 신뢰도 설명")'],
+/* v27 */ const TDC=[['입력 (매 프레임)','① 검출 모델이 낸 박스 목록: x1,y1,x2,y2,점수,종류 ② 앞 프레임 대비 화면 이동(optical flow 로 구한 2x3 행렬)'],
+ ['출력 (매 프레임)','확인된 궤적만: 박스 x1,y1,x2,y2 + 번호(ID) + 점수 + 종류. 확인 전 궤적은 내부에서만 유지하고 화면에 내지 않음'],
+ ['점수 기준','.10 이하는 버림 · .25 이상 = 높은 점수 박스 · .10~.25 = 낮은 점수 박스'],
+ ['위치 예측','Kalman filter (등속 모델. 상태 8개 = 중심 x,y · 폭 · 높이와 각각의 속도). 매 프레임 모든 궤적의 다음 위치를 예측. 놓친 사람의 위치는 "위치 예측" 줄에서 GRU 나 Mamba 를 고르면 그 모델이 보정 (어느 추적기에나 똑같이 붙음, 설명은 위 "위치 예측 설명")'],
  ['카메라 움직임 보정','짐벌이 돌면 화면 전체가 밀리므로, 화면 이동 행렬로 예측 위치를 같이 옮김 (BoT-SORT 논문 방식, 항상 켜짐)'],
- ['새 궤적 시작','어느 궤적과도 짝이 안 된 상자 중 점수 .25 이상이고 가장자리 규칙을 통과한 것만. 사람과 사람 아닌 것은 서로 잇지 않음'],
- ['학습 모델을 쓰는 곳','① 검출 모델(NPU) ② KeepID 의 외형 모델 특징(NPU · KeepID 줄에서 고른 RepVGG / ViT-lite 모델) + 번호 잇기 판정기(기본 모델 RepVGG_distillation_(TMOT,CAMEL)_20261103 기준, 다른 모델에서는 미검증) ③ BoT-SORT 외형 비교(KeepID 와 같은 모델) ④ 위치 기억 · 신뢰도의 GRU · Mamba (골랐을 때만, CPU). 짝짓기 자체(IoU, Kalman filter)는 어느 추적기에서도 학습 모델이 아니라 계산식'],
- ['재식별 (KeepID)','추적기 위에서 따로 동작. 상자는 건드리지 않고, 새 번호가 방금 잃은 번호와 같은 사람이면 번호만 이어 줌. KeepID 줄에서 켜고 끄고 외형 모델을 고름. 모델을 바꾸면 화면이 잠깐 멈추고 사람 번호가 새로 매겨짐. 어느 추적기를 골라도 똑같이 붙음']];
-const BT=['ByteTrack 처리 순서','Zhang et al., ECCV 2022. ① 모든 궤적 위치 예측 ② 1차: 궤적(추적 중 + 잃은 것) ↔ 높은 점수 상자. 비용 = 1 − IoU×점수, .8 이하만 짝 ③ 2차: 남은 추적 중 궤적 ↔ 낮은 점수 상자. IoU .5 이상만 — 가려져 점수가 떨어진 사람을 이어 가기 위함 ④ 그래도 짝 없는 궤적은 "잃음", 30프레임 지나면 삭제 ⑤ 확인 전 궤적 ↔ 남은 상자 ⑥ 남은 높은 점수 상자로 새 궤적 시작'];
+ ['새 궤적 시작','어느 궤적과도 짝이 안 된 박스 중 점수 .25 이상이고 가장자리 규칙을 통과한 것만. 사람과 사람 아닌 것은 서로 잇지 않음'],
+ ['학습 모델을 쓰는 곳','① 검출 모델(NPU) ② KeepID 의 외형 모델 특징(NPU · KeepID 줄에서 고른 RepVGG / ViT-lite 모델) + 번호 잇기 판정기(기본 모델 RepVGG_distillation_(TMOT,CAMEL)_20261103 기준, 다른 모델에서는 미검증) ③ BoT-SORT 외형 비교(KeepID 와 같은 모델) ④ 위치 예측의 GRU · Mamba (골랐을 때만, CPU). 짝짓기 자체(IoU, Kalman filter)는 어느 추적기에서도 학습 모델이 아니라 계산식'],
+ ['재식별 (KeepID)','추적기 위에서 따로 동작. 박스는 건드리지 않고, 새 번호가 방금 잃은 번호와 같은 사람이면 번호만 이어 줌. KeepID 줄에서 켜고 끄고 외형 모델을 고름. 모델을 바꾸면 화면이 잠깐 멈추고 사람 번호가 새로 매겨짐. 어느 추적기를 골라도 똑같이 붙음']];
+const BT=['ByteTrack 처리 순서','Zhang et al., ECCV 2022. ① 모든 궤적 위치 예측 ② 1차: 궤적(추적 중 + 잃은 것) ↔ 높은 점수 박스. 비용 = 1 − IoU×점수, .8 이하만 짝 ③ 2차: 남은 추적 중 궤적 ↔ 낮은 점수 박스. IoU .5 이상만 — 가려져 점수가 떨어진 사람을 이어 가기 위함 ④ 그래도 짝 없는 궤적은 "잃음", 30프레임 지나면 삭제 ⑤ 확인 전 궤적 ↔ 남은 박스 ⑥ 남은 높은 점수 박스로 새 궤적 시작'];
 const TD={
  bytetrack:[BT,
   ['새 ID 확인 시간','Python ByteTrack에서 밀리초로 지정합니다. 0이면 추가 시간 조건을 끕니다.'],
   ['위치 재결합','Python ByteTrack에서 잠깐 놓친 궤적을 근처의 새 검출에 이어 줍니다.'],
   ['엔진','Python과 C++를 선택합니다. 실시간의 C++는 화면의 박스와 ID에 적용됩니다.']],
  ocsort:[['새 사람 확인','3프레임 확인 규칙 (학습 모델 없음)'],
-  ['한 줄 요약','OC-SORT (Cao et al., CVPR 2023). Kalman 예측보다 "실제로 본 마지막 위치"를 더 믿는 추적기. 가려졌다 나오거나 방향이 급히 바뀔 때 번호를 지키려는 방식'],
-  ['추가로 기억하는 것','궤적마다 최근 관측 상자 8개(프레임 번호와 함께), 이동 방향, 마지막으로 본 순간의 Kalman 상태. 카메라가 움직이면 이것들도 같이 옮김'],
-  ['처리 순서','① 위치 예측 ② 1차: 비용 = 1 − (IoU + 0.2 × 방향 일치도 × 점수). 방향 일치도 = 궤적이 최근 3프레임 동안 움직인 방향과, 3프레임 전 위치에서 상자로 가는 방향의 각도 차. IoU .3 미만은 짝 안 지음 ③ 2차: 낮은 점수 상자(ByteTrack 과 같음) ④ 복구: 짝 없는 궤적의 "마지막으로 본 상자" ↔ 남은 높은 점수 상자, IoU .3 이상 ⑤ 잃었다가 찾은 궤적은 마지막 위치와 새 위치를 직선으로 이어 Kalman filter 를 그 구간만큼 다시 계산 ⑥ 잃음 처리·새 궤적은 ByteTrack 과 같음'],
+  ['개요','OC-SORT (Cao et al., CVPR 2023). Kalman 예측보다 "실제로 본 마지막 위치"를 더 믿는 추적기. 가려졌다 나오거나 방향이 급히 바뀔 때 번호를 지키려는 방식'],
+  ['추가로 기억하는 것','궤적마다 최근 관측 박스 8개(프레임 번호와 함께), 이동 방향, 마지막으로 본 순간의 Kalman 상태. 카메라가 움직이면 이것들도 같이 옮김'],
+  ['처리 순서','① 위치 예측 ② 1차: 비용 = 1 − (IoU + 0.2 × 방향 일치도 × 점수). 방향 일치도 = 궤적이 최근 3프레임 동안 움직인 방향과, 3프레임 전 위치에서 박스로 가는 방향의 각도 차. IoU .3 미만은 짝 안 지음 ③ 2차: 낮은 점수 박스(ByteTrack 과 같음) ④ 복구: 짝 없는 궤적의 "마지막으로 본 박스" ↔ 남은 높은 점수 박스, IoU .3 이상 ⑤ 잃었다가 찾은 궤적은 마지막 위치와 새 위치를 직선으로 이어 Kalman filter 를 그 구간만큼 다시 계산 ⑥ 잃음 처리·새 궤적은 ByteTrack 과 같음'],
   ['코드','AltTracker 클래스 (kind ocsort, Tracker 상속)'],
   ['주의','우리 카메라에서 아직 측정하지 않았습니다. 기본값이 아닙니다. 11-02 공개 데이터 비교에서는 채택되지 않았습니다.']],
  botsort:[['새 사람 확인','2프레임 확인 규칙 (시작 프레임 포함 2번 짝이 맞으면 냄, 학습 모델 없음)'],
-  ['한 줄 요약','BoT-SORT (Aharon et al., 2022). ByteTrack 짝짓기 + 카메라 움직임 보정 + 폭·높이를 직접 쓰는 Kalman filter + 외형 비교(고른 외형 모델)'],
+  ['개요','BoT-SORT (Aharon et al., 2022). ByteTrack 짝짓기 + 카메라 움직임 보정 + 폭·높이를 직접 쓰는 Kalman filter + 외형 비교(고른 외형 모델)'],
   BT,
-  ['다른 추적기와의 차이','매 프레임 점수가 높은 사람 4명까지(높이 32 px 이상) 고른 외형 모델로 외형을 뽑아, 겹친 상자끼리 누가 누구인지 정할 때 외형이 더 닮은 쪽으로 짝짓습니다. 외형은 상자가 이미 절반 이상 겹칠 때만 씁니다 (논문 기본값 .25 / .5). 새 궤적 확인은 2프레임입니다'],
+  ['다른 추적기와의 차이','매 프레임 점수가 높은 사람 4명까지(높이 32 px 이상) 고른 외형 모델로 외형을 뽑아, 겹친 박스끼리 누가 누구인지 정할 때 외형이 더 닮은 쪽으로 짝짓습니다. 외형은 박스가 이미 절반 이상 겹칠 때만 씁니다 (논문 기본값 .25 / .5). 새 궤적 확인은 2프레임입니다'],
   ['외형 비교 고르기','BoT-SORT 를 고르면 그 바로 아래에 "외형 비교" 칸이 열립니다 (다른 추적기에서는 보이지 않음). 끔, 또는 장치에 있는 RepVGG / ViT-lite 모델 중 하나. KeepID 와 같은 모델을 함께 쓰므로 여기서 모델을 바꾸면 KeepID 모델도 같이 바뀝니다. 끔이면 위치(IoU)만으로 짝짓습니다'],
   ['코드','BotSortTracker 클래스 (외형 = KeepID 와 같은 모델, NPU core 2)'],
   ['주의','우리 카메라에서 아직 측정하지 않았습니다. 기본값이 아닙니다.']],
  sort:[['새 사람 확인','3프레임 확인 규칙 (학습 모델 없음)'],
-  ['한 줄 요약','SORT (Bewley et al., ICIP 2016). 가장 단순한 기준 추적기. Kalman filter 예측과 검출 상자의 겹침(IoU)만으로 짝짓기'],
-  ['처리 순서','① 위치 예측 ② 궤적 ↔ 높은 점수 상자를 IoU .3 이상일 때만 짝지음 ③ 낮은 점수 상자는 쓰지 않음 ④ 한 프레임 놓친 궤적은 다음 프레임까지만 기다리고 지움. 다시 나타나면 새 번호'],
+  ['개요','SORT (Bewley et al., ICIP 2016). 가장 단순한 기준 추적기. Kalman filter 예측과 검출 박스의 겹침(IoU)만으로 짝짓기'],
+  ['처리 순서','① 위치 예측 ② 궤적 ↔ 높은 점수 박스를 IoU .3 이상일 때만 짝지음 ③ 낮은 점수 박스는 쓰지 않음 ④ 한 프레임 놓친 궤적은 다음 프레임까지만 기다리고 지움. 다시 나타나면 새 번호'],
   ['코드','AltTracker 클래스 (kind sort, Tracker 상속)'],
   ['주의','가려지거나 검출이 한두 프레임 끊기면 번호가 바뀝니다. 비교용입니다. 우리 카메라에서 아직 측정하지 않았습니다.']]};
 const DETECTOR_UPPER_650='bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480';
 const DETECTOR_TEMPORAL_650='bank:yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480';
 // names shown on the nodes (the server's long preset names are not printed)
-const OLDSRV='서버를 다시 켜야 열립니다',LK='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
+const OLDSRV='서버 재시작 필요',LK='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 const BT_KEYS=['bytetrack','confirm3','rebind'];
 const TN={bytetrack:['ByteTrack','가볍고 빠름 · 기본'],botsort:['BoT-SORT','외형·카메라 움직임까지 봄 · 무거움 · 시험 안 함'],ocsort:['OC-SORT','가려졌다 나와도 번호를 잘 이어감 · 시험 안 함'],sort:['SORT','가장 단순 · 시험 안 함']};   // 11-13: one line on what each is for
 const PN={kalman:['Kalman filter','기본 · 학습 모델 없음'],gru:['GRU_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음'],mamba:['Mamba_위치기억_(실외)_20261110','우리 카메라 실외 궤적으로 학습 · 1 epoch · 미검증 · 신뢰도 출력 없음'],gru_kpt:['GRU_위치기억+관절_(PoseTrack18)_20261114','관절 17개 + 움직임으로 놓친 뒤 15프레임 보정 · [관절] 검출 모델과 함께 · 시험에서 Kalman보다 21% 정확 · 장치 미확인'],mamba_kpt:['Mamba_위치기억+관절_(PoseTrack18)_20261114','관절 17개 + 움직임으로 놓친 뒤 15프레임 보정 · [관절] 검출 모델과 함께 · 시험에서 Kalman보다 19% 정확 · 장치 미확인']};   // 11-14: 관절 판
@@ -1380,7 +1380,7 @@ const DN={'bank:yolo26m_flir_outside_20261110_patch_640x480':'YOLO26m 실외 · 
 const AN={off:'끔',repvgg:'RepVGG_distillation_(TMOT,CAMEL)_20261103',vit:'ViT-lite_distillation_(TMOT,CAMEL)_202610'};
 // folders (user 11-11): one big node per architecture, pressing it shows the models inside
 const FD='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 3.2a1 1 0 0 1 1-1h2.6l1.2 1.3H10a1 1 0 0 1 1 1V9.3a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1z" fill="currentColor"/></svg>';
-const DNOTE={'bank:yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480':'범용 판 + 관절 출력 · 공개 시험 전부에서 가장 좋음, 작은 사람 훨씬 잘 찾음 · 우리 실내 반 넘게 가려진 사람은 11-14 판보다 덜 찾음 · 자동 선택의 먼 거리 모델 · AIM_Y 0.37','bank:yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_640x480':'범용 · OTP2+COCO+MOT17 + LLVIP-Pose(밤 열화상) · 공개 시험 전부에서 가장 좋음, 작은 사람 훨씬 잘 찾음 · 우리 실내 반 넘게 가려진 사람은 11-14 판보다 덜 찾음 · AIM_Y 0.37',w480:'FLIR 공개 열화상으로 학습 · 카메라 크기 그대로 · 기본',m640:'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 비교용',s480:'작은 모델 · 카메라 크기 그대로',s6:'작은 모델 · 정사각형 입력(위아래 빈 띠) · 비교용','bank:yolo26m_flir_inside_20261110_2020_640x480':'우리 카메라 실내로 fine-tuning · 2026-11-10 20:20','bank:yolo26s_nmsfree_npu_640x640':'NMS 없이 바로 상자 출력','bank:yolo26m_pose_otp2cocomot_20261114_bodybox_occl_kpt_640x480':'OTP2+COCO+MOT17 판 + 관절 출력 · GRU/Mamba 위치 기억 + 관절과 함께 · 근거리 시험용 · AIM_Y 0.37','bank:yolo26m_pose_otp2cocomot_20261114_bodybox_occl_640x480':'공개 열화상 자세(OTP2) + COCO·MOT17 흑백(실제 가림, 사람끼리 겹침)으로 학습 · 몸 네모(머리~골반, 화면 밖까지) + 강한 물체 가림·흐림·잡음 증강 · 근거리 시험용 · AIM_Y 0.37','bank:yolov8n_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolov8s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_nano_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정'};
+const DNOTE={'bank:yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480':'범용 판 + 관절 출력 · 공개 시험 전부에서 가장 좋음, 작은 사람 훨씬 잘 찾음 · 우리 실내 반 넘게 가려진 사람은 11-14 판보다 덜 찾음 · 자동 선택의 먼 거리 모델 · AIM_Y 0.37','bank:yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_640x480':'범용 · OTP2+COCO+MOT17 + LLVIP-Pose(밤 열화상) · 공개 시험 전부에서 가장 좋음, 작은 사람 훨씬 잘 찾음 · 우리 실내 반 넘게 가려진 사람은 11-14 판보다 덜 찾음 · AIM_Y 0.37',w480:'FLIR 공개 열화상으로 학습 · 카메라 크기 그대로 · 기본',m640:'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 비교용',s480:'작은 모델 · 카메라 크기 그대로',s6:'작은 모델 · 정사각형 입력(위아래 빈 띠) · 비교용','bank:yolo26m_flir_inside_20261110_2020_640x480':'우리 카메라 실내로 fine-tuning · 2026-11-10 20:20','bank:yolo26s_nmsfree_npu_640x640':'NMS 없이 바로 박스 출력','bank:yolo26m_pose_otp2cocomot_20261114_bodybox_occl_kpt_640x480':'OTP2+COCO+MOT17 판 + 관절 출력 · GRU/Mamba 위치 예측 + 관절과 함께 · 근거리 시험용 · AIM_Y 0.37','bank:yolo26m_pose_otp2cocomot_20261114_bodybox_occl_640x480':'공개 열화상 자세(OTP2) + COCO·MOT17 흑백(실제 가림, 사람끼리 겹침)으로 학습 · 상체 박스(머리~골반, 화면 밖까지) + 강한 물체 가림·흐림·잡음 증강 · 근거리 시험용 · AIM_Y 0.37','bank:yolov8n_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolov8s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_nano_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정','bank:yolox_s_nms_640x640':'FLIR 공개 열화상으로 학습 · 정사각형 입력(위아래 빈 띠) · 장치 정확도·속도 미측정'};
 const dfold=s=>/yolox/i.test(s)?'YOLOX':/yolo ?v?8/i.test(s)?'YOLOv8':/yolo ?26/i.test(s)?'YOLO26':'기타';
 // 11-13 (design review): detector folders by use (the close-range body-box model is an indoor model, user). Names stay the team's full names; the folder says where the model is for.
 const DUSE=['범용','실내','실외','기본 (공개 데이터)','다른 구조 (비교용)'];   // 11-15 (user): the general pose model has its own folder, first
@@ -1390,7 +1390,7 @@ const REC=['bank:yolo26m_flir_inside_20261110_2020_640x480'];   // 11-13: models
 const dsub=s=>{let m=/yolo ?26 ?([nsmlx])(?![a-z])/i.exec(s);if(m)return 'YOLO26'+m[1].toLowerCase();m=/yolox[-_ ]?(nano|tiny|s|m|l|x)(?![a-z])/i.exec(s);if(m)return 'YOLOX-'+m[1].toLowerCase();m=/yolo ?v?8 ?([nsmlx])(?![a-z])/i.exec(s);return m?'YOLOv8'+m[1].toLowerCase():'';};
 /* 11-13 (user): size sub-folders are listed smallest first. A name that does not end in a size keeps its place after the sized ones. */
 // 11-13 (user): YOLO26 models together; inside YOLO26 one sub-folder per use
-const dname=c=>DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim();   // 11-13: one display name for a detector (tree, top bar, 지금 적용된 값)
+const dname=c=>DN[c.det]||String(c.name).replace(/\s*\(자동 등록\)/g,'').replace(/\s*\([^)]*시험용[^)]*\)/g,'').replace(/\s*·\s*시험용/g,'').trim();   // 11-13: one display name for a detector (tree, top bar, 현재 설정)
 const wn=s=>esc(s).replace(/_/g,'_<wbr>');   // 11-13: long names break after '_', not inside a Korean word
 const DSTR=['YOLO26','YOLOv8','YOLOX','기타'],SGO=['범용','실내','실외','기본 (공개 데이터)','비교용'];
 const duse26=s=>{const u=duse(s);return u==='다른 구조 (비교용)'?'비교용':u;};
@@ -1398,12 +1398,12 @@ const szRank=q=>{const u=SGO.indexOf(q);if(u>=0)return u;const m=/(nano|tiny|[ns
 const AFOLD={repvgg:'RepVGG',vit:'ViT-lite'},PFOLD={kalman:'Kalman filter',gru:'GRU',mamba:'Mamba',gru_kpt:'GRU',mamba_kpt:'Mamba'};
 const otsub={};    // 'row|folder|size' -> opened (true) or closed (false) by the user; not set = open only when it holds the chosen node
 const otopen={};   // row index -> folder the user opened ('' = closed by the user); not set = the folder holding the chosen node
-const tname=k=>BT_KEYS.includes(k)?'ByteTrack':TN[k]?TN[k][0]:(k==='gate'?'없앤 이전 설정 (다른 Tracker를 고르세요)':String(k));
+const tname=k=>BT_KEYS.includes(k)?'ByteTrack':TN[k]?TN[k][0]:(k==='gate'?'지원 종료된 설정':String(k));
 const pend=(r,k)=>(r.pending&&r.pending[k]!=null)?r.pending[k]:r[k];   // a choice waiting for the next frame is shown as chosen
 function rdoc(k){if(BT_KEYS.includes(k))k='bytetrack';if(k===rdk)return;rdk=k;const dl=a=>'<dl class="legend">'+a.map(x=>'<dt>'+esc(x[0])+'</dt><dd>'+esc(x[1])+'</dd>').join('')+'</dl>';
   RD.innerHTML='<h4>'+esc(tname(k))+'</h4>'+(TD[k]?dl(TD[k]):'<dl class="legend"><dt>설명</dt><dd>아직 적어 두지 않았습니다.</dd></dl>')+'<h4>모든 추적기에 공통</h4>'+dl(TDC);}
 // 11-16 (design review 4): the rows in three groups, the rest folded as '고급 설정' (its title says what is switched on inside). Rows keep their order; a row not named here is 'advanced'.
-const OTG=[['',['엔드투엔드']],['사람 찾기 (검출)',['검출 모델 자동 선택','검출 모델']],['번호 붙이기 (추적)',['Tracker','위치 기억 · 신뢰도','KeepID']],['짐벌 · 화면',['제어','화면 표시']]];
+const OTG=[['',['엔드투엔드']],['검출',['검출 모델 자동 선택','검출 모델']],['추적',['추적기','위치 예측','KeepID']],['짐벌 · 화면',['제어','화면 표시']]];
 let otadv=false;try{otadv=localStorage.getItem('lwir_live_otadv')==='1';}catch(_){}
 
 
@@ -1431,7 +1431,7 @@ const DRETIRED_26M=new Set([
 function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const Q=q=>'/rules/set?'+q,trk=pend(r,'tracker'),rel=!!pend(r,'relabel'),prd=pend(r,'predictor')||'kalman',bot=trk==='botsort';
   const warm=r.warm_on!=null?!!r.warm_on:(r.warm_min>0||(r.warm_max||0)>0);
-  T.push({lab:'전처리',sub:'여러 개 켜기',multi:1,n:[
+  T.push({lab:'전처리',sub:'복수 선택',multi:1,n:[
     {name:'흔들림 보정',note:'optical flow · 화면+검출 · 시험 안 함',sel:!!r.stab,lock:r.stab==null?OLDSRV:'',u:Q('stab='+(r.stab?0:1))}]});
   const cat=(m&&m.catalog)||[];
   const dk=c=>String(c.det)+' '+String(c.name)+' '+(DN[c.det]||''),ADVON=document.body.classList.contains('adv'),HIDEF=['기본 (공개 데이터)','다른 구조 (비교용)'],curm=m?(m.busy?m.pending:m.current):null;
@@ -1440,7 +1440,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const ad=r.auto_det,adOn=!!(ad&&ad.on),ADASK='검출 모델 자동 선택이 켜져 있습니다.\n손으로 모델을 고르면 자동 선택이 꺼집니다. 고를까요?';   // 11-15 (user): 검출 모델 자동 선택 (src/detect/auto_det.py)
   // 11-15 (user: 상황에 맞는 최적 모델 알아서 선택): 근거리 / 먼 거리 모델을 사람 크기로 고름. 녹화 재생 중에는 바꾸지 않고 바꿨을 순간만 기록 (시험 운전) · 11-15 (user): 검출 모델 목록보다 위에 (모델이 많아 목록 아래에 묻혔음)
   {const AK={near:'근거리',far:'먼 거리',other:'다른 모델'},P=(ad&&ad.params)||{},s=ad&&ad.signal,dl=ad&&ad.dry_recent&&ad.dry_recent.length?ad.dry_recent[ad.dry_recent.length-1]:null;
-    const thr=ad?'사람 상자 '+P.far_px+' px 아래 '+P.hold_s+'초 → 먼 거리 (가려지거나 잘린 상자는 빼고) · '+P.near_px+' px 위, 또는 가려진 사람 '+P.hold_s+'초 → 근거리 · 사람을 잃으면 '+P.lost_s+'초 뒤 먼 거리 · 바꾼 뒤 '+P.dwell_s+'초 유지 · 1분에 '+P.max_per_min+'번까지':'';
+    const thr=ad?'사람 박스 '+P.far_px+' px 아래 '+P.hold_s+'초 → 먼 거리 (가려지거나 잘린 박스는 빼고) · '+P.near_px+' px 위, 또는 가려진 사람 '+P.hold_s+'초 → 근거리 · 사람을 잃으면 '+P.lost_s+'초 뒤 먼 거리 · 바꾼 뒤 '+P.dwell_s+'초 유지 · 1분에 '+P.max_per_min+'번까지':'';
     const miss=!ad?OLDSRV:!m?'모델 목록을 아직 받지 못했습니다':!cat.length||ad.can_switch===false?'이 실행에서는 모델을 바꿀 수 없습니다':!ad.far.present?'먼 거리 모델이 장치에 없습니다 (모델 폴더에 넣으면 열립니다)':!ad.near.present?'근거리 모델이 장치에 없습니다':'';
     const sig=s&&s.px!=null?(s.source==='followed'?'따라가는 사람 ':'화면 사람 가운뎃값 ')+Math.round(s.px/5)*5+' px'+(s.kpts!=null?' · 관절 '+s.kpts+'개':'')+(s.hidden?' · 가려짐':'')+(s.cut?' · 화면 끝에 잘림':''):s&&s.source==='followed_missing'?'따라가는 사람 안 보임':'';
     const now=!adOn?'':ad.mode==='dry_run'?'녹화 재생: 바꾸지 않고 기록만 · 바꿨을 순간 '+ad.dry_events+'번'+(dl?' · 마지막 '+(dl.frame!=null?(dl.frame+1)+'번째 장':dl.t+'초')+' '+(AK[dl.from]||dl.from)+'→'+(AK[dl.to]||dl.to):'')
@@ -1463,9 +1463,9 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
       {name:'전신 추정 · 머리~발 · '+poseBoxVersion+' · 2026-11-19',note:'다리가 가려지면 추정 · 사람 선택은 상체를 누르세요',sel:r.pose_box==='full',u:Q('pose_box=full')}
     ]});
   }
-  T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
-    {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
-    {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
+  T.push({lab:'검출 필터',sub:'검출 박스를 거름 · 값은 아래 필터 설정',multi:1,n:[
+    {name:'온도 필터',note:'차가운 박스 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
+    {name:'가장자리 필터',note:'가장자리 박스는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 필터 설정에서 바꿉니다 (0 = 끔)'}]});
   const ps=(r.presets||[]).map(p=>Array.isArray(p)?{key:p[0],name:p[1]}:p).filter(p=>p&&p.key&&p.key!=='gate');
   const bt=ps.find(p=>p.key==='bytetrack')||ps.find(p=>p.key==='confirm3');
   const camNative=r.camera_bytetrack;
@@ -1491,7 +1491,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   if(el&&el.available)e2e.push({key:'e2e_live_ftt',name:(el.label||'FastTrackTr')+' · 실시간',note:'장치 NPU 에서 매 프레임 실행'+(el.ms?' · '+el.ms+' ms':'')+(el.link_used?' · 번호 잇기: '+(el.link_used==='id'?'모델 번호 출력 + 겹침':'겹침만'):'')+(el.err?' · '+el.err:''),sel:el.on==='ftt'||el.want==='ftt',u:Q('e2e_live=ftt')});
   const E2E=e2e.length?{lab:'엔드투엔드',sub:replayStored?'사용 중 · 아래 검출 모델과 Tracker 줄은 쓰이지 않음':'검출부터 추적까지 한 모델 · 끔이면 아래 검출 + Tracker 사용',
     n:[{name:'끔',note:'아래 검출 모델 + Tracker',sel:!replayStored&&!(el&&(el.on==='ftt'||el.want==='ftt')),e2eOff:!!(recording&&replayStored),u:(el&&el.on==='ftt')?Q('e2e_live=off'):undefined}].concat(e2e)}:null;
-  const TRI=T.length;T.push({lab:'Tracker',sub:trackerSummary,n:tn});   // 11-15: the child rows below point at this row by its place (the auto-choice row above moved it)
+  const TRI=T.length;T.push({lab:'추적기',sub:trackerSummary,n:tn});   // 11-15: the child rows below point at this row by its place (the auto-choice row above moved it)
   const apps=r.apps||[{key:'off'},{key:'repvgg'},{key:'vit',available:false,note:'ViT 파일을 장치에 올려야 열립니다'}],app=r.apps?(r.app||'off'):'repvgg';   // old server: BoT-SORT always compared appearance
   // v41: a server that can change the appearance model while running sends reid_hot + reids (one model shared by KeepID and BoT-SORT 외형 비교)
   const hot=!!(r.reid_hot&&r.reids&&r.reids.length),rk=hot?(r.reid_pending||r.reid):'',fol=!!(r.gimbal&&r.gimbal.auto);
@@ -1507,7 +1507,7 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   else T.push({lab:'외형 비교',sub:'',kidOf:TRI,kidKey:'botsort',show:bot,f:['RepVGG','ViT-lite'],n:apps.map(a=>({g:AFOLD[a.key]||'',name:AN[a.key]||a.name||a.key,note:a.note||'',sel:bot&&a.key===app,lock:!bot?'BoT-SORT를 골라야 열립니다':!r.apps?OLDSRV:a.available===false?(a.note||'지금은 고를 수 없습니다'):'',u:Q('app='+encodeURIComponent(a.key))}))});
   const pl=r.predictors||[{key:'kalman',available:true}];
   const plv=pl.filter(p=>ADVON||p.key==='kalman'||p.key===prd||/_kpt$/.test(p.key));   // 11-13: GRU / Mamba (1 epoch, unverified) only with 'advanced' open. 11-14: keypoint versions always shown (user)
-  T.push({lab:'위치 기억 · 신뢰도',sub:'놓친 사람 위치'+(ADVON||plv.length>1?'':' · 학습 모델은 고급을 열면 보임'),f:plv.length>1?['Kalman filter','GRU','Mamba']:null,fe:{GRU:'장치에 GRU 가중치 파일이 없습니다',Mamba:'장치에 Mamba 가중치 파일이 없습니다'},n:plv.map(p=>({g:plv.length>1?(PFOLD[p.key]||''):'',name:PN[p.key]?PN[p.key][0]:p.name,note:PN[p.key]?PN[p.key][1]:(p.note||''),sel:p.key===prd,lock:p.available===false?(p.note||'가중치 파일이 없습니다'):(/_kpt$/.test(p.key)&&r.det_kpt===false)?'[관절] 검출 모델을 골라야 열립니다':'',u:Q('predictor='+encodeURIComponent(p.key))}))});   // 11-14 (user): keypoint versions only with a keypoint detector
+  T.push({lab:'위치 예측',sub:'놓친 사람 위치'+(ADVON||plv.length>1?'':' · 학습 모델은 고급을 열면 보임'),f:plv.length>1?['Kalman filter','GRU','Mamba']:null,fe:{GRU:'장치에 GRU 가중치 파일이 없습니다',Mamba:'장치에 Mamba 가중치 파일이 없습니다'},n:plv.map(p=>({g:plv.length>1?(PFOLD[p.key]||''):'',name:PN[p.key]?PN[p.key][0]:p.name,note:PN[p.key]?PN[p.key][1]:(p.note||''),sel:p.key===prd,lock:p.available===false?(p.note||'가중치 파일이 없습니다'):(/_kpt$/.test(p.key)&&r.det_kpt===false)?'[관절] 검출 모델을 골라야 열립니다':'',u:Q('predictor='+encodeURIComponent(p.key))}))});   // 11-14 (user): keypoint versions only with a keypoint detector
   const RST='장치에 파일은 있습니다. 쓰려면 추적 프로그램을 이 모델로 다시 켜야 합니다',VWAIT='PC에서 학습 중입니다. 끝나면 장치에 올립니다';
   if(hot&&!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람에게 예전 번호',n:[{name:'끔',sel:!rel,u:Q('relabel=0')},{name:'켬',note:rname,sel:rel,u:Q('relabel=1')}]});
   else if(!camCppControl&&!replayCpp)T.push({lab:'KeepID',sub:'돌아온 사람 번호',f:['RepVGG','ViT-lite'],n:[
@@ -1519,29 +1519,29 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
     {g:'ViT-lite',name:'ViT-lite_distillation_(실내)_20261111',note:'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST},
     {g:'ViT-lite',name:'ViT-lite_fine-tuning_(실내)_20261111',note:'우리 카메라 실내로 학습 · 장치 정확도 미측정',lock:RST}]});
   const kid=rel&&!camCppControl&&!replayCpp;
-  if(kid&&r.relink_pred!=null)T.push({lab:'KeepID 찾는 범위',sub:'돌아온 사람을 어디서 찾나',n:[{name:'마지막 자리 주변',note:'예전 방식 · 마지막으로 본 곳 둘레',sel:!r.relink_pred,u:Q('relink_pred=0')},{name:'예측 이동 + 커지는 범위',note:'기본 · 움직이던 방향으로 옮기며 시간이 지날수록 넓힘 · 녹화 재생에서 번호 바뀜 8→4',sel:!!r.relink_pred,u:Q('relink_pred=1')}]});   // 11-14 (user)
+  if(kid&&r.relink_pred!=null)T.push({lab:'재식별 범위',sub:'돌아온 사람을 어디서 찾나',n:[{name:'마지막 자리 주변',note:'예전 방식 · 마지막으로 본 곳 둘레',sel:!r.relink_pred,u:Q('relink_pred=0')},{name:'예측 이동 + 커지는 범위',note:'기본 · 움직이던 방향으로 옮기며 시간이 지날수록 넓힘 · 녹화 재생에서 번호 바뀜 8→4',sel:!!r.relink_pred,u:Q('relink_pred=1')}]});   // 11-14 (user)
   if(hot&&((bot&&app!=='off')||kid))T.push({lab:'외형 모델',sub:(bot&&app!=='off'&&kid?'BoT-SORT 외형 비교와 KeepID가 함께 씀':bot&&app!=='off'?'BoT-SORT 외형 비교가 씀':'KeepID가 씀'),f:['RepVGG','ViT-lite'],n:r.reids.map(a=>rn(a,true,'',true)).concat([NOVIT])});
   const g=r.gimbal,lead=!!r.lead;window.OTFOL=g?!!g.auto:autoNow;   // following is started by tapping a person in the picture, so it has no tile
-  T.push({lab:'제어',sub:'여러 개 켜기',multi:1,n:[
+  T.push({lab:'제어',sub:'복수 선택',multi:1,n:[
     {name:'예측 제어',note:'따라갈 때만 작동 · 재시작해도 유지',sel:lead,lock:r.lead==null?OLDSRV:(!lead&&!(g&&g.present))?'짐벌이 연결되어 있지 않습니다':'',u:Q('lead='+(lead?0:1))}]});
-  const br=r.box_refine;   // 11-15 (user "2번부터 하자", "변할 때 자연스럽게"): 그리는 상자와 짐벌 조준만 다듬기 (src/track/box_refine.py), 기본 꺼짐. 11-16 (user "필요한 것만 남기자"): 끔 / 크기만 / 상체 네모 셋만
-  if(br){const bm=br.mode||'off',BRN='추적기·채점·자동 선택은 원래 상자',BLT=0.3,bd=(br.modes||[]).find(x=>x.key==='body');
-    T.push({lab:'상자 다듬기',sub:'화면 상자와 짐벌 조준점만'+(bm!=='off'?' · '+br.mode_name+(bm==='body'&&br.body_family_name?' ('+br.body_family_name+')':'')+(br.ms!=null?' · '+Number(br.ms).toFixed(2)+' ms':''):'')+(br.why?' · '+br.why:''),n:[
-      {name:'끔',note:'추적기 상자 그대로',sel:bm==='off',u:Q('box_refine=off')},
-      {name:'크기만 부드럽게',note:'위치·짐벌 조준점은 추적기 그대로 · 상자 크기만 천천히 바뀜(근거리↔먼 거리 바뀔 때도) · '+BRN,sel:bm==='size',u:Q('box_refine=size')}].concat(bd?[
-      {name:'상체 네모로 통일 (변환표 + 크기 부드럽게)',note:'가까이든 멀리든 머리 위~골반 한 모양 · 먼 사람 전신 상자는 상체로 바꿈, 가까운 사람 상자는 그대로 · 짐벌 조준점은 바꾼 상자의 조준점 그대로, 크기만 부드럽게 · 자세 검출 모델은 변환표, 다른 모델은 사람 전체 상자의 위쪽 0.53 · 모델이 바뀌어도 이어짐 · 관절 필요 없음 · 장치에서 아직 재지 않음 · '+BRN,sel:bm==='body',lock:bd.available?'':(br.body_note||'변환표 파일이 없습니다'),u:Q('box_refine=body')}]:[])});   // body: 서버가 모드를 알 때만 줄을 보임 · 잠금 글은 서버가 아는 실제 까닭(없음 / 읽지 못함 / 방금 바뀜)
-    T.push({lab:'모델 바뀔 때 섞기',sub:'검출 모델이 바뀌면 상자를 천천히 넘김',multi:1,n:[
-      {name:'상자 섞기 '+(br.blend_s>0?br.blend_s:BLT)+'초',note:'근거리↔먼 거리 바뀔 때 상자가 튀지 않게 · 끔·크기만 부드럽게에서 씀(상체 네모는 스스로 이어 줌) · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});
-    if(br.lost_same!=null)T.push({lab:'놓친 상자',sub:'놓친 사람의 점선 상자'+(br.lost_same&&br.lost_why?' · '+br.lost_why:'')+(br.lost_same&&br.lost_errors?' · 오류 '+br.lost_errors+'번':''),multi:1,n:[   // 11-16 (judge A): lost box = seen box, display only, default off
-      {name:'보일 때 상자와 같게',note:'놓친 첫 장부터 점선 상자를 그림 · 모양·크기는 보일 때 상자와 같음(상자 다듬기 모드, 마지막 크기 유지) · 크기만 부드럽게에서는 짐벌 조준점이 지금 점선 상자와 같음 · 추적기·짐벌은 그대로 · 예측 상자 표시가 켜져 있을 때 · 장치에서 아직 재지 않음',sel:!!br.lost_same,u:Q('lost_same='+(br.lost_same?0:1))}]});}
-  T.push({lab:'화면 표시',sub:'여러 개 켜기',multi:1,n:[   // 11-13: it draws, it does not control
-    {name:'사람 후보 (공간 주파수)',note:'추적이 안 쓴 검출의 약한 상자를 공간 주파수로 다시 봄 · 사람다우면 진한 보라 miss? · 연속으로 보일 때만 · 표시만'+(r.prop&&r.prop.ms!=null?' · '+Math.round(r.prop.ms)+' ms':''),
+  const br=r.box_refine;   // 11-15 (user "2번부터 하자", "변할 때 자연스럽게"): 그리는 박스와 짐벌 조준만 다듬기 (src/track/box_refine.py), 기본 꺼짐. 11-16 (user "필요한 것만 남기자"): 끔 / 크기만 / 상체 네모 셋만
+  if(br){const bm=br.mode||'off',BRN='추적기·채점·자동 선택은 원래 박스',BLT=0.3,bd=(br.modes||[]).find(x=>x.key==='body');
+    T.push({lab:'박스 보정',sub:'화면 박스와 짐벌 조준점만'+(bm!=='off'?' · '+({off:'끔',size:'크기 보정',body:'상체 박스 보정'}[bm]||br.mode_name)+(bm==='body'&&br.body_family_name?' ('+br.body_family_name+')':'')+(br.ms!=null?' · '+Number(br.ms).toFixed(2)+' ms':''):'')+(br.why?' · '+br.why:''),n:[
+      {name:'끔',note:'추적기 박스 그대로',sel:bm==='off',u:Q('box_refine=off')},
+      {name:'크기 보정',note:'위치·짐벌 조준점은 추적기 그대로 · 박스 크기만 천천히 바뀜(근거리↔먼 거리 바뀔 때도) · '+BRN,sel:bm==='size',u:Q('box_refine=size')}].concat(bd?[
+      {name:'상체 박스 보정',note:'가까이든 멀리든 머리 위~골반 한 모양 · 먼 사람 전신 박스는 상체로 바꿈, 가까운 사람 박스는 그대로 · 짐벌 조준점은 바꾼 박스의 조준점 그대로, 크기 보정 · 자세 검출 모델은 변환표, 다른 모델은 사람 전체 박스의 위쪽 0.53 · 모델이 바뀌어도 이어짐 · 관절 필요 없음 · 장치에서 아직 재지 않음 · '+BRN,sel:bm==='body',lock:bd.available?'':(br.body_note||'변환표 파일이 없습니다'),u:Q('box_refine=body')}]:[])});   // body: 서버가 모드를 알 때만 줄을 보임 · 잠금 글은 서버가 아는 실제 까닭(없음 / 읽지 못함 / 방금 바뀜)
+    T.push({lab:'모델 전환 보간',sub:'검출 모델이 바뀌면 박스를 천천히 넘김',multi:1,n:[
+      {name:'보간 시간 '+(br.blend_s>0?br.blend_s:BLT)+'초',note:'근거리↔먼 거리 바뀔 때 박스가 튀지 않게 · 끔·크기 보정에서 씀(상체 네모는 스스로 이어 줌) · 장치에서 아직 재지 않음 · '+BRN,sel:br.blend_s>0,u:Q('box_blend='+(br.blend_s>0?0:BLT))}]});
+    if(br.lost_same!=null)T.push({lab:'미검출 박스',sub:'놓친 사람의 점선 박스'+(br.lost_same&&br.lost_why?' · '+br.lost_why:'')+(br.lost_same&&br.lost_errors?' · 오류 '+br.lost_errors+'번':''),multi:1,n:[   // 11-16 (judge A): lost box = seen box, display only, default off
+      {name:'마지막 관측 크기 유지',note:'놓친 첫 장부터 점선 박스를 그림 · 모양·크기는 보일 때 박스와 같음(박스 보정 모드, 마지막 크기 유지) · 크기 보정에서는 짐벌 조준점이 지금 점선 박스와 같음 · 추적기·짐벌은 그대로 · 예측 박스 표시가 켜져 있을 때 · 장치에서 아직 재지 않음',sel:!!br.lost_same,u:Q('lost_same='+(br.lost_same?0:1))}]});}
+  T.push({lab:'화면 표시',sub:'복수 선택',multi:1,n:[   // 11-13: it draws, it does not control
+    {name:'사람 후보 (공간 주파수)',note:'추적이 안 쓴 검출의 약한 박스를 공간 주파수로 다시 봄 · 사람다우면 진한 보라 miss? · 연속으로 보일 때만 · 표시만'+(r.prop&&r.prop.ms!=null?' · '+Math.round(r.prop.ms)+' ms':''),
      sel:!!r.prop_show,lock:r.prop_show==null?OLDSRV:'',u:Q('prop_show='+(r.prop_show?0:1))},   // 11-14: research feature (src/detect/spec_proposals.py)
-    {name:'피부 온도 (카메라 온도)',note:'카메라가 잰 온도로 사람 상자 옆에 °C · 초록 = 30-38 °C 덩어리(얼굴·손) 있음, 회색 = 상자의 가장 뜨거운 곳 · 표시만'+(r.temp&&r.temp.show?(r.temp.fresh?' · 온도 지도 '+r.temp.age.toFixed(1)+' s 전':' · 온도 지도 없음 (서버를 --cam-temp 로 켜야 함)'):''),
+    {name:'피부 온도 (카메라 온도)',note:'카메라가 잰 온도로 사람 박스 옆에 °C · 초록 = 30-38 °C 덩어리(얼굴·손) 있음, 회색 = 박스의 가장 뜨거운 곳 · 표시만'+(r.temp&&r.temp.show?(r.temp.fresh?' · 온도 지도 '+r.temp.age.toFixed(1)+' s 전':' · 온도 지도 없음 (서버를 --cam-temp 로 켜야 함)'):''),
      sel:!!r.temp_show,lock:r.temp_show==null?OLDSRV:(!r.temp_show&&r.temp&&r.temp.enabled===false)?'이 서버는 카메라 온도 지도를 받지 않습니다. 11-15 장치 시험: 이 카메라는 온도 계산(CalcTemp)이 모든 화소 0 이라 켜도 온도가 나오지 않습니다':'',u:Q('temp_show='+(r.temp_show?0:1))},   // 11-14: research feature (src/detect/skin_temp.py), not kept over a restart. 11-15 (user: options must work live): locked when the server has no temperature map
-    {name:'사진 먼저 (지연 줄임)',note:'카메라 사진을 검출 전에 바로 보내고 상자는 이 화면에서 그림 · 상자는 사진보다 두 장쯤 늦음 · 녹화 재생·흔들림 보정·사람 후보·피부 온도 표시 중에는 예전처럼'+(r.picture_first_state&&r.picture_first&&!r.picture_first_state.active?' · 지금은 예전처럼':''),
+    {name:'영상 우선 전송',note:'카메라 사진을 검출 전에 바로 보내고 박스는 이 화면에서 그림 · 박스는 사진보다 두 장쯤 늦음 · 녹화 재생·흔들림 보정·사람 후보·피부 온도 표시 중에는 예전처럼'+(r.picture_first_state&&r.picture_first&&!r.picture_first_state.active?' · 지금은 예전처럼':''),
      sel:!!r.picture_first,lock:r.picture_first==null?OLDSRV:'',u:Q('picture_first='+(r.picture_first?0:1))},   // 11-15 (src/web/picture_first.py, page/js/picture_first.js)
-    {name:'예측 상자 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.predictors?'':OLDSRV,u:Q('pred_show='+(r.pred_show?0:1))}]});
+    {name:'예측 박스 표시',note:'놓쳤을 때 점선',sel:!!r.pred_show,lock:r.predictors?'':OLDSRV,u:Q('pred_show='+(r.pred_show?0:1))}]});
   if(bt){
     const switching=!!rpLast?.state?.busy;
     const camCppNote=camNative?.restart_required?'새 C++ 빌드 적용: 서버 재시작 필요':camNative?.error?'실행 실패 · 기존 추적기로 복귀':camTransition?'다음 카메라 프레임 대기':camNative?.control_supported===true?'화면과 짐벌에서 같은 ID 사용':'카메라 화면에서 박스·ID 표시';
@@ -1567,19 +1567,19 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   });
   const e2eLive=!!(el&&(el.on==='ftt'||el.want==='ftt'));
   if(e2eLive||replayStored){   // 11-14 (user): the end-to-end model (live, or its stored result on a recording) replaces these, so they are locked while it runs; 11-15 (user): not 전처리 - stabilization moves the frame the end-to-end model sees
-    const OFF=['검출 모델','검출 모델 자동 선택','검출 뒤 Filter','Tracker','ByteTrack 옵션','위치 기억 · 신뢰도','KeepID','KeepID 찾는 범위','외형 비교','외형 모델','상자 다듬기','모델 바뀔 때 섞기','놓친 상자'],why=(e2eLive?'엔드투엔드(FastTrackTr) 사용 중':'엔드투엔드 결과 재생 중')+' · 엔드투엔드를 끄면 다시 고를 수 있습니다';
+    const OFF=['검출 모델','검출 모델 자동 선택','검출 필터','추적기','ByteTrack 옵션','위치 예측','KeepID','재식별 범위','외형 비교','외형 모델','박스 보정','모델 전환 보간','미검출 박스'],why=(e2eLive?'엔드투엔드(FastTrackTr) 사용 중':'엔드투엔드 결과 재생 중')+' · 엔드투엔드를 끄면 다시 고를 수 있습니다';
     const off=new Set();T.forEach((t,i)=>{if(OFF.includes(t.lab)||/ 엔진$/.test(t.lab))off.add(i);});
     T.forEach((t,i)=>{if(off.has(i)||(t.kidOf!=null&&off.has(t.kidOf))){t.sub=(e2eLive?'엔드투엔드 사용 중':'엔드투엔드 결과 재생 중')+' · 쓰이지 않음';(t.n||[]).forEach(n=>{n.lock=why;n.sel=false;});}
-      if(t.lab==='화면 표시')(t.n||[]).forEach(n=>{if(n.name==='사람 후보 (공간 주파수)'||n.name==='예측 상자 표시'){n.lock=why;n.sel=false;}});});}
+      if(t.lab==='화면 표시')(t.n||[]).forEach(n=>{if(n.name==='사람 후보 (공간 주파수)'||n.name==='예측 박스 표시'){n.lock=why;n.sel=false;}});});}
   // 11-16 (user: 무의미한 옵션은 지움): hidden from the page, the server keeps them off. 흔들림 보정 does almost nothing while following and turns picture first off;
   // 사람 후보 (공간 주파수) gave no sure gain; 피부 온도: this camera (TE-EV1) gives no temperatures. The code stays (set /rules/set?stab=1 etc. by hand to try again).
   {const HIDE=['흔들림 보정','사람 후보 (공간 주파수)','피부 온도 (카메라 온도)'];T.forEach(t=>{if(t.n)t.n=t.n.filter(n=>!HIDE.includes(n.name));});
-    // 11-16 (user): old choices hidden unless one of them is the choice in use (then it stays so it can be changed): 온도 Filter (this camera's values are not temperatures),
-    // KeepID 찾는 범위 '마지막 자리 주변' (old way), the appearance models before RepVGG_fine-tuning_(OTP2)_20261113. Kept on purpose: SORT, the Python engines, NPU 0·1 번갈아 쓰기.
-    const OLD={'검출 뒤 Filter':['온도 Filter'],'KeepID 찾는 범위':['마지막 자리 주변'],'외형 모델':['RepVGG_distillation_(실내)_20261110','RepVGG_fine-tuning_(실내)_20261110','ViT-lite_distillation_(TMOT,CAMEL)_202610','ViT-lite_distillation_(실내)_20261111','ViT-lite_fine-tuning_(실내)_20261111']};
+    // 11-16 (user): old choices hidden unless one of them is the choice in use (then it stays so it can be changed): 온도 필터 (this camera's values are not temperatures),
+    // 재식별 범위 '마지막 자리 주변' (old way), the appearance models before RepVGG_fine-tuning_(OTP2)_20261113. Kept on purpose: SORT, the Python engines, NPU 0·1 번갈아 쓰기.
+    const OLD={'검출 필터':['온도 필터'],'재식별 범위':['마지막 자리 주변'],'외형 모델':['RepVGG_distillation_(실내)_20261110','RepVGG_fine-tuning_(실내)_20261110','ViT-lite_distillation_(TMOT,CAMEL)_202610','ViT-lite_distillation_(실내)_20261111','ViT-lite_fine-tuning_(실내)_20261111']};
     T.forEach(t=>{const o=OLD[t.lab];if(o&&t.n){t.n=t.n.filter(n=>n.sel||!o.includes(n.name));if(t.f)t.f=t.f.filter(f=>t.n.some(n=>n.g===f));}});
     const drop=f=>{const i=T.findIndex(f);if(i>=0){T.splice(i,1);T.forEach(t=>{if(t.kidOf!=null&&t.kidOf>i)t.kidOf--;});}};
-    drop(t=>t.lab==='전처리'&&!t.n.length);drop(t=>t.lab==='KeepID 찾는 범위'&&t.n.length<2);}
+    drop(t=>t.lab==='전처리'&&!t.n.length);drop(t=>t.lab==='재식별 범위'&&t.n.length<2);}
   if(E2E){T.forEach(t=>{if(t.kidOf!=null)t.kidOf++;});T.unshift(E2E);}   // 11-14: first row; child rows keep pointing at their parent
   return T;}
 function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
@@ -1610,17 +1610,17 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
     h+='<div class="ot-adv'+(otadv?' open':'')+'"><button type="button" class="ot-advh" data-adv="1" aria-expanded="'+(otadv?'true':'false')+'"><b>고급 설정 '+adv.length+'개 '+(otadv?'▾':'▸')+'</b><small>'+(on.length?'켜진 것 · '+wn(on.join(' · ')):'켜진 것 없음')+'</small></button>'+(otadv?adv.map(row).join(''):'')+'</div>';}
   if(h!==othtml){othtml=h;OT.innerHTML=h;}   // redrawn only when something changed (keeps focus and the pressed look between the 1 s refreshes)
   const R=l=>OTT.find(t=>t.lab===l)||{n:[]};   // 11-13: rows by name (the '외형 모델' row moved the numbers)
-  const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(R('전처리')),flt=on(R('검출 뒤 Filter')),ctl=(window.OTFOL?['따라가기']:[]).concat(on(R('제어')));
+  const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(R('전처리')),flt=on(R('검출 필터')),ctl=(window.OTFOL?['따라가기']:[]).concat(on(R('제어')));
   const am=one(R('외형 모델')),ap=one(R('외형 비교')),kp=one(R('KeepID'));
   // 11-13 (design review 3): one line per stage, label + value (it was one long arrow chain)
   const e2eOn=one(R('엔드투엔드')),e2eUse=!!(e2eOn&&e2eOn!=='끔');   // 11-14: an end-to-end model replaces detection + tracker
   const a=(e2eUse?[['엔드투엔드',e2eOn]]:[]).concat((pre.length?[['전처리',pre.join(' + ')]]:[]).concat([['검출',e2eUse?'– (엔드투엔드 사용 중)':(one(R('검출 모델'))||'–')+(one(R('검출 모델 자동 선택'))==='켬'?' · 자동 선택':'')],
-    ['Filter',flt.length?flt.join(' + '):'없음'],['Tracker',e2eUse?'– (엔드투엔드 사용 중)':one(R('Tracker'))||tname(trk)]]));
+    ['필터',flt.length?flt.join(' + '):'없음'],['추적기',e2eUse?'– (엔드투엔드 사용 중)':one(R('추적기'))||tname(trk)]]));
   if(trk==='botsort')a.push(['외형 비교',ap==='끔'?'끔':(am||ap||'–')]);
-  a.push(['위치 기억',one(R('위치 기억 · 신뢰도'))||'Kalman filter'],['KeepID',kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'],['제어',ctl.length?ctl.join(' + '):'수동']);
+  a.push(['위치 예측',one(R('위치 예측'))||'Kalman filter'],['KeepID',kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'],['제어',ctl.length?ctl.join(' + '):'수동']);
   const sh=a.map(([k,v])=>'<b>'+esc(k)+'</b><span>'+wn(v)+'</span>').join('');if(OS.innerHTML!==sh)OS.innerHTML=sh;
   // 11-16 (design review 1): the combination in use as one line under the section title (shown while the section is folded; the detector's long name comes last so the cut falls there)
-  const det=one(R('검출 모델')),now=e2eUse?e2eOn:(one(R('Tracker'))||tname(trk))+' · KeepID '+(kp&&kp!=='끔'?'켬':'끔')+' · '+(det||'–')+(mlast&&mlast.busy?' (바꾸는 중…)':'');
+  const det=one(R('검출 모델')),now=e2eUse?e2eOn:(one(R('추적기'))||tname(trk))+' · KeepID '+(kp&&kp!=='끔'?'켬':'끔')+' · '+(det||'–')+(mlast&&mlast.busy?' (바꾸는 중…)':'');
   if(ON&&ON.textContent!==now)ON.textContent=now;}
 const ON=$('ot-now');OH.addEventListener('click',()=>{OH.textContent='';});   // 11-16: the answer strip floats over the tree; a tap puts it away
 OT.addEventListener('click',e=>{if(e.target.closest('[data-adv]')){otadv=!otadv;try{localStorage.setItem('lwir_live_otadv',otadv?'1':'0');}catch(_){}OH.textContent='';otdraw();return;}   // '고급 설정' fold: open / close, nothing is sent
@@ -1646,7 +1646,7 @@ OT.addEventListener('click',e=>{if(e.target.closest('[data-adv]')){otadv=!otadv;
       // 11-13 (user): a model change during a replay plays the recording again from the first frame (server), so the numbers start over
       if(n.model&&!(r&&r.ok===false)&&rpLast&&rpLast.state&&rpLast.state.on){rpEvalSetMode('live');RPMSG.textContent='모델을 바꿔서 녹화를 처음부터 다시 재생하고 지표도 처음부터 다시 셉니다';OH.textContent=RPMSG.textContent;}})
     .catch(()=>{OH.textContent='서버 연결 끊김';}).finally(()=>{otbusy=false;});});
-// detector model (GET /model every second; the chip in the top bar and the first line of "지금 적용된 값")
+// detector model (GET /model every second; the chip in the top bar and the first line of "현재 설정")
 function mdl(m){mlast=m;const cat=m.catalog||[];
   if(!cat.length){MIN.textContent='검출 모델 · 이 실행에서는 모델을 바꿀 수 없습니다.';chip('mcdot','mctext','','모델 고정');otdraw();return;}
   const cur=cat.find(c=>c.id===m.current);
@@ -1661,12 +1661,12 @@ setInterval(mtick,1000);mtick();
 function rshow(r){rlast=r;
   if(othint&&JSON.stringify(r.reid_last||null)!==othint[1]){if(OH.textContent===othint[0])OH.textContent='';othint=null;}   // v41: the change finished (done or failed) -> the status line below says which
   const pl=r.predictors||null;
-  PST.textContent=pl?pl.filter(p=>p.key!=='kalman').map(p=>(PN[p.key]?PN[p.key][0]:p.name)+': '+(p.available?'고를 수 있음':'고를 수 없음')+(p.note?' — '+p.note:'')).join(' / '):'이 서버 버전에는 위치 기억 선택이 없습니다. 서버를 다시 켜면 열립니다.';
+  PST.textContent=pl?pl.filter(p=>p.key!=='kalman').map(p=>(PN[p.key]?PN[p.key][0]:p.name)+': '+(p.available?'고를 수 있음':'고를 수 없음')+(p.note?' — '+p.note:'')).join(' / '):'이 서버 버전에는 위치 예측 선택이 없습니다. 서버를 다시 켜면 열립니다.';
   RWX.disabled=r.warm_max==null;   // v30: old server has no upper limit
   if(!rdirty){RW.value=r.warm_min;RWX.value=r.warm_max||0;RE.value=r.edge_birth;}
   const wx=r.warm_max||0,wp=r.warm_prev;
   let f='Filter · warmth '+(r.warm_min>0||wx>0?(r.warm_min>0?r.warm_min:'0')+' ~ '+(wx>0?wx:'제한 없음')+' 만 사람으로 인정':'검사 끔'+(wp&&(wp[0]>0||wp[1]>0)?' (켜면 '+wp[0]+' ~ '+(wp[1]>0?wp[1]:'제한 없음')+')':''))+' · 가장자리 새 궤적은 '+(r.edge_birth>0?'점수 '+r.edge_birth+' 이상':'제한 없음');
-  if(r.warm_dropped!=null)f+=' · warmth 범위 밖이라 버린 상자 '+r.warm_dropped+'개';
+  if(r.warm_dropped!=null)f+=' · warmth 범위 밖이라 버린 박스 '+r.warm_dropped+'개';
   if(r.pending)f+=' · 다음 프레임에 적용';
   FI.textContent=f;
   const trk=pend(r,'tracker');
@@ -1678,7 +1678,7 @@ function rshow(r){rlast=r;
     t+=' · 외형 모델 '+(rc?rc.name:(r.reid||'–'));
     if(rp)t+=' → '+rp.name+' 로 바꾸는 중 (화면이 잠깐 멈춤)';
     else if(L)t+=' ('+L.at+' '+(L.ok?'바뀜':'바꾸지 못함 — '+L.text)+(L.seconds!=null?' · '+L.seconds+'초':'')+')';}
-  if(pl){const pk=pend(r,'predictor');t+=' · 위치 기억 '+(PN[pk]?PN[pk][0]:pk);if(r.predictor!=='kalman')t+=' (놓친 사람 보정 '+r.pred_used+'회, 오류 '+r.pred_err+')';if(r.pred_show)t+=' · 예측 상자 표시';}
+  if(pl){const pk=pend(r,'predictor');t+=' · 위치 예측 '+(PN[pk]?PN[pk][0]:pk);if(r.predictor!=='kalman')t+=' (놓친 사람 보정 '+r.pred_used+'회, 오류 '+r.pred_err+')';if(r.pred_show)t+=' · 예측 박스 표시';}
   if(r.stab)t+=' · 흔들림 보정 켜짐'+(r.stab_ms!=null?' (계산 '+(+r.stab_ms).toFixed(1)+' ms'+(r.stab_resets?', 다시 시작 '+r.stab_resets+'회':'')+')':'');
   if(r.stab_err)t+=' · 흔들림 보정 오류: '+r.stab_err;
   if(r.lead)t+=' · 예측 제어 켜짐'+(r.lead_ms!=null?' ('+r.lead_ms+' ms 앞을 겨눔'+(r.lead_px?', 지금 '+r.lead_px+' px':'')+')':'');
@@ -1702,9 +1702,9 @@ let glast=null;
 function gshow(g){const v=x=>x==null||x===''?'프로그램 기본값':'<b class="num">'+esc(isFinite(+x)?+x:x)+'</b>';let h;
   if(g===undefined||(g&&g.error))h='서버에서 값을 받지 못함';
   else if(g===null)h='짐벌 없이 실행 중입니다 (짐벌 프로그램을 띄우지 않음)';
-  else{const a=+g.aim_y,an={0.08:'머리',0.3:'가슴',0.5:'상자 가운데'}[a],ms=+g.reacquire_ms;
+  else{const a=+g.aim_y,an={0.08:'머리',0.3:'가슴',0.5:'박스 가운데'}[a],ms=+g.reacquire_ms;
     h='짐벌 프로그램 <b>'+esc(g.program||'–')+'</b> · 제어 방식 '+(g.controller?'<b>'+esc(String(g.controller).toUpperCase())+'</b>':'프로그램 기본값')+' · Kp '+v(g.kp)+' · Ki '+v(g.ki)+' · Kd '+v(g.kd)+' · 불감대 '+v(g.deadband)+' · 자동 속도 최대 '+v(g.speed_max)+' · 손으로 움직일 때 속도 '+v(g.manual_speed)
-      +' · 놓친 사람을 기다리는 시간 '+(g.reacquire_ms!=null&&isFinite(ms)?'<b class="num">'+ms/1000+'</b>초':v(g.reacquire_ms))+' · 겨누는 높이 '+v(g.aim_y)+(g.aim_y!=null?' (사람 상자 위에서부터의 비율'+(an?' · '+an:'')+')':'')+' · 그 밖의 옵션 '+(g.extra?'<b class="num">'+esc(g.extra)+'</b>':'없음');}
+      +' · 놓친 사람을 기다리는 시간 '+(g.reacquire_ms!=null&&isFinite(ms)?'<b class="num">'+ms/1000+'</b>초':v(g.reacquire_ms))+' · 겨누는 높이 '+v(g.aim_y)+(g.aim_y!=null?' (사람 박스 위에서부터의 비율'+(an?' · '+an:'')+')':'')+' · 그 밖의 옵션 '+(g.extra?'<b class="num">'+esc(g.extra)+'</b>':'없음');}
   if(h!==glast){glast=h;$('gcfg').innerHTML=h;}}
 let rulesRequest=0, rulesShown=0;
 function rtick(signal){
@@ -2277,8 +2277,8 @@ function evShow(e,emptyText){if(!e){EVSW.innerHTML='';EVMSG.textContent=emptyTex
   let m=head+' · 정답 '+(e.label_file||'')+'\n'+(e.review||'')+'\n'+(evPhase(e)||'재생 상태 미상')+' · 이 회차 점수에 반영된 장 '+c.scored+evCoverage(e)+(e.scorable_frames!=null?' · 검수된 비교 가능 장 '+e.scorable_frames:'')+' · 건너뛴 카메라 장 '+(c.cam_skipped||0)+' · 서버 누락 '+(c.server_skipped||0)+(c.untagged?' · PNG 번호 모름 '+c.untagged:'')+'\nHOTA / mAP · '+evMetricStatus(e)+'\n'+e.since+' 부터'+(e.file?'\n결과 파일: '+e.file:'');
   EVMSG.style.whiteSpace='pre-line';EVMSG.textContent=m;
   const n=e.new||{},o=e.old||{};
-  const rows=[['metric','HOTA','hota',1],['metric','사람 mAP50:95 (검출 후보)','map',1],['metric','사람 AP50 (검출 후보)','ap50',1],['fp','잘못 그린 상자','false',0],['','정답 사람','gt',0],['','찾음','found',0],['','놓침','missed',0],['sub','작은 사람 (<32px)','missed_small',0],['sub','그 밖','missed_other',0],
-    ['','찾은 비율','recall',1],['','맞은 비율','precision',1],['','번호 바뀜','idsw',0],['','IDF1','idf1',1],['','MOTA','mota',1],['','무시 구역 상자','ignored_out',0]];
+  const rows=[['metric','HOTA','hota',1],['metric','사람 mAP50:95 (검출 후보)','map',1],['metric','사람 AP50 (검출 후보)','ap50',1],['fp','잘못 그린 박스','false',0],['','정답 사람','gt',0],['','찾음','found',0],['','놓침','missed',0],['sub','작은 사람 (<32px)','missed_small',0],['sub','그 밖','missed_other',0],
+    ['','찾은 비율','recall',1],['','맞은 비율','precision',1],['','번호 바뀜','idsw',0],['','IDF1','idf1',1],['','MOTA','mota',1],['','무시 구역 박스','ignored_out',0]];
   EVT.innerHTML='<tr><th></th><th>새 채점</th><th>옛 채점</th></tr>'+rows.map(([k,l,f,p])=>'<tr'+(k==='fp'?' class="fp"':'')+'><td'+(k==='sub'?' class="sub"':'')+'>'+l+'</td><td>'+(k==='metric'?(f==='hota'?metricText(e,n[f]):apText(e,n[f])):evN(n[f],p))+'</td><td>'+(k==='metric'||f==='ignored_out'?'–':evN(o[f],p))+'</td></tr>').join('');}
 function rpEvalSetMode(mode){rpEvalMode=mode;rpEvalToken++;rpEvalPending=false;rpEvalPrefix=null;rpEvalPrefixPos=null;rpEvalError='';clearTimeout(rpEvalRetryTimer);rpEvalRetryTimer=0;}
 function rpEvalRefreshButtons(){EVLIVE.setAttribute('aria-pressed',String(rpEvalMode==='live'));EVSLIDER.setAttribute('aria-pressed',String(rpEvalMode==='slider'));EVFINAL.setAttribute('aria-pressed',String(rpEvalMode==='final'));EVLIVE.classList.toggle('start',rpEvalMode==='live');EVSLIDER.classList.toggle('start',rpEvalMode==='slider');EVFINAL.classList.toggle('start',rpEvalMode==='final');}
@@ -2347,7 +2347,7 @@ function barShow(r,viewEval){
     else{const n=e.new||{},o=e.old||{},c=e.counts||{};
       const big=(k,v,sub,cls)=>'<span class="rpbig'+(cls?' '+cls:'')+'"><small>'+esc(k)+'</small><b>'+esc(v)+'</b>'+(sub?'<i>'+esc(sub)+'</i>':'')+'</span>';   // 11-13 (design review)
       const x=(k,v,cls)=>nchip(k,v,cls).replace('class="rpc','class="rpx rpc');
-      RMAIN.innerHTML=big('찾은 비율',evN(n.recall,1),evN(n.found)+' / '+evN(n.gt)+'명')+big('잘못 찾음',evN(n.false),'상자 수','fp'+(n.false?'':' zero'))+big('번호 바뀜',evN(n.idsw),'번')+'<button type="button" class="rpmorebtn">'+(rpMore?'접기':'자세히')+'</button>'
+      RMAIN.innerHTML=big('찾은 비율',evN(n.recall,1),evN(n.found)+' / '+evN(n.gt)+'명')+big('잘못 찾음',evN(n.false),'박스 수','fp'+(n.false?'':' zero'))+big('번호 바뀜',evN(n.idsw),'번')+'<button type="button" class="rpmorebtn">'+(rpMore?'접기':'자세히')+'</button>'
         +x('놓침',evN(n.missed)+' (작은 사람 '+evN(n.missed_small)+')')+x('맞은 비율 (precision)',evN(n.precision,1))+x('HOTA',metricText(e,n.hota))+x('IDF1',evN(n.idf1,1))+x('MOTA',evN(n.mota,1))+x('사람 mAP50:95 (검출 후보)',apText(e,n.map))+x('사람 AP50 (검출 후보)',apText(e,n.ap50));
       RMAIN.classList.toggle('more',rpMore);
       const same=['false','found','gt','missed','idsw'].every(k=>o[k]===n[k]);
@@ -2469,7 +2469,7 @@ function followNote(t,holdText){
   fnPrev={auto:active,id:t.id,held:!!holdText,h:t.handoffs||0};
   if(holdText){
     const elapsed=lostSince===null?'':' · '+Math.floor((Date.now()-lostSince)/1000)+'초 경과';
-    const baked=rlast?.picture_first===false?' · 영상 속 상자는 검출 표시':'';
+    const baked=rlast?.picture_first===false?' · 영상 속 박스는 검출 표시':'';
     fnShow(holdText+elapsed+baked,'lost',0);return;
   }
   if(p.auto&&active&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}

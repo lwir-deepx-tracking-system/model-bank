@@ -1,4 +1,4 @@
-// detector model (GET /model every second; the chip in the top bar and the first line of "지금 적용된 값")
+// detector model (GET /model every second; the chip in the top bar and the first line of "현재 설정")
 function mdl(m){mlast=m;const cat=m.catalog||[];
   if(!cat.length){MIN.textContent='검출 모델 · 이 실행에서는 모델을 바꿀 수 없습니다.';chip('mcdot','mctext','','모델 고정');otdraw();return;}
   const cur=cat.find(c=>c.id===m.current);

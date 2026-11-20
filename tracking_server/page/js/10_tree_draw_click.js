@@ -26,17 +26,17 @@ function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
     h+='<div class="ot-adv'+(otadv?' open':'')+'"><button type="button" class="ot-advh" data-adv="1" aria-expanded="'+(otadv?'true':'false')+'"><b>고급 설정 '+adv.length+'개 '+(otadv?'▾':'▸')+'</b><small>'+(on.length?'켜진 것 · '+wn(on.join(' · ')):'켜진 것 없음')+'</small></button>'+(otadv?adv.map(row).join(''):'')+'</div>';}
   if(h!==othtml){othtml=h;OT.innerHTML=h;}   // redrawn only when something changed (keeps focus and the pressed look between the 1 s refreshes)
   const R=l=>OTT.find(t=>t.lab===l)||{n:[]};   // 11-13: rows by name (the '외형 모델' row moved the numbers)
-  const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(R('전처리')),flt=on(R('검출 뒤 Filter')),ctl=(window.OTFOL?['따라가기']:[]).concat(on(R('제어')));
+  const on=t=>t.n.filter(n=>n.sel).map(n=>n.name),one=t=>(t.n.find(n=>n.sel)||{}).name,trk=pend(rlast,'tracker'),pre=on(R('전처리')),flt=on(R('검출 필터')),ctl=(window.OTFOL?['따라가기']:[]).concat(on(R('제어')));
   const am=one(R('외형 모델')),ap=one(R('외형 비교')),kp=one(R('KeepID'));
   // 11-13 (design review 3): one line per stage, label + value (it was one long arrow chain)
   const e2eOn=one(R('엔드투엔드')),e2eUse=!!(e2eOn&&e2eOn!=='끔');   // 11-14: an end-to-end model replaces detection + tracker
   const a=(e2eUse?[['엔드투엔드',e2eOn]]:[]).concat((pre.length?[['전처리',pre.join(' + ')]]:[]).concat([['검출',e2eUse?'– (엔드투엔드 사용 중)':(one(R('검출 모델'))||'–')+(one(R('검출 모델 자동 선택'))==='켬'?' · 자동 선택':'')],
-    ['Filter',flt.length?flt.join(' + '):'없음'],['Tracker',e2eUse?'– (엔드투엔드 사용 중)':one(R('Tracker'))||tname(trk)]]));
+    ['필터',flt.length?flt.join(' + '):'없음'],['추적기',e2eUse?'– (엔드투엔드 사용 중)':one(R('추적기'))||tname(trk)]]));
   if(trk==='botsort')a.push(['외형 비교',ap==='끔'?'끔':(am||ap||'–')]);
-  a.push(['위치 기억',one(R('위치 기억 · 신뢰도'))||'Kalman filter'],['KeepID',kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'],['제어',ctl.length?ctl.join(' + '):'수동']);
+  a.push(['위치 예측',one(R('위치 예측'))||'Kalman filter'],['KeepID',kp&&kp!=='끔'?(kp==='켬'?(am||'켬'):kp):'끔'],['제어',ctl.length?ctl.join(' + '):'수동']);
   const sh=a.map(([k,v])=>'<b>'+esc(k)+'</b><span>'+wn(v)+'</span>').join('');if(OS.innerHTML!==sh)OS.innerHTML=sh;
   // 11-16 (design review 1): the combination in use as one line under the section title (shown while the section is folded; the detector's long name comes last so the cut falls there)
-  const det=one(R('검출 모델')),now=e2eUse?e2eOn:(one(R('Tracker'))||tname(trk))+' · KeepID '+(kp&&kp!=='끔'?'켬':'끔')+' · '+(det||'–')+(mlast&&mlast.busy?' (바꾸는 중…)':'');
+  const det=one(R('검출 모델')),now=e2eUse?e2eOn:(one(R('추적기'))||tname(trk))+' · KeepID '+(kp&&kp!=='끔'?'켬':'끔')+' · '+(det||'–')+(mlast&&mlast.busy?' (바꾸는 중…)':'');
   if(ON&&ON.textContent!==now)ON.textContent=now;}
 const ON=$('ot-now');OH.addEventListener('click',()=>{OH.textContent='';});   // 11-16: the answer strip floats over the tree; a tap puts it away
 OT.addEventListener('click',e=>{if(e.target.closest('[data-adv]')){otadv=!otadv;try{localStorage.setItem('lwir_live_otadv',otadv?'1':'0');}catch(_){}OH.textContent='';otdraw();return;}   // '고급 설정' fold: open / close, nothing is sent

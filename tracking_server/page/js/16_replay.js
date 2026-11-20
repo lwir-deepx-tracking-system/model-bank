@@ -83,8 +83,8 @@ function evShow(e,emptyText){if(!e){EVSW.innerHTML='';EVMSG.textContent=emptyTex
   let m=head+' · 정답 '+(e.label_file||'')+'\n'+(e.review||'')+'\n'+(evPhase(e)||'재생 상태 미상')+' · 이 회차 점수에 반영된 장 '+c.scored+evCoverage(e)+(e.scorable_frames!=null?' · 검수된 비교 가능 장 '+e.scorable_frames:'')+' · 건너뛴 카메라 장 '+(c.cam_skipped||0)+' · 서버 누락 '+(c.server_skipped||0)+(c.untagged?' · PNG 번호 모름 '+c.untagged:'')+'\nHOTA / mAP · '+evMetricStatus(e)+'\n'+e.since+' 부터'+(e.file?'\n결과 파일: '+e.file:'');
   EVMSG.style.whiteSpace='pre-line';EVMSG.textContent=m;
   const n=e.new||{},o=e.old||{};
-  const rows=[['metric','HOTA','hota',1],['metric','사람 mAP50:95 (검출 후보)','map',1],['metric','사람 AP50 (검출 후보)','ap50',1],['fp','잘못 그린 상자','false',0],['','정답 사람','gt',0],['','찾음','found',0],['','놓침','missed',0],['sub','작은 사람 (<32px)','missed_small',0],['sub','그 밖','missed_other',0],
-    ['','찾은 비율','recall',1],['','맞은 비율','precision',1],['','번호 바뀜','idsw',0],['','IDF1','idf1',1],['','MOTA','mota',1],['','무시 구역 상자','ignored_out',0]];
+  const rows=[['metric','HOTA','hota',1],['metric','사람 mAP50:95 (검출 후보)','map',1],['metric','사람 AP50 (검출 후보)','ap50',1],['fp','잘못 그린 박스','false',0],['','정답 사람','gt',0],['','찾음','found',0],['','놓침','missed',0],['sub','작은 사람 (<32px)','missed_small',0],['sub','그 밖','missed_other',0],
+    ['','찾은 비율','recall',1],['','맞은 비율','precision',1],['','번호 바뀜','idsw',0],['','IDF1','idf1',1],['','MOTA','mota',1],['','무시 구역 박스','ignored_out',0]];
   EVT.innerHTML='<tr><th></th><th>새 채점</th><th>옛 채점</th></tr>'+rows.map(([k,l,f,p])=>'<tr'+(k==='fp'?' class="fp"':'')+'><td'+(k==='sub'?' class="sub"':'')+'>'+l+'</td><td>'+(k==='metric'?(f==='hota'?metricText(e,n[f]):apText(e,n[f])):evN(n[f],p))+'</td><td>'+(k==='metric'||f==='ignored_out'?'–':evN(o[f],p))+'</td></tr>').join('');}
 function rpEvalSetMode(mode){rpEvalMode=mode;rpEvalToken++;rpEvalPending=false;rpEvalPrefix=null;rpEvalPrefixPos=null;rpEvalError='';clearTimeout(rpEvalRetryTimer);rpEvalRetryTimer=0;}
 function rpEvalRefreshButtons(){EVLIVE.setAttribute('aria-pressed',String(rpEvalMode==='live'));EVSLIDER.setAttribute('aria-pressed',String(rpEvalMode==='slider'));EVFINAL.setAttribute('aria-pressed',String(rpEvalMode==='final'));EVLIVE.classList.toggle('start',rpEvalMode==='live');EVSLIDER.classList.toggle('start',rpEvalMode==='slider');EVFINAL.classList.toggle('start',rpEvalMode==='final');}
@@ -153,7 +153,7 @@ function barShow(r,viewEval){
     else{const n=e.new||{},o=e.old||{},c=e.counts||{};
       const big=(k,v,sub,cls)=>'<span class="rpbig'+(cls?' '+cls:'')+'"><small>'+esc(k)+'</small><b>'+esc(v)+'</b>'+(sub?'<i>'+esc(sub)+'</i>':'')+'</span>';   // 11-13 (design review)
       const x=(k,v,cls)=>nchip(k,v,cls).replace('class="rpc','class="rpx rpc');
-      RMAIN.innerHTML=big('찾은 비율',evN(n.recall,1),evN(n.found)+' / '+evN(n.gt)+'명')+big('잘못 찾음',evN(n.false),'상자 수','fp'+(n.false?'':' zero'))+big('번호 바뀜',evN(n.idsw),'번')+'<button type="button" class="rpmorebtn">'+(rpMore?'접기':'자세히')+'</button>'
+      RMAIN.innerHTML=big('찾은 비율',evN(n.recall,1),evN(n.found)+' / '+evN(n.gt)+'명')+big('잘못 찾음',evN(n.false),'박스 수','fp'+(n.false?'':' zero'))+big('번호 바뀜',evN(n.idsw),'번')+'<button type="button" class="rpmorebtn">'+(rpMore?'접기':'자세히')+'</button>'
         +x('놓침',evN(n.missed)+' (작은 사람 '+evN(n.missed_small)+')')+x('맞은 비율 (precision)',evN(n.precision,1))+x('HOTA',metricText(e,n.hota))+x('IDF1',evN(n.idf1,1))+x('MOTA',evN(n.mota,1))+x('사람 mAP50:95 (검출 후보)',apText(e,n.map))+x('사람 AP50 (검출 후보)',apText(e,n.ap50));
       RMAIN.classList.toggle('more',rpMore);
       const same=['false','found','gt','missed','idsw'].every(k=>o[k]===n[k]);
@@ -275,7 +275,7 @@ function followNote(t,holdText){
   fnPrev={auto:active,id:t.id,held:!!holdText,h:t.handoffs||0};
   if(holdText){
     const elapsed=lostSince===null?'':' · '+Math.floor((Date.now()-lostSince)/1000)+'초 경과';
-    const baked=rlast?.picture_first===false?' · 영상 속 상자는 검출 표시':'';
+    const baked=rlast?.picture_first===false?' · 영상 속 박스는 검출 표시':'';
     fnShow(holdText+elapsed+baked,'lost',0);return;
   }
   if(p.auto&&active&&p.id&&t.id&&t.id!==p.id){fnShow((t.handoffs||0)>p.h?p.id+'번 → '+t.id+'번으로 넘겨 따라감':t.id+'번 따라가기','',3500);return;}
