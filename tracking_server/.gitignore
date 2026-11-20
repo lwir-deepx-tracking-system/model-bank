@@ -26,3 +26,4 @@ src/gimbal/.build_gimbal_v27.*
 src/gimbal/test_v27_control
 src/gimbal/sim_v27
 src/gimbal/_native_control*.so*
+result/
