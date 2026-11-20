@@ -564,6 +564,16 @@ def _end_old(p_, replay_):   # 지금 카메라 자리의 프로그램을 끝낸
     return True
 
 
+def _new_delay_window(L_):   # 11-20 (user): the server delay numbers start again when the input changes between the camera and a recording
+    # The window object is asked only if it can start again (new_profile); a build without that keeps one running window as before.
+    fn_ = getattr(getattr(L_, 'pipeline_perf', None), 'new_profile', None)
+    if fn_ is None: return False
+    try: fn_()
+    except Exception as e_:
+        camera_extra.say('REPLAY delay window not started again (%s)' % type(e_).__name__); return False
+    return True
+
+
 def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (카메라로)
     L_ = APP.LIVE
     old_ = getattr(L_, 'replay', None)
@@ -590,6 +600,7 @@ def _switch(tgt_):   # 따로 도는 스레드. tgt_ = 새 녹화 또는 None (�
             with L_.cond: L_.q.clear()
             if tgt_ is not None: tgt_['fin0'] = L_.frames_in
             L_.replay = tgt_
+            _new_delay_window(L_)   # 11-20: a recording's frames and the camera's frames are not counted in one window
             replay_eval.activate(ev_, L_.replay_src_t, 'switched' if tgt_ is not None else 'stopped')
             installed = True   # 옛 재생의 채점은 파일로 쓰고 끝낸다
             _gimbal_stop()
@@ -628,6 +639,7 @@ def on_cam_lost(now_):   # lv_cam_wait (cam_lock 안, 주 스레드): 재생 프
     L_.replay_return_t = time.monotonic()   # 11-15: '카메라로 돌아가는 중' until the camera's first frame
     set_preview_producer(L_, None, before=L_.replay_src_t)
     L_.replay = None
+    _new_delay_window(L_)   # 11-20: the recording ended by itself and the camera is back
     replay_eval.activate(None, None, 'ended' if rc_ == 0 else 'replay program ended with code %s' % rc_)
     with L_.cond: L_.q.clear()
     L_.cam_fail_n = 0; L_.cam_unrec_n = 0; L_.cam_next_spawn = None
