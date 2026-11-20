@@ -366,7 +366,7 @@ static bool lsap(int nr, int nc, const double* input, std::vector<int>& rows, st
     return true;
 }
 
-static bool linear_assignment(const Cost& c, double thresh, Assign& out)
+static bool linear_assignment(const Cost& c, double thresh, Assign& out, bool cost_first = false, long* changed = nullptr)
 {
     out.m.clear(); out.ua.clear(); out.ub.clear();
     if (c.empty()) {
@@ -393,6 +393,22 @@ static bool linear_assignment(const Cost& c, double thresh, Assign& out)
     std::vector<char> ma(c.n, 0), mb(c.m, 0);
     for (size_t k = 0; k < rows.size(); ++k)
         if (c.at(rows[k], cols[k]) <= accept) { out.m.emplace_back(rows[k], cols[k]); ma[rows[k]] = 1; mb[cols[k]] = 1; }
+    if (cost_first) {   // 11-20 tracker_common._cost_first: allowed pair -> cost - thresh, forbidden -> 0, best full matching (same arithmetic)
+        std::vector<double> neg(c.v.size());
+        for (size_t k = 0; k < c.v.size(); ++k)
+            neg[k] = c.v[k] > thr ? 0.0 : (c.f32 ? static_cast<double>(static_cast<float>(c.v[k]) - static_cast<float>(thresh)) : c.v[k] - thresh);
+        std::vector<int> r2, c2;
+        if (!lsap(c.n, c.m, neg.data(), r2, c2)) { PyErr_SetString(PyExc_ValueError, "cost matrix is infeasible"); return false; }
+        std::vector<std::pair<int, int>> cf;
+        for (size_t k = 0; k < r2.size(); ++k)
+            if (c.at(r2[k], c2[k]) <= accept) cf.emplace_back(r2[k], c2[k]);
+        std::vector<std::pair<int, int>> s1 = out.m, s2 = cf;
+        std::sort(s1.begin(), s1.end()); std::sort(s2.begin(), s2.end());
+        if (changed && s1 != s2) *changed += 1;
+        out.m.swap(cf);
+        std::fill(ma.begin(), ma.end(), 0); std::fill(mb.begin(), mb.end(), 0);
+        for (const auto& p : out.m) { ma[p.first] = 1; mb[p.second] = 1; }
+    }
     for (int i = 0; i < c.n; ++i) if (!ma[i]) out.ua.push_back(i);
     for (int j = 0; j < c.m; ++j) if (!mb[j]) out.ub.push_back(j);
     return true;
@@ -453,6 +469,8 @@ struct TrackerData {
     double vdc = 0.2, iou_min = 0.3;
     double app_thr = 0.25, prox_thr = 0.5;
     long app_used = 0;
+    bool cost_first = false;   // 11-20 page switch (BoT-SORT only): linear_assignment cost_first
+    long cost_first_changed = 0;
     TV tracked, lost, new_tf, lost_tf;
 };
 
@@ -903,7 +921,7 @@ static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* 
         else if (T->kind == K_SORT) { c = iou_dist(pool, dets); thr = 1 - T->iou_min; }
         else { c = oc_cost(T, pool, dets); thr = 0.95; }
         class_gate(T, c, pool, dets);
-        if (!linear_assignment(c, thr, as)) return nullptr;
+        if (!linear_assignment(c, thr, as, T->kind == K_BOTSORT && T->cost_first, &T->cost_first_changed)) return nullptr;
     }
     for (const auto& m : as.m) {
         TrackObj* t = pool[m.first];
@@ -924,7 +942,7 @@ static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* 
         Cost c = iou_dist(rt, dets2);
         class_gate(T, c, rt, dets2);
         Assign a2;
-        if (!linear_assignment(c, 0.5, a2)) return nullptr;
+        if (!linear_assignment(c, 0.5, a2, T->kind == K_BOTSORT && T->cost_first, &T->cost_first_changed)) return nullptr;
         for (const auto& m : a2.m) {
             if (!take(T, rt[m.first], dets2[m.second]->d)) return nullptr;
             act.push_back(rt[m.first]);
@@ -975,7 +993,7 @@ static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* 
         Cost c = fused_dists(T, unconfirmed, rest);
         class_gate(T, c, unconfirmed, rest);
         Assign a4;
-        if (!linear_assignment(c, T->unconfirmed, a4)) return nullptr;
+        if (!linear_assignment(c, T->unconfirmed, a4, T->kind == K_BOTSORT && T->cost_first, &T->cost_first_changed)) return nullptr;
         for (const auto& m : a4.m) {
             TrackObj* u = unconfirmed[m.first];
             if (!take(T, u, rest[m.second]->d)) return nullptr;
@@ -1204,7 +1222,7 @@ static int tv_assign(TV& dst, PyObject* value)
 
 enum TrackerField {
     T_TRACKED, T_LOST, T_NEW_TF, T_LOST_TF, T_FRAME_ID, T_NEXT_ID, T_N_INIT, T_BUFFER, T_CLASS_GATE, T_HIGH, T_LOW,
-    T_NEW, T_MATCH, T_DT, T_VDC, T_IOU_MIN, T_APP_THR, T_PROX_THR, T_APP_USED, T_MODE, T_KIND, T_UNCONFIRMED
+    T_NEW, T_MATCH, T_DT, T_VDC, T_IOU_MIN, T_APP_THR, T_PROX_THR, T_APP_USED, T_MODE, T_KIND, T_UNCONFIRMED, T_COST_FIRST, T_COST_FIRST_CHANGED
 };
 
 static const char* kind_name(Kind k) { return k == K_SORT ? "sort" : k == K_OCSORT ? "ocsort" : "botsort"; }
@@ -1235,6 +1253,8 @@ static PyObject* tracker_get(PyObject* self, void* closure)
     case T_APP_USED: return PyLong_FromLong(T->app_used);
     case T_MODE: return PyUnicode_FromString(T->mode.c_str());
     case T_KIND: return PyUnicode_FromString(kind_name(T->kind));
+    case T_COST_FIRST: return PyBool_FromLong(T->cost_first);
+    case T_COST_FIRST_CHANGED: return PyLong_FromLong(T->cost_first_changed);
     }
     Py_RETURN_NONE;
 }
@@ -1252,6 +1272,8 @@ static int tracker_set(PyObject* self, PyObject* value, void* closure)
     case T_NEW_TF: return tv_assign(T->new_tf, value);
     case T_LOST_TF: return tv_assign(T->lost_tf, value);
     case T_CLASS_GATE: { int v = PyObject_IsTrue(value); if (v < 0) return -1; T->class_gate = v == 1; return 0; }
+    case T_COST_FIRST: { int v = PyObject_IsTrue(value); if (v < 0) return -1; T->cost_first = v == 1; return 0; }
+    case T_COST_FIRST_CHANGED: lf = &T->cost_first_changed; break;
     case T_FRAME_ID: lf = &T->frame_id; break;
     case T_NEXT_ID: lf = &T->next_id; break;
     case T_N_INIT: lf = &T->n_init; break;
@@ -1285,6 +1307,7 @@ static PyGetSetDef tracker_getset[] = {
     LWIR_KF("unconfirmed", T_UNCONFIRMED),
     LWIR_KF("dt", T_DT), LWIR_KF("vdc", T_VDC), LWIR_KF("iou_min", T_IOU_MIN), LWIR_KF("APP_THR", T_APP_THR),
     LWIR_KF("PROX_THR", T_PROX_THR), LWIR_KF("app_used", T_APP_USED), LWIR_KF("mode", T_MODE), LWIR_KF("kind", T_KIND),
+    LWIR_KF("cost_first", T_COST_FIRST), LWIR_KF("cost_first_changed", T_COST_FIRST_CHANGED),
     {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict, nullptr, nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr}
 };
@@ -1469,14 +1492,15 @@ static PyObject* py_linear_assignment(PyObject*, PyObject* args)
 {
     PyObject* arr;
     double thresh;
-    if (!PyArg_ParseTuple(args, "Od", &arr, &thresh)) return nullptr;
+    int cost_first = 0;
+    if (!PyArg_ParseTuple(args, "Od|p", &arr, &thresh, &cost_first)) return nullptr;
     Cost c;
     std::vector<Py_ssize_t> shape;
     if (!read_doubles(arr, c.v, &c.f32, &shape)) return nullptr;
     if (shape.size() != 2) { PyErr_SetString(PyExc_ValueError, "cost must be 2-D"); return nullptr; }
     c.n = static_cast<int>(shape[0]); c.m = static_cast<int>(shape[1]);
     Assign a;
-    if (!linear_assignment(c, thresh, a)) return nullptr;
+    if (!linear_assignment(c, thresh, a, cost_first != 0)) return nullptr;
     Ref m(PyList_New(0)), ua(PyList_New(0)), ub(PyList_New(0));
     if (!m || !ua || !ub) return nullptr;
     for (const auto& p : a.m) { Ref t(Py_BuildValue("(ii)", p.first, p.second)); if (!t || PyList_Append(m, t) != 0) return nullptr; }
@@ -1545,7 +1569,7 @@ static PyObject* module_init(PyModuleDef* def, const char* track_name, const cha
     static PyObject* lwir_create_tracker(PyObject*, PyObject* args) { return lwirnt::create_tracker_for(kind, args); } \
     static PyMethodDef lwir_module_methods[] = {                                                             \
         {"create_tracker", lwir_create_tracker, METH_VARARGS, "create_tracker(mode, kwargs) -> tracker"},   \
-        {"linear_assignment", lwirnt::py_linear_assignment, METH_VARARGS, "linear_assignment(cost, thresh)"},\
+        {"linear_assignment", lwirnt::py_linear_assignment, METH_VARARGS, "linear_assignment(cost, thresh, cost_first=False)"},\
         {nullptr, nullptr, 0, nullptr}};                                                                     \
     static PyModuleDef lwir_module = {PyModuleDef_HEAD_INIT, "_native_" #stem,                               \
         "C++ " #stem " tracker for the LWIR tracking server (native extension ABI v1).", -1,                \

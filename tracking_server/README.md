@@ -620,6 +620,18 @@ crontab 에 한 줄을 넣으면 서버가 꺼졌을 때 스스로 다시 켜집
 - PC 비용(한 가닥, 프레임당 늘어난 중앙값): 크기만 0.01~0.12 ms, 상체 네모 0.02~0.26 ms(10·30명, 1·3·6명 놓침). 장치 CPU(11-16): 크기만 +0.03~0.29 ms(p99 최대 +0.55), 상체 네모 +0.17~0.45 ms; C++ BoT-SORT 의 놓친 목록 읽기 28명에 0.12 ms. 장치 재생 네 번(끔/켬)에서 채점 숫자와 번호 바뀜 목록이 모두 같고, 실카메라 켬에서 초당 30장·지연 28.5 ms 그대로. 자세한 숫자 `HANDOFF.md` 4절.
 - 근거: LIG-Data `pos_refine_20261115/unified/judge/JUDGE_RESULT_20261116.md`(A), 확인 스크립트 LIG-Data `lost_same_20261116/`. 코드 `src/track/box_refine.py`(`LostHold`, `lost_boxes`), `src/web/lost_marks.py`(`pool_now`), `src/web/page_handler.py`(`_lost_marks`).
 
+**번호 지킴 두 가지** (`cost_first`, `feat_guard`, 2026-11-20, 코드 기본 꺼짐, 장치에는 아직 안 올림)
+
+사용자 보고 "앞사람이 (뒷사람 번호를) 채가기도"와 "가려졌을 때 앞사람 특징이 뒷사람 특징으로 저장되면 안 됨"에 대한 스위치입니다. `POST /rules/set?cost_first=1|0`, `POST /rules/set?feat_guard=1|0`. 고른 것은 `last_selection.json` 에 남고 다시 켤 때 돌아옵니다. 화면 버튼은 아직 없습니다. 둘 다 끄면 예전과 비트까지 같습니다(아래 확인).
+
+- `cost_first` (BoT-SORT 짝짓기, Python 과 C++ 똑같이): 추적기가 상자와 번호를 짝지을 때, 짝을 하나 더 만드는 쪽이 아니라 전체 비용이 낮은 쪽을 고릅니다(원래 ByteTrack / BoT-SORT 코드의 `lapjv(cost_limit)` 방식: 짝 없이 남는 번호나 상자 하나에 한도의 절반 비용). 예전 규칙(한도 넘는 짝 = 1e6)은 짝 수를 먼저 늘려서, 뒷사람의 놓친 번호에 짝을 주려고 앞사람 번호를 옆 상자로 밀어내고 앞사람 상자에 뒷사람 번호를 붙였습니다(보인 사례 0.85 + 0.59 두 짝 대신 0.15 한 짝). 세 번 짝짓기(높은 점수, 낮은 점수, 아직 확인 안 된 번호) 모두에 씁니다. ByteTrack·OC-SORT·SORT 는 그대로입니다. 프레임마다 `tracker_common.ASSIGN` 을 지금 추적기의 `cost_first` 에 옮깁니다(`app.py`). 코드 `src/track/tracker_common.py`(`_cost_first`), `src/track/bytetrack.py`, `src/track/native_tracker_core.hpp`(`linear_assignment`).
+- `feat_guard` (배운 번호 잇기 판정기의 외형 기억): 한 번호의 상자를 다른 보이는 상자가 15 % 이상 덮거나, 1초 안에 사라진 번호의 마지막 상자가 30 % 이상 덮으면(그 사람이 이 상자 뒤에 숨었을 수 있음) 그 번호에 특징을 저장하지 않고, 그 뒤 5 장도 저장하지 않습니다. 그다음 첫 특징은 겹치기 전 자기 기억보다 함께 겹친 사람의 기억에 더 가깝거나 자기 기억과 0.30 미만이면 계속 저장하지 않습니다. 새 번호가 옛 번호를 받을지 정할 때 그 새 상자의 특징은 그대로 씁니다(저장만 막음). 추적기 뒤에서 도므로 Python·C++ BoT-SORT, OC-SORT 모두에 같습니다. `--judge` 로 판정기를 쓸 때만 동작합니다. 코드 `src/reid/relink_online_judge.py`(`GUARD`, `_g_frame`, `_g_admit`).
+- 상태: `/rules` 의 `id_guard` — `feat_guard`, `cost_first`, `cost_first_tracker`(지금 추적기에 적용되는지), `cost_first_changed`(지금 추적기를 만든 뒤 짝이 예전 규칙과 달라진 횟수), `feat_stats`(`feat_seen` 본 특징, `feat_held_overlap` / `feat_held_hidden` / `feat_held_after` / `feat_held_disagree` 막은 까닭별 수).
+- 측정(PC, 라벨 있는 녹화 9편 3,877 장, 장치 검출기 E10 FP32, REVIEWED264 FP32, 장치 설정 그대로; 점수 규칙은 LIG-Data `id_steal_20261120/fix` 의 정의): 0.5 초 넘게 가는 '번호 채감' 20 → `cost_first` 18 → 둘 다 17, 앞사람이 채간 것 4 → 2. 번호 바뀜 43 → 41 / 42, IDF1 82.3 → 83.2 / 82.3. 상자를 0.5 px 흔든 다섯 번에서도 `cost_first` 는 다섯 번 모두 채감 −2, 번호 바뀜 −1~−2, IDF1 +0.6~+0.9. `feat_guard` 는 판정기 기억에 다른 사람 특징이 들어간 비율을 8.9 % → 4.8 % 로 줄이고 판정기의 틀린 번호 잇기 1 → 0(채감 1건 없앰). 맞는 번호 잇기는 혼자 켤 때 4 → 4, `cost_first` 와 함께 켤 때 5 → 4 이고 그때 IDF1 이 0.8 낮습니다(학습용_4명 한 편).
+- 남는 것: 두 사람이 거의 다 겹칠 때 보이던 번호가 앞사람 상자로 미끄러지는 경우(남은 17 건 대부분)는 둘 다 못 막습니다. 상자 하나가 두 사람을 덮고 뒷사람에게 번호가 없으면 `feat_guard` 도 숨은 사람을 모릅니다. 추적기 자신의 외형 기억(`set_feat`)은 건드리지 않았습니다(`cost_first` 로 7.3 % → 6.0 %).
+- PC 비용(WSL, 한 가닥, 400장 평균): `cost_first` C++ 10 / 30명 +0.000 / +0.008 ms, Python 차이는 잴 수 있는 크기 밖(±0.05 ms). `feat_guard` 판정기 한 장 +0.11 / +0.20 ms(Windows 파이썬에서는 위험 판단 0.13 / 0.17 ms + 저장 특징 하나에 0.02~0.04 ms). 장치 CPU 시간은 재지 않았습니다.
+- 확인: 끄면 `origin/main` 7140090 과 9편 모두 추적기 행·공개 번호·판정 입력·기억 쓰기가 같음. 시험 `src/track/test_cost_first.py`, `src/reid/test_id_guard.py`(옛 코드에서 채감이 나는 것도 확인), `src/track/test_native_trackers.py` 의 `test_cost_first_assignment_matches_python`, `test_botsort_cost_first_matches_python`(C++ = Python). 같은 파일의 기존 시험 9개는 이번 변경 전 `origin/main` 에서도 실패합니다(11-18 Python 한도 0.5 / 0.9 / 0.6 이 C++ 의 0.25 / 0.8 / 0.7 로 옮겨지지 않음, 한도를 맞춰도 6개는 남음).
+
 **녹화 재생** (2026-11-12)
 
 라벨 사이트의 녹화 또는 측정 버튼으로 찍은 녹화 하나를 카메라 대신 서버에 넣어, 검출·추적을 화면에서 봅니다. 화면 "녹화 재생" 구역에서 고릅니다.

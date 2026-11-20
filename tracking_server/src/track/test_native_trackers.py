@@ -115,6 +115,27 @@ def scenario(seed, frames=300, camera=False, features=False, classes=(0,), crowd
         yield arr, warp, feats
 
 
+def chain_scene(seed, frames=150, groups=5, features=True):
+    """11-20 cost_first: groups of three people (A half behind B, A hidden for 3 frames, then C next to B: test_cost_first.py) repeated
+    with jitter, so the cost-first and the pairs-first assignments differ often. Yields (arr, None, feats)."""
+    rng = np.random.default_rng(seed)
+    base = {k: rng.normal(size=32) for k in range(groups * 3)}
+    for f in range(frames):
+        rows, who = [], []
+        for g in range(groups):
+            cx, cy, lt = 70.0 + 125.0 * g, 120.0 + 60.0 * (g % 4), (f + 4 * g) % 15
+            people = [(cx - 40, 0.9, 0), (cx, 0.9, 1)] if lt < 8 else ([(cx, 0.9, 1)] if lt < 11 else [(cx - 3, 0.9, 1), (cx + 70, 0.85, 2)])
+            for x, sc, k in people:
+                x += rng.normal(0, 0.7); w, h = 100 * (1 + rng.normal(0, 0.01)), 200 * (1 + rng.normal(0, 0.01))
+                rows.append([x - w / 2, cy - h / 2 + 16, x + w / 2, cy + h / 2 + 16, float(np.clip(sc + rng.normal(0, 0.02), 0.3, 0.99)), 0]); who.append(3 * g + k)
+        arr = np.asarray(rows, np.float32).reshape(-1, 6); feats = None
+        if features:
+            best = [int(j) for j in np.argsort(-arr[:, 4]) if arr[j, 4] >= 0.25][:4]
+            feats = {j: ((base[who[j]] + rng.normal(0, 0.25, 32)) / np.linalg.norm(base[who[j]])).astype(np.float32) for j in best}
+            feats = {j: (v / np.linalg.norm(v)).astype(np.float32) for j, v in feats.items()}
+        yield arr, None, feats
+
+
 def server_camera_step(tracker, warp):
     """What app.py does with --gmc before update: pending warp for the pool, unconfirmed tracks warped now."""
     tracker.kf.warp = warp
@@ -256,6 +277,37 @@ class NativeTrackerComparison(unittest.TestCase):
                 self.assertEqual(([tuple(p) for p in want[0]], list(want[1]), list(want[2])), (list(got[0]), list(got[1]), list(got[2])),
                                  'case %d thresh %s\n%r' % (case, thresh, cost))
         del made
+
+    def test_cost_first_assignment_matches_python(self):
+        """11-20 cost_first: the same augmented matrix and tie order in C++ and Python"""
+        made = self.pair('sort', n_init=3, class_gate=False, radius=2.0)
+        native_la = sys.modules['_native_sort'].linear_assignment
+        rng = np.random.default_rng(11)
+        for case in range(4000):
+            n, m = int(rng.integers(0, 9)), int(rng.integers(0, 9))
+            if case % 3 == 0: cost = rng.integers(0, 4, (n, m)) / 4.0
+            elif case % 3 == 1: cost = np.round(rng.random((n, m)), 1)
+            else: cost = rng.random((n, m))
+            cost = cost.astype(np.float32 if case % 2 else np.float64)
+            for thresh in (0.5, 0.7, 0.8, 0.9):
+                want = linear_assignment(cost.copy(), thresh, cost_first=True)
+                got = native_la(cost, thresh, True)
+                self.assertEqual(([tuple(p) for p in want[0]], list(want[1]), list(want[2])), (list(got[0]), list(got[1]), list(got[2])),
+                                 'case %d thresh %s\n%r' % (case, thresh, cost))
+        del made
+
+    def test_botsort_cost_first_matches_python(self):
+        """11-20 cost_first on the whole BoT-SORT update. The limits are made equal first (the C++ twin still starts with the pre-11-18
+        values new 0.25 / match 0.8 / unconfirmed 0.7; Python 0.5 / 0.9 / 0.6), so only the switch is compared."""
+        changed = 0
+        for seed, frames in ((0, chain_scene(0)), (1, chain_scene(1, features=False)), (2, scenario(902, camera=True, features=True, crowd=10))):
+            py, native = self.pair('botsort', n_init=2, class_gate=False, radius=2.0)
+            native.new, native.match = py.new, py.match; py.unconfirmed = 0.7   # C++: unconfirmed limit fixed at 0.7
+            py.cost_first = native.cost_first = True
+            self.run_pair(py, native, frames, camera=seed == 2)
+            self.assertEqual(py.cost_first_changed, native.cost_first_changed)
+            changed += py.cost_first_changed
+        self.assertGreater(changed, 0)
 
     def test_sort(self):
         for seed in range(6):

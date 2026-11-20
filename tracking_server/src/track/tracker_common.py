@@ -14,15 +14,35 @@ except Exception:  # pragma: no cover
     _lsa = None
 
 
-def linear_assignment(cost, thresh):
+ASSIGN = dict(cost_first=False)   # 11-20 page switch 'cost_first' (BoT-SORT, Python and C++): copied onto the live tracker every frame (app.py)
+
+
+def linear_assignment(cost, thresh, cost_first=False, owner=None):
     if cost.size == 0: return [], list(range(cost.shape[0])), list(range(cost.shape[1]))
     if cost.shape == (1, 1):                                   # trivial case: no solver call
         return ([(0, 0)], [], []) if cost[0, 0] <= thresh else ([], [0], [0])
     c = np.where(cost > thresh, 1e6, cost)
     r, k = _lsa(c)
     matches = [(int(i), int(j)) for i, j in zip(r, k) if cost[i, j] <= thresh]
+    if cost_first:   # 11-20 switch 'cost_first' (BoT-SORT, default off): see _cost_first; owner.cost_first_changed counts the calls it changed
+        cf = _cost_first(cost, thresh)
+        if owner is not None and sorted(cf) != sorted(matches): owner.cost_first_changed += 1
+        matches = cf
     ma = {i for i, _ in matches}; mb = {j for _, j in matches}
     return matches, [i for i in range(cost.shape[0]) if i not in ma], [j for j in range(cost.shape[1]) if j not in mb]
+
+
+def _cost_first(cost, thresh):
+    """11-20 (user: the front person takes the hidden person's number): the assignment of the original ByteTrack / BoT-SORT code
+    (lap.lapjv(extend_cost=True, cost_limit=thresh)): leaving a track or a detection unpaired costs thresh / 2, so a pair is made only when
+    it lowers the total cost. The rule above (pairs over the limit = 1e6) first makes as many pairs as possible, which can move a seen
+    track onto the next person so that a lost track gets a pair too (two pairs at 0.85 + 0.59 instead of one at 0.15).
+    Solved on the n x m matrix: allowed pair -> cost - thresh (<= 0), forbidden -> 0; the best full matching of it holds the best set of
+    allowed pairs (padding pairs cost 0). Same arithmetic and tie order in the C++ twin (native_tracker_core.hpp linear_assignment)."""
+    r, k = _lsa(np.where(cost > thresh, 0.0, cost - thresh))
+    return [(int(i), int(j)) for i, j in zip(r, k) if cost[i, j] <= thresh]
+
+
 CANVAS_W, CANVAS_H, CANVAS_Y0 = 640.0, 512.0, 16.0   # detections live on the 640x512 canvas; camera rows are 16..496
 
 

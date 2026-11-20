@@ -35,6 +35,7 @@ class ByteTrackTracker:
         self.vit_conf, self.vit_min_h = vit_conf, vit_min_h
         self.high, self.low, self.new, self.match = 0.25, 0.10, 0.50, 0.9
         self.unconfirmed = 0.7
+        self.cost_first = False; self.cost_first_changed = 0   # 11-20 page switch 'cost_first' (BoT-SORT): tracker_common._cost_first; off = unchanged
         self.buffer = buffer if buffer is not None else (30 if mode == 'bytetrack' else 60)
         self.kf = KF(); self.frame_id = 0; self.tracked = []; self.lost = []; self.next_id = 0
         self.rebinds_motion = 0; self.rebinds_app = 0; self.rebinds_fallback = 0; self.new_this_frame = []; self.lost_this_frame = []
@@ -82,7 +83,7 @@ class ByteTrackTracker:
                 if t.state != TRACKED: mean[i, 6:8] = 0
             mean, cov = pos_predict(self.kf, pool, mean, cov)   # v32
             for i, t in enumerate(pool): t.mean, t.cov = mean[i], cov[i]
-        m, ut, ud = linear_assignment(self._cg(self._dists(pool, dets), pool, dets), self.match)
+        m, ut, ud = linear_assignment(self._cg(self._dists(pool, dets), pool, dets), self.match, self.cost_first, self)
         for i, j in m:
             t = pool[i]; was_lost = t.state == LOST; t.update(dets[j], self.frame_id); (refind if was_lost else act).append(t)
             if getattr(dets[j], 'det_feat', None) is not None: t.set_feat(dets[j].det_feat); t.feat_frame = self.frame_id
@@ -155,14 +156,14 @@ class ByteTrackTracker:
                 ut = [i for i in ut if i not in tk]; ud = [j for j in ud if j not in dk]
         rt = [pool[i] for i in ut if pool[i].state == TRACKED]
         if rt and dets2:
-            m2, ut2, _ = linear_assignment(self._cg(iou_dist(rt, dets2), rt, dets2), 0.5)
+            m2, ut2, _ = linear_assignment(self._cg(iou_dist(rt, dets2), rt, dets2), 0.5, self.cost_first, self)
             for i, j in m2: rt[i].update(dets2[j], self.frame_id); act.append(rt[i])
         else: ut2 = list(range(len(rt)))
         for i in ut2:
             if rt[i].state != LOST: rt[i].state = LOST; lost.append(rt[i]); self.lost_this_frame.append(rt[i])
         dets = [dets[j] for j in ud]
         if unconfirmed:
-            m3, uu, ud3 = linear_assignment(self._cg(self._dists(unconfirmed, dets), unconfirmed, dets), self.unconfirmed)
+            m3, uu, ud3 = linear_assignment(self._cg(self._dists(unconfirmed, dets), unconfirmed, dets), self.unconfirmed, self.cost_first, self)
             for i, j in m3:
                 unconfirmed[i].update(dets[j], self.frame_id); act.append(unconfirmed[i])
                 if self.n_init > 2: self._tentative(unconfirmed[i])

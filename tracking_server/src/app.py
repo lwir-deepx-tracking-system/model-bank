@@ -45,6 +45,7 @@ from .web import id_rule_switches   # 2026-11-20: /rules keys nested_dup and tra
 from .track import threshold_set
 from .web.pipeline_perf import PipelinePerf
 from .track import camera_motion
+from .track import tracker_common   # 11-20: ASSIGN['cost_first'] page switch
 from .camera import replay_tracks
 from .reid import reid_embed
 from .camera import camera_link, replay_eval, stall_diag
@@ -337,6 +338,7 @@ def main():
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
         if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'pose_box', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('feat_guard', 'cost_first') if k_ in sv_})   # 11-20 number guards
         # An engine which kills the process during construction must not be retried on restart.
         saved_detector = APP.SEL.pop('det', None)
         APP.sel_save()
@@ -358,6 +360,7 @@ def main():
         if 'auto_det' in APP.SEL: qs_.append(auto_det.restore_query(bool(APP.SEL['auto_det']), APP.SEL.get('auto_det_p')))   # 11-15: automatic detector choice on / off and the changed numbers
         if 'resident_det' in APP.SEL: qs_.append({'resident_det': ['1' if APP.SEL['resident_det'] else '0']})   # 11-15: two detector models resident (the other pair is made by the frame loop)
         qs_ += box_refine.restore_queries(APP.SEL)   # 11-15: box smoothing of the drawn / gimbal rows; one query per key (a refused mode keeps the blend time)
+        qs_ += [{k_: ['1' if APP.SEL[k_] else '0']} for k_ in ('feat_guard', 'cost_first') if k_ in APP.SEL]   # 11-20: number guards (relink_online_judge.GUARD, tracker_common.ASSIGN)
         for q_ in qs_:
             if not q_: continue
             APP.sel_restoring = True   # 11-15: lets a saved lead=1 through before the gimbal link exists (page_settings)
@@ -886,6 +889,8 @@ def main():
                 feat_fn = (lambda idxs, g_=g, arr_=arr, f_=i: sync_embed(idxs, g_, arr_, f_)) if (vit is not None and APP.args.vit_sync and APP.args.app_first) else None
                 if GATE_FN is not None: APP.tracker.gray = g   # v11: the gate's local-contrast / texture features read the current gray frame
                 is_botsort = isinstance(APP.tracker, BotSortTracker) or (APP.LIVE is not None and APP.RULES['tracker'] == 'botsort')
+                if is_botsort and getattr(APP.tracker, 'cost_first', None) is not None and APP.tracker.cost_first != tracker_common.ASSIGN['cost_first']:
+                    APP.tracker.cost_first = tracker_common.ASSIGN['cost_first']   # 11-20 page switch (Python and C++ BoT-SORT; off = unchanged)
                 batch = None
                 if is_botsort and APP.rl_eng is not None and len(arr) and APP.CTL['app'] == 'repvgg':
                     bk_ = [int(j) for j in np.argsort(-arr[:, 4]) if int(arr[j, 5]) == PERSON_CLS and arr[j, 4] >= 0.25 and arr[j, 3] - arr[j, 1] >= 32.0][:4]
