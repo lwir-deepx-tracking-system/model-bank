@@ -301,7 +301,7 @@ class NativeTrackerComparison(unittest.TestCase):
         values new 0.25 / match 0.8 / unconfirmed 0.7; Python 0.5 / 0.9 / 0.6), so only the switch is compared."""
         changed = 0
         for seed, frames in ((0, chain_scene(0)), (1, chain_scene(1, features=False)), (2, scenario(902, camera=True, features=True, crowd=10))):
-            py, native = self.pair('botsort', n_init=2, class_gate=False, radius=2.0)
+            py, native = self.pair('botsort', limits=None, n_init=2, class_gate=False, radius=2.0)   # each engine's own limits first (the scenes were made for them), then made equal below
             native.new, native.match = py.new, py.match; py.unconfirmed = 0.7   # C++: unconfirmed limit fixed at 0.7
             py.cost_first = native.cost_first = True
             self.run_pair(py, native, frames, camera=seed == 2)
