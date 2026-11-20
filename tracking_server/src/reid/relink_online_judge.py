@@ -33,6 +33,8 @@ import json, math, time, hashlib
 from pathlib import Path
 import numpy as np
 from ..common import frame_math
+from .cos_map import cmap as _cmap
+from .cos_map import cmap as _cmap
 
 VIEW = (0.0, 16.0, 640.0, 496.0)      # RT480 detector view in frame coords (rows 16..496 of the 640x512 frame)
 WINDOW = 90                            # candidate window (frames), = KeepID LOST_MAX
@@ -168,7 +170,7 @@ def gallery(obs, key, clean=False):
 
 
 def cos(a, b):
-    return NAN if a is None or b is None else float(np.dot(a, b))
+    return NAN if a is None or b is None else _cmap(float(np.dot(a, b)))   # 11-20: per-model cosine map (reid/cos_map.py; identity for most models)
 
 
 def _gallery_summary(observations, key, *, clean=False):

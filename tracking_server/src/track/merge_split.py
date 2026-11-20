@@ -26,6 +26,7 @@ import time
 import numpy as np
 
 from ..common.shared_values import PERSON_CLS
+from ..reid.cos_map import cmap as _cmap
 
 SW = dict(pre_capture=False, merge_split=False)
 AP_IOU, AP_DIST, PC_COVER, CLEAN_COVER, FREEZE_IOU, MEM_N, PC_MAX = 0.10, 1.0, 0.35, 0.15, 0.30, 5, 2
@@ -175,7 +176,7 @@ class MergeSplit:
                 fe = get_feats([r1, r2]) if (ma is not None and mb is not None) else {}
                 swap = None; mode = 'app'
                 if ma is not None and mb is not None and r1 in fe and r2 in fe:
-                    keep = float(fe[r1] @ ma) + float(fe[r2] @ mb); crs = float(fe[r1] @ mb) + float(fe[r2] @ ma)
+                    keep = _cmap(float(fe[r1] @ ma)) + _cmap(float(fe[r2] @ mb)); crs = _cmap(float(fe[r1] @ mb)) + _cmap(float(fe[r2] @ ma))   # 11-20: per-model cosine map (reid/cos_map.py)
                     if abs(keep - crs) / 2.0 >= MARGIN: swap = crs > keep; st['split_app'] += 1
                 if swap is None:
                     mode = 'split_motion' if (ma is not None and mb is not None) else 'split_nomem'; st[mode] += 1
@@ -225,7 +226,7 @@ class MergeSplit:
                         if ma is not None and mb is not None:
                             fe = get_feats([i])
                             if i in fe:
-                                d = (float(fe[i] @ ma) - float(fe[i] @ mb))
+                                d = (_cmap(float(fe[i] @ ma)) - _cmap(float(fe[i] @ mb)))
                                 if abs(d) >= MARGIN: front = a if d > 0 else b; st['front_app'] += 1
                         if front is None:
                             ia, ib = _iou(D, pa), _iou(D, pb)
@@ -269,7 +270,7 @@ class MergeSplit:
                 if ma is None or mb is None: st['pc_nomem'] += 1; continue
                 fe = get_feats([cur[a], cur[b]])
                 if cur[a] not in fe or cur[b] not in fe: st['pc_nomem'] += 1; continue
-                keep = float(fe[cur[a]] @ ma) + float(fe[cur[b]] @ mb); crs = float(fe[cur[a]] @ mb) + float(fe[cur[b]] @ ma)
+                keep = _cmap(float(fe[cur[a]] @ ma)) + _cmap(float(fe[cur[b]] @ mb)); crs = _cmap(float(fe[cur[a]] @ mb)) + _cmap(float(fe[cur[b]] @ ma))   # 11-20: per-model cosine map (reid/cos_map.py)
                 if (crs - keep) / 2.0 >= MARGIN:
                     ra, rb = raw[cur[a]], raw[cur[b]]; self._relabel(ra, b); self._relabel(rb, a); st['pc_swaps'] += 1
                     cur[a], cur[b] = cur[b], cur[a]; self._ev('pc_swap', a, b)

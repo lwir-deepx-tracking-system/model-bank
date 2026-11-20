@@ -5,6 +5,7 @@ import time
 from ..common import settings
 from ..common.state import APP
 from ..common.shared_values import HERE, CORE, DET, sha
+from ..reid import cos_map   # 11-20: per-model cosine map (BoT-SORT gate threshold)
 from ..detect.model_scan import BANK, KPT_DETS
 from ..detect import auto_det   # 11-15 (user): automatic NEAR / FAR detector choice (off by default)
 from ..detect import resident_det   # 11-15 (user): both models of that pair resident on NPU cores 0 and 1, instant switch (off by default)
@@ -77,7 +78,7 @@ def mk_tracker_(kind_):
                   motion_fallback=not APP.args.no_motion_fallback, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h,
                   hybrid=True, sync_k=APP.args.sync_k, hybrid_fallback=False, radius=APP.args.radius,
                   n_init=APP.args.n_init, class_gate=APP.args.class_gate)
-    return native_backend.create(kind_, native_mode, kwargs, lambda: cls(py_mode, **kwargs), native=use_native)
+    return cos_map.apply_gate(native_backend.create(kind_, native_mode, kwargs, lambda: cls(py_mode, **kwargs), native=use_native))   # 11-20: BoT-SORT gate on the running model's cosine scale
 
 
 def ctl_state():

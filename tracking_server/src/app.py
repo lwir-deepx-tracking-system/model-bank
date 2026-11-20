@@ -37,6 +37,7 @@ from .track.warm_p95 import p95 as warm_p95, MODE as WARM_P95_MODE   # 11-12: sa
 from .common.research_synth import load_synth_plan, apply_synth_plan
 from .detect.zoom_redetect import ZOOM_HW, zoom_candidates, zoom_windows, zoom_pack, zoom_merge
 from .reid.reid_models import reid_catalog, reid_swap
+from .reid import cos_map
 from .common.pc_dry_run import make_mock_dx
 from .common.research_prepare import prepare
 from .detect import model_scan, npu_engine, detect_frame
@@ -319,6 +320,7 @@ def main():
     # ---- v40 (user 11-10): tree page. app = BoT-SORT appearance, lead = 예측 제어 (default OFF, not kept over a restart), warm_prev = Filter numbers kept while 온도 Filter is off
     APP.CTL = dict(app='repvgg', lead=False, lead_ms=150, lv=None, lead_px=0.0, warm_prev=(45000, 0), lead_motion=None)
     APP.REID = dict(lock=md_th.Lock(), req=None, cur=APP.args.relabel or '', last=None, history=[])   # v41: appearance model picked on the page; req is taken by the frame loop between two frames
+    cos_map.activate(APP.REID['cur'])   # 11-20: cosine map of the start model (identity unless reid/cos_map.TABLES lists it)
     mk_tracker_ = threshold_set.factory(page_settings.mk_tracker_)   # 11-20: every tracker of the page factory carries the track_thr choice (default: untouched)
     APP.ctl_state = page_settings.ctl_state
     APP.RULES_PRESETS = [('confirm3', 'ByteTrack'), ('rebind', 'ByteTrack (위치 재결합 켜짐)'),
@@ -696,7 +698,7 @@ def main():
                 reid_drain_ = reid_embed.reid_drain_
                 rok_, rnew_, rtx_ = reid_swap(rr_['key'], (APP.rl_eng, APP.rl_async, APP.rl_x), reid_make_, reid_drain_)
                 if rok_:
-                    APP.rl_eng, APP.rl_async, APP.rl_x = rnew_; rnew_ = None; gc.collect(); APP.REID['cur'] = rr_['key']; APP.sel_save(reid=rr_['key'])
+                    APP.rl_eng, APP.rl_async, APP.rl_x = rnew_; rnew_ = None; gc.collect(); APP.REID['cur'] = rr_['key']; APP.sel_save(reid=rr_['key']); cos_map.apply_gate(APP.tracker)   # 11-20: the running BoT-SORT gate follows the new model's cosine map
                 elif APP.SEL.get('reid') == rr_['key']: APP.SEL.pop('reid', None); APP.sel_save()   # a saved model that does not load is not tried again at the next start
                 APP.REID['last'] = dict(key=rr_['key'], ok=bool(rok_), text=rtx_, at=time.strftime('%H:%M:%S'), seconds=round(time.perf_counter() - tr_, 1), frame=i)
                 APP.REID['history'].append(dict(APP.REID['last'], old=rold_))

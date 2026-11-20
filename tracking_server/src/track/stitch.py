@@ -1,5 +1,6 @@
 """끊긴 추적 조각을 외형 특징으로 다시 잇는 부분 (Stitcher)."""
 import numpy as np
+from ..reid.cos_map import cmap as _cmap
 
 
 class Stitcher:
@@ -37,7 +38,7 @@ class Stitcher:
             q = np.mean(np.asarray(r['embs'], np.float64), 0); q /= max(np.linalg.norm(q), 1e-12); sc = []
             for x, o in self.outs.items():
                 if o['gal'] is None or o['last'] >= r['first'] or r['first'] - o['last'] > self.W or o['cls'] != r['cls']: continue
-                sc.append((float(o['gal'] @ q), x))
+                sc.append((_cmap(float(o['gal'] @ q)), x))   # 11-20: per-model cosine map (reid/cos_map.py)
             sc.sort(reverse=True)
             if sc and sc[0][0] >= self.S and (len(sc) < 2 or sc[0][0] - sc[1][0] >= self.margin):
                 oid = sc[0][1]; self.stitches += 1

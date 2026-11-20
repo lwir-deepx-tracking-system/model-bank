@@ -1,11 +1,13 @@
 """외형(재식별) 모델 목록과, 실행 중에 그 모델을 바꾸는 절차."""
 from pathlib import Path
+from . import cos_map
 
 
 # ---- v41 (user 11-11): the appearance (re-ID) model is picked on the page and changed while running (KeepID and BoT-SORT 외형 비교 share ONE model:
 # both already ran on the same engine on NPU core 2; two different models would need two more engines on that core and two feature spaces) ----
 REID_JUDGE_FIT = 'RVGGA0_REID2C256'   # the 번호 잇기 판정기 (relink_judge_frozen.json) was fitted on this model's scores; with any other model it is not validated
 REID_INFO = {'REPVGG_REVIEWED264_20261117': ('RepVGG_fine-tuning_(검수264장)_20261117', 'RepVGG', '우리 카메라 검수 264장 직접 파인튜닝 · 가중치는 별도 설치'),
+             'REPVGG_SOLIDER_DISTILL_E_20261120': ('SOLIDER 증류 E · 실내·가림 강함 · 옥상 약함 · 시험_20261120', 'RepVGG', 'teacher SOLIDER(공개 먼저, 우리 라벨 다음) 증류 · 장치 검출기 상자로 학습 · 유사도 눈금표 적용(판정기 맞춤) · 시험용 추가 선택지'),
              'RVGGA0_REID2C256': ('RepVGG_distillation_(TMOT,CAMEL)_20261103', 'RepVGG', 'teacher SOLIDER · 공개 열화상 데이터로 학습'),
              'REPVGG_DISTILL_INSIDE_20261110': ('RepVGG_distillation_(실내)_20261110', 'RepVGG', 'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정'),
              'REPVGG_FT_INSIDE_20261110': ('RepVGG_fine-tuning_(실내)_20261110', 'RepVGG', '우리 카메라 실내로 학습 · 장치 정확도 미측정'),
@@ -28,9 +30,12 @@ def reid_swap(key, old, make, drain):
     1) make(key) builds and test-runs the NEW engines while the old ones are still loaded and in use; any error -> old kept.
     2) drain() collects the old engine's crops still in flight and drops every stored appearance feature (features of two models must never be compared).
     -> (ok, objects to use from now on, text for the page)"""
-    try: new = make(key)
+    try:
+        if key in cos_map.TABLES: cos_map.load_table(cos_map.MODELS / cos_map.TABLES[key])   # 11-20: a listed cosine map must be readable before the change
+        new = make(key)
     except Exception as e: return False, old, '새 모델을 올리지 못해 이전 모델 그대로: ' + repr(e)[:160]
     try: drain()
     except Exception as e:
         del new; return False, old, '이전 특징을 비우지 못해 이전 모델 그대로: ' + repr(e)[:160]
+    cos_map.activate(key)   # 11-20: every appearance cosine of the ID rules follows the model now running (identity for models without a map)
     return True, new, '바뀜'

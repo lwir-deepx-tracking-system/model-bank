@@ -1,6 +1,15 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
-마지막 고침 2026-11-20 · Claude · merge_split 계층 조회 오류로 서버가 시작하자마자 멈춘 것 고침 (바로 아래). 그 전: 겹친 두 사람 묶어 두기 시험
+마지막 고침 2026-11-20 · Claude · 시험용 외형 모델 SOLIDER 증류 E 추가 (바로 아래). 그 전: merge_split 계층 조회 오류로 서버가 시작하자마자 멈춘 것 고침
+
+
+## 2026-11-20 외형 모델 추가: SOLIDER 증류 E (브랜치 reid-solider-distill-e-20261120 · push 안 함 · 장치 미적용 · 기본 모델 그대로)
+
+- 무엇: 페이지에서 고를 수 있는 외형 모델 하나 추가 `REPVGG_SOLIDER_DISTILL_E_20261120` (화면 이름 "SOLIDER 증류 E · 실내·가림 강함 · 옥상 약함 · 시험_20261120"). 파일 `models/reid/repvgg_solider_distill_e_20261120_reid.dxnn` (sha256 e4a082f1…, 입력·출력 모양 지금 모델과 같음). 시작 모델과 기본 선택은 바꾸지 않음.
+- 왜 '시험': PC FP32 한 번 본 시험에서 검수 264장 판보다 새 날 실내 0.504 → 0.680, 잘림·가림 0.568 → 0.627, BU-TIV 0.754 → 0.827 이지만 옥상은 0.700 → 0.663 으로 나빠짐(옥상 라벨은 추적기 번호, 사람 확인 없음). 사전 규칙상 '더 좋음' 아님 → 사용자 규칙(일부에서 나은 모델은 추가 선택지)으로 올림.
+- 유사도 눈금표(새 파일 `src/reid/cos_map.py` + `models/reid/repvgg_solider_distill_e_20261120_cosmap.json`): 이 모델은 코사인이 전체로 높아 그대로면 판정기가 틀린 쌍을 239개 중 57~61개 받아들임(한계 45). 고정 조각 묶음(ID 규칙 점검용 27,541장)에서 검수 264장 판 눈금으로 옮기는 단조 표를 판정기 재생 전에 정해 저장. **이 모델이 돌 때만** 모든 외형 코사인에 적용: 판정기(`relink_online_judge.cos`), KeepID 문턱(`relabel_online`), Python 추적기 외형 비교·잃은 번호 잇기(`bytetrack`, `lostfirst`, `stitch`, `merge_split`), 따라가기 확인(`follow_guard.FollowGuardV2._sims`). BoT-SORT 외형 문턱은 코사인 대신 문턱값(APP_THR 0.25)을 같은 뜻의 원래 눈금 값으로 바꿈(Python·C++ 둘 다, C++ 코드 변경 없음; 비용 값 0.5×(1−코사인)은 원래 눈금 그대로). 다른 모델은 모두 그대로(표가 없으면 항등). 모델 바꾸기가 성공한 뒤에만 표가 바뀜(`reid_models.reid_swap`), 실패하면 이전 모델과 표 그대로.
+- 확인: 판정기 재생(0.25/0.8/0.7 추적 결과, 장치 C++ engine_default 와 같은 값) 맞는 쌍 182개 중 140/141, 틀린 쌍 239개 중 39/44 → 통과(검수 264장 판 138/139, 38/39). 0.50 추적 결과(PC 재실행, 쌍 36/36)는 틀린 쌍 7 대 5 — 잡음 범위로 기록. INT8: DX-COM 양자화 진단(보정 256장) 출력 코사인 0.982(같은 방법 검수 264장 판 0.944). 장치 NPU 정확도·속도, 장치 재생, 걷기 시험은 아직 안 함. 단위 시험 `src/reid/test_cos_map.py`(표, 항등, 바꾸기와 되돌리기, 판정기·가드 적용, Python 추적기 문턱; C++ 확장은 이 PC에 빌드가 없어 건너뜀). reid·track·web 시험 통과, `python -c "import src.app"` 통과. gimbal 시험 중 C++ 컴파일이 필요한 것들은 이 PC에서 origin/main 그대로도 같은 오류(`optional` 헤더 없음).
+- 장치에 올릴 때: 파일과 MANIFEST 를 넣고 `scripts/setup.sh` 로 링크, 재시작 후 페이지에서 고름. 판정기 맞춤 목록(`REID_JUDGE_FIT`)에는 넣지 않음. 자료: LIG-Data `solider_ft_20261120/distill/` (결과 `results/STUDENT_TEST_VERDICT.json`, 점검 `idcheck/`).
 
 
 ## 2026-11-20 서버 시작 오류 고침 (c5b6783에서 생김)

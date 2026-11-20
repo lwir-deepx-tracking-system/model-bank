@@ -12,6 +12,7 @@ from .kalman import KF
 from .position_memory import pos_predict
 from . import tracker_common as _tc
 from .tracker_common import Track, depth_order_blocks, edge_ok, iou_dist, linear_assignment
+from ..reid.cos_map import cmap as _cmap
 
 
 class ByteTrackTracker:
@@ -124,7 +125,7 @@ class ByteTrackTracker:
                         d = dets[j]; dh = max(float(d.xywh0[3]), 1.0); ratio = dh / th
                         if ratio < self.size_ratio[0] or ratio > self.size_ratio[1]: continue
                         if float(np.hypot(d.xywh0[0] - tc[0], d.xywh0[1] - tc[1])) > self.gate * max(th, dh): continue
-                        s = float(t.feat @ d.det_feat)
+                        s = _cmap(float(t.feat @ d.det_feat))   # 11-20: per-model cosine map (reid/cos_map.py)
                         if s >= self.sim: cost[a, b] = 1.0 - s
                 mm, _, _ = linear_assignment(cost, 0.999); tk, dk = set(), set()
                 for a, b in mm:
@@ -159,7 +160,7 @@ class ByteTrackTracker:
                         if not self.app: cost[a, b] = 0.5 * rel                                   # motion-only control (B)
                         elif t.feat is None or getattr(d, 'det_feat', None) is None: cost[a, b] = 0.8 + 0.19 * rel   # hybrid fallback (no appearance on a side)
                         else:
-                            s = float(t.feat @ d.det_feat)
+                            s = _cmap(float(t.feat @ d.det_feat))   # 11-20: per-model cosine map (reid/cos_map.py)
                             if s >= self.sim: cost[a, b] = 1.0 - s                                   # appearance pair beats every fallback pair
                 mm, _, _ = linear_assignment(cost, 0.999); tk, dk = set(), set()
                 for a, b in mm:
@@ -205,7 +206,7 @@ class ByteTrackTracker:
             lh = max(float(l.xywh[3]), 1.0); dist = float(np.hypot(d.xywh0[0] - l.xywh[0], d.xywh0[1] - l.xywh[1]))
             lost.append(dict(id=l.track_id, feat=l.feat is not None, age=self.frame_id - l.end_frame, ratio=dh / lh,
                              gate_rel=dist / max(lh, dh), motion_rel=dist / (self.radius * lh),
-                             sim=(float(l.feat @ f) if (l.feat is not None and f is not None) else None)))
+                             sim=(_cmap(float(l.feat @ f)) if (l.feat is not None and f is not None) else None)))
         self.diag.append(dict(frame=self.frame_id, new_id=d.track_id, h=dh, cls=d.cls, conf=d.score, det_feat=f is not None, lost=lost))
 
     def find(self, track_id):
@@ -229,7 +230,7 @@ class ByteTrackTracker:
             lh = max(float(l.xywh[3]), 1.0)
             if self.app_first and (self.frame_id - l.end_frame > self.lost_max_age or not (self.size_ratio[0] <= th / lh <= self.size_ratio[1])): continue
             if float(np.hypot(l.xywh[0] - tc[0], l.xywh[1] - tc[1])) > gate * max(th, lh): continue
-            s = float(l.feat @ t.feat)
+            s = _cmap(float(l.feat @ t.feat))   # 11-20: per-model cosine map (reid/cos_map.py)
             if s >= bs: best, bs = l, s
         if best is None and self.app_first and self.motion_fallback and not self.hybrid:
             # late motion fallback for a deferred detection (non-hybrid variant): nearest LOST track within the motion radius

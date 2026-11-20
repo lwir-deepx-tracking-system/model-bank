@@ -27,6 +27,7 @@ import math
 import numpy as np
 
 from . import native_control
+from ..reid.cos_map import cmap as _cmap
 
 CANVAS_Y = 16.0     # GMC warps work on the padded canvas: people rows are 16 px higher
 TAU = 0.25          # s, velocity smoothing
@@ -518,8 +519,8 @@ class FollowGuardV2(FollowGuard):
 
     def _sims(self, f, exclude=()):
         t = unit(np.mean(self.tmpl, 0)) if self.tmpl else None
-        st_ = float(f @ t) if t is not None else None
-        sd = max((float(f @ g) for i, g in self.distract.items() if i not in exclude), default=-1.)
+        st_ = _cmap(float(f @ t)) if t is not None else None   # 11-20: per-model cosine map (reid/cos_map.py)
+        sd = max((_cmap(float(f @ g)) for i, g in self.distract.items() if i not in exclude), default=-1.)
         return st_, sd
 
     def _looks(self, f, qid=None):
