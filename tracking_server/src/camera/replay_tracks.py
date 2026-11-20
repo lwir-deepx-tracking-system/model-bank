@@ -14,6 +14,11 @@
   MOT 형식: frame,id,x,y,w,h,conf,-1,-1,-1 (frame = 녹화의 1부터 센 장 번호) · 검출은 frame,-1,x,y,w,h,conf,class,-1,-1
   좌표는 카메라 640x480 기준 (TRACKS.jsonl과 같게 위쪽 여백 FRAME_DY를 뺌).
 
+켜고 끄기: result/replay_tracks.on 파일이 있을 때만 기록한다 (기본 꺼짐, 서버 재시작 필요 없음).
+  켜기  touch  tracking_server/result/replay_tracks.on
+  끄기  rm     tracking_server/result/replay_tracks.on
+  재생 회차가 시작될 때(첫 장) 확인하므로, 바꾼 뒤 다음 재생부터 적용된다. 꺼져 있으면 프레임마다 하는 일이 없다.
+
 폴더 이름의 추적기는 회차가 끝날 때 마지막 장에서 쓰인 추적기로 정한다. 메뉴에서 추적기를 바꾼 뒤 바로 재생하면
 변경이 재생 첫 장 뒤에 적용될 수 있는데, 이처럼 회차 중에 추적기가 바뀌면 이름 끝에 '_변경'을 붙이고 info.txt에
 몇 번째 장부터 바뀌었는지 적는다. 중간에 장을 건너뛰거나(±10초) 되돌리면 거기서 닫고 '_중단'을 붙인다.
@@ -26,8 +31,9 @@ from ..common.shared_values import HERE
 from ..common.state import APP
 
 RESULT_DIR = os.path.join(str(HERE), 'result', 'replay_tracks')
+ON_FILE = os.path.join(str(HERE), 'result', 'replay_tracks.on')
 
-_S = dict(fh=None, bh=None, dh=None, dir=None, stamp='', name='', last=-1, rows=0, kinds=[], keepid=False)
+_S = dict(on=None, fh=None, bh=None, dh=None, dir=None, stamp='', name='', last=-1, rows=0, kinds=[], keepid=False)
 
 
 def _safe(s):
@@ -90,11 +96,17 @@ def frame(eval_pos, tr_rows, arr, dy, tracker_key, base_rows=None):
         if eval_pos == 0:
             if _S['fh'] is not None:
                 _close()
+            on = os.path.exists(ON_FILE)
+            if on != _S['on']:                    # 켜짐/꺼짐이 바뀔 때만 한 줄 남김
+                print('REPLAY tracks %s (%s)' % ('on' if on else 'off', ON_FILE), flush=True)
+                _S['on'] = on
+            if not on:
+                return
             _S['stamp'] = time.strftime('%Y%m%d_%H%M%S'); _S['name'] = name = _name()
             d = _free(os.path.join(RESULT_DIR, '%s_기록중' % _S['stamp']))
             os.makedirs(os.path.join(d, name + '-SERVER', 'det'), exist_ok=True)
-            _S['fh'] = open(os.path.join(d, name + '.txt'), 'w', buffering=1)
-            _S['dh'] = open(os.path.join(d, name + '-SERVER', 'det', 'det.txt'), 'w', buffering=1)
+            _S['fh'] = open(os.path.join(d, name + '.txt'), 'w')
+            _S['dh'] = open(os.path.join(d, name + '-SERVER', 'det', 'det.txt'), 'w')
             _S['dir'] = d
         elif _S['fh'] is None:
             return
@@ -111,12 +123,15 @@ def frame(eval_pos, tr_rows, arr, dy, tracker_key, base_rows=None):
         _S['rows'] += len(tr_rows)
         if base_rows is not None and base_rows is not tr_rows:   # KeepID가 번호를 바꾼 경우: 추적기 원래 결과도
             if _S['bh'] is None:
-                _S['bh'] = open(os.path.join(_S['dir'], _S['name'] + '_tracker.txt'), 'w', buffering=1)
+                _S['bh'] = open(os.path.join(_S['dir'], _S['name'] + '_tracker.txt'), 'w')
                 _S['keepid'] = True
             _write(_S['bh'], f, base_rows, dy)
         for r in arr:
             x1, y1, x2, y2 = float(r[0]), float(r[1]) - dy, float(r[2]), float(r[3]) - dy
             _S['dh'].write('%d,-1,%.2f,%.2f,%.2f,%.2f,%.5f,%d,-1,-1\n' % (f, x1, y1, x2 - x1, y2 - y1, float(r[4]), int(r[5])))
+        for k in ('fh', 'bh', 'dh'):              # 줄마다가 아니라 장마다 한 번 내보냄 (재생 중에도 파일을 읽을 수 있게)
+            if _S[k] is not None:
+                _S[k].flush()
         _S['last'] = eval_pos
     except Exception as e:   # 기록 실패가 추적을 멈추지 않게
         print('REPLAY tracks not saved:', repr(e)[:120], flush=True)
