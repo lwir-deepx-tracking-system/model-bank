@@ -1,8 +1,15 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
-마지막 고침 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
+마지막 고침 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
 
 
+
+## 2026-11-20 추천 표시 한 곳에서 관리 (`models/RECOMMENDED.json`)
+
+페이지의 "추천" 표시는 이제 `tracking_server/models/RECOMMENDED.json` 하나가 정합니다. 서버는 검출기 목록(`model_scan.bank_scan`)과 외형 모델 목록(`reid_models.reid_catalog`)을 만들 때 이 파일을 읽어, 적힌 모델 이름 끝에 ` · 추천 (날짜)`를 붙입니다. 모델별 이름 파일(`*.json`의 `display_name`)에는 추천 문구를 쓰지 않습니다. 새 비교에서 다른 모델이 이기면 이 파일의 `key`, `date`, `basis`만 고치고 서버를 재시작하면 됩니다.
+
+- 지금 값: 검출기 `yolo26m_pose_ft16v8_aug_e10_bodybox_provisional_kpt_640x480`, 외형 `RVGGA0_REID2C256`. 근거는 2026-11-20 녹화 9개 ID 추적 비교(파일의 `basis`).
+- 파일이 없거나 깨지면 표시만 사라지고 서버는 그대로 돕니다. 검사: `src/common/test_recommended.py`.
 ## 2026-11-21 SOLIDER 증류 E: 이름 고침 + 시작할 때 눈금표 (브랜치 reid-distill-e-name-startgate · push 안 함 · 장치 미적용)
 
 - 이름: 추적 비교(PC FP32, 라벨 녹화 9편, 모델 9 검출, 장치 설정; LIG-Data `posebox_ft_20261120/ID_JUDGE_VERDICT_APPEARANCE.json`)에서 E 는 기본 RVGGA0 보다 전체가 약했음(오래 가는 빼앗김 15 대 12, 번호 바뀜 42 대 33, IDF1 82.4 대 83.0), 다른 사람에 가린 경우도 낫지 않음(19 대 15). 실내 근거리 4명 녹화(IDF1 61.2 대 51.1)와 화면 가장자리(1건)만 나음. 화면 이름을 "SOLIDER 증류 E · 실내 근거리 4명 장면 강함 · 전체 추적은 기본보다 약함 · 시험_20261120" 로, 설명과 `models/README.md` 도 이 숫자로 고침. 내부 이름·파일·확인값은 그대로(장치의 저장된 선택이 계속 맞음).

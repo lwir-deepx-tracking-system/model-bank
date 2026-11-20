@@ -1,6 +1,7 @@
 """외형(재식별) 모델 목록과, 실행 중에 그 모델을 바꾸는 절차."""
 from pathlib import Path
 from . import cos_map
+from ..common import recommended
 
 
 # ---- v41 (user 11-11): the appearance (re-ID) model is picked on the page and changed while running (KeepID and BoT-SORT 외형 비교 share ONE model:
@@ -23,6 +24,7 @@ def reid_catalog(models_dir, man, start_key=''):
         try: has = (Path(models_dir) / (k + '.dxnn')).exists()
         except OSError: has = False
         why = '' if (has and k in man) else ('장치에 파일이 없습니다' if not has else 'MANIFEST.json 에 이 파일의 확인값이 없습니다')
+        name = name + recommended.mark('reid', k)   # 11-20: models/RECOMMENDED.json
         out.append(dict(key=k, name=name, folder=folder, note=note, available=not why, why=why, judge_fit=k == REID_JUDGE_FIT, start=k == start_key))
     return out
 def reid_swap(key, old, make, drain):

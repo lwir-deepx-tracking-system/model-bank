@@ -5,6 +5,7 @@ import subprocess
 import re
 from pathlib import Path
 from ..common.state import APP
+from ..common import recommended
 from ..common.shared_values import HERE, CORE, DET, sha, anchors
 
 
@@ -85,6 +86,7 @@ def bank_scan(folder, skip, now):
         if '%dx%d' % (hw[1], hw[0]) not in name: name += ' %dx%d' % (hw[1], hw[0])
         if hw[2] == 'e2e': name += ' [NMS-free]'
         if hw[2] == 'six_kpt' and '관절' not in name: name += ' [관절]'
+        name += recommended.mark('detector', stem)   # 11-20: models/RECOMMENDED.json
         new.append(('bank:' + stem, stem, name + ' (자동 등록)', p, h, hw[:2], 16.0 if hw[0] == 480 else -64.0, hw[2]))
     return new
 
