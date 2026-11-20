@@ -8,14 +8,25 @@ Both implementations get the same synthetic detections, frame by frame: people w
 while, missed detections, low scores, false boxes, empty frames, optional camera motion and appearance
 features. Compared each frame: output rows (count, order, ID, class, detection row exactly; box and
 score within TOL), the tracked / lost lists, the ID counter and the per-frame new / lost lists.
+
+Since 2026-11-18 the two engines come with different score limits (new track / first match / unconfirmed match, see
+threshold_set.py), so untouched they cannot give the same tracks. Every pair here therefore gets ONE set on both engines
+(threshold_set 'cpp' by default, 'py' in test_python_limits_on_both_engines); test_engines_own_limits_differ_as_recorded
+pins the engines' own numbers.
+
+The Python OC-SORT also has two options the C++ OC-SORT does not have at all, both ON by default since commit 21a6283
+(11-16): buffer_scale 0.5 (one more match on widened boxes) and lost_output_frames 1 (a just-lost track is output one more
+frame). The comparison turns them off in Python (OCSORT_AS_CPP); with them on the two OC-SORT engines do not give the same
+tracks (WSL check 2026-11-20: 0 of 12 runs the same with the defaults, 12 of 12 with both off).
 """
 import sys
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from ..common import settings
-from . import native_backend
+from . import native_backend, threshold_set
 from .botsort import BotSortTracker
 from .bytetrack import crop_requests
 from .kalman import GKF, gmc_warp
@@ -27,18 +38,30 @@ from .tracker_common import linear_assignment
 
 TOL = 1e-6
 PYTHON = {'sort': SortTracker, 'ocsort': OCSortTracker}
+OCSORT_AS_CPP = dict(buffer_scale=0.0, lost_output_frames=0)   # the C++ OC-SORT has neither step
 
 
-def make_pair(kind, **kwargs):
-    """(python tracker, native tracker) for one kind, or None when the extension is not built."""
+def make_pair(kind, limits='cpp', **kwargs):
+    """(python tracker, native tracker) for one kind, both with the score limits of threshold_set `limits` ('cpp', 'py', or
+    None = each engine's own), or None when the extension is not built."""
     if kind == 'botsort':
         py = lambda: BotSortTracker('bytetrack', **kwargs)
+    elif kind == 'ocsort':
+        py = lambda: OCSortTracker(**dict(OCSORT_AS_CPP, **kwargs))
     else:
         py = lambda: PYTHON[kind](**kwargs)
     native = native_backend.create(kind, kind, kwargs, py)
     if native_backend.backend_of(native) != 'C++':
         return None
-    return py(), native
+    made = py(), native
+    if limits is not None:
+        with patch.dict(threshold_set.CHOICE, key=limits):
+            for tracker in made:
+                threshold_set.apply(tracker, kind)
+            note = threshold_set.state(native, kind)['track_thr_now']['note']
+        if note:   # an extension built before the unconfirmed limit became a field cannot take the 'py' set
+            raise unittest.SkipTest('C++ %s extension: %s' % (kind, note))
+    return made
 
 
 def scenario(seed, frames=300, camera=False, features=False, classes=(0,), crowd=6, feature_dtype=np.float32):
@@ -179,6 +202,37 @@ class NativeTrackerComparison(unittest.TestCase):
             rows_total += len(a)
         self.assertGreater(rows_total, 0)
         return rows_total
+
+    def test_engines_own_limits_differ_as_recorded(self):
+        """Untouched, the engines do not have the same numbers; the table in threshold_set.py says which."""
+        py, native = self.pair('botsort', limits=None, n_init=2)
+        self.assertEqual((py.new, py.match, py.unconfirmed), (0.50, 0.9, 0.6))
+        self.assertEqual((native.new, native.match), (0.25, 0.8))
+        self.assertEqual(threshold_set._read(native, 'unconfirmed'), 0.7)
+        for kind in ('sort', 'ocsort'):
+            py, native = self.pair(kind, limits=None, n_init=3)
+            self.assertEqual((py.new, native.new), (0.50, 0.25), kind)
+        server_default = OCSortTracker(n_init=3)   # what the page factory makes: the two Python-only steps are on
+        self.assertEqual((server_default.oc_buffer, server_default.lost_out), (0.5, 1))
+
+    def test_unconfirmed_limit_is_a_field_of_the_extension(self):
+        """Built from the 2026-11-20 source or later: the limit can be read and set (default 0.7, the old literal)."""
+        _, native = self.pair('botsort', limits=None, n_init=2)
+        if not hasattr(type(native), 'unconfirmed'):
+            self.skipTest('extension built before the unconfirmed field: bash scripts/build_native_trackers.sh')
+        self.assertEqual(native.unconfirmed, 0.7)
+        native.unconfirmed = 0.6
+        self.assertEqual(native.unconfirmed, 0.6)
+        self.assertNotIn('unconfirmed', native.__dict__)
+
+    def test_python_limits_on_both_engines(self):
+        """The other set (0.50 / 0.9 / 0.6): same tracks from both engines, with camera motion and appearance."""
+        for kind, kw in (('sort', dict(n_init=3)), ('ocsort', dict(n_init=3)), ('botsort', dict(n_init=2)), ('botsort', dict(n_init=4))):
+            for seed in range(3):
+                py, native = self.pair(kind, limits='py', class_gate=seed == 2, radius=2.0, **kw)
+                classes = (0, 2, 6) if seed == 2 else (0,)
+                self.run_pair(py, native, scenario(900 + seed, camera=True, features=kind == 'botsort', classes=classes),
+                              camera=True, requests=kind == 'botsort')
 
     def test_botsort_deferred_features_match_synchronous_native(self):
         _, reference = self.pair('botsort', n_init=3, class_gate=True, radius=2.0)

@@ -1,7 +1,60 @@
-"""Suppress a weak full-height duplicate of a well-observed upper-body box."""
+"""Suppress a weak full-height duplicate of a well-observed upper-body box.
+
+Which detectors the rule runs for is a switch (2026-11-20, ID-rules audit):
+  named  (default) only the three detectors it was written for on 11-18 / 11-19 (NAMED_DETS) = the behaviour before the switch
+  kpt    every detector whose file has keypoint heads (model_scan.KPT_DETS), whatever its name
+  off    no detector
+Start value: LWIR_NESTED_DUP=named|kpt|off. While running: POST /rules/set?nested_dup=named|kpt|off (not kept over a restart);
+GET /rules shows nested_dup, nested_dup_active (does it run for the detector in use) and nested_dup_dropped (boxes removed).
+
+What the rule removes: the LARGER box of a pair, never the small one. A large box is dropped only when all of this holds:
+its own head and shoulders are not seen (at most one of the 7 upper keypoints >= .35); exactly one small box with a well seen
+face (3 of 5 face points and a shoulder >= .50) lies in it (74 % covered, 48 px or taller), is 1.30 to 2.15 times shorter, has
+its top within 15 % of its height of the large box's top, its centre within 16 % of its width, and a score at least as high;
+and no second well seen face lies in the upper 45 % of the large box (that would be a person standing behind).
+"""
+import os
+
 import numpy as np
 
 from ..common import frame_math
+
+NAMED_DETS = ('bank:yolo26m_pose_lwir1056_20261118_bodybox_kpt_640x480',
+              'bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480',
+              'bank:yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480')
+MODES = ('named', 'kpt', 'off')
+
+
+def _start_mode():
+    mode = os.environ.get('LWIR_NESTED_DUP', '').strip().lower()
+    return mode if mode in MODES else 'named'
+
+
+RULE = {'mode': _start_mode(), 'dropped': 0}
+
+
+def applies(det, kpt_dets):
+    """Does the rule run for detector `det` (APP.args.det) under the switch? kpt_dets = model_scan.KPT_DETS."""
+    mode = RULE['mode']
+    if mode == 'off':
+        return False
+    if mode == 'kpt':
+        return det in kpt_dets
+    return det in NAMED_DETS
+
+
+def set_mode(mode):
+    """-> True when taken. The frame loop reads the mode once per frame, so the change lands between two frames."""
+    if mode not in MODES:
+        return False
+    if mode != RULE['mode']:
+        RULE['mode'] = mode; RULE['dropped'] = 0
+    return True
+
+
+def state(det, kpt_dets):
+    return dict(nested_dup=RULE['mode'], nested_dup_active=applies(det, kpt_dets), nested_dup_dropped=int(RULE['dropped']))
+
 
 def keep_person_poses(boxes, poses):
     """Return one mask for aligned person boxes (xyxy, score) and COCO poses."""

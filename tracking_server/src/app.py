@@ -41,6 +41,8 @@ from .common.pc_dry_run import make_mock_dx
 from .common.research_prepare import prepare
 from .detect import model_scan, npu_engine, detect_frame
 from .web import system_buttons, page_handler, page_settings, measure
+from .web import id_rule_switches   # 2026-11-20: /rules keys nested_dup and track_thr (both default to the behaviour before them)
+from .track import threshold_set
 from .web.pipeline_perf import PipelinePerf
 from .track import camera_motion
 from .camera import replay_tracks
@@ -315,7 +317,7 @@ def main():
     # ---- v40 (user 11-10): tree page. app = BoT-SORT appearance, lead = 예측 제어 (default OFF, not kept over a restart), warm_prev = Filter numbers kept while 온도 Filter is off
     APP.CTL = dict(app='repvgg', lead=False, lead_ms=150, lv=None, lead_px=0.0, warm_prev=(45000, 0), lead_motion=None)
     APP.REID = dict(lock=md_th.Lock(), req=None, cur=APP.args.relabel or '', last=None, history=[])   # v41: appearance model picked on the page; req is taken by the frame loop between two frames
-    mk_tracker_ = page_settings.mk_tracker_
+    mk_tracker_ = threshold_set.factory(page_settings.mk_tracker_)   # 11-20: every tracker of the page factory carries the track_thr choice (default: untouched)
     APP.ctl_state = page_settings.ctl_state
     APP.RULES_PRESETS = [('confirm3', 'ByteTrack'), ('rebind', 'ByteTrack (위치 재결합 켜짐)'),
                      ('ocsort', 'OC-SORT (가려졌다 나온 사람 위치 보정, 시험 안 함)'), ('botsort', 'BoT-SORT (ByteTrack + 카메라 움직임 보정 + RepVGG_(TMOT,CAMEL) 외형 비교, 시험 안 함)'), ('sort', 'SORT (가장 단순: Kalman + 겹침만, 놓치면 바로 새 번호, 시험 안 함)')]   # v31: AltTracker. v36: BoT-SORT and SORT in, C-BIoU off the list (user 11-10)
@@ -325,6 +327,7 @@ def main():
     APP.rules_request = page_settings.rules_request
     APP.rules_request0_ = APP.rules_request   # stab: the 'stab' key is taken here, every other key goes to the v24g parser unchanged
     APP.rules_request = page_settings.rules_request_2
+    id_rule_switches.install(APP)   # 11-20: nested_dup, track_thr in front of the parsers above
     APP.MODEL_TEXT = {0: '바뀜', 1: '없는 모델 번호', 2: '다른 변경이 진행 중', 3: '모델을 만들지 못함', 4: '실패해서 이전 모델로 되돌림', 5: '되돌리기도 실패', 6: '준비 안 됨'}
     APP.model_state = page_settings.model_state
     APP.model_request = page_settings.model_request
