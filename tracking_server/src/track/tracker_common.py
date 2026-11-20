@@ -3,7 +3,7 @@
 import numpy as np
 
 from ..common import settings
-from ..common.shared_values import TRACKED
+from ..common.shared_values import PERSON_CLS, TRACKED
 from .position_memory import POSP, pos_inn
 from .stabilizer import STAB_M
 
@@ -14,7 +14,42 @@ except Exception:  # pragma: no cover
     _lsa = None
 
 
-ASSIGN = dict(cost_first=False)   # 11-20 page switch 'cost_first' (BoT-SORT, Python and C++): copied onto the live tracker every frame (app.py)
+ASSIGN = dict(cost_first=False, depth_order=False)   # 11-20 page switches 'cost_first', 'depth_order' (BoT-SORT, Python and C++): copied onto the live tracker every frame (app.py)
+
+# 11-20 depth_order: which overlaps count and how 'in front' is decided (the C++ twin reads its own copy of these, set from Python)
+DEPTH_IOU, DEPTH_CONTAIN, DEPTH_Y2, DEPTH_H = 0.5, 0.6, 0.02, 1.05
+
+
+def depth_order_blocks(cost, pool, thresh, iou_thr=DEPTH_IOU, contain_thr=DEPTH_CONTAIN):
+    """11-20 switch 'depth_order' (BoT-SORT first association, default off). User: when two people overlap almost completely, the hidden
+    (back) person's number slides onto the front person's box. For every pair of seen (TRACKED, confirmed) person tracks whose predicted
+    boxes overlap (IoU >= iou_thr or intersection / smaller area >= contain_thr), the one in front = bottom edge lower in the picture by more
+    than DEPTH_Y2 x the taller height, else taller by more than DEPTH_H (else undecided: no action). When both tracks' best detection (lowest
+    cost, first on ties) is the same one and both may take it (cost <= thresh), it is forbidden to the one behind; that track stays unmatched
+    this frame unless it fits another detection (second association, then the lost path, number kept). A first version forbade every detection
+    both MAY take: it also took the hidden person's own box from it and measured worse; letting lost tracks be the one behind measured far
+    worse (HANDOFF 11-20).
+    Returns the (track row, detection column) pairs to forbid, in a fixed order (same order and arithmetic in native_tracker_core.hpp)."""
+    if cost.size == 0: return []
+    idx = [i for i, t in enumerate(pool) if t.state == TRACKED and t.is_activated and t.cls == PERSON_CLS]
+    if len(idx) < 2: return []
+    b = xyxy_of([pool[i] for i in idx]); out = []
+    for p in range(len(idx)):
+        for q in range(p + 1, len(idx)):
+            x1, y1, x2, y2 = (float(v) for v in b[p]); u1, v1, u2, v2 = (float(v) for v in b[q])
+            iw = min(x2, u2) - max(x1, u1); ih = min(y2, v2) - max(y1, v1)
+            if iw <= 0 or ih <= 0: continue
+            inter = iw * ih; ap = (x2 - x1) * (y2 - y1); aq = (u2 - u1) * (v2 - v1)
+            if inter / max(ap + aq - inter, 1e-9) < iou_thr and inter / max(min(ap, aq), 1e-9) < contain_thr: continue
+            hp, hq = y2 - y1, v2 - v1; m = DEPTH_Y2 * max(hp, hq)
+            if y2 > v2 + m: front, back = idx[p], idx[q]
+            elif v2 > y2 + m: front, back = idx[q], idx[p]
+            elif hp > DEPTH_H * hq: front, back = idx[p], idx[q]
+            elif hq > DEPTH_H * hp: front, back = idx[q], idx[p]
+            else: continue
+            j = int(np.argmin(cost[front]))
+            if int(np.argmin(cost[back])) == j and cost[front, j] <= thresh and cost[back, j] <= thresh: out.append((back, j))
+    return out
 
 
 def linear_assignment(cost, thresh, cost_first=False, owner=None):

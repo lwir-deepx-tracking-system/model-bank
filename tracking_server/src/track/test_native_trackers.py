@@ -136,6 +136,28 @@ def chain_scene(seed, frames=150, groups=5, features=True):
         yield arr, None, feats
 
 
+def depth_scene(seed, frames=160, groups=4, features=True):
+    """11-20 depth_order: groups of two people, A standing behind (shorter box, bottom higher), B walking in front of A fast and stopping
+    on A's place (only B's box while it covers A), then walking on; repeated with jitter (test_depth_order.py). Yields (arr, None, feats)."""
+    rng = np.random.default_rng(seed)
+    base = {k: rng.normal(size=32) for k in range(groups * 2)}
+    for f in range(frames):
+        rows, who = [], []
+        for g in range(groups):
+            ax, cy, lt = 80.0 + 150.0 * g, 150.0 + 40.0 * (g % 3), (f + 7 * g) % 20
+            bx = ax - 140.0 + 30.0 * min(lt, 5) if lt < 12 else ax + 30.0 * (lt - 11)
+            people = [(bx, cy + 20.0, 100.0, 200.0, 1)] + ([] if abs(bx - ax) < 1.0 else [(ax, cy, 90.0, 180.0, 0)])
+            for x, y, w, h, k in people:
+                x += rng.normal(0, 0.7); w *= 1 + rng.normal(0, 0.01); h *= 1 + rng.normal(0, 0.01)
+                rows.append([x - w / 2, y - h / 2 + 16, x + w / 2, y + h / 2 + 16, float(np.clip(0.9 + rng.normal(0, 0.02), 0.3, 0.99)), 0]); who.append(2 * g + k)
+        arr = np.asarray(rows, np.float32).reshape(-1, 6); feats = None
+        if features:
+            best = [int(j) for j in np.argsort(-arr[:, 4]) if arr[j, 4] >= 0.25][:4]
+            feats = {j: base[who[j]] + rng.normal(0, 0.25, 32) for j in best}
+            feats = {j: (v / np.linalg.norm(v)).astype(np.float32) for j, v in feats.items()}
+        yield arr, None, feats
+
+
 def server_camera_step(tracker, warp):
     """What app.py does with --gmc before update: pending warp for the pool, unconfirmed tracks warped now."""
     tracker.kf.warp = warp
@@ -308,6 +330,21 @@ class NativeTrackerComparison(unittest.TestCase):
             self.assertEqual(py.cost_first_changed, native.cost_first_changed)
             changed += py.cost_first_changed
         self.assertGreater(changed, 0)
+
+    def test_botsort_depth_order_matches_python(self):
+        """11-20 depth_order on the whole BoT-SORT update (limits made equal as in the cost_first test), alone and with cost_first"""
+        acted = 0
+        for seed, frames, cf in ((0, depth_scene(0), False), (1, depth_scene(1, features=False), False), (2, depth_scene(2), True),
+                                 (3, scenario(903, camera=True, features=True, crowd=10), False), (4, chain_scene(4), True)):
+            py, native = self.pair('botsort', limits=None, n_init=2, class_gate=False, radius=2.0)
+            native.new, native.match = py.new, py.match; py.unconfirmed = 0.7
+            py.depth_order = native.depth_order = True; py.cost_first = native.cost_first = cf
+            self.assertEqual((native.depth_iou, native.depth_contain), (py.depth_iou, py.depth_contain))
+            self.run_pair(py, native, frames, camera=seed == 3)
+            self.assertEqual(py.depth_order_acted, native.depth_order_acted)
+            self.assertEqual(py.cost_first_changed, native.cost_first_changed)
+            acted += py.depth_order_acted
+        self.assertGreater(acted, 0)
 
     def test_sort(self):
         for seed in range(6):

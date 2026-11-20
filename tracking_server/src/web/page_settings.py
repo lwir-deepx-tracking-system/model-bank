@@ -209,13 +209,13 @@ def rules_request(q_):
     if 'relink_pred' in q_:   # 11-14: KeepID growing search range on the predicted place (OnlineRelabel only)
         if APP.relabeler is None or not hasattr(APP.relabeler, 'pred_gate'): return False, 'KeepID(외형 번호 되살리기)가 이 실행에 없음'
         APP.relabeler.pred_gate = q_['relink_pred'][0] in ('1', 'true', 'on')
-    gq_ = {k_: q_[k_][0] for k_ in ('feat_guard', 'cost_first') if k_ in q_}   # 11-20 number guards: judge memory (relink_online_judge.GUARD), BoT-SORT assignment (tracker_common.ASSIGN); kept over a restart
+    gq_ = {k_: q_[k_][0] for k_ in ('feat_guard', 'cost_first', 'depth_order') if k_ in q_}   # 11-20 number guards: judge memory (relink_online_judge.GUARD), BoT-SORT assignment (tracker_common.ASSIGN); kept over a restart
     if gq_:
         if any(v_ not in ('1', '0', 'true', 'false', 'on', 'off') for v_ in gq_.values()): return False, '번호 지킴 값은 1 또는 0'
         from ..reid import relink_online_judge as rj_
         from ..track import tracker_common as tc_
         for k_, v_ in gq_.items(): (rj_.GUARD if k_ == 'feat_guard' else tc_.ASSIGN)[k_] = v_ in ('1', 'true', 'on')
-        on_ = dict(feat_guard=rj_.GUARD['feat_guard'], cost_first=tc_.ASSIGN['cost_first'])
+        on_ = dict(feat_guard=rj_.GUARD['feat_guard'], cost_first=tc_.ASSIGN['cost_first'], depth_order=tc_.ASSIGN['depth_order'])
         APP.sel_save(**{k_: bool(on_[k_]) for k_ in gq_})
         print('RULES set %s' % ' '.join('%s %d' % (k_, on_[k_]) for k_ in gq_), flush=True)
     if 'relabel' in q_:
@@ -335,6 +335,7 @@ def _id_guard_state():   # 11-20: number guards and how often they acted (judge 
         return dict(feat_guard=bool(rj_.GUARD['feat_guard']), cost_first=bool(tc_.ASSIGN['cost_first']), judge=isinstance(j_, rj_.OnlineJudge),
                     feat_stats=dict(getattr(j_, 'guard_stats', None) or {}), cost_first_tracker=getattr(t_, 'cost_first', None) is not None and APP.RULES.get('tracker') == 'botsort',
                     cost_first_changed=int(getattr(t_, 'cost_first_changed', 0) or 0),
+                    depth_order=bool(tc_.ASSIGN['depth_order']), depth_order_acted=int(getattr(t_, 'depth_order_acted', 0) or 0),   # 11-20 depth_order (not recommended: see HANDOFF)
                     feat_hold=j_.guard_state() if isinstance(j_, rj_.OnlineJudge) else None)   # 11-20 review: numbers held now, longest current hold (frames)
     except Exception as e_:   # noqa: BLE001
         return dict(last_error=repr(e_)[:120])

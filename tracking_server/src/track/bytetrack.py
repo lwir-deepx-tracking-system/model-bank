@@ -10,7 +10,8 @@ import numpy as np
 from ..common.shared_values import LOST, PERSON_CLS, REMOVED, TRACKED
 from .kalman import KF
 from .position_memory import pos_predict
-from .tracker_common import Track, edge_ok, iou_dist, linear_assignment
+from . import tracker_common as _tc
+from .tracker_common import Track, depth_order_blocks, edge_ok, iou_dist, linear_assignment
 
 
 class ByteTrackTracker:
@@ -36,6 +37,9 @@ class ByteTrackTracker:
         self.high, self.low, self.new, self.match = 0.25, 0.10, 0.50, 0.9
         self.unconfirmed = 0.7
         self.cost_first = False; self.cost_first_changed = 0   # 11-20 page switch 'cost_first' (BoT-SORT): tracker_common._cost_first; off = unchanged
+        # 11-20 page switch 'depth_order' (BoT-SORT, first association): tracker_common.depth_order_blocks; off = unchanged.
+        # depth_order_acted counts the frames where it changed the first-association pairs
+        self.depth_order = False; self.depth_order_acted = 0; self.depth_iou = _tc.DEPTH_IOU; self.depth_contain = _tc.DEPTH_CONTAIN
         self.buffer = buffer if buffer is not None else (30 if mode == 'bytetrack' else 60)
         self.kf = KF(); self.frame_id = 0; self.tracked = []; self.lost = []; self.next_id = 0
         self.rebinds_motion = 0; self.rebinds_app = 0; self.rebinds_fallback = 0; self.new_this_frame = []; self.lost_this_frame = []
@@ -83,7 +87,15 @@ class ByteTrackTracker:
                 if t.state != TRACKED: mean[i, 6:8] = 0
             mean, cov = pos_predict(self.kf, pool, mean, cov)   # v32
             for i, t in enumerate(pool): t.mean, t.cov = mean[i], cov[i]
-        m, ut, ud = linear_assignment(self._cg(self._dists(pool, dets), pool, dets), self.match, self.cost_first, self)
+        c1 = self._cg(self._dists(pool, dets), pool, dets)
+        blk = depth_order_blocks(c1, pool, self.match, self.depth_iou, self.depth_contain) if self.depth_order else ()
+        if blk:   # 11-20 depth_order: the track behind may not take a detection the track in front may take
+            c0 = c1.copy()
+            for i, j in blk: c1[i, j] = self.match + 1.0
+            m, ut, ud = linear_assignment(c1, self.match, self.cost_first, self)
+            if sorted(linear_assignment(c0, self.match, self.cost_first)[0]) != sorted(m): self.depth_order_acted += 1
+        else:
+            m, ut, ud = linear_assignment(c1, self.match, self.cost_first, self)
         for i, j in m:
             t = pool[i]; was_lost = t.state == LOST; t.update(dets[j], self.frame_id); (refind if was_lost else act).append(t)
             if getattr(dets[j], 'det_feat', None) is not None: t.set_feat(dets[j].det_feat); t.feat_frame = self.frame_id
