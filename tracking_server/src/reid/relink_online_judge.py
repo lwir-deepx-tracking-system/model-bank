@@ -361,6 +361,7 @@ class OnlineJudge:
         self.events, self.per_frame = [], []
         self.feat_ms, self.model_ms, self.cands_per_eval = [], [], []
         self.keep_rows = False; self.rows_log = []
+        self.ms_hold = None     # 11-20 merge_split (track/merge_split.py): numbers of a merged group; no feature stored, not handed to a birth (None = unchanged)
         self.pred_gate = True   # 11-14 (user): only candidates whose growing search range (relabel_online.search_range) holds the birth (default on after the replay check); False = the old candidate set                      # PC verification: (frame, t, birth id, [cand ids], X, p) per evaluation
         # 11-20 feat_guard: counters for GET /rules, kept over reset()
         self.guard_stats = dict(feat_seen=0, feat_held_overlap=0, feat_held_hidden=0, feat_held_after=0, feat_held_disagree=0,
@@ -420,7 +421,7 @@ class OnlineJudge:
     def _g_admit(self, o):
         """a feature arrived for observation o: may it be stored for this number? A refused feature is marked o['held'] (the galleries skip it)."""
         f, b, st = o['m1'], o['tid'], self.guard_stats
-        if f is None or '_hold' not in o: return
+        if f is None or '_hold' not in o or o.get('ms_held'): return
         st['feat_seen'] += 1
         why = None
         if o['_risk']: why = 'feat_held_' + o['_risk']
@@ -521,6 +522,7 @@ class OnlineJudge:
         velocities = {}
         if births:
             cl = [(c, co) for c, co in self.hist.items() if c not in now_set and t - co[-1]['t'] <= WINDOW]
+            if self.ms_hold: cl = [(c, co) for c, co in cl if c not in self.ms_hold]   # 11-20 merge_split: a held number stays with its group
             for b in births: cands[b] = cl
             if self.pred_gate:   # 11-14: candidate kept only if the birth centre lies in its growing search range around the predicted place
                 from .relabel_online import SR_BASE, SR_GROW, SR_MAX, SR_VMAX
@@ -555,6 +557,9 @@ class OnlineJudge:
         # ---- observations of this frame (not yet in hist: candidate histories are the frames before t0)
         obs = make_observations(t, prow_r, P, feat)
         if guard: self._g_frame(t, obs, now_set)
+        if self.ms_hold:   # 11-20 merge_split: no feature is stored for a number of a merged group (its box shows two people)
+            for b in obs:
+                if b in self.ms_hold: obs[b]['held'] = obs[b]['ms_held'] = True
         # ---- a compact ID is assigned after relink, so an unpublished birth that
         # keeps the old ID does not consume another number.
         pending_public = set()

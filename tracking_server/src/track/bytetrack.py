@@ -87,7 +87,9 @@ class ByteTrackTracker:
                 if t.state != TRACKED: mean[i, 6:8] = 0
             mean, cov = pos_predict(self.kf, pool, mean, cov)   # v32
             for i, t in enumerate(pool): t.mean, t.cov = mean[i], cov[i]
-        c1 = self._cg(self._dists(pool, dets), pool, dets)
+        c1 = self._dists(pool, dets)
+        if getattr(self, 'kpt_assoc', False): c1 = self._kpt_cost(c1, pool, dets)   # 11-20 measurement switch (BoT-SORT, Python only); off = unchanged
+        c1 = self._cg(c1, pool, dets)
         blk = depth_order_blocks(c1, pool, self.match, self.depth_iou, self.depth_contain) if self.depth_order else ()
         if blk:   # 11-20 depth_order: the track behind may not take a detection the track in front may take
             c0 = c1.copy()

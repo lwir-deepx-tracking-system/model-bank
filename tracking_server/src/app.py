@@ -46,6 +46,7 @@ from .track import threshold_set
 from .web.pipeline_perf import PipelinePerf
 from .track import camera_motion
 from .track import tracker_common   # 11-20: ASSIGN['cost_first'] page switch
+from .track import merge_split   # 11-20: switches merge_split / pre_capture (merge_split.SW)
 from .camera import replay_tracks
 from .reid import reid_embed
 from .camera import camera_link, replay_eval, stall_diag
@@ -338,7 +339,7 @@ def main():
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
         if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'pose_box', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('feat_guard', 'cost_first', 'depth_order') if k_ in sv_})   # 11-20 number guards
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('feat_guard', 'cost_first', 'depth_order', 'merge_split', 'pre_capture') if k_ in sv_})   # 11-20 number guards
         # An engine which kills the process during construction must not be retried on restart.
         saved_detector = APP.SEL.pop('det', None)
         APP.sel_save()
@@ -360,7 +361,7 @@ def main():
         if 'auto_det' in APP.SEL: qs_.append(auto_det.restore_query(bool(APP.SEL['auto_det']), APP.SEL.get('auto_det_p')))   # 11-15: automatic detector choice on / off and the changed numbers
         if 'resident_det' in APP.SEL: qs_.append({'resident_det': ['1' if APP.SEL['resident_det'] else '0']})   # 11-15: two detector models resident (the other pair is made by the frame loop)
         qs_ += box_refine.restore_queries(APP.SEL)   # 11-15: box smoothing of the drawn / gimbal rows; one query per key (a refused mode keeps the blend time)
-        qs_ += [{k_: ['1' if APP.SEL[k_] else '0']} for k_ in ('feat_guard', 'cost_first', 'depth_order') if k_ in APP.SEL]   # 11-20: number guards (relink_online_judge.GUARD, tracker_common.ASSIGN)
+        qs_ += [{k_: ['1' if APP.SEL[k_] else '0']} for k_ in ('feat_guard', 'cost_first', 'depth_order', 'merge_split', 'pre_capture') if k_ in APP.SEL]   # 11-20: number guards (relink_online_judge.GUARD, tracker_common.ASSIGN)
         for q_ in qs_:
             if not q_: continue
             APP.sel_restoring = True   # 11-15: lets a saved lead=1 through before the gimbal link exists (page_settings)
@@ -925,9 +926,19 @@ def main():
                         batch.drain()
                 t4 = time.perf_counter_ns()
                 vs = sync_lat[-1] if len(sync_lat) > n_sync0 else 0.0
+            e2e_rows_ = False
             if getattr(APP, 'dx', None) is not None and not APP.args.mock:   # 11-14 (user): live end-to-end FastTrackTr replaces the tracker rows when chosen on the page
                 er_ = e2e_live.step(g)
-                if er_ is not None: tr_rows = er_
+                if er_ is not None: tr_rows = er_; e2e_rows_ = True
+            if merge_split.active() and not own_ and not e2e_rows_ and tr_rows is not None:   # 11-20 switches merge_split / pre_capture (not recommended, HANDOFF 11-20): renames rows of any engine; off = not run
+                if getattr(APP, 'ms_layer', None) is None or APP.ms_key != (id(APP.tracker), vid): APP.ms_layer = merge_split.MergeSplit(); APP.ms_key = (id(APP.tracker), vid)
+                ms_embed_ = ((lambda ks_, g_=g, arr_=arr: APP.rl_embed(list(ks_), g_, {k_: arr_[k_, :4].tolist() for k_ in ks_}))
+                             if APP.rl_eng is not None and APP.CTL['app'] == 'repvgg' else None)
+                tr_rows = APP.ms_layer.step(tr_rows, arr, bs_feats or {}, ms_embed_, fps=30.0)
+                if APP.relabeler is not None and hasattr(APP.relabeler, 'ms_hold'): APP.relabeler.ms_hold = APP.ms_layer.hold_labels() or None
+            elif getattr(APP, 'ms_layer', None) is not None:
+                APP.ms_layer = None
+                if APP.relabeler is not None and hasattr(APP.relabeler, 'ms_hold'): APP.relabeler.ms_hold = None
             base_rows = tr_rows; rl_ms = 0.0
             trace_rows = [] if identity_trace is not None and identity_trace.recording else None
             keepid_start_ns = keepid_done_ns = None
