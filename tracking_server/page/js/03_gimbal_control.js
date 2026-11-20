@@ -8,9 +8,8 @@ v.addEventListener('click',e=>{
   const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
   const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;
   post('/gimbal/click?x='+x+'&y='+y);});
-const stopAll=()=>post('/gimbal/stop');
 function homeGimbal(){held.clear();keyDir='0,0';if(padBtn)padBtn.classList.remove('on');padDown=false;padBtn=null;joyEnd();return post('/gimbal/home');}
-// An empty-picture click stops; Space and the home button request pan/tilt (0, 0).
+// An empty-picture click stops; Space requests Home, pan/tilt (0, 0).
 for(const el of [v]){el.addEventListener('contextmenu',e=>e.preventDefault());el.addEventListener('dragstart',e=>e.preventDefault());}
 addEventListener('dragstart',e=>{if(e.target&&e.target.tagName==='IMG')e.preventDefault();});
 const K={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,1],ArrowDown:[0,-1],KeyA:[-1,0],KeyD:[1,0],KeyW:[0,1],KeyS:[0,-1]};   // v34: W A S D move like the arrow keys (e.code, so it also works with the Korean keyboard on)
