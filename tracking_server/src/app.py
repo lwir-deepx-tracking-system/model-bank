@@ -320,7 +320,7 @@ def main():
     mk_tracker_ = threshold_set.factory(page_settings.mk_tracker_)   # 11-20: every tracker of the page factory carries the track_thr choice (default: untouched)
     APP.ctl_state = page_settings.ctl_state
     APP.RULES_PRESETS = [('confirm3', 'ByteTrack'), ('rebind', 'ByteTrack (위치 재결합 켜짐)'),
-                     ('ocsort', 'OC-SORT (가려졌다 나온 사람 위치 보정, 시험 안 함)'), ('botsort', 'BoT-SORT (ByteTrack + 카메라 움직임 보정 + RepVGG_(TMOT,CAMEL) 외형 비교, 시험 안 함)'), ('sort', 'SORT (가장 단순: Kalman + 겹침만, 놓치면 바로 새 번호, 시험 안 함)')]   # v31: AltTracker. v36: BoT-SORT and SORT in, C-BIoU off the list (user 11-10)
+                     ('ocsort', 'OC-SORT (가려졌다 나온 사람 위치 보정, 시험 안 함)'), ('botsort', 'BoT-SORT (ByteTrack + 카메라 움직임 보정 + 외형 비교: 외형 모델 줄에서 고른 모델, 시험 안 함)'), ('sort', 'SORT (가장 단순: Kalman + 겹침만, 놓치면 바로 새 번호, 시험 안 함)')]   # v31: AltTracker. v36: BoT-SORT and SORT in, C-BIoU off the list (user 11-10). 11-20: the BoT-SORT text no longer names one fixed appearance model (it uses the model picked on the page, GET /rules 'reid')
     APP.rules_state = page_settings.rules_state
     APP.rules_state0_ = APP.rules_state   # stab: stab / stab_px next to the v24g fields
     APP.rules_state = page_settings.rules_state_2
