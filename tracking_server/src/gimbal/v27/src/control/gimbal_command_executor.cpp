@@ -92,7 +92,14 @@ GimbalCommandExecutor::GimbalCommandExecutor(ControlConfig config,
         smoothing_.seek_speed < config_.automatic.speed_min || smoothing_.seek_speed > config_.automatic.speed_max))
         throw std::invalid_argument("--seek: not with --search 1, --seek-ms within 1..10000, --seek-speed within --speed-min..--speed-max");
     worker_ = std::thread([this] { run(); });
-    const bool started = invoke([this] { stop("startup"); return !state_.error; });
+    const bool started = invoke([this] {
+        stop("startup");
+        if (!state_.error) {
+            try { device_->enable_pose_feedback(); }
+            catch (const std::exception& e) { Logger::error(std::string("[Control] pose feedback unavailable: ") + e.what()); }
+        }
+        return !state_.error;
+    });
     if (!started) {
         { std::lock_guard<std::mutex> lock(mutex_); closing_ = true; }
         wake_.notify_one(); worker_.join();
@@ -860,6 +867,7 @@ ControlSnapshot GimbalCommandExecutor::snapshot()
         position_estimate_.advance(Clock::now());
         state_.pan_estimate = position_estimate_.pan;
         state_.tilt_estimate = position_estimate_.tilt;
+        state_.pose = device_->read_pose();
         return state_;
     });
 }

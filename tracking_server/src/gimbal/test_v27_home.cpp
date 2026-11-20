@@ -8,6 +8,8 @@
 struct Device : IGimbalDevice {
     std::atomic<int> stops{0}, homes{0};
     bool fail_home = false;
+    std::optional<GimbalPose> reported_pose;
+    std::optional<GimbalPose> read_pose() override { return reported_pose; }
     void move(int, int) override {}
     void stop() override { ++stops; }
     void home() override {
@@ -25,10 +27,15 @@ int main() {
     auto* recorded = device.get();
     GimbalCommandExecutor executor(config, std::move(device), runtime);
     assert(executor.home() == ControlResult::NotReady && recorded->homes == 0);
+    recorded->reported_pose = GimbalPose{30, -15, std::chrono::steady_clock::now()};
+    const auto measured = executor.snapshot().pose;
+    assert(measured && measured->pan == 30 && measured->tilt == -15);
     executor.connected();
     executor.move(1, 0);
     const auto before = recorded->stops.load();
     assert(executor.home() == ControlResult::Ok);
+    assert(executor.snapshot().pose->received_at == measured->received_at);
+    assert(executor.snapshot().pose->pan == 30); // submitting Home never fakes a measured zero
     assert(recorded->stops == before + 1 && recorded->homes == 1);
     auto state = executor.snapshot();
     assert(!state.automatic && state.selected_id == 0 && state.moving);

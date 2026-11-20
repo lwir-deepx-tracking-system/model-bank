@@ -799,6 +799,7 @@ int main(int argc, char** argv) try {
     std::vector<char> buffer(262144);
     auto next_status = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     auto next_position = std::chrono::steady_clock::now();
+    auto reported_pose = std::chrono::steady_clock::time_point{};
     bool input_open = true;
     while (!stop_signal && input_open) {
         if (gui_gated) {   // before the input of this round: a picture that is already on its way is used or dropped by the same rule
@@ -838,6 +839,12 @@ int main(int argc, char** argv) try {
         if (snapshot.search != reported_search) { say("SEARCH " + std::to_string(snapshot.search)); reported_search = snapshot.search; }
         const auto now = std::chrono::steady_clock::now();
         if (!snapshot.error && now >= next_position) {
+            if (snapshot.pose && snapshot.pose->received_at != reported_pose &&
+                now - snapshot.pose->received_at < std::chrono::milliseconds(1000)) {
+                say("POSE " + std::to_string(snapshot.pose->pan) + " " + std::to_string(snapshot.pose->tilt) +
+                    " -180 180 -90 90");
+                reported_pose = snapshot.pose->received_at;
+            }
             say("POSITION_EST " + std::to_string(snapshot.pan_estimate) + " " + std::to_string(snapshot.tilt_estimate));
             next_position = now + std::chrono::milliseconds(250);
         }

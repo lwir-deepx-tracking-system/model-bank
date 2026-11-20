@@ -23,23 +23,22 @@ if (typeof ResizeObserver === 'function') new ResizeObserver(fitPoseOverlay).obs
 else addEventListener('resize', fitPoseOverlay);
 poseImage.addEventListener('load', fitPoseOverlay);
 
-function renderGimbalPose(pose, estimate) {
+function renderGimbalPose(pose) {
   if ((poseImage.naturalWidth / poseImage.naturalHeight || 0) !== poseImageAspect) fitPoseOverlay();
   let any = false;
   for (const {key, label, axis, marker} of poseAxes) {
     const actual = pose && pose[key];
-    const useActual = actual && Number.isFinite(actual.deg) &&
-      Number.isFinite(actual.min_deg) && Number.isFinite(actual.max_deg) &&
-      actual.min_deg < actual.max_deg;
-    const value = useActual ? actual.deg : estimate && estimate[key];
-    const min = useActual ? actual.min_deg : 0;
-    const max = useActual ? actual.max_deg : 100;
-    const valid = Number.isFinite(value) && value >= min && value <= max;
+    const value = actual && actual.deg;
+    // Display ranges are centred on Home, independently of mechanical limits.
+    const extent = key === 'pan' ? 180 : 90;
+    const valid = Number.isFinite(value) && Math.abs(value) <= 360;
     axis.hidden = !valid;
     if (!valid) continue;
     any = true;
-    axis.setAttribute('aria-label', label + (useActual ? ' ' + value + '°' : ' 추정 ' + Math.round(value) + '%'));
-    marker.style.setProperty('--pose-position', (100 * (value - min) / (max - min)) + '%');
+    const description=label+' '+value+'° · 표시 범위 -'+extent+'° ~ '+extent+'°';
+    axis.setAttribute('aria-label', description);
+    axis.title=description;
+    marker.style.setProperty('--pose-position', (50 + 50 * Math.max(-extent, Math.min(extent, value)) / extent) + '%');
   }
   poseReceivedAt = any ? Date.now() : 0;
 }

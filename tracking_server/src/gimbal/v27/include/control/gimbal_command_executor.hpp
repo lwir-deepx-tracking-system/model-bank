@@ -23,6 +23,7 @@ struct ControlSnapshot {
     std::uint64_t command_generation = 0;
     double pan_estimate = 50.0;
     double tilt_estimate = 50.0;
+    std::optional<GimbalPose> pose;
 };
 
 // One worker owns device I/O and every mutable control decision. GUI requests
