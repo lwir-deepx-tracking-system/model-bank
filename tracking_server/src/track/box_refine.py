@@ -598,6 +598,9 @@ def restore_queries(sel):
         v_ = str(sel['box_refine']).strip().lower()
         if v_ not in MODES:
             print('BOX_REFINE saved mode %r %s: off' % (sel['box_refine'], 'was removed on 11-16' if v_ in REMOVED_MODES else 'is unknown'), flush=True); v_ = 'off'
+        if v_ == 'off':   # 11-21 (user: "옵션 말고 항상 켜져 있게"): box shake correction is always on; a saved off becomes the default
+            v_ = DEFAULT_MODE if (DEFAULT_MODE != 'body' or scan_table() is not None) else 'size'
+            print('BOX_REFINE saved off: always on now, %s' % v_, flush=True)
         qs.append({'box_refine': [v_]})
     else:   # 11-20 (user): box shake correction is on by default when nothing was chosen yet: 'body' when its table file is there, else 'size'
         v_ = DEFAULT_MODE if (DEFAULT_MODE != 'body' or scan_table() is not None) else 'size'

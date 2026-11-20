@@ -375,14 +375,13 @@ class ServerGlueTests(unittest.TestCase):
         for old in ('euro', 'gru', 'gru2', 'GRU2 ', 'nonsense'):
             saved = []; APP.sel_save = lambda **kw: saved.append(kw); BR.BR['mode'] = 'size'; buf = io.StringIO()
             with contextlib.redirect_stdout(buf): qs = BR.restore_queries({'box_refine': old, 'box_blend': 0.0})
-            self.assertEqual(qs, [{'box_refine': ['off']}, {'box_blend': ['0.0']}], old)
-            log = [x for x in buf.getvalue().splitlines() if x.startswith('BOX_REFINE')]; self.assertEqual(len(log), 1, old)
-            self.assertIn('removed' if old.strip().lower() in BR.REMOVED_MODES else 'unknown', log[0])
+            self.assertEqual(qs[1:], [{'box_blend': ['0.0']}], old); self.assertIn(qs[0]['box_refine'][0], ('size', 'body'), old)   # 11-21: off is not kept, the default comes back
+            log = [x for x in buf.getvalue().splitlines() if x.startswith('BOX_REFINE')]; self.assertEqual(len(log), 2, old)   # 11-21: the removed/unknown line, then the always-on line
+            self.assertIn('removed' if old.strip().lower() in BR.REMOVED_MODES else 'unknown', log[0]); self.assertIn('always on', log[1])
             for q in qs:
                 ok, _, ap = BR.parse_request(q); self.assertTrue(ok)
                 with contextlib.redirect_stdout(io.StringIO()): ap()
-            self.assertEqual(BR.BR['mode'], 'off'); self.assertEqual(saved[0]['box_refine'], 'off')
-            rows = rows_at([(1, 100., 200., 40., 100.)]); self.assertIs(BR.apply(rows, None, 1.0), rows)
+            self.assertEqual(BR.BR['mode'], qs[0]['box_refine'][0]); self.assertEqual(saved[0]['box_refine'], qs[0]['box_refine'][0])
         self.assertEqual(BR.restore_queries({'box_refine': 'size'}), [{'box_refine': ['size']}])   # the kept modes come back unchanged
         import contextlib, io
         with contextlib.redirect_stdout(io.StringIO()):   # 11-20: nothing saved -> the default mode (body, or size when no table file)
@@ -401,7 +400,7 @@ class ServerGlueTests(unittest.TestCase):
                 self.assertEqual(BR.restore_queries({}), [{'box_refine': ['size']}])
             finally:
                 BR.scan_table = orig
-            self.assertEqual(BR.restore_queries({'box_refine': 'off'}), [{'box_refine': ['off']}])
+            self.assertIn(BR.restore_queries({'box_refine': 'off'})[0]['box_refine'][0], ('size', 'body'))   # 11-21: always on
         self.assertIn(BR.DEFAULT_MODE, ('size', 'body'))
 
 

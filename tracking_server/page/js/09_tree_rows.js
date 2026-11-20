@@ -102,7 +102,6 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
   const br=r.box_refine;   // 11-15 (user "2번부터 하자", "변할 때 자연스럽게"): 그리는 박스와 짐벌 조준만 다듬기 (src/track/box_refine.py), 기본 꺼짐. 11-16 (user "필요한 것만 남기자"): 끔 / 크기만 / 상체 네모 셋만
   if(br){const bm=br.mode||'off',BRN='추적기·채점·자동 선택은 원래 박스',BLT=0.3,bd=(br.modes||[]).find(x=>x.key==='body');
     T.push({lab:'박스 보정',sub:'화면 박스와 짐벌 조준점만'+(bm!=='off'?' · '+({off:'끔',size:'크기 보정',body:'상체 박스 보정'}[bm]||br.mode_name)+(bm==='body'&&br.body_family_name?' ('+br.body_family_name+')':'')+(br.ms!=null?' · '+Number(br.ms).toFixed(2)+' ms':''):'')+(br.why?' · '+br.why:''),n:[
-      {name:'끔',note:'추적기 박스 그대로',sel:bm==='off',u:Q('box_refine=off')},
       {name:'크기 보정',note:'위치·짐벌 조준점은 추적기 그대로 · 박스 크기만 천천히 바뀜(근거리↔먼 거리 바뀔 때도) · '+BRN,sel:bm==='size',u:Q('box_refine=size')}].concat(bd?[
       {name:'상체 박스 보정',note:'가까이든 멀리든 머리 위~골반 한 모양 · 먼 사람 전신 박스는 상체로 바꿈, 가까운 사람 박스는 그대로 · 짐벌 조준점은 바꾼 박스의 조준점 그대로, 크기 보정 · 자세 검출 모델은 변환표, 다른 모델은 사람 전체 박스의 위쪽 0.53 · 모델이 바뀌어도 이어짐 · 관절 필요 없음 · 장치에서 아직 재지 않음 · '+BRN,sel:bm==='body',lock:bd.available?'':(br.body_note||'변환표 파일이 없습니다'),u:Q('box_refine=body')}]:[])});   // body: 서버가 모드를 알 때만 줄을 보임 · 잠금 글은 서버가 아는 실제 까닭(없음 / 읽지 못함 / 방금 바뀜)
     T.push({lab:'모델 전환 보간',sub:'검출 모델이 바뀌면 박스를 천천히 넘김',multi:1,n:[

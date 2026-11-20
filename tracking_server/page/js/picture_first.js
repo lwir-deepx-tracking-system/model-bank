@@ -4,7 +4,7 @@
 // camera frames after the picture; boxes older than 1 s are not drawn. A click still picks from the boxes drawn last.
 const OV={es:null,data:null,at:0,cv:$('vdraw'),boxes:null,gen:null};
 const overlayQuery = new URLSearchParams(location.search);
-let overlayCenterEnabled = overlayQuery.get('overlay_center') === '1';
+let overlayCenterEnabled = overlayQuery.get('overlay_center') !== '0';   // 11-21 (user: "옵션 말고 항상 켜져 있게"): always on; ?overlay_center=0 only for a side-by-side check
 const overlayDebugEnabled = overlayQuery.get('overlay_debug') === '1';
 
 class OverlayCenter {
@@ -57,9 +57,6 @@ class OverlayCenter {
 }
 
 const overlayCenter = new OverlayCenter();
-const overlaySwitch=$('overlay-center-switch');
-overlaySwitch.checked=overlayCenterEnabled;
-overlaySwitch.onchange=()=>{overlayCenterEnabled=overlaySwitch.checked;overlayResetHistory();ovDraw();};
 const overlayGaps = [];
 function overlayOnMjpeg() {
   return PS.on && !PS.nativeFailed && (streamFetch || v.hasAttribute('src')) &&

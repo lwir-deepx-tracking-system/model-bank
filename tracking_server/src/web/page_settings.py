@@ -292,6 +292,7 @@ def rules_request_2(q_):
         return ok, message
     if 'box_refine' in q_ or 'box_blend' in q_ or 'lost_same' in q_:   # 11-15: box smoothing (src/track/box_refine.py); checked first, changed only when the rest of the query was taken too. 11-16: lost_same (lost box = seen box)
         br_ = {k_: x_ for k_, x_ in q_.items() if k_ in ('box_refine', 'box_blend', 'lost_same')}
+        if str((br_.get('box_refine') or [''])[0]).strip().lower() == 'off': return False, '박스 떨림 보정은 항상 켜져 있습니다 (크기 보정 또는 상체 박스 보정)'   # 11-21 (user: "옵션 말고 항상 켜져 있게")
         ok_, tx_, apply_ = box_refine.parse_request(br_)
         if not ok_: return ok_, tx_
         rest_ = {k_: x_ for k_, x_ in q_.items() if k_ not in br_}
