@@ -5,6 +5,7 @@
 - **[`detect/`](detect/)** — 검출 모델. 구조별 폴더 `yolo26m/` `yolo26s/` `yolo26x/` `yolov8/` `yolox/` 와 만든 스크립트 `build_scripts/`. 자세한 글: 이 글 1절.
 - **[`track/`](track/)** — 추적에 쓰는 작은 모델: 확인 판정기, 번호 잇기 판정기, 위치 기억. 자세한 글: 이 글 2절, [track/README.md](track/README.md).
 - **[`reid/`](reid/)** — 외형 비교(re-ID) 모델. 자세한 글: 이 글 3절, [reid/README.md](reid/README.md).
+- **[원본 가중치와 최종 ONNX](SOURCE_ARTIFACTS.md)** — 모델별 파일과 SHA256, 팀 보관소 내려받기.
 - **[`MANIFEST.json`](MANIFEST.json)** — 모델 파일 확인값(sha256)과 `내부 이름 -> 파일` 표. 자세한 글: 이 글 4절.
 
 읽는 법:
