@@ -334,7 +334,8 @@ def _id_guard_state():   # 11-20: number guards and how often they acted (judge 
         j_ = getattr(APP, 'relabeler', None); t_ = getattr(APP, 'tracker', None)
         return dict(feat_guard=bool(rj_.GUARD['feat_guard']), cost_first=bool(tc_.ASSIGN['cost_first']), judge=isinstance(j_, rj_.OnlineJudge),
                     feat_stats=dict(getattr(j_, 'guard_stats', None) or {}), cost_first_tracker=getattr(t_, 'cost_first', None) is not None and APP.RULES.get('tracker') == 'botsort',
-                    cost_first_changed=int(getattr(t_, 'cost_first_changed', 0) or 0))
+                    cost_first_changed=int(getattr(t_, 'cost_first_changed', 0) or 0),
+                    feat_hold=j_.guard_state() if isinstance(j_, rj_.OnlineJudge) else None)   # 11-20 review: numbers held now, longest current hold (frames)
     except Exception as e_:   # noqa: BLE001
         return dict(last_error=repr(e_)[:120])
 

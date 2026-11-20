@@ -54,6 +54,10 @@ NAN = float('nan')
 # number's last box was another person's crop in 17 % of the writes (alone 2.3 %), covered >= 0.15 by a shown box 6.9-11 %, below 0.15 4 %.
 GUARD = dict(feat_guard=False)
 G_IOA, G_HID_IOA, G_HIDE, G_HOLD, G_FLOOR, G_MEM = 0.15, 0.30, 30, 5, 0.30, 5
+# 11-20 review: the agreement check ends G_NEED_MAX frames after the hold (None = no limit; 0 = no agreement check), so a number whose look
+# really changed (turning, cut at the edge, distance) is learned again; the per-number guard state of numbers not shown for G_PRUNE frames
+# is dropped (checked every 30 frames) so it does not grow over a long session.
+G_NEED_MAX, G_PRUNE = 90, 900
 
 
 def _cover(A, B):
@@ -359,7 +363,8 @@ class OnlineJudge:
         self.keep_rows = False; self.rows_log = []
         self.pred_gate = True   # 11-14 (user): only candidates whose growing search range (relabel_online.search_range) holds the birth (default on after the replay check); False = the old candidate set                      # PC verification: (frame, t, birth id, [cand ids], X, p) per evaluation
         # 11-20 feat_guard: counters for GET /rules, kept over reset()
-        self.guard_stats = dict(feat_seen=0, feat_held_overlap=0, feat_held_hidden=0, feat_held_after=0, feat_held_disagree=0)
+        self.guard_stats = dict(feat_seen=0, feat_held_overlap=0, feat_held_hidden=0, feat_held_after=0, feat_held_disagree=0,
+                                feat_check_expired=0, hold_max_frames=0)
         self.reset()
 
     def reset(self):
@@ -377,6 +382,7 @@ class OnlineJudge:
         self.last_emb = {}        # tracker id -> t of its last feature (refresh priority)
         # 11-20 feat_guard: hold end frame, partners awaiting the agreement check, pre-overlap memory, guarded memory, last shown boxes
         self._g_until, self._g_need, self._g_pre, self._g_mem, self._g_last = {}, {}, {}, {}, {}   # _g_last: tid -> (t, box) of its last shown row (<= G_HIDE frames)
+        self._g_t0 = {}           # tid -> first frame of its current hold (for hold_now_frames / hold_max_frames)
 
     # ---------------------------------------------------------------- 11-20 feat_guard (nothing here runs when the switch is off)
     def _g_mean(self, tid):
@@ -388,6 +394,10 @@ class OnlineJudge:
         vanished <= G_HIDE frames ago (a hidden person under it) covers >= G_HID_IOA of it. Sets o['_risk'] / o['_hold']."""
         last = self._g_last
         for c in [c for c, (tc, _) in last.items() if t - tc > G_HIDE or c not in self.id_map]: del last[c]
+        if t % 30 == 0:   # drop the guard state of numbers not shown for G_PRUNE frames
+            old = [c for c in self._g_t0.keys() | self._g_mem.keys() if not self.hist.get(c) or t - self.hist[c][-1]['t'] > G_PRUNE]
+            for c in old:
+                for d in (self._g_until, self._g_need, self._g_pre, self._g_mem, self._g_t0): d.pop(c, None)
         tids = list(obs); hid = [c for c in last if c not in now_set]
         over_, under_ = [[] for _ in tids], [[] for _ in tids]
         if len(tids) > 1:
@@ -402,7 +412,7 @@ class OnlineJudge:
             o['_risk'] = 'overlap' if over else ('hidden' if under else None)
             if o['_risk']:
                 if b not in self._g_need or t > self._g_until.get(b, -1):   # risk starts: the memory as it was before the overlap
-                    self._g_pre[b] = self._g_mean(b)
+                    self._g_pre[b] = self._g_mean(b); self._g_t0[b] = t
                 self._g_until[b] = t + G_HOLD; self._g_need.setdefault(b, set()).update(over + under)
             o['_hold'] = bool(o['_risk']) or t <= self._g_until.get(b, -1)
             last[b] = (t, o['box'])
@@ -415,6 +425,8 @@ class OnlineJudge:
         why = None
         if o['_risk']: why = 'feat_held_' + o['_risk']
         elif o['_hold']: why = 'feat_held_after'
+        elif b in self._g_need and G_NEED_MAX is not None and o['t'] > self._g_until.get(b, -1) + G_NEED_MAX:
+            self._g_need.pop(b, None); st['feat_check_expired'] += 1   # the agreement check timed out: learn the number's look again
         elif b in self._g_need:
             own = self._g_pre.get(b); oth = [x for x in (self._g_pre.get(p, self._g_mean(p)) for p in self._g_need[b]) if x is not None]
             s_own = cos(f, own) if own is not None else NAN
@@ -423,10 +435,18 @@ class OnlineJudge:
         if why is not None:
             st[why] += 1
             o['held'] = True
+            if b in self._g_t0: st['hold_max_frames'] = max(st['hold_max_frames'], o['t'] - self._g_t0[b])
             return
         m = self._g_mem.setdefault(b, [[], None]); m[0].append(f)
         if len(m[0]) > G_MEM: del m[0][0]
         m[1] = unit(np.mean(m[0], 0))   # the guarded memory: unit mean of the last G_MEM stored features
+
+    def guard_state(self):
+        """GET /rules id_guard: numbers held right now and the longest current hold (frames since its overlap began)"""
+        t, t0, need, until, mem = self.t, dict(self._g_t0), set(self._g_need), dict(self._g_until), set(self._g_mem)   # copies: read from the web thread
+        now = [c for c in t0 if c in need or t <= until.get(c, -1)]
+        return dict(held_now=len(now), hold_now_frames=max((t - t0[c] for c in now), default=0),
+                    hold_max_frames=self.guard_stats['hold_max_frames'], state_numbers=len(t0.keys() | mem))
 
     def _allocate_compact_public_id(self):
         """Allocate a fresh public ID once its first publication is decided."""

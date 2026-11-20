@@ -95,6 +95,59 @@ class FeatGuardTests(unittest.TestCase):
         self.assertEqual(J.guard_stats['feat_seen'], 0)
         self.assertTrue(all('held' not in o for h in J.hist.values() for o in h))
 
+    def test_agreement_check_ends_after_limit(self):
+        """A passes behind B (overlap t 20-30), then A's look really changes (F_C, e.g. turned or cut at the edge): with no limit every later
+        feature of A is held; with G_NEED_MAX the check ends and A's new look is stored again."""
+        F_C = judge.unit(rng.normal(size=64) - 2 * F_B)   # nearer to B's look than A's pre-overlap memory, as the reviewer's train4 case
+        def turn(t):
+            bx = 600.0 if t < 15 or t > 35 else 320.0
+            return [(1, box(300.0), 'A' if t < 36 else 'C'), (2, box(bx), 'B')]
+        old_lim = judge.G_NEED_MAX
+        try:
+            def go(lim, frames=200):
+                judge.G_NEED_MAX = lim
+                old = dict(judge.GUARD); judge.GUARD['feat_guard'] = True
+                try:
+                    J = judge.OnlineJudge(str(SPEC), crops=0, compact_ids=True)
+                    for t in range(frames):
+                        rows, P, look = [], {}, {}
+                        for k, (raw, b_, who) in enumerate(turn(t)):
+                            rows.append([*b_, raw, 0.8, 0, k]); P[k] = list(b_); look[k] = dict(A=F_A, B=F_B, C=F_C)[who]
+                        J.step(rows, P, lambda ks, look=look: {k: judge.unit(look[k] + 0.02 * rng.normal(size=64)) for k in ks}, frame=t)
+                    return J
+                finally:
+                    judge.GUARD.update(old)
+            J = go(None)
+            self.assertFalse(any(float(o['m1'] @ F_C) > 0.9 for o in judge.gallery(J.hist[1], 'm1')), 'no limit: the new look is never stored')
+            self.assertGreater(J.guard_state()['hold_now_frames'], 150)
+            J = go(90)
+            self.assertTrue(any(float(o['m1'] @ F_C) > 0.9 for o in judge.gallery(J.hist[1], 'm1')))
+            self.assertEqual(J.guard_stats['feat_check_expired'], 1)
+            self.assertLessEqual(J.guard_stats['hold_max_frames'], 15 + 90 + 10)
+            self.assertEqual(J.guard_state()['held_now'], 0)
+        finally:
+            judge.G_NEED_MAX = old_lim
+
+    def test_guard_state_is_pruned(self):
+        """numbers that come and go (a new raw number every 20 frames, each overlapping a standing person) must not keep guard state forever"""
+        def churn(t):
+            raw = 10 + t // 20
+            return [(1, box(300.0), 'A'), (raw, box(320.0), 'B')]
+        old = dict(judge.GUARD); judge.GUARD['feat_guard'] = True
+        try:
+            J = judge.OnlineJudge(str(SPEC), crops=0, compact_ids=True)
+            for t in range(3000):
+                rows, P, look = [], {}, {}
+                for k, (raw, b_, who) in enumerate(churn(t)):
+                    rows.append([*b_, raw, 0.8, 0, k]); P[k] = list(b_); look[k] = F_A if who == 'A' else F_B
+                J.step(rows, P, lambda ks, look=look: {k: judge.unit(look[k] + 0.02 * rng.normal(size=64)) for k in ks}, frame=t)
+        finally:
+            judge.GUARD.update(old)
+        n = J.guard_state()['state_numbers']
+        self.assertLess(n, 3000 // 20 // 2, n)   # 151 numbers were shown; without pruning all 151 keep state
+        self.assertLessEqual(n, (judge.G_PRUNE + 30) // 20 + 2, n)   # numbers seen in the last G_PRUNE frames only
+        self.assertEqual(set(J._g_mem) - {1}, {c for c in J._g_mem if c != 1 and J.t - J.hist[c][-1]['t'] <= judge.G_PRUNE + 30})
+
 
 if __name__ == '__main__':
     unittest.main()
