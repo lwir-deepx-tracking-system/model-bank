@@ -345,7 +345,7 @@ def _id_guard_state():   # 11-20: number guards and how often they acted (judge 
 
 def _merge_split_state():   # 11-20 switches merge_split / pre_capture (not recommended: HANDOFF 11-20): counters of the live layer, groups now
     from ..track import merge_split as ms_
-    l_ = getattr(APP, 'ms_layer', None)
+    l_ = vars(APP).get('ms_layer')
     return dict(merge_split=bool(ms_.SW['merge_split']), pre_capture=bool(ms_.SW['pre_capture']),
                 merge_stats=None if l_ is None else {k_: (round(v_, 2) if isinstance(v_, float) else v_) for k_, v_ in l_.stats.items()},
                 merge_groups=None if l_ is None else l_.groups_now())

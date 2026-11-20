@@ -931,12 +931,12 @@ def main():
                 er_ = e2e_live.step(g)
                 if er_ is not None: tr_rows = er_; e2e_rows_ = True
             if merge_split.active() and not own_ and not e2e_rows_ and tr_rows is not None:   # 11-20 switches merge_split / pre_capture (not recommended, HANDOFF 11-20): renames rows of any engine; off = not run
-                if getattr(APP, 'ms_layer', None) is None or APP.ms_key != (id(APP.tracker), vid): APP.ms_layer = merge_split.MergeSplit(); APP.ms_key = (id(APP.tracker), vid)
+                if vars(APP).get('ms_layer') is None or APP.ms_key != (id(APP.tracker), vid): APP.ms_layer = merge_split.MergeSplit(); APP.ms_key = (id(APP.tracker), vid)
                 ms_embed_ = ((lambda ks_, g_=g, arr_=arr: APP.rl_embed(list(ks_), g_, {k_: arr_[k_, :4].tolist() for k_ in ks_}))
                              if APP.rl_eng is not None and APP.CTL['app'] == 'repvgg' else None)
                 tr_rows = APP.ms_layer.step(tr_rows, arr, bs_feats or {}, ms_embed_, fps=30.0)
                 if APP.relabeler is not None and hasattr(APP.relabeler, 'ms_hold'): APP.relabeler.ms_hold = APP.ms_layer.hold_labels() or None
-            elif getattr(APP, 'ms_layer', None) is not None:
+            elif vars(APP).get('ms_layer') is not None:
                 APP.ms_layer = None
                 if APP.relabeler is not None and hasattr(APP.relabeler, 'ms_hold'): APP.relabeler.ms_hold = None
             base_rows = tr_rows; rl_ms = 0.0

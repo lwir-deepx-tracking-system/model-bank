@@ -1,6 +1,11 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
-마지막 고침 2026-11-20 · Claude · 겹친 두 사람 묶어 두기 `merge_split`·`pre_capture`·`kpt_assoc` 시험 (바로 아래, 브랜치 merge_split, 켜지 말 것), 그 전 기록: 번호 지킴 스위치 두 개 (cost_first, feat_guard)
+마지막 고침 2026-11-20 · Claude · merge_split 계층 조회 오류로 서버가 시작하자마자 멈춘 것 고침 (바로 아래). 그 전: 겹친 두 사람 묶어 두기 시험
+
+
+## 2026-11-20 서버 시작 오류 고침 (c5b6783에서 생김)
+
+`c5b6783`을 장치에 적용하자 서버가 첫 프레임에서 `NameError: ms_layer`로 멈췄습니다. `APP`는 아직 넣지 않은 이름을 읽으면 AttributeError가 아니라 NameError를 내서 `getattr(APP, 'ms_layer', None)`이 None으로 돌아가지 않습니다. `app.py`, `page_settings.py`에서 `vars(APP).get('ms_layer')`로 바꿨습니다. 장치는 그동안 `2d06361`로 되돌려 17:54에 다시 켰습니다. 앞으로 `APP`의 새 속성은 `getattr`/`hasattr` 대신 `vars(APP).get`으로 읽습니다.
 
 ## 2026-11-20 겹친 두 사람 묶어 두기 시험 (브랜치 merge_split · push 안 함 · 장치 미적용 · 켜지 말 것)
 
@@ -1040,6 +1045,8 @@ LWIR650 상체 E10의 고정 학습·검증 자료는 [LWIR650 상체 E10 재현
 4. 장치에 내려받았으면 1절의 "장치에서 도는 코드"와 3절에서 그 줄을 지웁니다.
 
 ## 8. 바뀐 것 기록 (새 것이 위)
+
+- 2026-11-20 Claude — merge_split 계층 조회 NameError로 서버 시작이 멈춘 것 고침(c5b6783 → 이 커밋). 장치는 2d06361로 되돌려 운영 유지.
 
 - 2026-11-20 Codex — 사용자 요청으로 GUI 메뉴·표시 이름·요약·도움말 용어를 통일. 모델 고유명·평가/미검증 정보 유지. PC/휴대폰 × 4종 메뉴 의미·8상태·POST 12개·시간표·Home·녹화 확대·Node·조각 검사 통과, 페이지 오류 0. `7a42487` push·보드 main 갱신·HTTP 일치·약 30 FPS/분할 유지 확인. 서버 재시작 없음.
 
