@@ -5,7 +5,8 @@ from pathlib import Path
 # ---- v41 (user 11-11): the appearance (re-ID) model is picked on the page and changed while running (KeepID and BoT-SORT 외형 비교 share ONE model:
 # both already ran on the same engine on NPU core 2; two different models would need two more engines on that core and two feature spaces) ----
 REID_JUDGE_FIT = 'RVGGA0_REID2C256'   # the 번호 잇기 판정기 (relink_judge_frozen.json) was fitted on this model's scores; with any other model it is not validated
-REID_INFO = {'RVGGA0_REID2C256': ('RepVGG_distillation_(TMOT,CAMEL)_20261103', 'RepVGG', 'teacher SOLIDER · 공개 열화상 데이터로 학습'),
+REID_INFO = {'REPVGG_REVIEWED264_20261117': ('RepVGG_fine-tuning_(검수264장)_20261117', 'RepVGG', '우리 카메라 검수 264장 직접 파인튜닝 · 가중치는 별도 설치'),
+             'RVGGA0_REID2C256': ('RepVGG_distillation_(TMOT,CAMEL)_20261103', 'RepVGG', 'teacher SOLIDER · 공개 열화상 데이터로 학습'),
              'REPVGG_DISTILL_INSIDE_20261110': ('RepVGG_distillation_(실내)_20261110', 'RepVGG', 'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정'),
              'REPVGG_FT_INSIDE_20261110': ('RepVGG_fine-tuning_(실내)_20261110', 'RepVGG', '우리 카메라 실내로 학습 · 장치 정확도 미측정'),
              'VIT_LITE_DISTILL_INSIDE_20261111': ('ViT-lite_distillation_(실내)_20261111', 'ViT-lite', 'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정'),

@@ -19,7 +19,8 @@
     "REPVGG_FT_INSIDE_20261110": "reid/repvgg_ft_inside_20261110_reid.dxnn",
     "VIT_LITE_DISTILL_INSIDE_20261111": "reid/vit_lite_distill_inside_20261111_reid.dxnn",
     "VIT_LITE_FT_INSIDE_20261111": "reid/vit_lite_ft_inside_20261111_reid.dxnn",
-    "REPVGG_FT_OTP2_20261113": "reid/repvgg_ft_otp2_20261113_reid.dxnn"
+    "REPVGG_FT_OTP2_20261113": "reid/repvgg_ft_otp2_20261113_reid.dxnn",
+    "REPVGG_REVIEWED264_20261117": "reid/repvgg_ft_reviewed264_20261117_reid.dxnn"
   },
   "_files": {
     "optimized/E10_KPT_480x384.dxnn": "47fd961044bf18fdc3e5b8a90d74e499699a05ae2a114629cd9ee9751820e4a9",
@@ -43,7 +44,9 @@
     "reid/repvgg_tmot_camel_reid.dxnn": "dc19d7862a77ffa1d7c7f71f84283e86c33267d9e741b59070b839cb1921ff53",
     "reid/vit_lite_distill_inside_20261111_reid.dxnn": "9c79e07bedefa097d36b4deb7716a72b404ba5f1f19366f448e5bd03b9a68199",
     "reid/vit_lite_ft_inside_20261111_reid.dxnn": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2",
-    "reid/repvgg_ft_otp2_20261113_reid.dxnn": "92cf064b3dc627b5ddc6360b7e693e2ca973b519e7696cf207d5dd710f178d31"
+    "reid/repvgg_ft_otp2_20261113_reid.dxnn": "92cf064b3dc627b5ddc6360b7e693e2ca973b519e7696cf207d5dd710f178d31",
+    "reid/repvgg_ft_reviewed264_20261117_reid.dxnn": "944747d7fe0d9cf56b3401b557dc73ce9412d7db3868c2c2346b4608343752fb"
   },
-  "_note": "internal model name -> sha256 of the DXNN file. scripts/setup.sh links models/links/<name>.dxnn to the file given in \"_links\" and checks every sha256 here. The server checks the detector and the re-ID model it loads against these values and lists a model on the page only when its name is here and linked. \"_files\": sha256 of every DXNN under models/detect/*/ and models/reid/ (detectors without an internal name are found by the server itself in models/detect/*/). Keys that start with \"_\" are not model names."
+  "_note": "internal model name -> sha256 of the DXNN file. scripts/setup.sh links models/links/<name>.dxnn to the file given in \"_links\" and checks every sha256 here. The server checks the detector and the re-ID model it loads against these values and lists a model on the page only when its name is here and linked. \"_files\": sha256 of every DXNN under models/detect/*/ and models/reid/ (detectors without an internal name are found by the server itself in models/detect/*/). Keys that start with \"_\" are not model names.",
+  "REPVGG_REVIEWED264_20261117": "944747d7fe0d9cf56b3401b557dc73ce9412d7db3868c2c2346b4608343752fb"
 }
