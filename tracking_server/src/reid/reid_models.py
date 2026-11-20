@@ -7,7 +7,7 @@ from . import cos_map
 # both already ran on the same engine on NPU core 2; two different models would need two more engines on that core and two feature spaces) ----
 REID_JUDGE_FIT = 'RVGGA0_REID2C256'   # the 번호 잇기 판정기 (relink_judge_frozen.json) was fitted on this model's scores; with any other model it is not validated
 REID_INFO = {'REPVGG_REVIEWED264_20261117': ('RepVGG_fine-tuning_(검수264장)_20261117', 'RepVGG', '우리 카메라 검수 264장 직접 파인튜닝 · 가중치는 별도 설치'),
-             'REPVGG_SOLIDER_DISTILL_E_20261120': ('SOLIDER 증류 E · 실내·가림 강함 · 옥상 약함 · 시험_20261120', 'RepVGG', 'teacher SOLIDER(공개 먼저, 우리 라벨 다음) 증류 · 장치 검출기 상자로 학습 · 유사도 눈금표 적용(판정기 맞춤) · 시험용 추가 선택지'),
+             'REPVGG_SOLIDER_DISTILL_E_20261120': ('SOLIDER 증류 E · 실내 근거리 4명 장면 강함 · 전체 추적은 기본보다 약함 · 시험_20261120', 'RepVGG', 'teacher SOLIDER 증류 · 시험용 추가 선택지. 추적 비교(PC, 9편): 전체는 기본(RVGGA0)보다 약함(번호 바뀜 42 대 33, IDF1 82.4 대 83.0, 오래 가는 빼앗김 15 대 12), 다른 사람에 가린 경우도 낫지 않음(19 대 15). 실내 근거리 4명 녹화에서만 뚜렷이 나음(IDF1 61.2 대 51.1). 유사도 눈금표 적용'),
              'RVGGA0_REID2C256': ('RepVGG_distillation_(TMOT,CAMEL)_20261103', 'RepVGG', 'teacher SOLIDER · 공개 열화상 데이터로 학습'),
              'REPVGG_DISTILL_INSIDE_20261110': ('RepVGG_distillation_(실내)_20261110', 'RepVGG', 'teacher SOLIDER · 우리 카메라 실내로 학습 · 장치 정확도 미측정'),
              'REPVGG_FT_INSIDE_20261110': ('RepVGG_fine-tuning_(실내)_20261110', 'RepVGG', '우리 카메라 실내로 학습 · 장치 정확도 미측정'),
@@ -37,5 +37,5 @@ def reid_swap(key, old, make, drain):
     try: drain()
     except Exception as e:
         del new; return False, old, '이전 특징을 비우지 못해 이전 모델 그대로: ' + repr(e)[:160]
-    cos_map.activate(key)   # 11-20: every appearance cosine of the ID rules follows the model now running (identity for models without a map)
+    cos_map.follow(key)   # 11-20: every appearance cosine of the ID rules follows the model now running (identity for models without a map); the caller passes the running tracker to apply_gate
     return True, new, '바뀜'

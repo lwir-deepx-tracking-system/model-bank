@@ -96,6 +96,50 @@ class CosMapTest(unittest.TestCase):
         cos_map.activate(KEY); cos_map.apply_gate(t); self.assertAlmostEqual(t.APP_THR, cos_map.gate_thr())
         cos_map.activate(''); cos_map.apply_gate(t); self.assertEqual(t.APP_THR, 0.25)
 
+    # ---- 2026-11-21 (review): server START with E, through the real page tracker factory (page_settings.mk_tracker_, Python engine)
+    def _factory_tracker(self):
+        import types
+        from ..common.state import APP
+        from ..web import page_settings
+        saved = {k: vars(APP).get(k) for k in ('args', 'RULES')}
+        APP.args = types.SimpleNamespace(sim=0.5, late_window=10, gate=3.5, no_motion_fallback=False, vit_conf=0.25, vit_min_h=32.0, sync_k=2, radius=2.0,
+                                         n_init=3, class_gate=True)
+        APP.RULES = dict(engine='python')
+        try:
+            return page_settings.mk_tracker_('botsort')
+        finally:
+            for k, v in saved.items():
+                if v is None: vars(APP).pop(k, None)
+                else: setattr(APP, k, v)
+
+    def test_start_with_E_as_relabel(self):
+        on, err = cos_map.follow(KEY)                      # app.py start: APP.REID['cur'] = --relabel
+        self.assertTrue(on); self.assertEqual(err, '')
+        t = self._factory_tracker()                        # first tracker of the frame loop
+        self.assertAlmostEqual(t.APP_THR, cos_map.gate_thr()); self.assertLess(t.APP_THR, 0.25)
+
+    def test_start_with_E_saved_choice(self):
+        cos_map.follow('RVGGA0_REID2C256')                 # start model of the start command
+        t = self._factory_tracker(); self.assertEqual(t.APP_THR, 0.25)
+        ok, new, txt = reid_swap(KEY, 'old', lambda k: ('engine', k), lambda: None)   # the saved choice is loaded by the frame loop
+        self.assertTrue(ok)
+        cos_map.apply_gate(t)                              # app.py: the running tracker after a successful change
+        self.assertAlmostEqual(t.APP_THR, cos_map.gate_thr())
+        t2 = self._factory_tracker(); self.assertAlmostEqual(t2.APP_THR, cos_map.gate_thr())   # every later tracker (new video, page change)
+        ok, new, txt = reid_swap('RVGGA0_REID2C256', new, lambda k: ('engine', k), lambda: None)
+        cos_map.apply_gate(t2); self.assertEqual(t2.APP_THR, 0.25); self.assertEqual(self._factory_tracker().APP_THR, 0.25)
+
+    def test_start_with_broken_table_does_not_stop_the_server(self):
+        old = cos_map.TABLES[KEY]
+        cos_map.TABLES[KEY] = 'reid/missing_cosmap.json'
+        try:
+            on, err = cos_map.follow(KEY)
+            self.assertFalse(on); self.assertIn('WITHOUT', err); self.assertEqual(cos_map.active(), '')
+            ok, kept, txt = reid_swap(KEY, 'cur', lambda k: 'x', lambda: None)   # a live change to a model with a broken table is refused
+            self.assertFalse(ok); self.assertEqual(kept, 'cur')
+        finally:
+            cos_map.TABLES[KEY] = old
+
 
 if __name__ == '__main__':
     unittest.main()

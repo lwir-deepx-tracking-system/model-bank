@@ -98,5 +98,20 @@ def apply_gate(tracker):
     return tracker
 
 
+def follow(key, tracker=None):
+    """the one entry point for 'model `key` is the one running now' (server start and every successful change): the map of `key` (identity
+    for a model without one) and the BoT-SORT gate of the running tracker, if there is one. Trackers made afterwards get the gate from the page
+    factory (page_settings.mk_tracker_ -> apply_gate). A listed table that cannot be read is reported and the model runs without a map
+    (returns False with the reason) instead of stopping the server."""
+    try:
+        on = activate(key)
+    except Exception as e:
+        activate('')
+        apply_gate(tracker)
+        return False, 'cosine map of %s not usable, model runs WITHOUT it: %r' % (key, e)
+    apply_gate(tracker)
+    return on, ''
+
+
 def state():
     return dict(model=active(), table=_S['file'], gate_app_thr=gate_thr())
