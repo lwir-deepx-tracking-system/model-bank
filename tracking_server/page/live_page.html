@@ -547,6 +547,9 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
       </section>
       <label class="hint camera-only" style="display:block;margin:6px 0"><input id="overlay-center-switch" type="checkbox"> 박스 떨림 보정 (JPEG 화면 표시만 · 상자 중앙 클릭)</label>
       <div class="rpseek" id="rpseek" hidden>
+        <label for="replayZoom">추적 확대</label>
+        <input id="replayZoom" type="range" min="1" max="4" step=".1" value="2" aria-label="녹화 가상 추종 확대 배율">
+        <output id="replayZoomValue" for="replayZoom">2.0배</output>
         <div class="rpr"><button class="btn small" id="rpplay" disabled>일시정지</button><button class="btn small" id="rpm10" disabled title="10초 뒤로 되감기">−10초</button><input type="range" id="rpslider" min="0" max="0" step="1" value="0" disabled aria-label="재생 위치"><button class="btn small" id="rpp10" disabled title="10초 앞으로 건너뛰기">+10초</button><button class="btn small" id="rpstep" type="button" disabled title="멈춘 상태에서 다음 한 장 (추적이 이어짐)">+1장</button></div>
         <div class="rpr rpt"><span class="num" id="rptime">–</span><span class="rpj">장 번호 <input type="number" id="rpjn" min="1" step="1" inputmode="numeric" aria-label="이동할 장 번호 (1부터)" disabled><button class="btn small" id="rpgo" disabled>이동</button></span></div>
         <div class="rpr rpreturn-row"><button class="btn small" id="rpreturn" disabled>카메라로 돌아가기</button><span class="rpreturn-key"><kbd>Esc</kbd></span></div>
@@ -670,7 +673,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
           </div>
           <details class="fold" style="margin-top:0"><summary>녹화 재생 설명</summary><dl class="legend">
             <dt>하는 일</dt><dd>라벨 사이트의 녹화 폴더 하나를 카메라 대신 서버에 넣습니다. 검출·추적은 카메라 영상과 똑같이 돌고, 영상 맨 위 줄에 REPLAY 와 녹화 이름이 나옵니다.</dd>
-            <dt>짐벌</dt><dd>재생을 시작하면 짐벌을 멈추고, 재생 중에는 사람을 눌러도 손으로 움직여도 짐벌이 움직이지 않습니다. 재생을 멈춘 뒤에는 사람을 다시 누를 때까지 따라가지 않습니다.</dd>
+            <dt>녹화 확대 추적</dt><dd>사람 상자를 누르면 설정한 배율로 확대해 따라갑니다. 가려지면 최대 10초 동안 위치를 추정합니다. 빈 곳을 누르면 전체 화면으로 돌아갑니다. 실제 짐벌에는 명령을 보내지 않습니다. 재생을 멈춘 뒤에는 사람을 다시 누를 때까지 따라가지 않습니다.</dd>
             <dt>카메라로</dt><dd>영상 아래의 카메라로 돌아가기 또는 Esc를 누르세요. 반복을 끄면 한 번 끝까지 재생한 뒤 마지막 장면에서 멈춥니다.</dd>
             <dt>8비트 녹화</dt><dd>값이 0~255 를 늘린 것이라 온도 Filter(16비트 값)가 맞지 않아 사람이 걸러질 수 있습니다. 볼 때만 설정의 "온도 Filter"를 잠시 끄세요. 서버가 Filter 를 스스로 바꾸지는 않습니다.</dd>
             <dt>측정</dt><dd>재생 중에도 측정할 수 있습니다. 측정 결과(summary.json, README_KO.txt)에 재생한 녹화 이름이 적힙니다.</dd>
@@ -693,7 +696,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         <label class="chk"><input type="checkbox" id="npu-feed" aria-describedby="npu-feed-state npu-feed-hint" disabled> 초당 장 수 지키기 · NPU 0·1 번갈아 쓰기</label>
         <!-- 11-16: NPU 0 only, and both by itself while detection cannot keep the camera period (src/detect/feed_auto.py) -->
         <label class="chk"><input type="checkbox" id="npu-feed-auto" aria-describedby="npu-feed-state npu-feed-hint" disabled> 자동 · 느려지면 번갈아 쓰기</label>
-        <label class="chk"><input type="checkbox" id="npu-feed-tile" aria-describedby="npu-feed-state npu-feed-hint" disabled> 한 장 분할 · NPU 0·1 동시 검출 (E10 관절 · 시험)</label>
+        <label class="chk"><input type="checkbox" id="npu-feed-tile" aria-describedby="npu-feed-state npu-feed-hint" disabled> 한 장 분할 · NPU 0·1 동시 검출</label>
         <button class="btn accent small" id="npu-feed-apply" disabled>적용</button>
         <span class="feedinfo"><span id="npu-feed-state" role="status">상태를 확인하는 중…</span> <span class="num" id="npu-feed-counts"></span> <span id="npu-feed-hint" role="status"></span></span>
       </div>
@@ -744,7 +747,7 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
             <dt>카메라 초기화</dt><dd>카메라 프로그램(cam_pipe)을 정상 종료하고 다시 시작합니다. 10~60초 걸립니다. 영상이 안 들어오는 중이면, 카메라가 보드의 USB 허브 쪽 포트(소프트웨어로 전원을 끌 수 있는 곳)에 있을 때만 USB 전원(5V)을 3초 껐다 켭니다(케이블을 뽑았다 꽂는 것과 같음. 짐벌 USB 와 마우스도 같이 잠깐 끊김. USB 메모리·디스크가 꽂혀 있으면 전원을 끄지 않음). 보드에 직접 연결된 포트에서는 전원을 끌 수 없어 USB 는 건드리지 않고, 카메라 USB 선을 10초 뽑았다 다시 꽂으라고 알려 줍니다. 카메라의 USB 칩이 멈추면(화면에 "카메라가 멈췄습니다") 전원을 끊는 것 말고는 고칠 방법이 없습니다. 다시 꽂으면 서버가 몇 초 안에 알아보고 카메라를 다시 엽니다.</dd>
             <dt>서버 재시작</dt><dd>8090 추적 서버를 다시 시작합니다. 직전 실행 기록은 보관하고, 서버가 돌아오면 화면이 자동으로 연결됩니다.</dd>
             <dt>초당 장 수 지키기 · NPU 0·1 번갈아 쓰기</dt><dd>영상 위에 있는 스위치입니다. 같은 검출 모델을 NPU 코어 0과 1에 올려 두고 영상을 한 장씩 번갈아 맡깁니다. 앞 장의 검출이 끝나기를 기다리지 않고 다음 장을 시작하므로, 검출 한 장이 카메라 주기(33 ms)보다 길어져도 영상을 버리지 않고 결과가 고르게 나옵니다. 한 장을 계산하는 시간이 줄지는 않고(평소에는 조금 늘 수 있음), 검출 결과는 같습니다. 처리 중인 프레임이 끝나면 서버를 다시 시작하지 않고 전환합니다. 옆의 "자동"은 평소에는 NPU 0만 쓰다가 검출이 카메라 주기를 못 따라가면 스스로 번갈아 씁니다.</dd>
-            <dt>한 장 분할 · NPU 0·1 동시 검출</dt><dd>E10 관절 모델에서 한 프레임을 겹치는 왼쪽·오른쪽 영상으로 나눠 동시에 검출한 뒤 합칩니다. 관절 17개와 기존 추적기·외형 모델을 사용합니다. 장면에 따라 지연과 검출 결과가 달라질 수 있으므로 추적 지연과 버린 장 수를 함께 확인하세요.</dd>
+            <dt>한 장 분할 · NPU 0·1 동시 검출</dt><dd>분할을 지원하는 관절 모델에서 한 프레임을 겹치는 왼쪽·오른쪽 영상으로 나눠 동시에 검출한 뒤 합칩니다. 관절 17개와 기존 추적기·외형 모델을 사용합니다. 장면에 따라 지연과 검출 결과가 달라질 수 있으므로 추적 지연과 버린 장 수를 함께 확인하세요.</dd>
             <dt>오렌지파이 재부팅</dt><dd>짐벌을 멈추고 보드를 재부팅합니다. 1~2분 뒤 이 화면이 저절로 다시 뜹니다. 보드에서 돌던 다른 작업도 모두 끊깁니다. 부팅 후 5분 안에는 다시 눌러도 실행하지 않습니다.</dd>
           </dl></details>
         </div>
@@ -1203,13 +1206,24 @@ setInterval(ovTick,1000);addEventListener('resize',ovDraw);
 function post(u,ka){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',keepalive:!!ka}).then(r=>r.json()).then(show).catch(()=>{S.textContent='명령이 전달되지 않았습니다';netChip();});}
 v.addEventListener('click',e=>{
   if(Date.now()<joyClickBlock)return;   // v40: the click that ends a joystick drag picks nobody
-  const blocked=cameraClickBlock();
+  const replay=document.body.classList.contains('replay-mode');
+  const blocked=replay?'':cameraClickBlock();
   if(blocked){$('ans').textContent=blocked;return;}
   const r=v.getBoundingClientRect();
   // the image keeps 4:3 inside its box (object-fit: contain): map the click into the picture itself
   const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
   const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;
+  if(replay){rppost('/replay/virtual-click?'+new URLSearchParams({x,y}));return;}
   post('/gimbal/click?x='+x+'&y='+y);});
+const replayZoom=$('replayZoom'), replayZoomValue=$('replayZoomValue');
+let replayZoomTimer;
+if(replayZoom)replayZoom.addEventListener('input',()=>{
+  replayZoomValue.value=Number(replayZoom.value).toFixed(1)+'배';
+  clearTimeout(replayZoomTimer);
+  replayZoomTimer=setTimeout(()=>{
+    if(document.body.classList.contains('replay-mode'))rppost('/replay/virtual-zoom?zoom='+encodeURIComponent(replayZoom.value));
+  },100);
+});
 function homeGimbal(){held.clear();keyDir='0,0';if(padBtn)padBtn.classList.remove('on');padDown=false;padBtn=null;joyEnd();return post('/gimbal/home');}
 // An empty-picture click stops; Space requests Home, pan/tilt (0, 0).
 for(const el of [v]){el.addEventListener('contextmenu',e=>e.preventDefault());el.addEventListener('dragstart',e=>e.preventDefault());}
@@ -1234,7 +1248,7 @@ const JOYB=$('joyb'),JOYK=$('joyk'),JOY={id:null,x0:0,y0:0,on:false,dx:0,dy:0,se
 const JOY_START=14,JOY_DEAD=18,JOY_R=56,JOY_T=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
 function joyDir(ax,ay){if(Math.hypot(ax,ay)<JOY_DEAD)return [0,0];return JOY_T[((Math.round(Math.atan2(-ay,ax)/(Math.PI/4))%8)+8)%8];}   // screen y grows downwards; the gimbal's y = 1 is up
 function joyEnd(){if(JOY.id==null)return false;const was=JOY.on,sent=JOY.sent;try{v.releasePointerCapture(JOY.id);}catch(_){}JOY.id=null;JOY.on=false;JOY.sent=false;JOY.dx=JOY.dy=0;JOYB.style.display='none';JOYK.style.transform='';if(was)joyClickBlock=Date.now()+400;return sent;}   // true = a move was sent, so the caller must send the stop
-v.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'||JOY.id!=null)return;JOY.id=e.pointerId;JOY.x0=e.clientX;JOY.y0=e.clientY;JOY.on=false;JOY.sent=false;JOY.dx=JOY.dy=0;try{v.setPointerCapture(e.pointerId);}catch(_){}});
+v.addEventListener('pointerdown',e=>{if(document.body.classList.contains('replay-mode')||e.pointerType==='mouse'||JOY.id!=null)return;JOY.id=e.pointerId;JOY.x0=e.clientX;JOY.y0=e.clientY;JOY.on=false;JOY.sent=false;JOY.dx=JOY.dy=0;try{v.setPointerCapture(e.pointerId);}catch(_){}});
 v.addEventListener('pointermove',e=>{if(e.pointerId!==JOY.id)return;const ax=e.clientX-JOY.x0,ay=e.clientY-JOY.y0,d=Math.hypot(ax,ay);
   if(!JOY.on){if(d<JOY_START)return;JOY.on=true;const r=v.parentNode.getBoundingClientRect();JOYB.style.left=(JOY.x0-r.left)+'px';JOYB.style.top=(JOY.y0-r.top)+'px';JOYB.style.display='block';try{if(navigator.vibrate)navigator.vibrate(8);}catch(_){}}
   const k=d>JOY_R?JOY_R/d:1;JOYK.style.transform='translate('+(ax*k).toFixed(0)+'px,'+(ay*k).toFixed(0)+'px)';
@@ -1358,6 +1372,8 @@ const TD={
   ['처리 순서','① 위치 예측 ② 궤적 ↔ 높은 점수 상자를 IoU .3 이상일 때만 짝지음 ③ 낮은 점수 상자는 쓰지 않음 ④ 한 프레임 놓친 궤적은 다음 프레임까지만 기다리고 지움. 다시 나타나면 새 번호'],
   ['코드','AltTracker 클래스 (kind sort, Tracker 상속)'],
   ['주의','가려지거나 검출이 한두 프레임 끊기면 번호가 바뀝니다. 비교용입니다. 우리 카메라에서 아직 측정하지 않았습니다.']]};
+const DETECTOR_UPPER_650='bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480';
+const DETECTOR_TEMPORAL_650='bank:yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480';
 // names shown on the nodes (the server's long preset names are not printed)
 const OLDSRV='서버를 다시 켜야 열립니다',LK='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 const BT_KEYS=['bytetrack','confirm3','rebind'];
@@ -1439,6 +1455,17 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
        ask:adOn?'':'검출 모델 자동 선택은 아직 장치에서 시험하지 않은 기능입니다.\n사람이 작게 보이면 먼 거리 모델로, 크게 보이면 근거리 모델로 바꿉니다.\n바꾸는 동안 화면이 잠깐 멈춥니다. 켤까요?'}]});}
   T.push({lab:'검출 모델',sub:'구조별 · YOLO26 안은 쓰는 곳별'+(adOn?' · 자동 선택 켜짐'+(ad.mode==='live'?' · 지금 '+({near:'근거리',far:'먼 거리',other:'다른 모델'}[ad.current]||'–')+' 모델':''):''),f:m&&cat.length?dfs:null,fe:{},n:!m?[{name:'불러오는 중…',lock:'모델 목록을 아직 받지 못했습니다'}]:!cat.length?[{name:'모델 고정',lock:'이 실행에서는 모델을 바꿀 수 없습니다'}]:
     catv.map(c=>({g:dfold(dk(c)),sg:dfold(dk(c))==='YOLO26'?duse26(dk(c)):'',rec:c.det==='bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480'||REC.includes(c.det),latest:c.det===latestDetector,note:DNOTE[c.det]||'',name:dname(c),sel:c.id===(m.busy?m.pending:m.current),lock:m.busy&&c.id!==m.pending?'모델을 바꾸는 중입니다. 끝나면 열립니다':'',u:'/model/set?id='+encodeURIComponent(c.id),model:1,ask:adOn?ADASK:''}))});
+  const poseBoxDetector=m&&!m.busy&&cat.find(c=>c.id===m.current);
+  if(r.pose_box && poseBoxDetector && [DETECTOR_UPPER_650, DETECTOR_TEMPORAL_650].includes(poseBoxDetector.det)){
+    const poseBoxVersion=poseBoxDetector.det===DETECTOR_TEMPORAL_650?'E10+3':'E10';
+    const detectorIndex=T.findIndex(t=>t.lab==='검출 모델');
+    const selectedRow=T[detectorIndex].n.find(n=>n.sel);
+    selectedRow.key='poseBoxDetector';
+    T.push({lab:'박스 모양',kidOf:detectorIndex,kidKey:'poseBoxDetector',show:true,sub:'같은 '+poseBoxVersion+' 관절 모델 · 화면 표시',n:[
+      {name:'상체 · 머리~골반 · '+poseBoxVersion+' · 2026-11-19',sel:r.pose_box==='upper',u:Q('pose_box=upper')},
+      {name:'전신 추정 · 머리~발 · '+poseBoxVersion+' · 2026-11-19',note:'다리가 가려지면 추정 · 사람 선택은 상체를 누르세요',sel:r.pose_box==='full',u:Q('pose_box=full')}
+    ]});
+  }
   T.push({lab:'검출 뒤 Filter',sub:'검출 상자를 거름 · 값은 아래 Filter 값',multi:1,n:[
     {name:'온도 Filter',note:'차가운 상자 버림',sel:warm,lock:r.warm_on==null?OLDSRV:'',u:Q('warm_on='+(warm?0:1))},
     {name:'가장자리 Filter',note:'가장자리 상자는 점수 '+(r.edge_birth!=null?r.edge_birth:'–')+' 이상만 새로 시작',sel:(r.edge_birth||0)>0,info:'값은 아래 Filter 값에서 바꿉니다 (0 = 끔)'}]});
@@ -1561,20 +1588,21 @@ function tiers(){const r=rlast,m=mlast,T=[];if(!r)return T;
 function otdraw(){OTT=tiers();if(!OTT.length)return;let h='';
   const body=(t,i)=>{let h='';
     const btn=(n,j)=>'<button type="button" class="ot-n'+(n.lock?' lock':n.sel?' sel':'')+'" data-i="'+i+'.'+j+'"'+(n.lock?' aria-disabled="true"':' aria-pressed="'+(n.sel?'true':'false')+'"')+(n.note?' title="'+esc(n.note)+'"':'')+'>'+(n.lock?LK+' ':t.multi&&!n.pick?'<i class="ot-box'+(n.sel?' on':'')+'"></i>':'')+wn(n.name)+(n.rec?'<span class="ot-rec">추천</span>':'')+(n.latest?'<span class="ot-rec">최신</span>':'')+(n.note?'<small>'+esc(n.note)+'</small>':'')+(n.lock&&n.lock!==n.note?'<small class="ot-why">'+esc(n.lock)+'</small>':'')+'</button>';   // 11-13: why a node is locked, shown in it
-    if(!t.f)t.n.forEach((n,j)=>{const kids=n.sel&&n.key?OTT.map((c,ki)=>[c,ki]).filter(([c])=>c.kidOf===i&&c.show&&c.kidKey===n.key):[];   // v42: a chosen tile that owns child rows becomes one box with the children inside. 11-16: all of them (only the first was drawn, so BoT-SORT had no engine row)
-      if(!kids.length){h+=btn(n,j);return;}
-      h+='<div class="ot-grp sel ot-own">'+btn(n,j)+kids.map(([c,ki])=>'<div class="ot-kid" data-kid="'+ki+'"><div class="ot-kidlab">'+esc(c.lab)+(c.sub?'<small>'+esc(c.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(c,ki)+'</div></div>').join('')+'</div>';});
-    else{t.n.forEach((n,j)=>{if(!n.g||!t.f.includes(n.g))h+=btn(n,j);});
+    const tile=(n,j)=>{const kids=n.sel&&n.key?OTT.map((c,ki)=>[c,ki]).filter(([c])=>c.kidOf===i&&c.show&&c.kidKey===n.key):[];   // v42: a chosen tile that owns child rows becomes one box with the children inside. 11-16: all of them (only the first was drawn, so BoT-SORT had no engine row)
+      if(!kids.length)return btn(n,j);
+      return '<div class="ot-grp sel ot-own">'+btn(n,j)+kids.map(([c,ki])=>'<div class="ot-kid" data-kid="'+ki+'"><div class="ot-kidlab">'+esc(c.lab)+(c.sub?'<small>'+esc(c.sub)+'</small>':'')+'</div><div class="ot-nodes">'+body(c,ki)+'</div></div>').join('')+'</div>';};
+    if(!t.f)t.n.forEach((n,j)=>{h+=tile(n,j);});
+    else{t.n.forEach((n,j)=>{if(!n.g||!t.f.includes(n.g))h+=tile(n,j);});
       const sg=(t.n.find(n=>n.sel&&n.g)||{}).g||'',op=(i in otopen)?otopen[i]:sg;
       t.f.forEach((f,k)=>{const inn=t.n.filter(n=>n.g===f),s=inn.find(n=>n.sel),all=inn.length&&inn.every(n=>n.lock);
-        if(inn.length===1){h+=btn(inn[0],t.n.indexOf(inn[0]));return;}   // 11-16 (design review 10): a folder that holds one model is that model's tile (one tap less)
+        if(inn.length===1){h+=tile(inn[0],t.n.indexOf(inn[0]));return;}   // 11-16 (design review 10): a folder that holds one model is that model's tile (one tap less)
         if(op===f)h+='<div class="ot-grp'+(s?' sel':'')+'">';
         h+='<button type="button" class="ot-n ot-f'+(s?' sel':!inn.length||all?' lock':'')+(op===f?' open':'')+'" data-f="'+i+'.'+k+'" aria-expanded="'+(op===f?'true':'false')+'">'+FD+' '+esc(f)+' '+(op===f?'▾':'▸')+'<small>'+(s?(op===f?'':'선택: '+wn(s.name)):inn.length?'모델 '+inn.length+'개'+(all?' · 모두 잠김':''):'모델 없음')+'</small></button>';
         if(op===f){let b='';const sz=[];inn.forEach(n=>{if(n.sg&&!sz.includes(n.sg))sz.push(n.sg);});sz.sort((a,b)=>szRank(a)-szRank(b));   // 11-13: size sub-folders smallest first (n, nano, tiny, s, m, l, x). the models sit inside the folder's own box
-          t.n.forEach((n,j)=>{if(n.g===f&&(sz.length<2||!n.sg))b+=btn(n,j);});
+          t.n.forEach((n,j)=>{if(n.g===f&&(sz.length<2||!n.sg))b+=tile(n,j);});
           if(sz.length>1)sz.forEach(q=>{const si=inn.filter(n=>n.sg===q),ss=si.find(n=>n.sel),key=i+'|'+f+'|'+q,so=(key in otsub)?otsub[key]:!!ss;   // two or more sizes: one sub-folder per size
             b+='<div class="ot-sg'+(ss?' sel':'')+'"><button type="button" class="ot-n ot-f ot-sf'+(ss?' sel':si.every(n=>n.lock)?' lock':'')+(so?' open':'')+'" data-s="'+esc(key)+'" aria-expanded="'+(so?'true':'false')+'">'+FD+' '+esc(q)+' '+(so?'▾':'▸')+'<small>'+(ss?(so?'':'선택: '+wn(ss.name)):'모델 '+si.length+'개')+'</small></button>';
-            if(so){b+='<div class="ot-sub">';t.n.forEach((n,j)=>{if(n.g===f&&n.sg===q)b+=btn(n,j);});b+='</div>';}
+            if(so){b+='<div class="ot-sub">';t.n.forEach((n,j)=>{if(n.g===f&&n.sg===q)b+=tile(n,j);});b+='</div>';}
             b+='</div>';});
           h+='<div class="ot-sub">'+(b||'<span class="ot-none">'+esc((t.fe&&t.fe[f])||'이 안에 모델이 없습니다')+'</span>')+'</div></div>';}});}
     return h;};
@@ -1756,16 +1784,19 @@ function syncSystemButtons(){
   const requested=wanted==='arrival', auto=wanted==='auto';
   const switching=feed?.pending===true;
   if(feed&&!switching&&feedChoice===wanted)feedChoice=null;
-  const selectedMode=feedChoice??wanted??'normal';
+  const splitUnavailable=feed&&feed.tile_available!==true&&!feed.tile_active;
+  if(splitUnavailable&&feedChoice==='tile')feedChoice=null;
+  const selectedMode=feedChoice??(splitUnavailable&&wanted==='tile'?feed.mode:wanted)??'normal';
   feedAuto.checked=selectedMode==='auto';
   feedTile.checked=selectedMode==='tile';
   feedToggle.checked=selectedMode==='arrival'||(selectedMode==='auto'&&feed?.active===true);
   feedAuto.disabled=sysbusy||pending||switching||!feed;
-  feedTile.disabled=feedAuto.disabled||(!feed?.tile_available&&selectedMode!=='tile');
-  feedTile.title=feed?.tile_available?'':(feed?.tile_reason||'E10 관절 모델을 선택한 뒤 사용할 수 있습니다');
+  feedTile.disabled=feedAuto.disabled||splitUnavailable;
+  feedTile.title=splitUnavailable?'현재 검출 모델에서 한 장 분할을 사용할 수 없습니다':'';
   feedToggle.disabled=feedAuto.disabled||feedAuto.checked;   // auto chooses the cores itself
   feedApply.disabled=feedAuto.disabled||feed?.can_toggle!==true||
-    (selectedMode===feed.requested&&(selectedMode==='auto'||selectedMode===feed.mode));
+    (selectedMode===feed.requested&&(selectedMode==='auto'||selectedMode===feed.mode))||
+    (splitUnavailable&&wanted==='tile'&&feedChoice===null);
   const mon=feed?.auto, per=mon?.period;   // 11-16: measured detection time against the camera period (also when auto is off)
 
   let state='상태를 확인하는 중…';
@@ -1775,9 +1806,10 @@ function syncSystemButtons(){
     if(switching)state='전환 중 · '+state;
     else{
       if(auto)state='자동 · '+state+(mon?(mon.why?' · '+mon.why:''):' · 자동 선택 멈춤 (서버 기록 참고)');   // 11-16: no monitor = the rule stopped (error) or the feed turned itself off
-      else if(wanted==='tile'&&!feed.tile_active)state='분할 검출 준비 대기 · '+state;
+      else if(splitUnavailable)state+=' · 현재 검출 모델은 한 장 분할을 사용할 수 없음';
+      else if(wanted==='tile'&&!feed.tile_active)state='분할 선택됨 · '+state;
       else if(wanted!=='tile'&&requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
-      if(feed.reason)state+=' · '+feed.reason;
+      if(feed.reason&&!(splitUnavailable&&feed.reason.includes('E10 관절 모델')))state+=' · '+feed.reason;
     }
     if(per?.state)state+=' · '+per.text;
   }
@@ -2212,7 +2244,7 @@ function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLas
   // 11-13: follow the playing recording only when it CHANGES, not on every answer. Otherwise a recording picked during playback snaps back
   // as soon as the focus leaves the selector, and its stored results can never be chosen (they are offered for the selected recording only).
   const playing=st.on?st.name:'';
-  if(playing!==rpSelSynced&&document.activeElement!==RPSEL){rpSelSynced=playing;if(playing&&rpItem(playing))RPSEL.value=playing;}
+  if(playing!==rpSelSynced&&document.activeElement!==RPSEL&&(!playing||rpItem(playing))){rpSelSynced=playing;if(playing)RPSEL.value=playing;}
   rpFillBackends(r);
   if(st.on&&document.activeElement!==RPFPS&&st.fps!=null)RPFPS.value=Math.round(st.fps);
   RPST.disabled=rpBusy||st.busy||!list.some(x=>x.usable);RPSP.disabled=rpBusy||st.busy||!st.on;
@@ -2356,7 +2388,22 @@ if(window.ResizeObserver)new ResizeObserver(()=>{
   else document.documentElement.style.removeProperty('--replay-controls-height');
 }).observe(RSK);
 let rpTick=0;
-function rptick(force){if(!force){const on=rpLast&&rpLast.state&&(rpLast.state.on||rpLast.state.returning);if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;}fetch('/replay'+(force==='refresh'?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()).then(rpShow).catch(()=>{});}
+let rpStatusPending=false, rpCataloguePending=false;
+function rptick(force){
+  const refresh=force==='refresh';
+  if(!force){
+    const on=rpLast?.state&&(rpLast.state.on||rpLast.state.returning);
+    if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;
+  }
+  if(refresh?rpCataloguePending:rpStatusPending)return;
+  if(refresh)rpCataloguePending=true;
+  else rpStatusPending=true;
+  return fetch(refresh?'/replay?refresh=1':'/replay?status=1',{cache:'no-store'})
+    .then(response=>response.json())
+    .then(data=>rpShow({list:[],backends:[],...rpLast,...data}))
+    .catch(()=>{})
+    .finally(()=>{if(refresh)rpCataloguePending=false;else rpStatusPending=false;});
+}
 function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=RRETURN.disabled=true;
   return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:r.status===403||r.status===404?'서버 재시작 후 쓸 수 있습니다':'서버 응답 '+r.status}))).then(r=>{RPMSG.textContent=r.text||(r.ok?'완료':'실패');return r;}).catch(()=>{RPMSG.textContent='서버 연결 끊김';return {ok:false,text:RPMSG.textContent};}).finally(()=>{rpBusy=false;setTimeout(()=>rptick(true),300);});}
 async function rpUseTracker(backend){
@@ -2404,7 +2451,7 @@ function rpBackToCamera(){const st=rpLast&&rpLast.state;if(st&&st.on&&!st.busy&&
 for(const button of [RPSP,RRETURN])button.addEventListener('click',rpBackToCamera);
 addEventListener('keydown',e=>{if(e.key==='Escape'&&!e.repeat&&!e.isComposing&&rpLast&&rpLast.state&&rpLast.state.on){e.preventDefault();rpBackToCamera();}});
 RPSEC.addEventListener('toggle',()=>{if(RPSEC.open)rptick('refresh');});
-setInterval(rptick,500);rptick(true);
+setInterval(rptick,500);rptick(RPSEC.open?'refresh':true);
 // 11-13 (design review, pass 2): 'advanced' open/closed shows the engineering controls (body.adv); stop button and hint over
 // the picture; aim marker at the bridge's --aim-screen-y. (Model / tracker are chosen in the settings tree, kept in the main panel.)
 const ADV=$('advsec');function advSync(){document.body.classList.toggle('adv',!!ADV.open);if(rlast)otdraw();}ADV.addEventListener('toggle',advSync);advSync();

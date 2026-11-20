@@ -1,7 +1,7 @@
 """프레임 한 장이 서버 안의 단계마다 언제 지나갔는지 재기 (2026-11-11). 기본으로 꺼져 있다. 환경 변수 LWIR_STAGE_TIMING 이 정확히 1 일 때만 켜진다.
 
 꺼져 있으면 app.py 의 프레임 반복에서 "APP.TIMING is not None" 을 두 번 보는 것 말고는 아무 일도 하지 않는다 (이 파일의 코드는 start() 한 번만 실행된다).
-실시간 실행(--live-port)에서만 켜진다.
+실시간 실행(--live-port)에서만 켜진다. LWIR_STAGE_TIMING_AUTO=1은 실제 GUI 실행기의 자동 측정을 허용하며, 명시적인 LWIR_STAGE_TIMING=0이 우선한다.
 
 프레임마다 적는 시각 (초, 서버의 프레임 시계 = time.perf_counter. 장치의 리눅스에서는 CLOCK_MONOTONIC 과 같은 시계다)
   cam         카메라 프로그램이 프레임을 받은 시각 (LWIR_CAM_STAMP=1 일 때만, 아니면 비어 있음)
@@ -47,7 +47,11 @@ STAGES_KO = {'cam>arrival': '카메라 프로그램이 받음 → 서버에 도�
 
 
 def wanted():
-    return os.environ.get('LWIR_STAGE_TIMING') == '1'
+    value = os.environ.get('LWIR_STAGE_TIMING')
+    if value is not None:
+        return value == '1'
+    return (os.environ.get('LWIR_STAGE_TIMING_AUTO') == '1'
+            and os.environ.get('LWIR_REAL_GUI_LAUNCH', '').lower() in ('1', 'true', 'yes'))
 
 
 def start():

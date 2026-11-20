@@ -47,7 +47,7 @@ function rpShow(r){const redraw=rpTrackerState(rpLast)!==rpTrackerState(r);rpLas
   // 11-13: follow the playing recording only when it CHANGES, not on every answer. Otherwise a recording picked during playback snaps back
   // as soon as the focus leaves the selector, and its stored results can never be chosen (they are offered for the selected recording only).
   const playing=st.on?st.name:'';
-  if(playing!==rpSelSynced&&document.activeElement!==RPSEL){rpSelSynced=playing;if(playing&&rpItem(playing))RPSEL.value=playing;}
+  if(playing!==rpSelSynced&&document.activeElement!==RPSEL&&(!playing||rpItem(playing))){rpSelSynced=playing;if(playing)RPSEL.value=playing;}
   rpFillBackends(r);
   if(st.on&&document.activeElement!==RPFPS&&st.fps!=null)RPFPS.value=Math.round(st.fps);
   RPST.disabled=rpBusy||st.busy||!list.some(x=>x.usable);RPSP.disabled=rpBusy||st.busy||!st.on;
@@ -191,7 +191,22 @@ if(window.ResizeObserver)new ResizeObserver(()=>{
   else document.documentElement.style.removeProperty('--replay-controls-height');
 }).observe(RSK);
 let rpTick=0;
-function rptick(force){if(!force){const on=rpLast&&rpLast.state&&(rpLast.state.on||rpLast.state.returning);if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;}fetch('/replay'+(force==='refresh'?'?refresh=1':''),{cache:'no-store'}).then(r=>r.json()).then(rpShow).catch(()=>{});}
+let rpStatusPending=false, rpCataloguePending=false;
+function rptick(force){
+  const refresh=force==='refresh';
+  if(!force){
+    const on=rpLast?.state&&(rpLast.state.on||rpLast.state.returning);
+    if(document.hidden||(!on&&!RPSEC.open&&(++rpTick%8)))return;
+  }
+  if(refresh?rpCataloguePending:rpStatusPending)return;
+  if(refresh)rpCataloguePending=true;
+  else rpStatusPending=true;
+  return fetch(refresh?'/replay?refresh=1':'/replay?status=1',{cache:'no-store'})
+    .then(response=>response.json())
+    .then(data=>rpShow({list:[],backends:[],...rpLast,...data}))
+    .catch(()=>{})
+    .finally(()=>{if(refresh)rpCataloguePending=false;else rpStatusPending=false;});
+}
 function rppost(url){rpBusy=true;RPST.disabled=RPSP.disabled=RRETURN.disabled=true;
   return fetch(url,{method:'POST',headers:{'X-Gimbal':'1'}}).then(r=>r.json().catch(()=>({ok:false,text:r.status===403||r.status===404?'서버 재시작 후 쓸 수 있습니다':'서버 응답 '+r.status}))).then(r=>{RPMSG.textContent=r.text||(r.ok?'완료':'실패');return r;}).catch(()=>{RPMSG.textContent='서버 연결 끊김';return {ok:false,text:RPMSG.textContent};}).finally(()=>{rpBusy=false;setTimeout(()=>rptick(true),300);});}
 async function rpUseTracker(backend){
@@ -239,7 +254,7 @@ function rpBackToCamera(){const st=rpLast&&rpLast.state;if(st&&st.on&&!st.busy&&
 for(const button of [RPSP,RRETURN])button.addEventListener('click',rpBackToCamera);
 addEventListener('keydown',e=>{if(e.key==='Escape'&&!e.repeat&&!e.isComposing&&rpLast&&rpLast.state&&rpLast.state.on){e.preventDefault();rpBackToCamera();}});
 RPSEC.addEventListener('toggle',()=>{if(RPSEC.open)rptick('refresh');});
-setInterval(rptick,500);rptick(true);
+setInterval(rptick,500);rptick(RPSEC.open?'refresh':true);
 // 11-13 (design review, pass 2): 'advanced' open/closed shows the engineering controls (body.adv); stop button and hint over
 // the picture; aim marker at the bridge's --aim-screen-y. (Model / tracker are chosen in the settings tree, kept in the main panel.)
 const ADV=$('advsec');function advSync(){document.body.classList.toggle('adv',!!ADV.open);if(rlast)otdraw();}ADV.addEventListener('toggle',advSync);advSync();

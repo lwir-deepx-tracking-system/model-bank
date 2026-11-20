@@ -339,7 +339,7 @@ class PublishFixture(unittest.TestCase):
                 APP.GB.people=list(people)
                 APP.GB.people_t=args[1]
             return APP.GB.state['id']
-        def evaluation(stamp, rows, *args):
+        def evaluation(stamp, rows, *args, **kwargs):
             self.evaluations.append(np.array(rows, copy=True))
             return None, None
         for target, attr, value in ((page.live_tracks, 'publish', control),
@@ -379,7 +379,7 @@ class PublishFixture(unittest.TestCase):
         return stamp
 
     def install_replay(self):
-        self.live.replay = {'name': 'fixture'}
+        self.live.replay = {'name': 'fixture', 'fps': 25.}
         self.live.proc = object()
         page.preview_worker.set_preview_producer(
             self.live, self.live.proc, before=time.perf_counter() - .1)

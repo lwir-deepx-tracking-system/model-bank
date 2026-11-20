@@ -1,5 +1,6 @@
 """웹 화면: 보여 줄 그림 만들기(live_publish), 페이지 요청 처리(lv_Handler, lv_Server), 서버 끝내기(live_close)."""
 from colorsys import hsv_to_rgb
+from dataclasses import replace
 from functools import lru_cache
 from ipaddress import IPv4Address, IPv4Network
 import json
@@ -11,6 +12,7 @@ from urllib.parse import parse_qs, urlsplit
 import numpy as np
 from ..common import frame_records
 from ..common.state import APP
+from ..common.identity_trace import diagnostic_payload
 from ..common.shared_values import HERE
 from ..gimbal.gimbal_link import gb_sample
 from ..gimbal import live_tracks
@@ -19,11 +21,12 @@ from ..detect import spec_proposals   # 11-14: people proposals from the spatial
 from ..detect import skin_temp   # 11-14: skin temperature per person box from the camera's temperature map (display only, off by default)
 from ..detect import auto_det   # 11-15: automatic NEAR / FAR detector choice (off by default)
 from ..detect import frame_feed   # 11-16: sent() = the period monitor's 'result is out' time of each frame
+from ..detect import pose_full_box
 from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows only (off by default)
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
 from . import system_buttons
-from . import preview_worker
+from . import preview_worker, replay_virtual_follow
 from .measure import STAGE_FIELDS
 from . import stream_sender   # 11-15 (user: 화면 전송 지연): GET /stream, one viewer
 from . import picture_first   # 11-15 (user: total delay about one camera frame): picture at frame arrival, boxes drawn by the page
@@ -259,7 +262,7 @@ def _raw_click_owners(raw_ids, raw_to_public=None):
 
 
 def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
-                 click_raw_ids=(), click_raw_to_public=None, click_namespace=None, deadline_marks=None):
+                 keypoints=None, click_raw_ids=(), click_raw_to_public=None, click_namespace=None, identity_details=None, deadline_marks=None):
     paired_stamp_ = bool(APP.LIVE.arr)
     now_ = time.perf_counter(); t_in = APP.LIVE.arr.popleft() if paired_stamp_ else now_
     if not isinstance(t_in, (int, float)) or not math.isfinite(t_in) or not 0 < t_in <= now_:
@@ -290,13 +293,6 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
     frozen_ = False if rep_ or not raw_valid_ else frozen_check(rq_)   # Invalid/missing RAW is separately denied below.
     sC_ = APP.LIVE.stabq.popleft() if APP.LIVE.stabq else None; STAB['px'] = sC_ or (0.0, 0.0)   # stab: correction of the frame being shown
     APP.LIVE.done_ts.append(now_)
-    if APP.LIVE.meas is not None:   # v22
-        with APP.LIVE.meas_lock:
-            if APP.LIVE.meas is not None: APP.LIVE.meas['boxes'].append((t_in, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0, int(b_[4]), float(b_[5]), int(b_[6])) for b_ in stab_rows_real(display_rows, sC_)]))   # v22d
-            if APP.LIVE.meas is not None and not APP.LIVE.meas['video']:
-                APP.LIVE.meas.setdefault('image_ids', []).append(row_.get('image_id'))
-                APP.LIVE.meas.setdefault('stage_rows', []).append(tuple(row_.get(k) for k in STAGE_FIELDS))
-            if APP.LIVE.meas is not None: APP.LIVE.meas['rows'].append((now_, (now_ - t_in) * 1000.0, float(row_.get('frame_total_ms', 0.0)), float(row_.get('pre_model_ms', 0.0)), float(row_.get('tracker_ms', 0.0)), float(APP.LIVE.cam_fps)))
     fps_ = (len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0
     # v26c: track output timing, independent of whether a JPEG is made.
     _record_perf(APP.LIVE, now_, t_in if paired_stamp_ else None, fps_, float(row_.get('frame_total_ms', 0.0)))
@@ -335,9 +331,50 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
                 click_namespace = None
             elif source_[0] == 'python' and camera_rows is None:
                 click_owners_ = _raw_click_owners(click_raw_ids, click_raw_to_public)
+        def preserve_follow_(old, new, namespace):
+            # Prepare every affected list before changing the judge. A camera-owned
+            # namespace, stale map, duplicate ID or immutable row list falls back.
+            judge = getattr(APP, 'relabeler', None)
+            transfer = getattr(judge, 'confirm_follow_transfer', None)
+            if (camera_rows is not None or source_ is None or source_[0] != 'python'
+                    or namespace is not click_namespace or namespace is not getattr(judge, 'id_map', None)
+                    or not callable(transfer) or click_raw_to_public is None):
+                return False
+            active = tuple(click_raw_ids)
+            if (len(active) != len(set(active))
+                    or any(click_raw_to_public.get(raw) != namespace.get(raw) for raw in active)):
+                return False
+            batches = {}
+            for seq in (rows_, display_rows, shown_rows_):
+                if not isinstance(seq, list):
+                    return False
+                person_ids = [int(r[4]) for r in seq if int(r[6]) == 0]
+                if (old in person_ids or person_ids.count(new) != 1
+                        or len(person_ids) != len(set(person_ids))):
+                    return False
+                batches[id(seq)] = (seq, [[*r[:4], old if int(r[6]) == 0 and int(r[4]) == new else r[4], *r[5:]] for r in seq])
+            raw = transfer(old, new, active, namespace=namespace, expected_t=judge.t)
+            if raw is None:
+                return False
+            for seq, replacement in batches.values():
+                seq[:] = replacement
+            click_raw_to_public[raw] = old
+            return True
         gb_id_ = live_tracks.publish(gb_people_, sC_, t_in, raw16_, source_,
                                     frozen_ or replay_link.frame_blocked(t_in), healthy_live=healthy_,
-                                    click_owners=click_owners_, click_namespace=click_namespace)
+                                    click_owners=click_owners_, click_namespace=click_namespace,
+                                    preserve_follow=preserve_follow_ if healthy_ else None,
+                                    identity_details=(identity_details, tracker_detections, stream_sender.frame_key(t_in))
+                                    if identity_details is not None and paired_stamp_ and not rep_ and
+                                    source_ and source_[0] == 'python' and not replay_link.frame_blocked(t_in) else None)
+    # Record canonical IDs and timing together after the same-frame follow commit.
+    if APP.LIVE.meas is not None:   # v22
+        with APP.LIVE.meas_lock:
+            if APP.LIVE.meas is not None: APP.LIVE.meas['boxes'].append((t_in, [(float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0, int(b_[4]), float(b_[5]), int(b_[6])) for b_ in stab_rows_real(display_rows, sC_)]))   # v22d
+            if APP.LIVE.meas is not None and not APP.LIVE.meas['video']:
+                APP.LIVE.meas.setdefault('image_ids', []).append(row_.get('image_id'))
+                APP.LIVE.meas.setdefault('stage_rows', []).append(tuple(row_.get(k) for k in STAGE_FIELDS))
+            if APP.LIVE.meas is not None: APP.LIVE.meas['rows'].append((now_, (now_ - t_in) * 1000.0, float(row_.get('frame_total_ms', 0.0)), float(row_.get('pre_model_ms', 0.0)), float(row_.get('tracker_ms', 0.0)), float(APP.LIVE.cam_fps)))
     pipeline_ = getattr(APP.LIVE, 'pipeline_perf', None)
     if pipeline_ is not None and paired_stamp_:
         tracked_at_ = time.perf_counter()
@@ -346,12 +383,13 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
                           feed_marks=feed_.deadline_marks(t_in) if feed_ is not None else None)
     frame_feed.sent(t_in)   # 11-16 period monitor (feed_auto): this frame's result is out (gimbal); its deadline is arrival + one camera period
     marks_ = _lost_marks(t_in, display_rows, gb_id_, fps_, own_pool=camera_rows is None)   # 11-16: every frame, so the kept marks follow the camera motion
+    if replay_ is None: replay_virtual_follow.VIRTUAL.clear()
     seek_ = APP.GB.state.get('seek') if has_gimbal_ and gb_id_ else None   # 11-16: the gimbal's search while the followed person is lost (bridge --seek 1)
     if skin_temp.TEMP['show']:   # 11-14: person boxes in real camera coordinates against the newest temperature map (no labels on a recording); after the gimbal frame (display only)
         skin_temp.on_frame(t_in, [(int(b_[4]), float(b_[0]), float(b_[1]) - 16.0, float(b_[2]), float(b_[3]) - 16.0) for b_ in stab_rows_real(display_rows, sC_) if int(b_[6]) == 0],
                            ok=raw_valid_ and not rep_ and not replay_link.frame_blocked(t_in))
     preview_receipt = []
-    receipt_args = {'preview_receipt': preview_receipt} if async_replay_ else {}
+    receipt_args = {'preview_receipt': preview_receipt} if replay_ is not None else {}
     gtd_, overlay_rows = replay_eval.on_frame(t_in, rows_, sC_, row_.get('image_id'), detections,
                                              tracker_detections, **receipt_args)
     position = preview_receipt[0] if preview_receipt else None
@@ -362,9 +400,12 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
                         replay_ is None or replay_source_ is not None)
     required = async_replay_ and worker_.replay_required(position, replay_.get('frames') or 0)
     pf_ = picture_first.active(APP.LIVE) and overlay_rows is None   # 11-15: the picture went out at frame arrival; here only its boxes
+    estimate_full = keypoints is not None and pose_full_box.mode(APP) == 'full'
     if pf_ and (APP.LIVE.viewers > 0 or now_ - APP.LIVE.snap_t < 3.0):
         boxes_ = []
-        for r_ in shown_rows_:   # the boxes drawn on the picture = the boxes sent to the gimbal (box_refine, 11-15)
+        picture_rows = (pose_full_box.project_tracks(display_rows, tracker_detections, keypoints, APP.LIVE_W, APP.LIVE_H, 16)
+                        if estimate_full else shown_rows_)
+        for r_ in picture_rows:
             if int(r_[6]) != 0: continue
             tid_ = int(r_[4])
             if gb_id_ and tid_ != gb_id_: continue   # while following, only the followed person's box (as in the drawn picture)
@@ -384,6 +425,9 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
         if overlay_rows is not None:
             rows_ = preview_rows_ = overlay_rows
             selected_ = 0
+        if estimate_full and not (replay_ is not None and getattr(replay_eval.EV, 'own_boxes', False)):
+            picture_rows = display_rows if overlay_rows is None else overlay_rows
+            preview_rows_ = pose_full_box.project_tracks(picture_rows, tracker_detections, keypoints, APP.LIVE_W, APP.LIVE_H, 16)
         float_coords_ = not has_gimbal_ and overlay_rows is None
         draw_ = []
         for r_ in preview_rows_:
@@ -407,6 +451,11 @@ def live_publish(g_, rows_, row_, detections=None, tracker_detections=None, *,
                                    rows_, row_, npers_, now_, fps_, gb_id_, owned=async_live_ or async_replay_,
                                    click_people=click_people, click_ticket=click_ticket, replay_position=position,
                                    marks=marks_, seek=seek_)
+        if replay_ is not None and position is not None:
+            hh_, ww_ = frame_.gray.shape[:2]
+            view_ = replay_virtual_follow.VIRTUAL.update(
+                t_in, position, replay_['fps'], frame_.boxes, round(ww_*sc_), round(hh_*sc_))
+            frame_ = replace(frame_, virtual=view_)
         if async_live_ or async_replay_:
             worker_.submit(token_, frame_, requested_at=now_)
         else:
@@ -573,9 +622,27 @@ def make_lv_Handler():
                 u4_ = us4_(self.path)
                 if u4_.path == '/replay/start': code_, text_ = replay_link.start_request(pq4_(u4_.query))
                 elif u4_.path == '/replay/stop': code_, text_ = replay_link.stop_request()
+                elif u4_.path == '/replay/virtual-click':
+                    try:
+                        click_ = pq4_(u4_.query)
+                        x_, y_ = float(click_['x'][0]), float(click_['y'][0])
+                        with APP.LIVE.jcond: stamp_ = getattr(APP.LIVE, 'jpeg_frame_t', None)
+                        run_ = getattr(replay_eval.EV, 'run_id', None)
+                        ok_, text_ = replay_virtual_follow.VIRTUAL.click(stamp_, run_, x_, y_) if run_ is not None else (False, '녹화 재생 중에 선택하세요')
+                    except (KeyError, ValueError, IndexError):
+                        ok_, text_ = False, '잘못된 화면 좌표'
+                    code_ = 200 if ok_ else 400
+                elif u4_.path == '/replay/virtual-zoom':
+                    try:
+                        value_ = float(pq4_(u4_.query)['zoom'][0])
+                        ok_, text_ = replay_virtual_follow.VIRTUAL.set_zoom(value_) if getattr(APP.LIVE, 'replay', None) else (False, '녹화 재생 중에 조절하세요')
+                    except (KeyError, ValueError, IndexError):
+                        ok_, text_ = False, '잘못된 확대 배율'
+                    code_ = 200 if ok_ else 400
                 elif u4_.path == '/replay/seek':
                     with APP.LIVE.cond:
                         code_, text_ = replay_link.seek_request(pq4_(u4_.query))   # 11-12: jump to a frame (0-based index)
+                    if code_ == 200: replay_virtual_follow.VIRTUAL.clear()
                 elif u4_.path == '/replay/pause': code_, text_ = replay_link.pause_request()
                 elif u4_.path == '/replay/step': code_, text_ = replay_link.step_request()
                 elif u4_.path == '/replay/play': code_, text_ = replay_link.play_request()
@@ -590,6 +657,7 @@ def make_lv_Handler():
             if APP.GB is None or self.headers.get('X-Gimbal') != '1': self.send_error(403); return
             u_ = urlsplit(self.path); q_ = parse_qs(u_.query, keep_blank_values=True)
             strict_ = u_.path == '/gimbal/click-frame'
+            control_status_ = 200
             try:
                 if strict_:
                     u_ = u_._replace(path='/gimbal/click')
@@ -638,7 +706,11 @@ def make_lv_Handler():
                     if not ok_:
                         b_ = json.dumps(dict(APP.GB.state, refused=True), ensure_ascii=False).encode()
                         self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
-                elif u_.path == '/gimbal/stop': APP.GB.state['answer'] = ''; APP.gb_send('H')
+                elif u_.path == '/gimbal/stop':
+                    APP.GB.state['answer'] = ''
+                    if not APP.gb_send('H'):
+                        control_status_ = 503
+                        APP.GB.state['answer'] = '정지 명령을 전달하지 못했습니다'
                 elif u_.path == '/gimbal/home':
                     APP.GB.state['answer'] = '원점 이동 요청: pan 0°, tilt 0°'
                     if not APP.gb_send('C'): self.send_error(503, 'Gimbal command unavailable'); return
@@ -647,13 +719,28 @@ def make_lv_Handler():
             except (KeyError, ValueError, IndexError): self.send_error(400); return
             try:
                 b_ = json.dumps(dict(APP.GB.state, **live_gimbal_position(), cam_idle=round(time.monotonic() - APP.LIVE.last_frame_t, 1), cam_fail=APP.LIVE.cam_fail_n, handoffs=getattr(APP.GB, 'handoff_n', 0))).encode()   # v24: cam_idle = seconds since the last camera frame; v24d: cam_fail = cam_pipe failures in a row (0 = fine or repairing)
-                self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
+                self.send_response(control_status_); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
             except (BrokenPipeError, ConnectionResetError, OSError): pass
         def do_GET(self):
             try:
                 if urlsplit(self.path).path == '/network':
                     body = json.dumps(network_state()).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+                elif self.path.split('?', 1)[0] == '/diagnostics/identity':
+                    trace_ = getattr(APP.LIVE, 'identity_trace', None)
+                    query_ = self.path.partition('?')[2]
+                    if query_:
+                        param_, _, digits_ = query_.partition('=')
+                        if (param_ != 'limit' or not (digits_.isascii() and digits_.isdigit()) or
+                                len(digits_) > 3 or not 1 <= int(digits_) <= 180):
+                            self.send_error(404)
+                            return
+                    b_ = diagnostic_payload(trace_, self.client_address[0], self.headers.get('Host', ''),
+                                             int(digits_) if query_ else 30)
+                    if b_ is None:
+                        self.send_error(404)
+                        return
+                    self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/stream'):
                     # 11-15: f=1 = the page reads the stream with fetch, which WebKit (iPhone Safari) refuses for x-mixed-replace
                     ctype_ = 'multipart/mixed' if 'f=1' in urlsplit(self.path).query.split('&') else 'multipart/x-mixed-replace'
@@ -677,7 +764,8 @@ def make_lv_Handler():
                     b_ = json.dumps(dict(t=round(time.time(), 4), v=stream_sender.page_stats(APP.LIVE, (parse_qs(urlsplit(self.path).query).get('p') or [''])[0]))).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/gimbal/people') and APP.GB is not None:   # v19: read only
-                    b_ = json.dumps(dict(state=APP.GB.state, **live_gimbal_position(), people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()
+                    b_ = json.dumps(dict(state=APP.GB.state, **live_gimbal_position(),
+                                         keepid_returns=getattr(APP.GB, 'follow_id_kept', 0), people=[dict(id=p_[0], x1=p_[1], y1=p_[2], x2=p_[3], y2=p_[4], conf=p_[5]) for p_ in APP.GB.people], width=APP.LIVE_W, height=APP.LIVE_H)).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
                 elif self.path.startswith('/rules'):   # v24g
                     b_ = json.dumps(auto_det.dry_log() if self.path.startswith('/rules/auto_det_log') else APP.rules_state(), ensure_ascii=False).encode()   # 11-15: every kept "would-have switch" of a replay (read only)
@@ -692,7 +780,7 @@ def make_lv_Handler():
                     with APP.LIVE.dlock: pr_ = [r_ for r_ in APP.LIVE.perf if r_[0] > since_]
                     b_ = json.dumps(dict(now=round(time.time(), 1), delay_kind='tracker_output', cols=['t', 'track_fps', 'cam_fps', 'delay_ms', 'delay_max_ms', 'compute_ms', 'paired_n', 'picture_delay_ms'], rows=pr_, pipeline=APP.LIVE.pipeline_perf.snapshot())).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-cache'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_)
-                elif self.path.startswith('/healthz'):   # v24d: read-only liveness for the keep-alive supervisor (never POST /gimbal/ping from a script: that is the page's safety heartbeat). 11-15: cam_frozen = the camera's USB chip froze (cam_pipe exit 8, no camera frame since): keepalive.sh does not reboot then
+                elif self.path.startswith('/healthz'):   # v24d: read-only liveness for the keep-alive supervisor (never POST /gimbal/ping from a script: that keeps browser manual control enabled). 11-15: cam_frozen = the camera's USB chip froze (cam_pipe exit 8, no camera frame since): keepalive.sh does not reboot then
                     now_ = time.monotonic(); last_out_ = APP.LIVE.done_ts[-1] if APP.LIVE.done_ts else None
                     try: rss_ = int(open('/proc/self/statm').read().split()[1]) * 4096 // 1048576
                     except Exception: rss_ = None

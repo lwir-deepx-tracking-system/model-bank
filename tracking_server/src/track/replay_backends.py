@@ -45,7 +45,7 @@ PICTURE_WH = (640, 480)
 MOT_MAX_BYTES = 64 * 1024 * 1024
 META_MAX_BYTES = 4 * 1024 * 1024
 LABEL_MAX = 40
-META_KEEP = ('what', 'motip_commit', 'checkpoint', 'checkpoint_sha256', 'settings', 'attention', 'resize', 'input',
+META_KEEP = ('what', 'motip_commit', 'checkpoint', 'checkpoint_sha256', 'model_key', 'settings', 'attention', 'resize', 'input',
              'device', 'threads', 'versions', 'timing_ms', 'written')   # 설명 파일에서 결과 파일로 옮겨 적는 항목
 META_ITEM_MAX = 2000
 

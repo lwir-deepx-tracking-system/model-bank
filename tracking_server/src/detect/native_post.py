@@ -17,13 +17,16 @@ def fast_nms(y):
  n=lib.nms_decoded(y,_nmsout,y.shape[2]);assert 0<=n<=300
  return _nmsout[:n].copy()
 
+
 if hasattr(lib, 'nms_person'):
- lib.nms_person.argtypes=[arr,arr,ctypes.c_int];lib.nms_person.restype=ctypes.c_int
+    lib.nms_person.argtypes = [arr, arr, ctypes.c_int]
+    lib.nms_person.restype = ctypes.c_int
+    _person_nms_out = np.empty((300, 6), np.float32)
 
- def fast_nms_person(y):
-  n=lib.nms_person(y,_nmsout,y.shape[2]);assert 0<=n<=300
-  return _nmsout[:n].copy()
-
+    def fast_nms_person(candidates):
+        count = lib.nms_person(candidates, _person_nms_out, candidates.shape[2])
+        assert 0 <= count <= 300
+        return _person_nms_out[:count].copy()
 
 if hasattr(lib, 'prepare_split_heads') and hasattr(lib, 'decode_split_heads'):
     head_pointers = ctypes.c_void_p * 18

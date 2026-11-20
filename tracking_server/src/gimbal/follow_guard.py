@@ -193,8 +193,8 @@ class FollowGuard:
                 if len(fit) == 1 and len(crowd) == 1:
                     if self._count(int(fit[0][0])):
                         out['reselect'] = int(fit[0][0])
-                        self.reaccepts += 1; self.why = 're-catch: new id %d at the prediction' % out['reselect']
-                        self.retarget(out['reselect'], cwh(fit[0]), t, people)
+                        self.why = 're-catch: new id %d at the prediction' % out['reselect']
+                        self.propose_retarget(out, cwh(fit[0]), t, people, "reaccepts")
                         return self._out(out, t)
                 else:
                     self.cand_n = 0
@@ -212,6 +212,9 @@ class FollowGuard:
         """may following move to qid? A new id (not on screen when ours was last trusted), or, right after an overlap in which
         our id ended up on someone else, a box that overlapped ours (the tracker swapped the ids)."""
         return qid not in self.ids_at_trust or (self.mask_from_risk and qid in self.partners)
+
+    def _allow_risk_without_identity(self):
+        return True
 
     def _mask(self, why, from_risk):
         if self.phase != 'masked':
@@ -239,13 +242,13 @@ class FollowGuard:
                 if max(overlaps(q, [r for r in others if r is not q]), default=0.) > MERGE_IOU: continue
                 qc = cwh(q); dq = self.dist(qc)
                 if (self.fits(qc, t) and (not ok or (d >= MIN_SWAP_H and dq < BETTER * d)) and
-                        (self._allowed(int(q[0])) or self.phase == 'risk') and (better is None or dq < better[1])):
+                        (self._allowed(int(q[0])) or (self.phase == 'risk' and self._allow_risk_without_identity())) and (better is None or dq < better[1])):
                     better = (int(q[0]), dq, qc)
         if better is not None:
             if self._count(better[0]):
                 out['reselect'] = better[0]
-                self.swaps += 1; self.why = 'swap: %d is nearer the prediction (%.2f vs %.2f heights)' % (better[0], better[1], d)
-                self.retarget(better[0], better[2], t, people)
+                self.why = 'swap: %d is nearer the prediction (%.2f vs %.2f heights)' % (better[0], better[1], d)
+                self.propose_retarget(out, better[2], t, people, "swaps")
                 return
             out['mask'] = True
             if not ok: self._mask('jump: %.2f heights from the prediction' % d, self.phase == 'risk')
@@ -288,6 +291,20 @@ class FollowGuard:
             return None
         px, py = warp_point(m, self.trust[0], self.trust[1])
         return ((c[0] - px) / dt, (c[1] - py) / dt)
+
+    def propose_retarget(self, out, c, t, people, counter, *, forget=None):
+        proposal = (out['reselect'], c, t, people, counter, forget)
+        if getattr(self, 'defer_retarget', False):
+            out['retarget'] = proposal
+        else:
+            self.accept_retarget(proposal)
+
+    def accept_retarget(self, proposal):
+        new_id, c, t, people, counter, forget = proposal
+        self.retarget(new_id, c, t, people)
+        setattr(self, counter, getattr(self, counter) + 1)
+        if forget is not None:
+            self.distract.pop(forget, None)
 
     def retarget(self, new_id, c, t, people):
         """Following moved to new_id (guard re-select, or a click/handoff for a new id): keep the velocity, trust its box."""
@@ -465,6 +482,22 @@ class FollowGuardV2(FollowGuard):
         self.app_masks = self.app_swaps = 0
         self.wide = None
         self.wide_reaccepts = 0
+        self.allow_masked_seek = False
+        self.masked_seek_lock = False
+
+    def _allowed(self, qid):
+        """Never let the geometry-only fallback transfer identity unverified.
+
+        Appearance-based hand-back is handled by _candidate; requiring it here
+        prevents the base guard's fallback from choosing a different person
+        when the embedding is stale, absent, ambiguous or mismatched.
+        """
+        # _candidate already accumulates appearance evidence across frames.
+        # Do not allow the base class to count the same frame a second time.
+        return False
+
+    def _allow_risk_without_identity(self):
+        return False
 
     def _wide_ok(self, c, f):
         """the followed number's box c with feature f is inside the search circle and clearly looks like the person"""
@@ -538,9 +571,8 @@ class FollowGuardV2(FollowGuard):
                 continue
             if self._count(qid):
                 out['reselect'] = qid
-                self.app_swaps += 1; self.why = 'hand-back by appearance: %d looks like the person and is in the gate' % qid
-                self.retarget(qid, cwh(q), t, people)
-                self.distract.pop(qid, None)
+                self.why = 'hand-back by appearance: %d looks like the person and is in the gate' % qid
+                self.propose_retarget(out, cwh(q), t, people, "app_swaps", forget=qid)
             else:
                 out['mask'] = out['mask'] or self.phase == 'masked'
             return True
@@ -551,8 +583,32 @@ class FollowGuardV2(FollowGuard):
         mine = [p for p in people if int(p[0]) == self.sel]
         mine = mine[0] if len(mine) == 1 else None
         out = dict(mask=False, reselect=0, pred=None)
-        self._remember(mine, people)
         f = self._feat(self.sel) if mine is not None else None
+        if self.masked_seek_lock:
+            # During a guarded search only the selected ID, verified against
+            # the last trusted prediction and appearance, can resume control.
+            comparable = mine is not None and self.pred is not None and f is not None and bool(self.tmpl)
+            c = cwh(mine) if comparable else None
+            look = self._looks(f) if comparable else None
+            fits = comparable and self.fits(c, t)
+            if fits and look == 'target' and not any(
+                    int(q[0]) != self.sel and iou(mine[1:5], q[1:5]) > RISK_IOU for q in people):
+                self.masked_seek_lock = False
+                self.reaccepts += 1
+                self._accept(t, c, people, motion, velocity=False)
+                self.phase = 'track'
+                self.cand_n = 0
+                self.partners, self.mask_from_risk = set(), False
+                return self._finish(out, t, mine)
+            out['mask'] = True
+            out['seek_masked'] = self.pred is not None and (
+                not people or (len(people) == 1 and comparable and (look == 'distractor' or not fits)))
+            return self._finish(out, t, mine)
+        seek_candidate = (self.allow_masked_seek and len(people) == 1
+                          and mine is not None and self.pred is not None and self.trust is not None)
+        position_disputed = seek_candidate and not self.fits(cwh(mine), t)
+        if not position_disputed:
+            self._remember(mine, people)
         if mine is not None and self.pred is not None and self.trust is not None and f is not None and self.tmpl:
             c = cwh(mine)
             others = [q for q in people if int(q[0]) != self.sel]
@@ -560,9 +616,9 @@ class FollowGuardV2(FollowGuard):
             ov = max(overlap_values, default=0.)
             if ov > RISK_IOU:
                 self.partners |= {int(q[0]) for q, value in zip(others, overlap_values) if value > RISK_IOU}
-            if self.phase in ('risk', 'masked', 'lost') or ov > RISK_IOU:
+            if self.phase in ('risk', 'masked', 'lost') or ov > RISK_IOU or position_disputed:
                 look = self._looks(f)
-                gate = self._in_gate(c, t)
+                gate = not position_disputed if seek_candidate else self._in_gate(c, t)
                 if not gate and ov <= RISK_IOU and self.phase in ('lost', 'masked') and self._wide_ok(c, f):
                     self.reaccepts += 1; self.wide_reaccepts += 1   # 11-16: found again inside the search circle
                     self.why = 're-catch in the search circle by appearance'
@@ -576,7 +632,11 @@ class FollowGuardV2(FollowGuard):
                         self.app_masks += 1
                         self._mask('looks like a person near it' if look == 'distractor' else 'outside the gate', self.phase == 'risk')
                     out['mask'] = True
-                    self._candidate(t, people, out)
+                    if seek_candidate:
+                        self.masked_seek_lock = True
+                        out['seek_masked'] = True
+                    else:
+                        self._candidate(t, people, out)
                     return self._finish(out, t, mine)
                 if look == 'target' and ov <= RISK_IOU:
                     if self.phase in ('masked', 'lost'): self.reaccepts += 1
@@ -584,16 +644,46 @@ class FollowGuardV2(FollowGuard):
                     self.phase = 'track'; self.cand_n = 0
                     self.partners, self.mask_from_risk = set(), False
                     return self._finish(out, t, mine)
+                if look is None and ov <= RISK_IOU:
+                    # A geometrically plausible selected ID may now belong to
+                    # a different person. Try a separately identified target;
+                    # never switch from geometry alone while it is ambiguous.
+                    if self._candidate(t, people, out):
+                        if out['reselect']:
+                            return self._out(out, t)
+                        out['mask'] = True
+                        return self._finish(out, t, mine)
                 if self.phase == 'masked':
                     out['mask'] = True
                     self._candidate(t, people, out)
                     return self._finish(out, t, mine)
                 self.phase = 'risk'   # overlapped or not yet clear: follow it, trust nothing
                 return self._finish(out, t, mine)
+        if (mine is not None and self.guard and self.pred is not None
+                and self.trust is not None and self.phase in ('risk', 'masked', 'lost')
+                and self.tmpl and f is None):
+            overlap = max((iou(mine[1:5], q[1:5]) for q in people
+                           if int(q[0]) != self.sel), default=0.)
+            velocity = self._motion_since_trust(t, cwh(mine), motion)
+            consistent_motion = (self.v_known and velocity is not None and
+                                 math.hypot(velocity[0] - self.vx, velocity[1] - self.vy)
+                                 <= VCONS_H * cwh(mine)[3])
+            if overlap <= RISK_IOU and not consistent_motion:
+                # Do not trust a possibly swapped ID just because the boxes
+                # separated before a clean identity feature became available.
+                self._mask('awaiting appearance after ambiguity', self.phase == 'risk' or self.mask_from_risk)
+                out['mask'] = True
+                return self._finish(out, t, mine)
         if mine is None and self.guard and self.pred is not None and self.tmpl:
             if self.phase not in ('lost', 'masked'): self.phase = 'lost'
-            if self._candidate(t, people, out) and out['reselect']:
+            matched = self._candidate(t, people, out)
+            if matched and out['reselect']:
                 return self._out(out, t)
+            if not matched:
+                self.cand, self.cand_n = 0, 0
+            # The base path resets candidate evidence when no geometry-only
+            # candidate is allowed; preserve the appearance counter instead.
+            return self._finish(out, t, mine)
         return super().step_after_propagate(t, people, motion, mine, out)
 
     def _finish(self, out, t, mine):

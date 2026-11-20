@@ -324,27 +324,21 @@ class Feed:
     def __init__(self, second_, *, hot_switch=False, warm_before_camera=False):
         self.eng = [APP.a] + ([second_] if second_ is not None else [])
         self.regular_eng = list(self.eng)
-        self.tile_engine = None; self.tile_tone = None; self.tile_error = None
-        if not getattr(APP.args, 'mock', False) and len(self.regular_eng) == 2:
-            self.tile_error = dual_tile.assets_reason()
-            if self.tile_error is None:
-                try:
-                    self.tile_tone = dual_tile.Tone()
-                    self.tile_engine = dual_tile.Engine()
-                    if warm_before_camera and APP.FEED_MODE == 'tile':
-                        self.tile_engine.b.warm_before_camera()
-                except Exception as error:
-                    if self.tile_engine is not None:
-                        self.tile_engine.b.dispose()
-                    self.tile_engine = self.tile_tone = None
-                    self.tile_error = '분할 검출기를 준비하지 못했습니다: %s' % str(error)[:120]
+        self.tile_engine = self.tile_tone = self.tile_error = None
+        self._prepare_tile()
+        if warm_before_camera and APP.FEED_MODE == 'tile' and self.tile_engine is not None:
+            try:
+                self.tile_engine.b.warm_before_camera()
+            except Exception as error:
+                self._dispose_tile()
+                self.tile_error = '분할 검출 워밍업 실패: %s' % str(error)[:120]
         self.busy = [False] * len(self.eng)
         self.last_e = len(self.eng) - 1
         self.hot_switch = hot_switch
         self.auto_live = bool(hot_switch and not vars(APP).get('FEED_HOT_SWITCH'))
         self.mode = 'arrival' if (APP.FEED_MODE == 'arrival' and second_ is not None) else 'normal'   # auto starts on core 0 only
         if APP.FEED_MODE == 'tile' and self.tile_engine is not None and dual_tile.selected():
-            self.eng = [self.tile_engine]; self.busy = [False]; self.mode = 'tile'
+            self.eng = [self.tile_engine]; self.busy = [False]; self._set_mode('tile')
         self.mon = feed_auto.Monitor()
         self.pending = None
         self.out = collections.deque()   # 검출기에 넣은 프레임 (도착 순서). 프레임 반복이 아직 받아 가지 않은 것
@@ -523,7 +517,7 @@ class Feed:
                 return False, 'NPU 1에 검출 모델이 올라가 있지 않습니다'
             if mode == 'tile':
                 if not dual_tile.selected():
-                    return False, '분할 검출은 E10 관절 모델에서만 사용할 수 있습니다'
+                    return False, '현재 검출 모델은 한 장 분할을 지원하지 않습니다'
                 if getattr(self, 'tile_engine', None) is None or getattr(self, 'tile_tone', None) is None:
                     return False, getattr(self, 'tile_error', None) or '분할 검출 모델을 준비하지 못했습니다'
                 resident_ = _resident()
@@ -536,6 +530,19 @@ class Feed:
             APP.LIVE.cond.notify_all()
         return True, 'NPU 검출 모드 변경을 요청했습니다'
 
+    def _set_mode(self, mode):
+        """Shorten Python thread handoffs while the two tile cores share the feed."""
+        previous_mode = self.mode
+        if mode == 'tile' and previous_mode != 'tile':
+            self._regular_switch_interval = sys.getswitchinterval()
+            sys.setswitchinterval(0.001)
+        elif previous_mode == 'tile' and mode != 'tile':
+            regular_interval = getattr(self, '_regular_switch_interval', None)
+            if regular_interval is not None:
+                sys.setswitchinterval(regular_interval)
+                self._regular_switch_interval = None
+        self.mode = mode
+
     def _apply_mode(self, *, from_feeder=False):
         """Apply under the condition after collecting the previous detector jobs."""
         mode = self.pending
@@ -547,7 +554,7 @@ class Feed:
                 why_ = auto_conflict() if self.mon is not None else ''
                 if why_ is None:
                     text_ = self.mon.switched(to_, self._clock())
-                    self.mode = to_; self.last_e = len(self.eng) - 1
+                    self._set_mode(to_); self.last_e = len(self.eng) - 1
                     camera_extra.say('FEED auto: %s' % text_)
                 elif why_: self.mon.held(why_)
             except Exception as x_:
@@ -563,14 +570,14 @@ class Feed:
             else:
                 APP.FEED_MODE = mode
                 if mode == 'tile':
-                    self.eng = [self.tile_engine]; self.busy = [False]; self.mode = 'tile'
+                    self.eng = [self.tile_engine]; self.busy = [False]; self._set_mode('tile')
                 else:
                     was_tile_ = self.mode == 'tile'
                     if was_tile_:
                         self.eng = self.regular_eng
                     self.busy = [False] * len(self.eng)
-                    if mode != 'auto': self.mode = mode
-                    elif was_tile_: self.mode = 'normal'
+                    if mode != 'auto': self._set_mode(mode)
+                    elif was_tile_: self._set_mode('normal')
                 self.last_e = len(self.eng) - 1
                 if from_feeder:
                     self.reset_monitor_on_take = True
@@ -730,7 +737,7 @@ class Feed:
                         self.st['order_bad'] += 1
                     self.prev_seq = r_.seq
                     self.st['taken'] += 1
-                    # Free the read-ahead slot for an idle engine.
+                    # Free the read-ahead slot only after recording the consumed sequence.
                     L_.cond.notify_all()
             if r_ is not None:
                 if L_.prev_t is not None and r_.t - L_.prev_t > 1.0:
@@ -763,16 +770,38 @@ class Feed:
             except Exception: pass
         return rs_
 
+    def _prepare_tile(self):
+        self.tile_error = None
+        if getattr(APP.args, 'mock', False):
+            return
+        self.tile_error = dual_tile.assets_reason()
+        if self.tile_error is not None:
+            return
+        if len(self.regular_eng) != 2:
+            self.tile_error = 'NPU 1을 준비하지 못했습니다'
+            return
+        try:
+            tone = dual_tile.Tone()
+            engine = dual_tile.Engine()
+        except Exception as error:
+            self.tile_error = '분할 검출기를 준비하지 못했습니다: %s' % str(error)[:120]
+            return
+        self.tile_tone, self.tile_engine = tone, engine
+
+    def _dispose_tile(self):
+        tile = getattr(self, 'tile_engine', None)
+        self.tile_engine = self.tile_tone = None
+        if tile is not None:
+            try: tile.b.dispose()
+            except Exception: pass
+
     def _off(self, why_):   # 이 방식을 끈다: 여기서부터 read_frame 은 보통 읽기(live_next), APP.a 는 첫째 엔진
         self._stop_thread(); self._drain()
         with APP.LIVE.cond: self.mon = None   # 11-16: nothing is measured from here; /rules must not keep the last period statement
         regular_ = getattr(self, 'regular_eng', self.eng) if self.mode == 'tile' else self.eng
         APP.a = regular_[0]; second_ = regular_[1:]; self.eng = regular_[:1]; self.direct = True
-        tile_ = getattr(self, 'tile_engine', None); self.tile_engine = None
-        if tile_ is not None:
-            try: tile_.b.dispose()
-            except Exception: pass
-        self.mode = 'normal'
+        self._dispose_tile()
+        self._set_mode('normal')
         self.pending = None; self.auto_to = None
         for e_ in second_:
             try: e_.b.dispose()
@@ -788,6 +817,7 @@ class Feed:
             if self.auto_to is not None: self.pending = None; self.auto_to = None   # 11-16: an automatic switch asked for just before this change is dropped (it was for the old model)
             while self.working and self.th.is_alive(): L_.cond.wait(0.2)
         rs_ = self._drain(); self.st['swaps'] += 1; self.st['redo'] += len(rs_)
+        self._dispose_tile()
         self.redo.extendleft(reversed(rs_))   # 옛 모델에 들어가 있던 프레임: 바꾼 뒤 새 모델에 다시 넣는다 (보통 방식과 같다)
         regular_ = getattr(self, 'regular_eng', self.eng) if self.mode == 'tile' else self.eng
         APP.a = regular_[0]
@@ -808,13 +838,16 @@ class Feed:
         old_mode_ = self.mode
         self.regular_eng = [prim_] + ([second_] if second_ is not None else [])
         self.eng = self.regular_eng; self.busy = [False] * len(self.eng); self.last_e = len(self.eng) - 1
-        self.mode = (APP.FEED_MODE if APP.FEED_MODE not in ('auto', 'tile') else
-                     old_mode_ if APP.FEED_MODE == 'auto' and old_mode_ in ('normal', 'arrival') else 'normal') if second_ is not None else 'normal'
+        self._prepare_tile()
+        regular_mode = old_mode_ if APP.FEED_MODE == 'auto' and old_mode_ in ('normal', 'arrival') else 'normal'
+        if APP.FEED_MODE not in ('auto', 'tile'):
+            regular_mode = APP.FEED_MODE
+        self._set_mode(regular_mode if second_ is not None else 'normal')
         if APP.FEED_MODE == 'tile':
             if getattr(self, 'tile_engine', None) is not None and dual_tile.selected():
-                self.eng = [self.tile_engine]; self.busy = [False]; self.mode = 'tile'
+                self.eng = [self.tile_engine]; self.busy = [False]; self._set_mode('tile')
             else:
-                self.reason = 'E10 관절 모델에서만 분할 검출을 사용할 수 있습니다'
+                self.reason = self.tile_error or '현재 검출 모델은 한 장 분할을 사용할 수 없습니다'
         APP.a = self
         with APP.LIVE.cond:
             if self.mon is not None: self.mon.reset()
@@ -831,10 +864,9 @@ class Feed:
                 try: e_.b.dispose()
                 except Exception: pass
             self.eng = regular_[:1]; self.direct = True
-            tile_ = getattr(self, 'tile_engine', None); self.tile_engine = None
-            if tile_ is not None:
-                try: tile_.b.dispose()
-                except Exception: pass
+            self._dispose_tile()
+        if self.mode == 'tile':
+            self._set_mode('normal')
         s_ = self.st
         camera_extra.say('FEED arrival end: fed %d, taken %d, core 0 %d, core 1 %d, started while the other core was still busy %d, dropped while waiting to be fed %d, '
                          'fed again after a model change %d (changes %d), most frames ahead of the loop %d, order errors %d'

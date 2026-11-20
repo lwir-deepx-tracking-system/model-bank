@@ -40,7 +40,7 @@ class LivePreviewPrepareTests(PublishFixture):
         APP.GB.state['id'] = 1
         stages = []
 
-        def publish_control(people, correction, stamp, raw, source, blocked, *, healthy_live):
+        def publish_control(people, correction, stamp, raw, source, blocked, *, healthy_live, **kwargs):
             stages.append('control')
             self.assertTrue(healthy_live)
             self.assertFalse(blocked)

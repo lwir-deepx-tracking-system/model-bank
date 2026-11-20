@@ -35,7 +35,7 @@ from ..track.bytetrack import available_bytetrack_library
 from ..track import replay_backends
 from ..web.preview_worker import set_preview_producer
 from . import camera_extra
-from . import replay_eval
+from . import replay_eval, replay_box_contract
 from . import stall_diag   # 11-13: stall log (LWIR_STALL_DIAG=1 only)
 
 FPS_MIN, FPS_MAX, FPS_DEF = 5.0, 30.0, 25.0
@@ -347,10 +347,17 @@ def state():
     return st_
 
 
+def _status_payload(why):
+    return dict(result_views=True, available=why is None, why=why,
+                state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
+
+
 def get_info(q_):
     r_ = on(); refresh_ = q_.get('refresh', ['0'])[0] == '1'
     why_ = None if r_ else ('녹화 폴더가 정해지지 않음 (--replay-root)' if not getattr(APP.args, 'replay_root', '') else '녹화 폴더가 없음')
     if r_ and APP.args.live_wait: why_ = '이 실행 방식에서는 쓸 수 없음 (--live-wait 0 필요)'
+    if not refresh_ and q_.get('status', ['0'])[0] == '1':
+        return _status_payload(why_)
     backends = [dict(id='python', label='현재 추적기')]
     if available_bytetrack_library(APP.args) is not None:
         backends.append(dict(id='cpp_bytetrack', label='C++ ByteTrack'))
@@ -369,7 +376,9 @@ def get_info(q_):
                 if bad_: it_['tracks_note'] = '저장된 결과 %s 못 씀: %s' % (bad_[0]['key'], bad_[0]['why']) + (' (외 %d개)' % (len(bad_) - 1) if len(bad_) > 1 else '')
             shown_.append(it_)
         items_ = shown_
-    return dict(backends=backends, result_views=True, available=why_ is None, why=why_, fps_min=FPS_MIN, fps_max=FPS_MAX, fps_default=FPS_DEF, list=items_, state=state(), eval=replay_eval.state(), eval_last=replay_eval.last())
+    return dict(_status_payload(why_), backends=backends, fps_min=FPS_MIN,
+                fps_max=FPS_MAX, fps_default=FPS_DEF, list=items_,
+                approx_box_recordings=sorted(replay_box_contract.KNOWN_FULL_GT))
 
 
 def start_request(q_):   # -> (http 코드, 글)
@@ -382,6 +391,10 @@ def start_request(q_):   # -> (http 코드, 글)
     if len(pacing_values) != 1 or pacing_values[0] not in ('legacy', 'deadline'):
         return 400, 'pacing 은 legacy 또는 deadline'
     pacing = pacing_values[0]
+    box_modes = q_.get('box_mode', ['verified'])
+    if len(box_modes) != 1 or box_modes[0] not in ('verified', replay_box_contract.APPROX):
+        return 400, '알 수 없는 정답 상자 비교 방식'
+    box_mode = box_modes[0]
     backend = q_.get('backend', ['python'])[0]
     library = available_bytetrack_library(APP.args) if backend == 'cpp_bytetrack' else None
     stored_key = replay_backends.stored_key(backend) if tracks_root() is not None else None   # 'pre:<key>' (저장된 결과). 옵션이 없으면 전처럼 모르는 이름이다
@@ -391,6 +404,10 @@ def start_request(q_):   # -> (http 코드, 글)
         return 409, 'C++ ByteTrack 라이브러리가 설정되지 않았습니다'
     it_, d_ = find(q_.get('seq', [''])[0])
     if it_ is None: return (409 if not on() else 400), d_
+    if box_mode == replay_box_contract.APPROX and (
+            it_['name'] not in replay_box_contract.KNOWN_FULL_GT or stored_key is not None
+            or replay_box_contract.prediction_definition(replay_box_contract.live_model()) != replay_box_contract.UPPER):
+        return 422, '추정 상체 GT는 지원 녹화의 머리–골반 검출 모델에서만 사용할 수 있습니다'
     tracks_ = None
     if stored_key is not None:
         tracks_, why_ = _stored_target(it_, d_, stored_key)
@@ -413,6 +430,7 @@ def start_request(q_):   # -> (http 코드, 글)
     _gimbal_stop()
     tgt_ = dict(name=it_['name'], dir=d_, fps=fps_, loop=lp_ == '1', bits=it_['bits'], frames=it_['frames'], fin0=None, paused=False,
                 backend=backend, tracker_library=library, preview=preview_mode, pacing=pacing)
+    if box_mode != 'verified': tgt_['box_mode'] = box_mode
     if tracks_ is not None: tgt_['tracks'] = tracks_
     APP.lv_th.Thread(target=_switch, args=(tgt_,), daemon=True).start()
     return 200, '재생 시작: %s' % it_['name']
@@ -481,6 +499,8 @@ def restart_request():
         query['preview'] = [target['preview']]
     if 'pacing' in target:
         query['pacing'] = [target['pacing']]
+    if 'box_mode' in target:
+        query['box_mode'] = [target['box_mode']]
     return start_request(query)
 
 
@@ -492,9 +512,10 @@ def restart_after_change(why, *, tries=20, wait_s=0.5, start=None):
     target = getattr(live_, 'replay', None) if live_ is not None else None
     if target is None:
         return None
+    replay_eval.model_changed()
     query = {'seq': [target['name']], 'fps': [str(target['fps'])], 'loop': ['1' if target.get('loop') else '0'],
              'backend': [target.get('backend', 'python')]}
-    for k_ in ('preview', 'pacing'):
+    for k_ in ('preview', 'pacing', 'box_mode'):
         if k_ in target:
             query[k_] = [target[k_]]
     start = start or start_request

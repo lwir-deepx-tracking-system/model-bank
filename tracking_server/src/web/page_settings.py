@@ -12,6 +12,7 @@ from ..detect import frame_feed   # 11-16: manual_pending (a pending automatic s
 from ..track import native_backend
 from ..track.position_memory import POSP, POS_NAMES, pos_list, pos_select
 from ..track import e2e_live
+from ..detect import pose_full_box
 from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows (off by default)
 from ..track.stabilizer import STAB
 from ..track.bytetrack import ByteTrackTracker
@@ -115,6 +116,7 @@ def rules_state():
 
 def rules_state_2():
     return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg(), auto_det=auto_det.state(), resident_det=resident_det.state(),
+                pose_box=pose_full_box.mode(APP),
                 box_refine=box_refine.state())   # 11-15: 상자 다듬기 (src/track/box_refine.py): mode, blend_s, ms per frame, tracks   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). resident_det (11-15): 두 모델 상주·즉시 전환 (src/detect/resident_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
 
 
@@ -265,6 +267,18 @@ def rules_request(q_):
 
 
 def rules_request_2(q_):
+    if 'pose_box' in q_:
+        mode = q_['pose_box'][0]
+        if mode not in ('upper', 'full'):
+            return False, '박스 모양은 상체 또는 전신 추정만 선택할 수 있습니다'
+        if not pose_full_box.available(APP):
+            return False, 'E10 또는 E10+3 관절 모델을 선택한 뒤 박스 모양을 바꿔 주세요'
+        rest = {name: value for name, value in q_.items() if name != 'pose_box'}
+        ok, message = rules_request_2(rest) if rest else (True, '박스 모양 적용됨')
+        if ok:
+            APP.SEL['pose_box'] = mode
+            APP.sel_save(pose_box=mode)
+        return ok, message
     if 'box_refine' in q_ or 'box_blend' in q_ or 'lost_same' in q_:   # 11-15: box smoothing (src/track/box_refine.py); checked first, changed only when the rest of the query was taken too. 11-16: lost_same (lost box = seen box)
         br_ = {k_: x_ for k_, x_ in q_.items() if k_ in ('box_refine', 'box_blend', 'lost_same')}
         ok_, tx_, apply_ = box_refine.parse_request(br_)

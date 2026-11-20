@@ -301,19 +301,41 @@ def load_spec(path):
     return spec, hashlib.sha256(txt.encode('utf-8')).hexdigest()
 
 
+def mutual_best_pairs(ranked_pairs):
+    """Keep only unique first choices on both sides of the eligible candidate list."""
+    best_birth, best_owner = {}, {}
+    tied_birth, tied_owner = set(), set()
+    for pair in ranked_pairs:
+        score, birth, owner = pair
+        if birth not in best_birth:
+            best_birth[birth] = pair
+        elif score == best_birth[birth][0]:
+            tied_birth.add(birth)
+        if owner not in best_owner:
+            best_owner[owner] = pair
+        elif score == best_owner[owner][0]:
+            tied_owner.add(owner)
+    return [pair for pair in ranked_pairs
+            if pair[1] not in tied_birth and pair[2] not in tied_owner
+            and best_birth[pair[1]] == pair and best_owner[pair[2]] == pair]
+
+
 # ---------------------------------------------------------------- the online judge
 class OnlineJudge:
     """Drop-in for relabel_online.OnlineRelabel (same step / reset / stats / events / per_frame interface) with the learned judge.
     crops = per-frame crop budget on NPU core 2 (0 = unlimited: every eligible crop every frame; the PC replay uses it)."""
-    def __init__(self, spec_path, crops=2, *, compact_ids=False):
+    def __init__(self, spec_path, crops=2, *, joint_candidates=False, compact_ids=False):
         self.spec, self.spec_sha = load_spec(spec_path)
         self.M, self.feats, self.thr = self.spec['model'], list(self.spec['features']), float(self.spec['decision']['threshold'])
         self.crops = int(crops)
+        self.joint_candidates = joint_candidates
         self.compact_ids = bool(compact_ids)
         self._history_type = _LiveObservationHistory if compact_ids else list
         self.stats = dict(new_ids=0, births=0, births_with_candidates=0, pairs_scored=0, relabelled=0, retired_reappearances=0, frames=0,
                           crops_new=0, crops_refresh=0, crops_embedded=0, crops_new_births_with_candidates=0, births_with_candidates_no_feature=0,
                           decided_with_feature=0)
+        if joint_candidates:
+            self.stats['joint_withheld_births'] = 0
         self.events, self.per_frame = [], []
         self.feat_ms, self.model_ms, self.cands_per_eval = [], [], []
         self.keep_rows = False; self.rows_log = []
@@ -328,19 +350,44 @@ class OnlineJudge:
         self.next_public_id = 1
         self.public_identity_token = object() if self.compact_ids else None
         self.hist = {}            # tracker id -> observation history, preserving raw IDs after disappearance
+        self.current_raw_ids = ()
+        self.follow_transfers = []
         self.id_map = {}          # tracker id -> output id (popped when retired)
         self.retired = set()      # tracker ids handed over; a fresh output id if output again
         self.last_emb = {}        # tracker id -> t of its last feature (refresh priority)
 
     def _allocate_compact_public_id(self):
-        """Allocate per-sequence public IDs independently of raw tracker IDs.
-
-        Relinks keep the canonical old number. Spent provisional IDs are never
-        recycled, including when a retired raw tracker appears again.
-        """
+        """Allocate a fresh public ID once its first publication is decided."""
         public = self.next_public_id
         self.next_public_id += 1
         return public
+
+    def confirm_follow_transfer(self, old_public, new_public, active_raw, *, namespace, expected_t):
+        """Transfer only a uniquely owned, absent public ID in this exact judge frame."""
+        active = tuple(int(raw) for raw in active_raw)
+        if (namespace is not self.id_map or expected_t != self.t or self.t < 0
+                or old_public == new_public or old_public <= 0 or new_public <= 0
+                or len(active) != len(set(active)) or set(active) != set(self.current_raw_ids)):
+            return None
+        public_now = [self.id_map.get(raw) for raw in active]
+        if (None in public_now or len(public_now) != len(set(public_now))
+                or old_public in public_now or public_now.count(new_public) != 1):
+            return None
+        old_owners = [raw for raw, public in self.id_map.items() if public == old_public]
+        new_owners = [raw for raw, public in self.id_map.items() if public == new_public]
+        if len(old_owners) != 1 or len(new_owners) != 1:
+            return None
+        old_raw, new_raw = old_owners[0], new_owners[0]
+        if (old_raw in active or new_raw not in active or old_raw in self.retired
+                or new_raw in self.retired or not self.hist.get(old_raw) or not self.hist.get(new_raw)
+                or self.hist[old_raw][-1]['t'] >= self.t or self.hist[new_raw][-1]['t'] != self.t):
+            return None
+        self.id_map[new_raw] = old_public
+        self.id_map.pop(old_raw)
+        self.retired.add(old_raw)
+        self.follow_transfers.append(dict(t=self.t, old_public=old_public, new_public=new_public,
+                                         old_raw=old_raw, new_raw=new_raw))
+        return new_raw
 
     def _elig(self, prow, P):
         """tracker id -> detection k of the rows that can be cropped (k in P, detection height >= 32 px, any overlap)"""
@@ -350,7 +397,11 @@ class OnlineJudge:
             if k >= 0 and k in P and P[k][3] - P[k][1] >= MIN_H: e[int(r[4])] = k
         return e
 
-    def step(self, rows, P, embed, frame=None, embed_async=None):
+    @staticmethod
+    def trace_supported():
+        return True
+
+    def step(self, rows, P, embed, frame=None, embed_async=None, *, trace_candidates=None):
         """rows: this frame's tracker rows [x1, y1, x2, y2, id, conf, cls, k, ...]; P: {k: [x1, y1, x2, y2]} person detections (conf >= 0.1)
         keyed like the rows' k; embed(list of k) -> {k: L2-normalised feature}; embed_async(list of k) -> collect() -> {k: feature}.
         Returns the rows (same order, same boxes) with relabelled person IDs."""
@@ -369,6 +420,7 @@ class OnlineJudge:
         # rows rounded like TRACKS_BASE.jsonl, so the features equal an offline rebuild from the saved rows
         prow_r = [[round(float(v), 2) for v in r[:4]] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in prow]
         now = [int(r[4]) for r in prow_r]; now_set = set(now)
+        self.current_raw_ids = tuple(now)
         births = [b for b in now if b not in self.hist]
         # candidates of every birth (frozen at t0): tracker ids output before, not output now, lost <= WINDOW frames
         cands = {}
@@ -408,18 +460,23 @@ class OnlineJudge:
         st['crops_new_births_with_candidates'] += sum(1 for b in bc[:n_new] if b in feat)
         # ---- observations of this frame (not yet in hist: candidate histories are the frames before t0)
         obs = make_observations(t, prow_r, P, feat)
-        # ---- id bookkeeping (relabel_online): retired ids reappearing get a fresh id; births get their own id
+        # ---- a compact ID is assigned after relink, so an unpublished birth that
+        # keeps the old ID does not consume another number.
+        pending_public = set()
         for b in now:
             if b in self.retired:
                 if self.compact_ids:
-                    self.id_map[b] = self._allocate_compact_public_id()
+                    pending_public.add(b)
                 else:
                     self.id_map[b] = self.fresh; self.fresh += 1
                 self.retired.discard(b); st['retired_reappearances'] += 1
-            if b not in self.id_map:
-                self.id_map[b] = self._allocate_compact_public_id() if self.compact_ids else b
+            elif b not in self.id_map:
+                if self.compact_ids:
+                    pending_public.add(b)
+                else:
+                    self.id_map[b] = b
                 st['new_ids'] += 1
-        out_ids = {self.id_map[x] for x in now}
+        out_ids = {self.id_map[x] for x in now if x in self.id_map}
         # ---- judge every birth with candidates (K = 0: features at t_now = t0, nobs = [the birth observation])
         st['births'] += len(births); pairs = []
         summaries = {}
@@ -446,14 +503,37 @@ class OnlineJudge:
             if self.keep_rows: self.rows_log.append((frame, t, b, [c for c, _ in cl], X, p))
             for (c, _), pv in zip(cl, p):
                 pv = float(pv)
-                if pv >= self.thr and c != b and c in self.id_map and c not in now_set and self.id_map[c] not in out_ids:
+                eligible = pv >= self.thr and c != b and c in self.id_map and c not in now_set and self.id_map[c] not in out_ids
+                if eligible:
                     pairs.append((pv, b, c))
+                if trace_candidates is not None and len(trace_candidates) < 17:
+                    # Reasons describe eligibility before greedy assignment.
+                    why = (0 if eligible else 1 if not pv >= self.thr else 2 if c == b else
+                           3 if c not in self.id_map else 4)
+                    q = round(pv * 10000) if math.isfinite(pv) and 0 <= pv <= 1 else 0
+                    trace_candidates.append([b, c, self.id_map.get(c, 0), q, why, False])
+        ranked_pairs = sorted(pairs, key=lambda x: (-x[0], x[1], x[2]))
+        if self.joint_candidates:
+            # Compare against all eligible choices before transferring any ID.
+            # An ambiguous birth is still published with its own number.
+            chosen = mutual_best_pairs(ranked_pairs)
+            st['joint_withheld_births'] += len({b for _, b, _ in ranked_pairs}) - len(chosen)
+            ranked_pairs = chosen
         ub, uc = set(), set()
-        for pv, b, c in sorted(pairs, key=lambda x: (-x[0], x[1], x[2])):
-            if b in ub or c in uc or c not in self.id_map or b not in self.id_map: continue
-            ub.add(b); uc.add(c); oid = self.id_map[c]; old_new = self.id_map[b]
+        chosen_trace = set() if trace_candidates is not None else None
+        for pv, b, c in ranked_pairs:
+            if b in ub or c in uc or c not in self.id_map or (b not in self.id_map and b not in pending_public): continue
+            ub.add(b); uc.add(c); oid = self.id_map[c]; old_new = self.id_map.get(b)
             self.id_map[b] = oid; self.retired.add(c); self.id_map.pop(c, None); st['relabelled'] += 1
             self.events.append(dict(frame=frame, t=t, tracker_id=b, new_id=old_new, old_id=oid, cand_tid=c, p=round(pv, 4), n_cand=len(cands[b])))
+            if chosen_trace is not None:
+                chosen_trace.add((b, c))
+        if chosen_trace is not None:
+            for row in trace_candidates:
+                row[5] = (row[0], row[1]) in chosen_trace
+        for b in now:
+            if b in pending_public and b not in self.id_map:
+                self.id_map[b] = self._allocate_compact_public_id()
         # ---- histories + deferred refresh
         for b, o in obs.items():
             if b not in self.hist:

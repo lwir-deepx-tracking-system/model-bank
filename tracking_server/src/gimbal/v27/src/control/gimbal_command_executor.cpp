@@ -308,9 +308,13 @@ bool GimbalCommandExecutor::alive() const
 {
     return connected_ && Clock::now() - ping_ < std::chrono::milliseconds(config_.heartbeat_timeout_ms);
 }
+bool GimbalCommandExecutor::heartbeat_allows_control() const
+{
+    return alive() || (state_.automatic && persistent_web_follow_);
+}
 bool GimbalCommandExecutor::ready() const
 {
-    return !stopped_ && !state_.error && alive() && !runtime_.stop_requested.load() &&
+    return !stopped_ && !state_.error && heartbeat_allows_control() && !runtime_.stop_requested.load() &&
         runtime_.state.load() == RuntimeState::Running &&
         runtime_.generation.load() == model_generation_ &&
         runtime_.tracker_epoch.load() == tracker_epoch_;
@@ -352,6 +356,7 @@ void GimbalCommandExecutor::failure(const std::exception& e)
     brake_ = {};
     state_.error = true;
     published_brake_target_.store(0);
+    persistent_web_follow_ = false;
     state_.automatic = false; state_.selected_id = 0; state_.lost = false;
     search_ = {}; state_.search = 0;   // v27
     coasting_ = coasted_ = seeking_ = false;      // v27 coast / seek
@@ -384,6 +389,7 @@ void GimbalCommandExecutor::invalidate(const char* reason)
     controller_.reset();
     ++state_.command_generation;
     published_brake_target_.store(0);
+    persistent_web_follow_ = false;
     state_.automatic = false; state_.selected_id = 0; state_.lost = false;
     lost_since_ = {}; next_auto_ = {};
     grace_deadline_ = {}; last_observed_capture_ = {}; observation_cadence_ = {};
@@ -639,7 +645,7 @@ void GimbalCommandExecutor::tick(bool arrival)
         tracker_epoch_ = runtime_.tracker_epoch.load();
         return;
     }
-    if (!alive()) { if (state_.automatic || state_.moving) invalidate("heartbeat/disconnect"); return; }
+    if (!heartbeat_allows_control()) { if (state_.automatic || state_.moving) invalidate("heartbeat/disconnect"); return; }
     if (!state_.automatic || state_.error) return;
     const auto now = Clock::now();
     const Track* t = target(state_.selected_id);
@@ -809,20 +815,43 @@ void GimbalCommandExecutor::tick(bool arrival)
 void GimbalCommandExecutor::connected() { invoke([this] { invalidate("connect"); connected_ = !stopped_; ping_ = Clock::now(); }); }
 void GimbalCommandExecutor::disconnected() { invoke([this] { connected_ = false; invalidate("disconnect"); }, true); }
 void GimbalCommandExecutor::ping() { invoke([this] { ping_ = Clock::now(); }); }
-ControlResult GimbalCommandExecutor::select(std::uint32_t id)
+ControlResult GimbalCommandExecutor::select(std::uint32_t id, FollowLifetime lifetime)
 {
-    return invoke([this, id] {
-        if (!ready()) return ControlResult::NotReady;
-        if (!target(id)) return ControlResult::InvalidTarget;
-        invalidate("AUTO selection");
-        if (state_.error) return ControlResult::NotReady;
-        lead_after_frame_ = last_frame_id_;
-        state_.selected_id = id; state_.automatic = true;
-        if (smoothing_.predictive_brake) published_brake_target_.store(id);
-        if (smoothing_.observation_grace_ms > 0)
-            last_observed_capture_ = latest_->frame->metadata.captured_at;
-        return ControlResult::Ok;
+    return invoke([this, id, lifetime] {
+        if (!alive() || !ready()) return ControlResult::NotReady;
+        if (!target(id) || (lifetime == FollowLifetime::Web && !latest_healthy_))
+            return ControlResult::InvalidTarget;
+        return bind_target(id, lifetime);
     });
+}
+ControlResult GimbalCommandExecutor::handoff(std::uint32_t old_id, std::uint64_t epoch,
+                                            std::uint32_t id, std::uint64_t frame)
+{
+    return invoke([this, old_id, epoch, id, frame] {
+        if (!ready() || !state_.automatic || state_.selected_id != old_id || state_.command_generation != epoch ||
+            (state_.lost && Clock::now() - lost_since_ >= std::chrono::milliseconds(config_.automatic.reacquire_timeout_ms)))
+            return ControlResult::NotReady;
+        // The Python guard masks the old public ID on its exact proposal frame.
+        // A stale frame, an old target returned, or a duplicate new ID cannot rebind control.
+        if (!latest_healthy_ || last_frame_id_ != frame || id == old_id || target(old_id) || !target(id) ||
+            std::count_if(latest_->tracks.begin(), latest_->tracks.end(), [id](const Track& t) {
+                return t.track_id == static_cast<int>(id);
+            }) != 1)
+            return ControlResult::InvalidTarget;
+        return bind_target(id, persistent_web_follow_ ? FollowLifetime::Web : FollowLifetime::Session);
+    });
+}
+ControlResult GimbalCommandExecutor::bind_target(std::uint32_t id, FollowLifetime lifetime)
+{
+    invalidate("AUTO selection");
+    if (state_.error) return ControlResult::NotReady;
+    lead_after_frame_ = last_frame_id_;
+    persistent_web_follow_ = lifetime == FollowLifetime::Web;
+    state_.selected_id = id; state_.automatic = true;
+    if (smoothing_.predictive_brake) published_brake_target_.store(id);
+    if (smoothing_.observation_grace_ms > 0)
+        last_observed_capture_ = latest_->frame->metadata.captured_at;
+    return ControlResult::Ok;
 }
 ControlResult GimbalCommandExecutor::manual()
 {
@@ -857,6 +886,10 @@ ControlResult GimbalCommandExecutor::home()
         }
         return ControlResult::Ok;
     });
+}
+void GimbalCommandExecutor::release_manual()
+{
+    invoke([this] { if (!state_.automatic && state_.moving && !state_.error) stop("key release"); });
 }
 void GimbalCommandExecutor::halt() { invoke([this] { invalidate("halt"); }, true); }
 void GimbalCommandExecutor::suspend() { invoke([this] { invalidate("model switch"); latest_.reset(); last_frame_id_ = 0; }, true); }

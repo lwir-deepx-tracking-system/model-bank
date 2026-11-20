@@ -61,6 +61,32 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(160));
     assert(!executor.snapshot().moving); // heartbeat still stops an absolute move
     executor.connected();
+    // Explicit web selections survive browser heartbeat loss, while Home does not.
+    executor.publish(result, true);
+    executor.snapshot();
+    assert(executor.select(7, GimbalCommandExecutor::FollowLifetime::Web) == ControlResult::Ok);
+    executor.snapshot();
+    std::this_thread::sleep_for(std::chrono::milliseconds(160));
+    assert(executor.snapshot().automatic);
+    executor.release_manual();
+    assert(executor.snapshot().automatic); // a page key-release cannot override AUTO
+    auto next_frame = std::make_shared<FrameContext>(*frame);
+    next_frame->metadata.frame_id = 2;
+    next_frame->metadata.captured_at = std::chrono::steady_clock::now();
+    auto next_result = std::make_shared<TrackingResult>();
+    next_result->frame = next_frame;
+    person.track_id = 8;
+    next_result->tracks.push_back(person);
+    executor.publish(next_result, true);
+    executor.snapshot();
+    const auto epoch = executor.snapshot().command_generation;
+    assert(executor.handoff(7, epoch + 1, 8, 2) == ControlResult::NotReady);
+    assert(executor.handoff(7, epoch, 8, 1) == ControlResult::InvalidTarget);
+    assert(executor.handoff(7, epoch, 8, 2) == ControlResult::Ok);
+    assert(executor.snapshot().selected_id == 8);
+    executor.halt();
+    assert(!executor.snapshot().automatic && !executor.snapshot().moving);
+    executor.connected();
     recorded->fail_home = true;
     assert(executor.home() == ControlResult::NotReady);
     state = executor.snapshot();

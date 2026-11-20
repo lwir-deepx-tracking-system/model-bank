@@ -43,6 +43,7 @@ class PreviewFrame:
     proposals: tuple = ()   # 11-14: ((x1, y1), (x2, y2), score, covered) people proposals from the spatial spectrum
     temps: tuple = ()   # 11-14: ((x1, y1), (x2, y2), text, colour) skin-temperature labels of person boxes (src/detect/skin_temp.py)
     seek: tuple | None = None   # 11-16: (phase, cx, cy, sweep half-width, target offset or None) of the gimbal's search, picture px x scale (gimbal/search_follow.py)
+    virtual: tuple | None = None
 
 
 def transition_jpeg(cv2):
@@ -78,6 +79,7 @@ def render_preview(cv2, frame, keep=None):
         img = cv2.resize(img, None, fx=sc, fy=sc, interpolation=cv2.INTER_LINEAR)
     font = cv2.FONT_HERSHEY_SIMPLEX
     for p1, p2, col, tid in frame.boxes:
+        if frame.virtual and frame.virtual[1] == tid: col = FOLLOW_COLOR
         if not frame.replay and tuple(col) == FOLLOW_COLOR:   # 11-13 (design review): the followed person stands out: thick box, filled tag
             cv2.rectangle(img, p1, p2, col, 4)
             label, (tw, th) = 'FOLLOW %d' % tid, cv2.getTextSize('FOLLOW %d' % tid, font, 0.6, 2)[0]
@@ -131,6 +133,22 @@ def render_preview(cv2, frame, keep=None):
         y = min(max(p1[1] + th + 2, th + 2), hh - 2)
         cv2.rectangle(img, (x - 2, y - th - 3), (x + tw + 2, y + 3), (20, 20, 20), -1)
         cv2.putText(img, text, (x, y), font, 0.5, col, 1, cv2.LINE_AA)
+    if frame.virtual and frame.virtual[1] is not None:
+        (left, top, crop_w, crop_h), person, age, pred, zoom = frame.virtual
+        if pred is not None:
+            x, y, w, h = pred
+            p1 = (min(max(0, round(x-w/2)), ww-1), min(max(0, round(y-h/2)), hh-1))
+            p2 = (min(max(0, round(x+w/2)), ww-1), min(max(0, round(y+h/2)), hh-1))
+            if p2[0] > p1[0] and p2[1] > p1[1]:
+                _dash_rect(cv2, img, p1, p2, FOLLOW_COLOR, 2, 7)
+        if 0 < crop_w < ww and 0 < crop_h < hh:
+            img = cv2.resize(img[top:top+crop_h, left:left+crop_w], (ww, hh), interpolation=cv2.INTER_LINEAR)
+        title = ('REPLAY #%d  %.1fx' % (person, zoom) if age is None else
+                 'REPLAY #%d  %s %.1fs / 10s' % (person, 'GRU' if pred else 'HOLD', age))
+        ty = max(20, hh-12)
+        tw = cv2.getTextSize(title, font, .50, 1)[0][0]
+        cv2.rectangle(img, (7, ty-15), (tw+19, ty+5), (18,18,18), -1)
+        cv2.putText(img, title, (13,ty), font, .50, FOLLOW_COLOR, 1, cv2.LINE_AA)
     if PICTURE_BANNER:
         cv2.rectangle(img, (0, 0), (ww, 26), (0, 0, 150) if frame.replay else (0, 0, 0), -1)
         cv2.putText(img, frame.top_text, (8, 19), font, 0.55, (255, 255, 255), 1)

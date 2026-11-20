@@ -1,3 +1,5 @@
+const DETECTOR_UPPER_650='bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480';
+const DETECTOR_TEMPORAL_650='bank:yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480';
 // names shown on the nodes (the server's long preset names are not printed)
 const OLDSRV='서버를 다시 켜야 열립니다',LK='<svg class="ot-ic" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.3"/></svg>';
 const BT_KEYS=['bytetrack','confirm3','rebind'];

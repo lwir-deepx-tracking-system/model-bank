@@ -1,13 +1,24 @@
 function post(u,ka){return fetch(u,{method:'POST',headers:{'X-Gimbal':'1'},cache:'no-store',keepalive:!!ka}).then(r=>r.json()).then(show).catch(()=>{S.textContent='명령이 전달되지 않았습니다';netChip();});}
 v.addEventListener('click',e=>{
   if(Date.now()<joyClickBlock)return;   // v40: the click that ends a joystick drag picks nobody
-  const blocked=cameraClickBlock();
+  const replay=document.body.classList.contains('replay-mode');
+  const blocked=replay?'':cameraClickBlock();
   if(blocked){$('ans').textContent=blocked;return;}
   const r=v.getBoundingClientRect();
   // the image keeps 4:3 inside its box (object-fit: contain): map the click into the picture itself
   const ar=4/3,bw=r.width,bh=r.height;let w=bw,h=bw/ar;if(h>bh){h=bh;w=bh*ar;}
   const x=(e.clientX-r.left-(bw-w)/2)/w,y=(e.clientY-r.top-(bh-h)/2)/h;if(x<0||x>1||y<0||y>1)return;
+  if(replay){rppost('/replay/virtual-click?'+new URLSearchParams({x,y}));return;}
   post('/gimbal/click?x='+x+'&y='+y);});
+const replayZoom=$('replayZoom'), replayZoomValue=$('replayZoomValue');
+let replayZoomTimer;
+if(replayZoom)replayZoom.addEventListener('input',()=>{
+  replayZoomValue.value=Number(replayZoom.value).toFixed(1)+'배';
+  clearTimeout(replayZoomTimer);
+  replayZoomTimer=setTimeout(()=>{
+    if(document.body.classList.contains('replay-mode'))rppost('/replay/virtual-zoom?zoom='+encodeURIComponent(replayZoom.value));
+  },100);
+});
 function homeGimbal(){held.clear();keyDir='0,0';if(padBtn)padBtn.classList.remove('on');padDown=false;padBtn=null;joyEnd();return post('/gimbal/home');}
 // An empty-picture click stops; Space requests Home, pan/tilt (0, 0).
 for(const el of [v]){el.addEventListener('contextmenu',e=>e.preventDefault());el.addEventListener('dragstart',e=>e.preventDefault());}
@@ -32,7 +43,7 @@ const JOYB=$('joyb'),JOYK=$('joyk'),JOY={id:null,x0:0,y0:0,on:false,dx:0,dy:0,se
 const JOY_START=14,JOY_DEAD=18,JOY_R=56,JOY_T=[[1,0],[1,1],[0,1],[-1,1],[-1,0],[-1,-1],[0,-1],[1,-1]];
 function joyDir(ax,ay){if(Math.hypot(ax,ay)<JOY_DEAD)return [0,0];return JOY_T[((Math.round(Math.atan2(-ay,ax)/(Math.PI/4))%8)+8)%8];}   // screen y grows downwards; the gimbal's y = 1 is up
 function joyEnd(){if(JOY.id==null)return false;const was=JOY.on,sent=JOY.sent;try{v.releasePointerCapture(JOY.id);}catch(_){}JOY.id=null;JOY.on=false;JOY.sent=false;JOY.dx=JOY.dy=0;JOYB.style.display='none';JOYK.style.transform='';if(was)joyClickBlock=Date.now()+400;return sent;}   // true = a move was sent, so the caller must send the stop
-v.addEventListener('pointerdown',e=>{if(e.pointerType==='mouse'||JOY.id!=null)return;JOY.id=e.pointerId;JOY.x0=e.clientX;JOY.y0=e.clientY;JOY.on=false;JOY.sent=false;JOY.dx=JOY.dy=0;try{v.setPointerCapture(e.pointerId);}catch(_){}});
+v.addEventListener('pointerdown',e=>{if(document.body.classList.contains('replay-mode')||e.pointerType==='mouse'||JOY.id!=null)return;JOY.id=e.pointerId;JOY.x0=e.clientX;JOY.y0=e.clientY;JOY.on=false;JOY.sent=false;JOY.dx=JOY.dy=0;try{v.setPointerCapture(e.pointerId);}catch(_){}});
 v.addEventListener('pointermove',e=>{if(e.pointerId!==JOY.id)return;const ax=e.clientX-JOY.x0,ay=e.clientY-JOY.y0,d=Math.hypot(ax,ay);
   if(!JOY.on){if(d<JOY_START)return;JOY.on=true;const r=v.parentNode.getBoundingClientRect();JOYB.style.left=(JOY.x0-r.left)+'px';JOYB.style.top=(JOY.y0-r.top)+'px';JOYB.style.display='block';try{if(navigator.vibrate)navigator.vibrate(8);}catch(_){}}
   const k=d>JOY_R?JOY_R/d:1;JOYK.style.transform='translate('+(ax*k).toFixed(0)+'px,'+(ay*k).toFixed(0)+'px)';
