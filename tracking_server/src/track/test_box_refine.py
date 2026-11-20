@@ -384,7 +384,25 @@ class ServerGlueTests(unittest.TestCase):
             self.assertEqual(BR.BR['mode'], 'off'); self.assertEqual(saved[0]['box_refine'], 'off')
             rows = rows_at([(1, 100., 200., 40., 100.)]); self.assertIs(BR.apply(rows, None, 1.0), rows)
         self.assertEqual(BR.restore_queries({'box_refine': 'size'}), [{'box_refine': ['size']}])   # the kept modes come back unchanged
-        self.assertEqual(BR.restore_queries({}), [])
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):   # 11-20: nothing saved -> the default mode (body, or size when no table file)
+            BR.BR['dir'] = '/nonexistent_dir_for_test'; BR.BR.update(table=None, tfile=None, tmt=None)
+            self.assertEqual(BR.restore_queries({}), [{'box_refine': ['size']}])
+
+    def test_default_is_on_when_nothing_was_saved(self):
+        """11-20 (user): box shake correction is on by default; a saved 'off' from the page stays off."""
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            orig = BR.scan_table
+            try:
+                BR.scan_table = lambda: object()
+                self.assertEqual(BR.restore_queries({}), [{'box_refine': [BR.DEFAULT_MODE]}])
+                BR.scan_table = lambda: None
+                self.assertEqual(BR.restore_queries({}), [{'box_refine': ['size']}])
+            finally:
+                BR.scan_table = orig
+            self.assertEqual(BR.restore_queries({'box_refine': 'off'}), [{'box_refine': ['off']}])
+        self.assertIn(BR.DEFAULT_MODE, ('size', 'body'))
 
 
 # ------------------------------------------------------------------------------------------------ body (11-15): one body box for near and far, lookup + size filter
@@ -917,7 +935,8 @@ class LostSameTests(unittest.TestCase):
         self.assertTrue(BR.BR['lost_same']); self.assertEqual(saved[-1], dict(box_refine=BR.BR['mode'], box_blend=BR.BR['blend_s'], lost_same=1)); self.assertTrue(BR.state()['lost_same'])
         BR.parse_request({'box_refine': ['size']})[2](); self.assertEqual(saved[-1], dict(box_refine='size', box_blend=0.0))   # other choices save as before
         for bad in ('2', 'yes', ''): self.assertFalse(BR.parse_request({'lost_same': [bad]})[0], bad)
-        self.assertEqual(BR.restore_queries({'lost_same': 1}), [{'lost_same': ['1']}]); self.assertEqual(BR.restore_queries({'lost_same': 0}), [{'lost_same': ['0']}])
+        rq_ = lambda s: [q for q in BR.restore_queries(s) if 'box_refine' not in q]   # 11-20: the default box_refine query comes first when none is saved
+        self.assertEqual(rq_({'lost_same': 1}), [{'lost_same': ['1']}]); self.assertEqual(rq_({'lost_same': 0}), [{'lost_same': ['0']}])
         self.assertEqual(BR.restore_queries({'box_refine': 'size', 'box_blend': 0.0}), [{'box_refine': ['size']}, {'box_blend': ['0.0']}])   # without it: as before
         here = os.path.dirname(os.path.abspath(__file__))
         with open(os.path.join(here, '..', 'app.py'), encoding='utf-8') as f: self.assertIn("'box_refine', 'box_blend', 'lost_same')", f.read())   # kept in last_selection.json

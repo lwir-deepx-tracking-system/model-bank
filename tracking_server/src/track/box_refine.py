@@ -76,6 +76,7 @@ from ..common import frame_math
 from ..common.shared_values import PERSON_CLS
 
 MODES = ('off', 'size', 'body')
+DEFAULT_MODE = 'body'   # 11-20 (user: "박스 떨림 보정 옵션은 자동으로 켜져 있게"): used at start when no choice is saved; a choice made on the page (also 'off') is kept
 MODE_KO = dict(off='끔', size='크기만 부드럽게', body='상체 네모로 통일 (변환표 + 크기 부드럽게)')
 REMOVED_MODES = ('euro', 'gru', 'gru2')   # 11-16: tried on 11-15, removed (a saved choice of these becomes 'off' at startup)
 TABLE_PREFIX = 'box_body_table_'          # body mode's own table file: models/track/box_body_table_*.npz, name order last wins (a later file needs no code change)
@@ -597,6 +598,10 @@ def restore_queries(sel):
         v_ = str(sel['box_refine']).strip().lower()
         if v_ not in MODES:
             print('BOX_REFINE saved mode %r %s: off' % (sel['box_refine'], 'was removed on 11-16' if v_ in REMOVED_MODES else 'is unknown'), flush=True); v_ = 'off'
+        qs.append({'box_refine': [v_]})
+    else:   # 11-20 (user): box shake correction is on by default when nothing was chosen yet: 'body' when its table file is there, else 'size'
+        v_ = DEFAULT_MODE if (DEFAULT_MODE != 'body' or scan_table() is not None) else 'size'
+        print('BOX_REFINE no saved choice: default %s' % v_, flush=True)
         qs.append({'box_refine': [v_]})
     if 'box_blend' in sel: qs.append({'box_blend': [str(sel['box_blend'])]})
     if 'lost_same' in sel: qs.append({'lost_same': ['1' if sel['lost_same'] in (True, 1, '1', 'true', 'on') else '0']})   # 11-16

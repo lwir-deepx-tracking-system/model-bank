@@ -1,9 +1,13 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
-마지막 고침 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
+마지막 고침 2026-11-20 · Claude · 상자 떨림 보정 기본 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
 
 
 
+
+## 2026-11-20 상자 떨림 보정(`box_refine`) 기본 켜짐
+
+사용자 요청("박스 떨림 보정 옵션은 자동으로 켜져 있게"). 저장된 선택이 없을 때 서버 시작값이 `off`에서 `body`(상체 네모로 통일 + 크기 부드럽게)로 바뀌었습니다. 변환표 파일(`models/track/box_body_table_*.npz`)이 없으면 `size`(크기만 부드럽게)로 켭니다. 페이지에서 고른 값은 `off`를 포함해 그대로 유지됩니다. 상수는 `src/track/box_refine.py`의 `DEFAULT_MODE`. 검사: `src/track/test_box_refine.py`.
 ## 2026-11-20 추천 표시 한 곳에서 관리 (`models/RECOMMENDED.json`)
 
 페이지의 "추천" 표시는 이제 `tracking_server/models/RECOMMENDED.json` 하나가 정합니다. 서버는 검출기 목록(`model_scan.bank_scan`)과 외형 모델 목록(`reid_models.reid_catalog`)을 만들 때 이 파일을 읽어, 적힌 모델 이름 끝에 ` · 추천 (날짜)`를 붙입니다. 모델별 이름 파일(`*.json`의 `display_name`)에는 추천 문구를 쓰지 않습니다. 새 비교에서 다른 모델이 이기면 이 파일의 `key`, `date`, `basis`만 고치고 서버를 재시작하면 됩니다.
