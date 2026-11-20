@@ -86,10 +86,6 @@ body:not(.adv) .adv-only{display:none!important}
 .advsec>summary{color:var(--ink2)}.advbody>details.sec{margin:0 -2px;border-radius:var(--r)}.advfeed{margin:0}
 .cardt{font-size:12px;color:var(--ink2);margin-bottom:4px;display:block}
 .quick{display:flex;flex-direction:column;gap:8px}.qrow{display:flex;flex-direction:column;gap:2px}.qrow select{width:100%}
-.vfol{position:absolute;left:10px;right:10px;bottom:16px;z-index:2;display:flex;align-items:center;gap:8px;pointer-events:none}
-.vfol>*{pointer-events:auto}.vhint{background:rgba(10,10,10,.62);color:#eee;font-size:12.5px;padding:4px 10px;border-radius:999px}
-.vhint[hidden]{display:none}
-body.replay-mode .vfol{display:none}
 .chip[hidden]{display:none}
 /* 11-13 (pass 4): camera-not-answering note and follow notes over the picture */
 .vdead{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;max-width:86%;text-align:center;background:rgba(20,20,20,.86);border:1px solid var(--bad);border-radius:10px;padding:14px 18px;pointer-events:none}

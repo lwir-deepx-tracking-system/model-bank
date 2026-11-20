@@ -150,10 +150,6 @@ body:not(.adv) .adv-only{display:none!important}
 .advsec>summary{color:var(--ink2)}.advbody>details.sec{margin:0 -2px;border-radius:var(--r)}.advfeed{margin:0}
 .cardt{font-size:12px;color:var(--ink2);margin-bottom:4px;display:block}
 .quick{display:flex;flex-direction:column;gap:8px}.qrow{display:flex;flex-direction:column;gap:2px}.qrow select{width:100%}
-.vfol{position:absolute;left:10px;right:10px;bottom:16px;z-index:2;display:flex;align-items:center;gap:8px;pointer-events:none}
-.vfol>*{pointer-events:auto}.vhint{background:rgba(10,10,10,.62);color:#eee;font-size:12.5px;padding:4px 10px;border-radius:999px}
-.vhint[hidden]{display:none}
-body.replay-mode .vfol{display:none}
 .chip[hidden]{display:none}
 /* 11-13 (pass 4): camera-not-answering note and follow notes over the picture */
 .vdead{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:3;display:flex;flex-direction:column;align-items:center;gap:6px;max-width:86%;text-align:center;background:rgba(20,20,20,.86);border:1px solid var(--bad);border-radius:10px;padding:14px 18px;pointer-events:none}
@@ -490,7 +486,6 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
         <div class="vchip vage num" id="vage" title="카메라 프레임이 서버에 들어온 때부터 이 화면까지 (서버 처리 + 전송). '그중 서버' = 그 가운데 서버 안에서 걸린 시간. 내 화면 fps 는 추적보다 느릴 때만 나옴. '약 …' = 이 브라우저(아이폰 등)는 사진 시각을 못 읽어 서버가 잰 값: 서버 처리 + 사진이 이 기기에 도착할 때까지(이 기기의 수신 확인으로 잼). 브라우저가 그리는 시간(화면 한 번 갱신쯤)은 빠져 있음. 중간·작은 사진 = 회선이 느려 480x360·320x240 사진을 받는 중" hidden></div>
         <div class="vdead" id="vdead" role="alert" hidden><b id="vdeadt"></b><span id="vdeads"></span></div>
         <div class="vtoast" id="vtoast" role="status" hidden></div>
-        <div class="vfol camera-only" id="vfol"><span class="vhint" id="vhint">사람을 누르면 따라갑니다 · Space: 홈 (0°, 0°)</span></div>
         <div id="camera-center" class="camera-center" aria-hidden="true" hidden></div>
         <div class="pose" id="gimbal-position">
           <div class="pose-axis pose-pan" id="pose-pan" role="img" hidden><i data-marker></i></div>
@@ -2434,7 +2429,7 @@ setInterval(rptick,500);rptick(true);
 // 11-13 (design review, pass 2): 'advanced' open/closed shows the engineering controls (body.adv); stop button and hint over
 // the picture; aim marker at the bridge's --aim-screen-y. (Model / tracker are chosen in the settings tree, kept in the main panel.)
 const ADV=$('advsec');function advSync(){document.body.classList.toggle('adv',!!ADV.open);if(rlast)otdraw();}ADV.addEventListener('toggle',advSync);advSync();
-setInterval(()=>{$('vhint').hidden=autoNow||camIdle>3;const ex=((rlast&&rlast.gimbal_cfg&&rlast.gimbal_cfg.extra)||'').match(/--aim-screen-y\s+([0-9.]+)/),ay=ex?Number(ex[1]):0.5;$('camera-center').style.top=(ay>0&&ay<1?ay*100:50)+'%';},500);
+setInterval(()=>{const ex=((rlast&&rlast.gimbal_cfg&&rlast.gimbal_cfg.extra)||'').match(/--aim-screen-y\s+([0-9.]+)/),ay=ex?Number(ex[1]):0.5;$('camera-center').style.top=(ay>0&&ay<1?ay*100:50)+'%';},500);
 // 11-13 (pass 4): camera-not-answering note (Korean, with what to do) and follow notes over the picture
 setInterval(()=>{const d=$('vdead'),live=!document.body.classList.contains('replay-mode'),fz=rlast?.cam_frozen;
   if(live&&fz){d.hidden=false;d.classList.remove('wait');$('vdeadt').textContent=fz.title;$('vdeads').textContent=fz.text;return;}   // 11-15: frozen camera (from /rules, also without the gimbal): replug notice
