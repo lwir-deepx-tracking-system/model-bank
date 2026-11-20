@@ -5,7 +5,9 @@
   - 추적기를 바꿔 같은 녹화를 다시 재생하면 추적기별 결과 파일이 하나씩 생기고
   - 검출 파일로 다른 추적기를 PC에서 같은 검출에 다시 돌릴 수 있다 (mb_tracks.py)
 
-저장 위치: <서버 출력 폴더>/replay_tracks/<시각>_<추적기>/
+저장 위치: tracking_server/result/replay_tracks/<시각>_<추적기>/
+  (서버 출력 폴더 real_gui_1 등은 재시작 때 바뀌거나 지워질 수 있어 밖의 고정 폴더에 둔다.
+   result/는 .gitignore에 넣어 공개 저장소에 올라가지 않게 한다: 녹화에서 나온 자료다)
   <녹화>.txt              추적 결과 MOT: frame,id,x,y,w,h,conf,-1,-1,-1   (frame = 녹화의 1부터 센 장 번호)
   <녹화>-SERVER/det/det.txt 검출 MOT:  frame,-1,x,y,w,h,conf,class,-1,-1
 좌표는 카메라 640x480 기준 (TRACKS.jsonl과 같게 위쪽 여백 FRAME_DY를 뺌).
@@ -17,7 +19,10 @@ import os
 import re
 import time
 
+from ..common.shared_values import HERE
 from ..common.state import APP
+
+RESULT_DIR = os.path.join(str(HERE), 'result', 'replay_tracks')
 
 _S = dict(fh=None, dh=None, dir=None, last=-1, rows=0)
 
@@ -57,11 +62,8 @@ def frame(eval_pos, tr_rows, arr, dy, tracker_key):
         if eval_pos == 0:
             if _S['fh'] is not None:
                 _close()
-            out = getattr(APP, 'out', None)
-            if out is None:
-                return
             name = _name()
-            base = os.path.join(str(out), 'replay_tracks', '%s_%s' % (time.strftime('%Y%m%d_%H%M%S'), _safe(tracker_key)))
+            base = os.path.join(RESULT_DIR, '%s_%s' % (time.strftime('%Y%m%d_%H%M%S'), _safe(tracker_key)))
             d, k = base, 2
             while os.path.exists(d) or os.path.exists(d + '_중단'):   # 같은 초에 두 번 시작해도 덮어쓰지 않게
                 d = '%s_%d' % (base, k); k += 1
