@@ -204,7 +204,7 @@ body:not(.adv) .adv-only{display:none!important}
 .pf-schedule-frame>span{margin-top:1px;color:var(--ink2);font-size:12px}
 .pf-schedule-core{display:block;margin-top:2px;color:var(--pf-det);font-size:10px;font-weight:700;white-space:nowrap}
 .pf-schedule-lane{position:relative;height:18px;margin-inline:5px;background:linear-gradient(var(--line),var(--line)) center/100% 1px no-repeat}
-.pf-schedule-lane::before{content:'';position:absolute;left:50%;height:100%;border-left:1px dashed var(--line2)}
+.pf-schedule-lane::before{content:'';position:absolute;left:var(--pf-schedule-goal);height:100%;border-left:1px dashed var(--line2)}
 .pf-schedule-bar,.pf-schedule-mark{position:absolute;top:50%;background:var(--stage)}
 .pf-schedule-bar{height:4px;transform:translateY(-50%)}
 .pf-schedule-mark{width:8px;height:8px;border-radius:50%;transform:translate(-50%,-50%)}
@@ -214,14 +214,6 @@ body:not(.adv) .adv-only{display:none!important}
 .pf-schedule-track{--stage:var(--pf-track)}
 .pf-schedule-times{display:flex;justify-content:space-between;gap:4px;font-size:11px;flex-wrap:wrap}
 .pf-schedule-times span{color:var(--stage);white-space:nowrap}
-.pf-schedule-output{margin-top:5px;border-top:1px solid var(--line);padding-top:7px}
-.pf-schedule-output h4{margin:0 0 2px;font-size:12px;color:var(--ink2)}
-.pf-schedule-output-row{align-items:center;padding:3px 0}
-.pf-schedule-output-row b{display:block;color:var(--pf-track);font-size:11px;white-space:nowrap}
-.pf-schedule-output-bar{position:absolute;top:50%;height:4px;background:var(--pf-track);transform:translateY(-50%)}
-.pf-schedule-output-bar::before,.pf-schedule-output-bar::after{content:'';position:absolute;top:50%;width:2px;height:12px;background:inherit;transform:translate(-50%,-50%)}
-.pf-schedule-output-bar::before{left:0}
-.pf-schedule-output-bar::after{left:100%}
 .pfdetail{margin-top:9px;border:1px solid var(--line);border-radius:8px;background:var(--pan)}
 .pfdetail>summary{cursor:pointer;padding:8px 11px;color:var(--ink2);font-weight:700}
 .pfdetail[open]>summary{border-bottom:1px solid var(--line)}
@@ -511,13 +503,9 @@ body:not(.verbose) .ot-n small.ot-why{display:block}   /* 11-13: why a node is l
           <h3 id="pf-schedule-title">최근 3장 처리 시간표</h3>
           <p id="pf-schedule-status">실시간 프레임 측정 대기 중</p>
           <div id="pf-schedule-data" hidden>
-            <p class="pf-schedule-caption">아래 시각은 첫 장이 서버에 도착한 때부터 잰 값입니다.</p>
+            <p class="pf-schedule-caption">각 장의 서버 수신을 0 ms로 맞췄습니다 · 점선은 33.3 ms (30 FPS 기준)</p>
             <div class="pf-schedule-axis num" id="pf-schedule-axis" aria-hidden="true"></div>
             <ol class="pf-schedule-frames" id="pf-schedule-frames"></ol>
-            <div class="pf-schedule-output" id="pf-schedule-output" hidden>
-              <h4>추적 출력 간격</h4>
-              <ol class="pf-schedule-frames num" id="pf-schedule-output-rows"></ol>
-            </div>
           </div>
         </section>
         <details class="pfdetail" id="pfstages"><summary>단계별 시간</summary>
@@ -2098,25 +2086,16 @@ function pfSchedule(pipeline){
       : Array.isArray(data) ? '실시간 프레임 측정 대기 중' : '프레임별 실측 데이터 없음';
     return;
   }
-  const intervals=frames.slice(1).map((frame,i)=>{
-    const prev=frames[i], start=prev[2], duration=frame[2]-start;
-    return {pair:(i+1)+' → '+(i+2), start, duration,
-            output:duration<0?'순서 역전':duration.toFixed(1)+' ms'};
-  });
-  $('pf-schedule-output').hidden=intervals.length===0;
+  // Keep the wire timestamps intact; each row starts at its own server receipt.
+  const relative=frames.map(([receive,detect,track])=>[0,detect-receive,track-receive]);
   const cores=Array.isArray(pipeline.frame_schedule_npu) ? pipeline.frame_schedule_npu : [];
-  const last=Math.max(...frames.map(row=>row[2]));
-  const limit=Math.max(20,Math.ceil(last/20)*20);
+  const last=Math.max(...relative.map(row=>row[2]));
+  const limit=Math.max(40,Math.ceil(last/20)*20);
   const pct=value=>String(value/limit*100)+'%';
-  $('pf-schedule-output-rows').innerHTML=intervals.map(({pair,start,duration,output})=>{
-    const bar=duration>=0 ? '<i class="pf-schedule-output-bar" style="left:'+pct(start)
-      +';width:'+pct(duration)+'"></i>' : '';
-    return '<li class="pf-schedule-frame pf-schedule-output-row"><span>'+pair+'<b>'+output
-      +'</b></span><div class="pf-schedule-lane" aria-hidden="true">'+bar+'</div></li>';
-  }).join('');
+  chart.style.setProperty('--pf-schedule-goal',pct(1000/30));
   $('pf-schedule-axis').innerHTML='<div><span>0</span><span>'+limit/2+'</span><span>'+limit+' ms</span></div>';
   const stages=[['received','수신'],['detect','탐지'],['track','추적']];
-  $('pf-schedule-frames').innerHTML=frames.map((frame,i)=>{
+  $('pf-schedule-frames').innerHTML=relative.map((frame,i)=>{
     const [receive, detect, track]=frame;
     const segment=(stage,start,end)=>'<i class="pf-schedule-bar pf-schedule-'+stage
       +'" style="left:'+pct(start)+';width:'+pct(end-start)+'"></i>';
