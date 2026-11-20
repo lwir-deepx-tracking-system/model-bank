@@ -448,6 +448,7 @@ struct TrackerData {
     long frame_id = 0, next_id = 0, n_init = 2, buffer = 30;
     bool class_gate = false;
     double high = 0.25, low = 0.10, new_ = 0.25, match = 0.8;
+    double unconfirmed = 0.7;   // cost limit of the unconfirmed-track association (11-20: a field so Python can set it; was the literal 0.7)
     long dt = 3;
     double vdc = 0.2, iou_min = 0.3;
     double app_thr = 0.25, prox_thr = 0.5;
@@ -974,7 +975,7 @@ static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* 
         Cost c = fused_dists(T, unconfirmed, rest);
         class_gate(T, c, unconfirmed, rest);
         Assign a4;
-        if (!linear_assignment(c, 0.7, a4)) return nullptr;
+        if (!linear_assignment(c, T->unconfirmed, a4)) return nullptr;
         for (const auto& m : a4.m) {
             TrackObj* u = unconfirmed[m.first];
             if (!take(T, u, rest[m.second]->d)) return nullptr;
@@ -1203,7 +1204,7 @@ static int tv_assign(TV& dst, PyObject* value)
 
 enum TrackerField {
     T_TRACKED, T_LOST, T_NEW_TF, T_LOST_TF, T_FRAME_ID, T_NEXT_ID, T_N_INIT, T_BUFFER, T_CLASS_GATE, T_HIGH, T_LOW,
-    T_NEW, T_MATCH, T_DT, T_VDC, T_IOU_MIN, T_APP_THR, T_PROX_THR, T_APP_USED, T_MODE, T_KIND
+    T_NEW, T_MATCH, T_DT, T_VDC, T_IOU_MIN, T_APP_THR, T_PROX_THR, T_APP_USED, T_MODE, T_KIND, T_UNCONFIRMED
 };
 
 static const char* kind_name(Kind k) { return k == K_SORT ? "sort" : k == K_OCSORT ? "ocsort" : "botsort"; }
@@ -1225,6 +1226,7 @@ static PyObject* tracker_get(PyObject* self, void* closure)
     case T_LOW: return PyFloat_FromDouble(T->low);
     case T_NEW: return PyFloat_FromDouble(T->new_);
     case T_MATCH: return PyFloat_FromDouble(T->match);
+    case T_UNCONFIRMED: return PyFloat_FromDouble(T->unconfirmed);
     case T_DT: return PyLong_FromLong(T->dt);
     case T_VDC: return PyFloat_FromDouble(T->vdc);
     case T_IOU_MIN: return PyFloat_FromDouble(T->iou_min);
@@ -1260,6 +1262,7 @@ static int tracker_set(PyObject* self, PyObject* value, void* closure)
     case T_LOW: df = &T->low; break;
     case T_NEW: df = &T->new_; break;
     case T_MATCH: df = &T->match; break;
+    case T_UNCONFIRMED: df = &T->unconfirmed; break;
     case T_VDC: df = &T->vdc; break;
     case T_IOU_MIN: df = &T->iou_min; break;
     case T_APP_THR: df = &T->app_thr; break;
@@ -1279,6 +1282,7 @@ static PyGetSetDef tracker_getset[] = {
     LWIR_KF("lost_this_frame", T_LOST_TF), LWIR_KF("frame_id", T_FRAME_ID), LWIR_KF("next_id", T_NEXT_ID),
     LWIR_KF("n_init", T_N_INIT), LWIR_KF("buffer", T_BUFFER), LWIR_KF("class_gate", T_CLASS_GATE),
     LWIR_KF("high", T_HIGH), LWIR_KF("low", T_LOW), LWIR_KF("new", T_NEW), LWIR_KF("match", T_MATCH),
+    LWIR_KF("unconfirmed", T_UNCONFIRMED),
     LWIR_KF("dt", T_DT), LWIR_KF("vdc", T_VDC), LWIR_KF("iou_min", T_IOU_MIN), LWIR_KF("APP_THR", T_APP_THR),
     LWIR_KF("PROX_THR", T_PROX_THR), LWIR_KF("app_used", T_APP_USED), LWIR_KF("mode", T_MODE), LWIR_KF("kind", T_KIND),
     {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict, nullptr, nullptr},
