@@ -91,6 +91,11 @@ TEMPORAL_SOURCE_SHA = 'a245d0f189d8f95d62a38ff38c9e62de31ea6b761adea6378407852db
 TEMPORAL_MODEL_SHA = 'a32e9ad8e421142df9988d63098e8e146b758a64732b1d2668203c0b55efecf2'
 TEMPORAL_MODEL = HERE / 'models' / 'optimized' / 'LWIR650_TEMPORAL_E13_480x384.dxnn'
 
+ALLIN_KEY = 'yolo26m_pose_allin_20261121_s1_bodybox_kpt_640x480'   # 11-21: all-data keypoint-box detector (test option)
+ALLIN_SOURCE_SHA = 'bc0f1e0b1fae0a1649d2c84dff962f8c62927481ddbe4c009b72454d40be268c'
+ALLIN_MODEL_SHA = '5d0b044f14aacf5c19b6db273443844781896b23ebe703e6fae9aad28e07baf5'
+ALLIN_MODEL = HERE / 'models' / 'optimized' / 'ALLIN_S1_E10_480x384.dxnn'
+
 
 def selected_profile():
     detector = getattr(APP.args, 'det', None)
@@ -103,6 +108,8 @@ def selected_profile():
         return NEW_650_KEY, NEW_650_MODEL, NEW_650_MODEL_SHA
     if detector == 'bank:' + NEW_KEY and manifest.get(NEW_KEY) == NEW_SOURCE_SHA:
         return NEW_KEY, NEW_MODEL, NEW_MODEL_SHA
+    if detector == 'bank:' + ALLIN_KEY and manifest.get(ALLIN_KEY) == ALLIN_SOURCE_SHA:
+        return ALLIN_KEY, ALLIN_MODEL, ALLIN_MODEL_SHA
     return None
 
 
