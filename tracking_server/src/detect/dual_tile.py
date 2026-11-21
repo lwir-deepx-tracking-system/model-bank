@@ -101,6 +101,11 @@ ALLIN2_SOURCE_SHA = 'abd1acac8fa1d702a712c7faeceb63e593a78417d90cf77b1049a15bddd
 ALLIN2_MODEL_SHA = 'a1a7d80cef1b70a6e29ad4929d02963e1c2fce9e64e60aa82b85c24722fc77e8'
 ALLIN2_MODEL = HERE / 'models' / 'optimized' / 'ALLIN2_S0_E10_480x384.dxnn'
 
+OWN9E_S1_KEY = 'yolo26m_pose_own9e_20261121_s1_bodybox_kpt_640x480'   # 11-22: own labels in model 9's box shape, seed 1 (test option)
+OWN9E_S1_SOURCE_SHA = 'aea2b454bc9c50c90e6d4c763fc604576064eaac09ecca9e8e268b6abb42c749'
+OWN9E_S1_MODEL_SHA = 'e6261f29eeb70863c1352d5cc89d2998d9abe06150317e874706eb3925234db0'
+OWN9E_S1_MODEL = HERE / 'models' / 'optimized' / 'OWN9E_S1_E10_480x384.dxnn'
+
 
 def selected_profile():
     detector = getattr(APP.args, 'det', None)
@@ -117,6 +122,8 @@ def selected_profile():
         return ALLIN_KEY, ALLIN_MODEL, ALLIN_MODEL_SHA
     if detector == 'bank:' + ALLIN2_KEY and manifest.get(ALLIN2_KEY) == ALLIN2_SOURCE_SHA:
         return ALLIN2_KEY, ALLIN2_MODEL, ALLIN2_MODEL_SHA
+    if detector == 'bank:' + OWN9E_S1_KEY and manifest.get(OWN9E_S1_KEY) == OWN9E_S1_SOURCE_SHA:
+        return OWN9E_S1_KEY, OWN9E_S1_MODEL, OWN9E_S1_MODEL_SHA
     return None
 
 
