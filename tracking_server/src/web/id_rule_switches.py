@@ -7,16 +7,21 @@ comes back after a restart (the in-process restart does not read live.env again)
                                                     of 11-18 / 11-19 (default), kpt = every detector with keypoint heads.
   POST /rules/set?track_thr=engine_default|py|cpp   tracker score limits of BoT-SORT / OC-SORT / SORT: each engine's own
                                                     (default), or one set on both engines (src/track/threshold_set.py).
-GET /rules shows nested_dup, nested_dup_active, nested_dup_dropped, track_thr, track_thr_sets, track_thr_now.
+  POST /rules/set?close_aim=1|0                     11-21: aim the gimbal higher on a close followed person (src/gimbal/close_aim.py).
+                                                    Start value LWIR_CLOSE_AIM (default 1 = on, user approval 11-21), saved like the two above.
+GET /rules shows nested_dup, nested_dup_active, nested_dup_dropped, track_thr, track_thr_sets, track_thr_now,
+close_aim, close_aim_now, close_aim_rows.
 
 install(APP) puts both in front of the existing /rules parser: these two keys are checked first and changed only when the
 rest of the query was taken too (the rule of the other switches in page_settings.rules_request_2).
 """
 from ..detect import pose_duplicate
 from ..detect.model_scan import KPT_DETS
+from ..gimbal import close_aim
 from ..track import threshold_set
 
-KEYS = ('nested_dup', 'track_thr')
+KEYS = ('nested_dup', 'track_thr', 'close_aim')
+CLOSE_AIM_VALUES = {'1': '1', 'on': '1', '0': '0', 'off': '0'}
 
 
 def _tracker(app):
@@ -29,7 +34,7 @@ def _tracker(app):
 def state(app):
     det = getattr(vars(app).get('args'), 'det', None)   # vars(): a name APP does not hold yet must not raise here
     tracker, kind = _tracker(app)
-    return dict(pose_duplicate.state(det, KPT_DETS), **threshold_set.state(tracker, kind))
+    return dict(pose_duplicate.state(det, KPT_DETS), **threshold_set.state(tracker, kind), **close_aim.state())
 
 
 def request(app, query, rest_request):
@@ -41,6 +46,10 @@ def request(app, query, rest_request):
         return False, '겹친 상자 지우기 값은 named, kpt, off 중 하나'
     if 'track_thr' in mine and mine['track_thr'] not in threshold_set.KEYS:
         return False, '추적기 기준값 세트는 engine_default, py, cpp 중 하나'
+    if 'close_aim' in mine:
+        if mine['close_aim'] not in CLOSE_AIM_VALUES:
+            return False, '가까운 사람 위쪽 조준은 1(켜기) 또는 0(끄기)'
+        mine['close_aim'] = CLOSE_AIM_VALUES[mine['close_aim']]
     rest = {key: value for key, value in query.items() if key not in mine}
     ok, text = rest_request(rest) if rest else (True, '적용됨')
     if not ok:
@@ -49,6 +58,8 @@ def request(app, query, rest_request):
         pose_duplicate.set_mode(mine['nested_dup'])
     if 'track_thr' in mine:
         threshold_set.set_key(mine['track_thr'], *_tracker(app))
+    if 'close_aim' in mine:
+        close_aim.set_on(mine['close_aim'] == '1')
     print('RULES set %s' % ' '.join('%s=%s' % item for item in sorted(mine.items())), flush=True)
     save = vars(app).get('sel_save')   # 11-21: kept over a restart (the in-process restart does not read live.env again)
     if save is not None:

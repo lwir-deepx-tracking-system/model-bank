@@ -14,7 +14,7 @@ from ..common.state import APP
 from ..common import frame_math
 from ..common.identity_trace import record_bridge_observation
 from ..track.stabilizer import stab_people_real
-from . import bounded_seek, follow_guard, native_control, predictive_lead, search_follow
+from . import bounded_seek, close_aim, follow_guard, native_control, predictive_lead, search_follow
 from .gimbal_link import reset_lead, without_lead
 
 
@@ -746,6 +746,12 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         real, seen = native_control.prepare(gb.people, hidden, correction, selected, float(width), float(height))
         aim_y = _bridge_aim_y(gb)
         aim_screen = _bridge_aim_screen_y(gb) * APP.LIVE_H
+        try:   # 11-21: close person -> the followed row is moved so the bridge aims higher (src/gimbal/close_aim.py, LWIR_CLOSE_AIM / /rules close_aim)
+            real = close_aim.apply(real, selected, aim_y, frame_t, float(height), bool(gb.state.get('auto')))
+        except Exception as error:   # never stop the frame: the unmoved rows go out as before
+            close_aim.reset()
+            if not getattr(gb, 'close_aim_error', None):
+                gb.close_aim_error = repr(error)[:120]; print('CLOSE AIM failed, rows sent unchanged: %s' % gb.close_aim_error, flush=True)
         tilt_hold = False
         if APP.CTL['lead'] and selected and gb.state.get('auto') and aim_y is not None:
             tilt = getattr(gb, 'reentry_tilt', None)
