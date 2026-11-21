@@ -343,6 +343,7 @@ def main():
         except (OSError, ValueError): sv_ = {}
         if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'pose_box', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
         if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('feat_guard', 'cost_first', 'depth_order', 'merge_split', 'pre_capture') if k_ in sv_})   # 11-20 number guards
+        if isinstance(sv_, dict): APP.SEL.update({k_: str(sv_[k_]) for k_ in ('nested_dup', 'track_thr') if isinstance(sv_.get(k_), str)})   # 11-21: these two are kept over a restart too
         # An engine which kills the process during construction must not be retried on restart.
         saved_detector = APP.SEL.pop('det', None)
         APP.sel_save()
@@ -364,6 +365,7 @@ def main():
         if 'auto_det' in APP.SEL: qs_.append(auto_det.restore_query(bool(APP.SEL['auto_det']), APP.SEL.get('auto_det_p')))   # 11-15: automatic detector choice on / off and the changed numbers
         if 'resident_det' in APP.SEL: qs_.append({'resident_det': ['1' if APP.SEL['resident_det'] else '0']})   # 11-15: two detector models resident (the other pair is made by the frame loop)
         qs_ += box_refine.restore_queries(APP.SEL)   # 11-15: box smoothing of the drawn / gimbal rows; one query per key (a refused mode keeps the blend time)
+        qs_ += [{k_: [APP.SEL[k_]]} for k_ in ('nested_dup', 'track_thr') if k_ in APP.SEL]   # 11-21: saved page choice wins over the LWIR_* start value
         qs_ += [{k_: ['1' if APP.SEL[k_] else '0']} for k_ in ('feat_guard', 'cost_first', 'depth_order', 'merge_split', 'pre_capture') if k_ in APP.SEL]   # 11-20: number guards (relink_online_judge.GUARD, tracker_common.ASSIGN)
         for q_ in qs_:
             if not q_: continue

@@ -1,5 +1,6 @@
 """Two /rules switches of the 2026-11-20 ID-rules audit. Both start at the behaviour before the switch and are not kept
-over a restart (start values: LWIR_NESTED_DUP, LWIR_TRACK_THR in scripts/live.env).
+over a restart (start values: LWIR_NESTED_DUP, LWIR_TRACK_THR in scripts/live.env). 11-21: a choice made through /rules/set is saved and
+comes back after a restart (the in-process restart does not read live.env again).
 
   POST /rules/set?nested_dup=named|kpt|off          which detectors drop the weak full-height duplicate of an upper-body
                                                     box (src/detect/pose_duplicate.py). named = only the three detectors
@@ -49,6 +50,10 @@ def request(app, query, rest_request):
     if 'track_thr' in mine:
         threshold_set.set_key(mine['track_thr'], *_tracker(app))
     print('RULES set %s' % ' '.join('%s=%s' % item for item in sorted(mine.items())), flush=True)
+    save = vars(app).get('sel_save')   # 11-21: kept over a restart (the in-process restart does not read live.env again)
+    if save is not None:
+        try: save(**mine)
+        except Exception as error: print('RULES save %s failed: %r' % (sorted(mine), error), flush=True)
     return ok, text
 
 

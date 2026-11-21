@@ -1,12 +1,16 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
-마지막 고침 2026-11-21 · Claude · 전체 데이터 검출기(allin s1) 한 장 분할 등록 (바로 아래). 그 전: 2026-11-21 · Claude · 박스 떨림 보정 항상 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 상자 떨림 보정 기본 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
+마지막 고침 2026-11-21 · Claude · nested_dup·track_thr 선택을 재시작 뒤에도 유지 (바로 아래). 그 전: 2026-11-21 · Claude · 전체 데이터 검출기(allin s1) 한 장 분할 등록 (바로 아래). 그 전: 2026-11-21 · Claude · 박스 떨림 보정 항상 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 상자 떨림 보정 기본 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
 
 
 
 
 
 
+
+## 2026-11-21 `nested_dup`·`track_thr` 선택이 재시작 뒤에도 유지
+
+페이지 재시작(`/system/restart`)은 같은 프로세스 안에서 다시 시작해 `scripts/live.env`를 다시 읽지 않습니다. 그래서 `LWIR_TRACK_THR=py`를 넣어도 재시작 뒤 `engine_default`(C++ 0.25/0.8/0.7)로 돌아갔습니다. 이제 `/rules/set`으로 고른 두 값은 마지막 선택 파일에 저장되고 시작할 때 다시 적용됩니다(`src/web/id_rule_switches.py`, `src/app.py`). 장치 값: `track_thr=py`, `nested_dup=kpt`.
 ## 2026-11-21 전체 데이터 검출기 `allin s1` 한 장 분할 등록 (시험 선택지)
 
 `yolo26m_pose_allin_20261121_s1_bodybox_kpt_640x480` (장치 목록 이름 "YOLO26m 전체 데이터 · 관절 상자 · 우리 녹화 크게 향상 · 붐비는 장면 약함 · 시험"). 학습에 안 쓴 우리 녹화 4개에서 IDF1 77.0 → 95.7, TMOT val 48.5 → 50.3, 붐비는 BU-TIV 70.1 → 67.1 (FP32, 두 시드 같은 방향). 분할 없이 장치에서 p95 47 ms(33 ms 넘음)라 `src/detect/dual_tile.py`에 분할 파일 `models/optimized/ALLIN_S1_E10_480x384.dxnn`(sha256 `5d0b044f…`, 원본 sha `bc0f1e0b…`)을 등록했습니다. 두 파일은 장치에만 둡니다(다른 분할 파일과 같음). 추천 표시는 9번 그대로입니다.
