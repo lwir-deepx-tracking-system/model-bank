@@ -106,6 +106,11 @@ OWN9E_S1_SOURCE_SHA = 'aea2b454bc9c50c90e6d4c763fc604576064eaac09ecca9e8e268b6ab
 OWN9E_S1_MODEL_SHA = 'e6261f29eeb70863c1352d5cc89d2998d9abe06150317e874706eb3925234db0'
 OWN9E_S1_MODEL = HERE / 'models' / 'optimized' / 'OWN9E_S1_E10_480x384.dxnn'
 
+OWN9Z_S1_KEY = 'yolo26m_pose_own9z_20261122_s1_bodybox_kpt_640x480'   # 11-22: own9e recipe + keypoint-confidence fix (keypoints restored), seed 1 (test option)
+OWN9Z_S1_SOURCE_SHA = '7ceefc962ef5e971c9ae6cbaa6af35affc018ca2331096f2c5d6e0a698e6a16d'
+OWN9Z_S1_MODEL_SHA = '88073a2b14f8cfc73736ea489281513ced46ae65ad3b93197aa809104ba49ded'
+OWN9Z_S1_MODEL = HERE / 'models' / 'optimized' / 'OWN9Z_S1_E10_480x384.dxnn'
+
 
 def selected_profile():
     detector = getattr(APP.args, 'det', None)
@@ -124,6 +129,8 @@ def selected_profile():
         return ALLIN2_KEY, ALLIN2_MODEL, ALLIN2_MODEL_SHA
     if detector == 'bank:' + OWN9E_S1_KEY and manifest.get(OWN9E_S1_KEY) == OWN9E_S1_SOURCE_SHA:
         return OWN9E_S1_KEY, OWN9E_S1_MODEL, OWN9E_S1_MODEL_SHA
+    if detector == 'bank:' + OWN9Z_S1_KEY and manifest.get(OWN9Z_S1_KEY) == OWN9Z_S1_SOURCE_SHA:
+        return OWN9Z_S1_KEY, OWN9Z_S1_MODEL, OWN9Z_S1_MODEL_SHA
     return None
 
 
