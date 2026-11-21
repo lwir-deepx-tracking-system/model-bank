@@ -96,6 +96,11 @@ ALLIN_SOURCE_SHA = 'bc0f1e0b1fae0a1649d2c84dff962f8c62927481ddbe4c009b72454d40be
 ALLIN_MODEL_SHA = '5d0b044f14aacf5c19b6db273443844781896b23ebe703e6fae9aad28e07baf5'
 ALLIN_MODEL = HERE / 'models' / 'optimized' / 'ALLIN_S1_E10_480x384.dxnn'
 
+ALLIN2_KEY = 'yolo26m_pose_allin2_20261121_s0_bodybox_kpt_640x480'   # 11-21: all-data + seated indoor people (test option)
+ALLIN2_SOURCE_SHA = 'abd1acac8fa1d702a712c7faeceb63e593a78417d90cf77b1049a15bddd8e18b'
+ALLIN2_MODEL_SHA = 'a1a7d80cef1b70a6e29ad4929d02963e1c2fce9e64e60aa82b85c24722fc77e8'
+ALLIN2_MODEL = HERE / 'models' / 'optimized' / 'ALLIN2_S0_E10_480x384.dxnn'
+
 
 def selected_profile():
     detector = getattr(APP.args, 'det', None)
@@ -110,6 +115,8 @@ def selected_profile():
         return NEW_KEY, NEW_MODEL, NEW_MODEL_SHA
     if detector == 'bank:' + ALLIN_KEY and manifest.get(ALLIN_KEY) == ALLIN_SOURCE_SHA:
         return ALLIN_KEY, ALLIN_MODEL, ALLIN_MODEL_SHA
+    if detector == 'bank:' + ALLIN2_KEY and manifest.get(ALLIN2_KEY) == ALLIN2_SOURCE_SHA:
+        return ALLIN2_KEY, ALLIN2_MODEL, ALLIN2_MODEL_SHA
     return None
 
 
