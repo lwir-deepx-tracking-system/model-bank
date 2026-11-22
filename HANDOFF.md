@@ -1,6 +1,6 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
-마지막 고침 2026-11-22 · Claude · 인터넷·Tailscale 없이 쓰기: 직결 케이블 자동 연결 (바로 아래). 그 전: 2026-11-22 · Claude · own9e 시드 1 을 기본 검출기·추천으로. 그 전: 2026-11-22 · Claude · own9e 시드 1 검출기 한 장 분할 등록. 그 전: 2026-11-21 · Claude · 가까운 사람 위쪽 조준 close_aim (브랜치 close_aim, 바로 아래). 그 전: 2026-11-21 · Claude · nested_dup·track_thr 선택을 재시작 뒤에도 유지. 그 전: 2026-11-21 · Claude · 전체 데이터 검출기(allin s1) 한 장 분할 등록 (바로 아래). 그 전: 2026-11-21 · Claude · 박스 떨림 보정 항상 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 상자 떨림 보정 기본 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
+마지막 고침 2026-11-22 · Claude · 카메라 멈춤 자동 복구 (바로 아래). 그 전: 2026-11-22 · Claude · 인터넷·Tailscale 없이 쓰기: 직결 케이블 자동 연결. 그 전: 2026-11-22 · Claude · own9e 시드 1 을 기본 검출기·추천으로. 그 전: 2026-11-22 · Claude · own9e 시드 1 검출기 한 장 분할 등록. 그 전: 2026-11-21 · Claude · 가까운 사람 위쪽 조준 close_aim (브랜치 close_aim, 바로 아래). 그 전: 2026-11-21 · Claude · nested_dup·track_thr 선택을 재시작 뒤에도 유지. 그 전: 2026-11-21 · Claude · 전체 데이터 검출기(allin s1) 한 장 분할 등록 (바로 아래). 그 전: 2026-11-21 · Claude · 박스 떨림 보정 항상 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 상자 떨림 보정 기본 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
 
 
 
@@ -8,6 +8,15 @@
 
 
 
+
+## 2026-11-22 카메라 멈춤 자동 복구 (사용자 승인 · 기본 켜짐 · 코드 `src/camera/cam_autoreset.py`)
+- 배경: 11-22 09:44 카메라 USB 칩이 멈췄고(cam_pipe `control libusb_timeout`, exit 8) 서버는 49분 동안 열기를 되풀이했지만 매번 `DIAG open: op=4(send) result=-7(libusb_timeout)` + `OPEN_FAILED`(exit 2)였다. 사람이 화면의 카메라 초기화(허브 5V 껐다 켜기)를 눌러서야 살아났다.
+- 동작: **열기가 연달아 5번(`LWIR_CAM_AUTORESET_N`) 실패하고, 매번 그 시도의 마지막 `DIAG open` 줄이 `libusb_timeout` 이거나 exit 8(`CAMERA_FROZEN`)이고 그 사이 프레임이 없으면**, 감시 스레드가 화면 버튼과 똑같은 초기화(`APP.cam_reset_request` → `cam_reset_work` → `cam_usb_power` 의 5V 껐다 켜기)를 실행한다. 오늘 실제 기록으로 확인: 10:16~10:33 의 열기 실패 26번이 모두 `libusb_timeout` 으로 분류됨, 5번째 실패는 첫 실패 뒤 161초(재시작 직후) / 321초(09:44 멈춤: exit 8 한 번 + 80초 간격 exit 2)였다.
+- 안전장치: (1) **30분에 한 번만**, 서버를 다시 켜도 같은 부팅 안에서는 유지(`~/.lwir_cam_autoreset.json`, 부팅 번호 + 가동 시간 사용: 보드에 RTC 가 없음). 전원을 못 끈 시도(`cam_usb_power` 가 거부)는 한도에 안 넣고 5분 뒤 다시, 3번 연달아면 30분 쉼. (2) **사람이 짐벌을 손으로 움직이는 동안은 안 함**(페이지의 이동 명령이 10초 안에 있었음, 페이지가 이동을 쥐고 있음, 브리지가 이동 중이라 알림): 2초마다 다시 보고 쉬면 간다. (3) **녹화 재생 중에는 안 함**(재생은 카메라를 안 쓰고 카메라 프로그램도 안 띄운다: `replay_link.blocking()` 과 `LIVE.replay` 로 확인), 측정 중·이미 초기화 중·카메라가 허브 뒤가 아닐 때(소프트웨어로 전원을 못 끔)도 안 함. (4) 초기화 자체가 버튼과 같아서 USB 저장장치가 꽂혀 있으면 거부, 짐벌을 먼저 멈추고 이동을 막는다.
+- 짐벌: 같은 허브의 짐벌 어댑터(cp210x)도 전원이 끊겼다 돌아온다. 원래 `gb_watch` 가 장치가 바뀐 것을 보고 브리지를 다시 띄운다. 초기화 뒤 감시가 `gimbal_alive`/`gimbal_ready` 를 보고, 브리지가 30초 넘게 없으면 `gb_spawn`(20초 간격으로 다시), 살아 있는데 45초 넘게 준비가 안 되면 `gb_end`(최대 2번, 다음 브리지는 `gb_watch` 가 띄움). 결과 줄: `CAMAUTORESET result ...: camera frames again|still no frame, gimbal ok|not ready`.
+- 스위치: `LWIR_CAM_AUTORESET=1`(기본, 켜짐) | `0`(끔) | `dry`(결정하고 기록만, 초기화 안 함). 서버를 켠 채로 `POST /rules/set?cam_autoreset=1|0|dry`(다른 규칙처럼 재시작 뒤에도 유지, `GET /rules` 의 `cam_autoreset`). 상태: `/healthz` 의 `cam_autoreset` = `mode, usb_fail_n, need_n, count_today, dry_today, last(HH:MM:SS), phase, result, skip, next_in_s`. 기록: `camera_events.log` 의 `CAMAUTORESET ...` 줄(시작할 때 한 줄, 기다리는 까닭은 분당 한 번, 시작·결과).
+- 시험: `python3 -m unittest src.camera.test_cam_autoreset`(29개): 원인 분류(실제 줄), 연달아 세기(프레임이 끼면 새로 시작, 다른 원인은 끊음), 5번째에 한 번, 30분 한도(재시작은 유지, 재부팅은 풀림, 날짜가 바뀌면 오늘 횟수 0), 손 조종·재생·측정·허브 아님·요청 거부 때 안 함, 전원 안 껐을 때 재시도, 짐벌 브리지 재시작(죽음·준비 안 됨), dry·끄기, `/rules` 키. 진짜 `cam_pipe.cpp` 를 가짜 SDK 로 돌린 시험 포함(첫 열기 실패 → exit 2 + libusb_timeout, 멈춤 → exit 8, 장치 없음 → 센 것 아님). 웹 113개·기존 카메라 시험 통과.
+- **진짜 멈춤에서만 확인되는 것**: 실제 허브 5V 껐다 켜기와 그 뒤 카메라 프레임, 짐벌 어댑터가 돌아온 뒤 브리지가 준비되는 시간, 사람이 조종 중일 때 실제로 기다리는지. 일부러 멈추게 하지 않았다(멈춤은 가짜 SDK 로만 재현).
 
 ## 2026-11-22 인터넷·Tailscale 없이 쓰기: 둘째 랜 포트에 PC를 꽂으면 주소 없이 화면이 열림 (코드 main · 장치 적용 상태는 아래 "적용")
 - 요구: 인터넷이 끊기면 스스로 LAN 모드, PC를 보드의 직결 포트에 꽂으면 자동으로 주소를 받고 화면이 저절로 뜨기(사용자는 주소를 치지 않음), 내려받는 PC 프로그램은 보드를 스스로 찾아 연다. 자세한 설명·점검표·운영체제별 동작·위험·스위치: `tracking_server/OFFLINE_DIRECT_LINK_20261122_KO.md`.
@@ -1126,6 +1135,8 @@ LWIR650 상체 E10의 고정 학습·검증 자료는 [LWIR650 상체 E10 재현
 4. 장치에 내려받았으면 1절의 "장치에서 도는 코드"와 3절에서 그 줄을 지웁니다.
 
 ## 8. 바뀐 것 기록 (새 것이 위)
+
+- 2026-11-22 Claude — 카메라 멈춤 자동 복구(사용자 승인): 열기가 libusb_timeout/CAMERA_FROZEN 으로 연달아 5번 실패하면 화면 버튼과 같은 초기화(허브 5V)를 30분에 한 번까지 스스로 실행, 손 조종·재생·측정 중에는 미룸, 초기화 뒤 짐벌 브리지 확인·재시작, 스위치 `LWIR_CAM_AUTORESET`(1/0/dry, `/rules/set?cam_autoreset=`), `/healthz cam_autoreset`. 단위 29 + 웹 113 통과, 실제 로그 26건 분류 확인. 장치 적용·재시작 후 확인은 아래 같은 절.
 
 - 2026-11-22 Claude — 인터넷·Tailscale 없이 쓰기: 직결 포트 NM 프로필 + 서버의 다중 주소 귀(IP_FREEBIND, 자기 네트워크만) + lwir_netd(인터넷 점검·로그인 창 응답·UDP 신호·mDNS) + root 한 번 설치(DHCP·DNS·80번 전달) + PC 연결 프로그램(`pc_connect/`) + 화면 "LAN 모드"/내려받기 링크 + live_bind.sh 가 주소 없이도 서버를 켬 (`9986c9c`, `fed9dd7`, `8ec4ca9`). 단위 25 + 웹 113 + 네임스페이스 57 통과, 장치 적용(서버 재시작 1번, 13초 만에 정상)·NM 프로필 적용·더미 장치로 실제 서버가 주소 생기자 응답 확인. 실제 PC+케이블·root 설치는 아직.
 

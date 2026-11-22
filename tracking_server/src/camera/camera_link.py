@@ -10,6 +10,7 @@ from . import replay_link   # 11-12: recording replay from the page (does nothin
 from . import camera_extra   # 2026-11-11: 지워지지 않는 카메라 기록(기본 켜짐), 프레임 시간표와 공유 메모리(환경 변수로만 켜짐)
 from . import stall_diag   # 2026-11-13: 서버가 잠깐 멈춘 까닭을 찾는 기록 (LWIR_STALL_DIAG=1 일 때만. 기본 꺼짐)
 from . import cam_frozen   # 11-15: the camera's USB chip froze (cam_pipe exit 8): wait for a replug, no usbreset, 5 V step only behind the switchable hub
+from . import cam_autoreset   # 11-22: after N failed opens with libusb_timeout / CAMERA_FROZEN the page button's reset runs by itself (watcher in app.py)
 from . import cam_scene   # 11-15: frames without a scene (cam_pipe v2.13 SCENE_LOST): page notice
 from . import spawn_keeper   # 11-15: cam_pipe is started by a thread that lives as long as the server
 
@@ -67,6 +68,7 @@ def lv_spawn():   # v21: open (or reopen) the camera process and its reader
     invalidate_preview(APP.LIVE, before=time.perf_counter())
     cam_scene.on_spawn(APP.LIVE)   # 11-15: a new cam_pipe checks the picture again (SCENE_LOST comes back after its LWIR_CAM_BLANK_S if there is still no scene)
     if getattr(APP.LIVE, 'replay', None) is not None: return replay_link.spawn()   # 11-12: the replay program, always with frame headers and png numbers (the camera start below is unchanged)
+    cam_autoreset.on_spawn(APP.LIVE)   # 11-22: where this try's lines in cam_pipe.log begin (the cause of a failed open is read from them)
     cam_frozen.on_spawn(APP.LIVE)   # 11-15: where the camera is on USB (for the reset button); while it is frozen also the USB entry this try starts with (a later change = replug)
     if camera_extra.wanted(): return camera_extra.spawn()   # LWIR_CAM_STAMP=1 (off by default): the same start with the setting passed on to cam_pipe
     proc = spawn_keeper.popen(APP.lv_sp.Popen, replay_link.cam_argv(), stdout=APP.lv_sp.PIPE, stderr=APP.LIVE.log, bufsize=0)   # 11-15: started by a thread that outlives this call (cam_pipe gets SIGTERM when the thread that started it ends)
@@ -111,6 +113,7 @@ def lv_cam_wait():   # v21 (--live-wait 0): no frame: keep the page and the gimb
                 wait_ = 0 if APP.LIVE.cam_fail_n == 0 else 5 if rc_ == 7 else (60, 300, 300)[min(APP.LIVE.cam_unrec_n - 1, 2)] if rc_ in (3, 6) else 15
                 fw_ = cam_frozen.on_exit(APP.LIVE, rc_, now_, getattr(APP.LIVE.log, 'name', None))   # 11-15: code 8 = the camera's USB chip froze: wait for a replug (or 60 s)
                 if fw_ is not None: wait_ = fw_
+                cam_autoreset.on_exit(APP.LIVE, rc_)   # 11-22: counts the failed opens in a row that have the USB cause (libusb_timeout / exit 8)
                 APP.LIVE.cam_next_spawn = now_ + wait_
                 camera_extra.say('LIVE camera: cam_pipe ended with code %s after %.0f s without a frame (failures in a row: %d), next start in %d s%s' % (rc_, idle_, APP.LIVE.cam_fail_n, wait_, cam_frozen.say_tail(APP.LIVE) if fw_ is not None else ''))
             elif now_ < APP.LIVE.cam_next_spawn and cam_frozen.replugged(APP.LIVE):   # 11-15: frozen camera and its USB entry changed (replug): start now

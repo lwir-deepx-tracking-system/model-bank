@@ -26,6 +26,7 @@ from ..detect import pose_full_box
 from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows only (off by default)
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
+from ..camera import cam_autoreset   # 11-22: /healthz cam_autoreset
 from . import system_buttons
 from . import direct_listeners   # 11-22: direct-cable / offline listeners, /netinfo and the PC connect download
 from . import preview_worker, replay_virtual_follow
@@ -696,7 +697,9 @@ def make_lv_Handler():
                     self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
                 if not strict_ and getattr(APP.GB, 'usb_hold', False) and u_.path in ('/gimbal/click', '/gimbal/move'): u_ = u_._replace(path='/gimbal/stop')   # v35: USB power is being cycled, no new move
                 if not strict_ and u_.path in ('/gimbal/click', '/gimbal/stop', '/gimbal/home'): APP.GB.mover = None
-                elif u_.path == '/gimbal/move': APP.GB.mover = ip_ if (int(q_['x'][0]) or int(q_['y'][0])) else None
+                elif u_.path == '/gimbal/move':
+                    APP.GB.mover = ip_ if (int(q_['x'][0]) or int(q_['y'][0])) else None
+                    if APP.GB.mover is not None: APP.GB.last_manual_t = time.monotonic()   # 11-22: the camera auto-reset does not run while a person drives (cam_autoreset.Hooks.manual_active)
                 if u_.path == '/gimbal/click':
                     x_, y_ = float(q_['x'][0]) * APP.LIVE_W, float(q_['y'][0]) * APP.LIVE_H
                     if strict_:
@@ -801,6 +804,8 @@ def make_lv_Handler():
                               observation_status=bool(getattr(APP.GB, 'observation_status_supported', False)), observation_healthy=bool(getattr(APP.GB, 'observation_ok', False)), observation_good=getattr(APP.GB, 'observation_good', 0), observation_bad=getattr(APP.GB, 'observation_bad', 0),
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,
                               q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, replay=(getattr(APP.LIVE, 'replay', None) or {}).get('name'), track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
+                    try: h_['cam_autoreset'] = cam_autoreset.health(APP.LIVE)   # 11-22: mode, failed opens in a row, resets today, last reset, result
+                    except Exception as e_: h_['cam_autoreset'] = dict(error=repr(e_)[:80])
                     worker_ = getattr(APP.LIVE, 'preview_worker', None)
                     h_.update(delay_kind='jpeg_ready', async_preview=bool(worker_ and worker_.async_live),
                               async_replay_preview=bool(worker_ and worker_.async_replay),

@@ -51,6 +51,7 @@ from .track import merge_split   # 11-20: switches merge_split / pre_capture (me
 from .camera import replay_tracks
 from .reid import reid_embed
 from .camera import camera_link, replay_eval, stall_diag
+from .camera import cam_autoreset   # 11-22: the camera reset by itself after a frozen camera
 from .camera import temp_ring   # 11-14: --cam-temp (camera temperature map for the skin-temperature labels; off by default)
 from .gimbal import gimbal_link
 from .common import result_summary
@@ -345,7 +346,7 @@ def main():
         except (OSError, ValueError): sv_ = {}
         if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'pose_box', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
         if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('feat_guard', 'cost_first', 'depth_order', 'merge_split', 'pre_capture') if k_ in sv_})   # 11-20 number guards
-        if isinstance(sv_, dict): APP.SEL.update({k_: str(sv_[k_]) for k_ in ('nested_dup', 'track_thr', 'close_aim') if isinstance(sv_.get(k_), str)})   # 11-21: these (and close_aim) are kept over a restart too
+        if isinstance(sv_, dict): APP.SEL.update({k_: str(sv_[k_]) for k_ in ('nested_dup', 'track_thr', 'close_aim', 'cam_autoreset') if isinstance(sv_.get(k_), str)})   # 11-21: these (and close_aim) are kept over a restart too
         # An engine which kills the process during construction must not be retried on restart.
         saved_detector = APP.SEL.pop('det', None)
         APP.sel_save()
@@ -367,7 +368,7 @@ def main():
         if 'auto_det' in APP.SEL: qs_.append(auto_det.restore_query(bool(APP.SEL['auto_det']), APP.SEL.get('auto_det_p')))   # 11-15: automatic detector choice on / off and the changed numbers
         if 'resident_det' in APP.SEL: qs_.append({'resident_det': ['1' if APP.SEL['resident_det'] else '0']})   # 11-15: two detector models resident (the other pair is made by the frame loop)
         qs_ += box_refine.restore_queries(APP.SEL)   # 11-15: box smoothing of the drawn / gimbal rows; one query per key (a refused mode keeps the blend time)
-        qs_ += [{k_: [APP.SEL[k_]]} for k_ in ('nested_dup', 'track_thr', 'close_aim') if k_ in APP.SEL]   # 11-21: saved page choice wins over the LWIR_* start value
+        qs_ += [{k_: [APP.SEL[k_]]} for k_ in ('nested_dup', 'track_thr', 'close_aim', 'cam_autoreset') if k_ in APP.SEL]   # 11-21: saved page choice wins over the LWIR_* start value
         qs_ += [{k_: ['1' if APP.SEL[k_] else '0']} for k_ in ('feat_guard', 'cost_first', 'depth_order', 'merge_split', 'pre_capture') if k_ in APP.SEL]   # 11-20: number guards (relink_online_judge.GUARD, tracker_common.ASSIGN)
         for q_ in qs_:
             if not q_: continue
@@ -614,6 +615,7 @@ def main():
                     APP.lv_th.Thread(target=APP.lv_srv_local.serve_forever, daemon=True).start()
                 except OSError as e_: APP.lv_srv_local = None; print('LIVE no listener on 127.0.0.1:%d (%s)' % (APP.args.live_port, e_), flush=True)
             page_handler.start_lan_listener(lv_Handler)
+            if not APP.args.live_wait: cam_autoreset.install(APP)   # 11-22: same condition as the page's camera reset button (--live-wait 0)
             direct_listeners.start(lv_Handler, APP.args.live_port, APP.args.live_extra_binds,
                                    skip=(APP.args.live_bind,) + ((APP.args.live_lan_bind,) if getattr(APP, 'lv_lan_listener', None) is not None else ()))   # 11-22
             live_close = page_handler.live_close
