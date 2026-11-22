@@ -1,0 +1,16 @@
+[Unit]
+Description=LWIR direct cable port: DHCP + captive-portal DNS (own dnsmasq) and the port 80 redirect to the portal responder
+Documentation=file:/etc/lwir/direct-dnsmasq.conf
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=simple
+ExecStartPre=/usr/sbin/nft -f /etc/lwir/direct-link.nft
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/lwir/direct-dnsmasq.conf --user=dnsmasq
+ExecStopPost=-/usr/sbin/nft delete table ip lwir_direct
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

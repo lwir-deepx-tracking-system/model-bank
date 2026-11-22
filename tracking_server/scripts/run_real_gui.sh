@@ -63,6 +63,13 @@ tracker_args=(
 
 if [ -n "$LAN_BIND" ]; then tracker_args+=(--live-lan-bind "$LAN_BIND"); fi
 
+# 11-22: lwir_netd = offline / direct-cable helper (internet supervisor, captive-portal responder, beacon, mDNS). One copy per board (it holds its own lock),
+# independent of the server: it keeps running while the server restarts. LWIR_NETD=0 in scripts/live.env switches it off. keepalive.sh starts it too.
+# 9>&- : the child must NOT inherit the launch lock (fd 9): keepalive.sh decides 'launcher alive' from that lock.
+if [ "${LWIR_NETD:-1}" != 0 ]; then
+  setsid nohup python3 -B -m src.net.netd >> "$HOME/lwir_netd.log" 2>&1 < /dev/null 9>&- &
+fi
+
 # A fresh process releases all of the previous DXRT client's resources.
 # Only a graceful restart requested from the web page returns 75.
 stop_launcher() {

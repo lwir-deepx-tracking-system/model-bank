@@ -93,3 +93,5 @@
 
 #lan-web:not([hidden]){display:inline-flex;align-items:center;flex:none;text-decoration:none}
 #lan-web:not([href]){cursor:default}
+#pc-connect:not([hidden]){display:inline-flex;align-items:center;flex:none;text-decoration:none}
+#net-mode:not([hidden]){flex:none}

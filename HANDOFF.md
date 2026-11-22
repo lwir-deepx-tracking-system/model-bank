@@ -1,6 +1,6 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
-마지막 고침 2026-11-22 · Claude · own9e 시드 1 을 기본 검출기·추천으로 (바로 아래). 그 전: 2026-11-22 · Claude · own9e 시드 1 검출기 한 장 분할 등록. 그 전: 2026-11-21 · Claude · 가까운 사람 위쪽 조준 close_aim (브랜치 close_aim, 바로 아래). 그 전: 2026-11-21 · Claude · nested_dup·track_thr 선택을 재시작 뒤에도 유지. 그 전: 2026-11-21 · Claude · 전체 데이터 검출기(allin s1) 한 장 분할 등록 (바로 아래). 그 전: 2026-11-21 · Claude · 박스 떨림 보정 항상 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 상자 떨림 보정 기본 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
+마지막 고침 2026-11-22 · Claude · 인터넷·Tailscale 없이 쓰기: 직결 케이블 자동 연결 (바로 아래). 그 전: 2026-11-22 · Claude · own9e 시드 1 을 기본 검출기·추천으로. 그 전: 2026-11-22 · Claude · own9e 시드 1 검출기 한 장 분할 등록. 그 전: 2026-11-21 · Claude · 가까운 사람 위쪽 조준 close_aim (브랜치 close_aim, 바로 아래). 그 전: 2026-11-21 · Claude · nested_dup·track_thr 선택을 재시작 뒤에도 유지. 그 전: 2026-11-21 · Claude · 전체 데이터 검출기(allin s1) 한 장 분할 등록 (바로 아래). 그 전: 2026-11-21 · Claude · 박스 떨림 보정 항상 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 상자 떨림 보정 기본 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
 
 
 
@@ -8,6 +8,15 @@
 
 
 
+
+## 2026-11-22 인터넷·Tailscale 없이 쓰기: 둘째 랜 포트에 PC를 꽂으면 주소 없이 화면이 열림 (코드 main · 장치 적용 상태는 아래 "적용")
+- 요구: 인터넷이 끊기면 스스로 LAN 모드, PC를 보드의 직결 포트에 꽂으면 자동으로 주소를 받고 화면이 저절로 뜨기(사용자는 주소를 치지 않음), 내려받는 PC 프로그램은 보드를 스스로 찾아 연다. 자세한 설명·점검표·운영체제별 동작·위험·스위치: `tracking_server/OFFLINE_DIRECT_LINK_20261122_KO.md`.
+- 만든 것: (1) NetworkManager 프로필 `lwir-direct-link`(둘째 포트 enP4p65s0만: 10.42.0.1/24 + 링크로컬 169.254.42.1/16 + 팀 링크 192.168.50.2/24 + 옛 192.168.77.2/24, `manual`) — **첫째 포트 enP3p49s0·Tailscale·옛 프로필은 안 건드림.** (2) 서버가 주소 여러 개에 동시에 귀를 엶(`src/web/direct_listeners.py`, `--live-extra-binds` / `LWIR_LIVE_EXTRA_BINDS`, IP_FREEBIND라 케이블이 없어도 시작되고 주소가 생기면 재시작 없이 응답, 주소마다 자기 네트워크의 PC만 받음, 0.0.0.0 안 씀). (3) `src/net/netd.py`(서버와 함께 켜지고 keepalive 가 지킴): 5초마다 인터넷·Tailscale 점검(`/dev/shm/lwir_net_state.json`: online | lan-only, 화면에 "LAN 모드" 표시), 운영체제 연결 확인 응답기(포트 8091), UDP 신호(47890, 2초마다 + `LWIR_DISCOVER` 답), mDNS(orangepi.local). (4) root 한 번: `scripts/net/install_direct_link_root.sh` = 우리 dnsmasq(DHCP 10.42.0.20~200 + 연결 확인 이름 11개 DNS) + 80→8091 nft 전달. (5) `pc_connect/lwir_connect.bat|ps1|sh`(찾는 순서 10.42.0.1 → orangepi.local → UDP 신호 → 링크로컬, `-Install` 은 묻고 시작 프로그램에 넣어 보드가 연결되면 화면을 엶), 화면의 "PC 연결 프로그램" 링크(LAN·직결 접속에만; Tailscale 접속에는 안 줌).
+- 중요: NetworkManager `shared` 방식은 쓰지 않았다(주소 하나만 남아 팀 GUI 링크 192.168.50.2 가 사라지고, IP 전달·NAT 가 켜져 직결 PC가 첫째 포트·Tailscale 로 나갈 수 있고, 추가 설정이 전역·root). 이유와 대안은 문서.
+- 같이 고친 것: `scripts/live_bind.sh` 가 Tailscale·LAN 주소가 없으면 예전에는 빈 값이라 서버가 안 켜졌다(인터넷 없이 부팅하면 서버가 안 뜸) → 루프백으로 시작(Tailscale 이 있으면 예전과 똑같음). keepalive 가 그 루프백으로 /healthz 를 읽고 lwir_netd 를 지킨다. 서버가 귀를 열 때 `getfqdn()` 건너뜀(DNS 시간 초과 대기).
+- **사용자 sudo 가 필요한 단 하나**: `sudo bash tracking_server/scripts/net/install_direct_link_root.sh` (암호 없는 sudo 가 없다). 그 전에는 케이블을 꽂으면 주소(10.42.0.1)와 화면은 되고 PC의 자동 주소(DHCP)·로그인 창만 없다.
+- 시험: 단위 25 + 웹 전체 113 + live_bind 6 + keepalive 2 통과. 네임스페이스 시험 57개 통과(실제 dnsmasq·nft·lwir_netd·direct_listeners, DHCP, 로그인 창 302/정상 10분/케이블 재연결, UDP 신호, mDNS, 링크로컬, 팀 링크 고정 주소, 케이블 뽑았다 꽂기, 인터넷 online↔lan-only). PowerShell 은 Windows PowerShell 5.1 에서 구문·찾기·설치/제거·감시·뮤텍스 확인. **실제 PC+케이블 없이는 증명 안 된 것**: Windows/macOS 가 유선에서 창을 실제로 띄우는지(Microsoft 문서는 Wi-Fi 예시, 외부 글은 링크만 보인다고 함), 실제 NIC 의 DHCP, SmartScreen, `.local` 시간.
+- 실행 규칙: 장치에서 `src.net.netd` 는 한 벌만(`~/.lwir_netd.lock`), 끄기 `LWIR_NETD=0`(live.env). 창 끄기 `touch ~/.lwir_portal_off`. 새 시험 `bash scripts/net/netns/netns_test.sh`(일반 사용자, 보드 네트워크 무관).
 
 ## 2026-11-22 기본 검출기를 own9e 시드 1 로 (추천 표시 갱신 · 모델 9 로 되돌리기 가능)
 - 근거: 장치 재생 18개 녹화(INT8·분할)에서 모델 9 보다 IDF1 +4.50 [+1.26, +10.26], 찾은 비율 +5.90 [+2.31, +12.25], 상자 중복 -7.79 [-11.21, -3.44], 속도 같음(계산 21.6 vs 22.1 ms, 늦은 프레임 0). 번호 바뀜은 차이 없음. `models/RECOMMENDED.json` 의 detector 를 own9e 로 바꿈.

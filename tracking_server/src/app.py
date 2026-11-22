@@ -41,7 +41,7 @@ from .reid import cos_map
 from .common.pc_dry_run import make_mock_dx
 from .common.research_prepare import prepare
 from .detect import model_scan, npu_engine, detect_frame
-from .web import system_buttons, page_handler, page_settings, measure
+from .web import system_buttons, page_handler, page_settings, measure, direct_listeners
 from .web import id_rule_switches   # 2026-11-20: /rules keys nested_dup and track_thr (both default to the behaviour before them)
 from .track import threshold_set
 from .web.pipeline_perf import PipelinePerf
@@ -148,6 +148,8 @@ def main():
     ap.add_argument('--live-bind', default='127.0.0.1', help='address of the web page. The page has no password; the default is this device only, give the address of a trusted network to view it from another computer')
     ap.add_argument('--live-lan-bind', type=page_handler.lan_ipv4, default=None,
                     help='optional extra web listener on an RFC1918 or usable IPv4 link-local address; keeps the primary and loopback listeners')
+    ap.add_argument('--live-extra-binds', default=os.environ.get('LWIR_LIVE_EXTRA_BINDS', direct_listeners.DEFAULT_SPECS),
+                    help="11-22: extra web listeners for offline use, 'address/prefix,...' (RFC1918 or link-local only). Each one serves its own network only and is bound with IP_FREEBIND, so a cable plugged later works without a restart. 'off' = none. Default: the direct cable port 10.42.0.1/24 with its link-local fallback 169.254.42.1/16 and the team link 192.168.50.2/24, 192.168.77.2/24")
     ap.add_argument('--live-seconds', type=float, default=600, help='v14: live run length in seconds')
     ap.add_argument('--measure-dir', default='/mnt/lwir_data/results/live_measure', help='v22c: folder for the measurement button files (a YYYYMMDD subfolder per day); the run folder when it cannot be written')
     ap.add_argument('--live-wait', type=float, default=90, help='v21: seconds to wait for the first camera frame; 0 = never give up: the page and the gimbal link stay up with a placeholder picture and the camera is reopened every 180 s until --live-seconds ends')
@@ -612,6 +614,8 @@ def main():
                     APP.lv_th.Thread(target=APP.lv_srv_local.serve_forever, daemon=True).start()
                 except OSError as e_: APP.lv_srv_local = None; print('LIVE no listener on 127.0.0.1:%d (%s)' % (APP.args.live_port, e_), flush=True)
             page_handler.start_lan_listener(lv_Handler)
+            direct_listeners.start(lv_Handler, APP.args.live_port, APP.args.live_extra_binds,
+                                   skip=(APP.args.live_bind,) + ((APP.args.live_lan_bind,) if getattr(APP, 'lv_lan_listener', None) is not None else ()))   # 11-22
             live_close = page_handler.live_close
             print('LIVE http://%s:%d/ for %d s' % (APP.args.live_bind, APP.args.live_port, APP.args.live_seconds), flush=True)
         if APP.args.preload:         # --preload: decode once, outside every timed interval

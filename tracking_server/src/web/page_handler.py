@@ -7,6 +7,7 @@ import json
 import math
 import os
 import socket
+import socketserver
 import time
 from urllib.parse import parse_qs, urlsplit
 import numpy as np
@@ -26,6 +27,7 @@ from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal ro
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
 from . import system_buttons
+from . import direct_listeners   # 11-22: direct-cable / offline listeners, /netinfo and the PC connect download
 from . import preview_worker, replay_virtual_follow
 from .measure import STAGE_FIELDS
 from . import stream_sender   # 11-15 (user: 화면 전송 지연): GET /stream, one viewer
@@ -726,6 +728,15 @@ def make_lv_Handler():
                 if urlsplit(self.path).path == '/network':
                     body = json.dumps(network_state()).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+                elif urlsplit(self.path).path == '/netinfo':   # 11-22: offline note + PC connect offer (src/web/direct_listeners.py)
+                    body = direct_listeners.netinfo_body(self.client_address[0])
+                    self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+                elif urlsplit(self.path).path.startswith('/pc/'):   # 11-22: the PC connect program, LAN clients only
+                    status_, ctype_, name_, body = direct_listeners.pc_download(urlsplit(self.path).path, self.client_address[0])
+                    if status_ != 200:
+                        self.send_error(404)
+                        return
+                    self.send_response(200); self.send_header('Content-Type', ctype_); self.send_header('Content-Disposition', 'attachment; filename="%s"' % name_); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
                 elif self.path.split('?', 1)[0] == '/diagnostics/identity':
                     trace_ = getattr(APP.LIVE, 'identity_trace', None)
                     query_ = self.path.partition('?')[2]
@@ -845,7 +856,8 @@ def make_lv_Server():
         def server_bind(self):
             try: self.socket.setsockopt(0, 15, 1)
             except OSError: pass
-            super().server_bind()
+            socketserver.TCPServer.server_bind(self)   # 11-22: not HTTPServer.server_bind: its getfqdn() waits for DNS time-outs when the internet is gone
+            self.server_name, self.server_port = self.server_address[:2]
     return lv_Server
 
 
@@ -940,6 +952,7 @@ def live_close():
     except Exception as e_: print('REPLAY EVAL save failed', e_, flush=True)
     with APP.LIVE.jcond: APP.LIVE.jcond.notify_all()
     close_lan_listener()
+    direct_listeners.stop()
     APP.lv_srv.shutdown()
     if APP.lv_srv_local is not None: APP.lv_srv_local.shutdown()
     if APP.GB is not None:

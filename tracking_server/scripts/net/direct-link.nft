@@ -1,0 +1,11 @@
+# Port 80 -> the portal responder (src/net/portal.py listens on 8091), only for traffic that arrives on the direct port and is
+# addressed to the board's direct address. Nothing else is touched (no forwarding, no NAT, no filtering).
+# Loaded by lwir-direct-link.service; "table ... / delete table ..." makes loading repeatable.
+table ip lwir_direct
+delete table ip lwir_direct
+table ip lwir_direct {
+    chain portal_redirect {
+        type nat hook prerouting priority dstnat; policy accept;
+        iifname "enP4p65s0" ip daddr 10.42.0.1 tcp dport 80 redirect to :8091
+    }
+}
