@@ -10,6 +10,13 @@ from . import replay_link   # 11-12: recording replay from the page (does nothin
 from . import camera_extra   # 2026-11-11: 지워지지 않는 카메라 기록(기본 켜짐), 프레임 시간표와 공유 메모리(환경 변수로만 켜짐)
 from . import stall_diag   # 2026-11-13: 서버가 잠깐 멈춘 까닭을 찾는 기록 (LWIR_STALL_DIAG=1 일 때만. 기본 꺼짐)
 from . import cam_frozen   # 11-15: the camera's USB chip froze (cam_pipe exit 8): wait for a replug, no usbreset, 5 V step only behind the switchable hub
+def follow_log_cause(tag_):
+    try:
+        from ..gimbal import follow_log
+        follow_log.cause(tag_)
+    except Exception: pass
+
+
 from . import cam_autoreset   # 11-22: after N failed opens with libusb_timeout / CAMERA_FROZEN the page button's reset runs by itself (watcher in app.py)
 from . import cam_scene   # 11-15: frames without a scene (cam_pipe v2.13 SCENE_LOST): page notice
 from . import spawn_keeper   # 11-15: cam_pipe is started by a thread that lives as long as the server
@@ -189,7 +196,7 @@ def live_next(*, wait=True, fresh_only=False):
                     APP.LIVE.cond.notify_all()
                 if APP.LIVE.prev_t is not None and t_ - APP.LIVE.prev_t > 1.0:   # v26b: the camera gave no frame for over 1 s (repair, restart). The person at the old place may be someone else now:
                     APP.LIVE.gap_n += 1                                         # the gimbal selection is dropped here, before this frame goes to the bridge, and the tracker forgets its tracks at this frame (see the main loop). The person is clicked again.
-                    if APP.GB is not None: APP.gb_send('H')
+                    if APP.GB is not None: follow_log_cause('camera_gap'); APP.gb_send('H')   # 11-22
                     camera_extra.say('LIVE input gap of %.1f s: selection dropped, tracks restart' % (t_ - APP.LIVE.prev_t))
                 APP.LIVE.prev_t = t_; break
             if APP.LIVE.stopped or APP.args.live_wait:
@@ -244,7 +251,7 @@ def cam_usb_power():   # v35: USB host 5 V off 3 s and on (root helper, same as 
         open_ = False
         if APP.LIVE.stopped: return 'no', '서버 종료 중이라 USB 전원을 끄지 않음. '
         if APP.GB is not None:
-            APP.GB.usb_hold = True; APP.GB.mover = None   # manual moves and clicks are turned into stop while the hold is on
+            follow_log_cause('usb_reset'); APP.GB.usb_hold = True; APP.GB.mover = None   # manual moves and clicks are turned into stop while the hold is on
             if APP.GB.closing: return 'no', '서버 종료 중이라 USB 전원을 끄지 않음. '
             with APP.GB.wcond: open_ = APP.GB.wopen
             if not open_ and APP.GB.proc is not None and APP.GB.proc.poll() is None: return 'no', '짐벌 연결을 다시 시작하는 중이라 USB 전원을 끄지 않음. 잠시 뒤 다시 누르세요. '

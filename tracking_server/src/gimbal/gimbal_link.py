@@ -1,4 +1,5 @@
 """짐벌 연결: 짐벌 프로그램(gimbal_bridge) 띄우기와 지켜보기, 명령·프레임 보내기, 따라갈 사람의 예측 제어."""
+from . import follow_log   # 11-22
 import math
 import os
 import select
@@ -319,6 +320,7 @@ def gb_reader(p_):
             with APP.GB.wcond:
                 if p_ is not APP.GB.proc: continue
                 state = APP.GB.state
+                follow_log.state(APP.GB, tuple(state.get(key, 0) for key in ('auto', 'lost', 'error', 'id')), (auto, lost, error, track_id))   # 11-22
                 if (auto, lost, error, track_id) != tuple(state.get(key, 0) for key in ('auto', 'lost', 'error', 'id')):
                     reset_lead()
                     APP.GB.wframe = without_lead(APP.GB.wframe)
@@ -418,6 +420,7 @@ def gb_spawn():   # v26: start (or start again) the bridge. A new bridge sends S
 
 def gb_end(p_, why_):   # ask a bridge to end (on SIGTERM it sends STOP and leaves; its input pipe is not closed from here because the writer thread may be inside a write), kill it if it does not
     print('GIMBAL bridge is being restarted:', why_, flush=True)
+    follow_log.cause('bridge_restart')   # 11-22
     with APP.GB.wcond:
         if APP.GB.proc is p_:
             APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.wcond.notify_all()

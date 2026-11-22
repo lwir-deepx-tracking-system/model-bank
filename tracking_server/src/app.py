@@ -615,6 +615,7 @@ def main():
                     APP.lv_th.Thread(target=APP.lv_srv_local.serve_forever, daemon=True).start()
                 except OSError as e_: APP.lv_srv_local = None; print('LIVE no listener on 127.0.0.1:%d (%s)' % (APP.args.live_port, e_), flush=True)
             page_handler.start_lan_listener(lv_Handler)
+            from .gimbal import follow_log; follow_log.start()   # 11-22
             if not APP.args.live_wait: cam_autoreset.install(APP)   # 11-22: same condition as the page's camera reset button (--live-wait 0)
             direct_listeners.start(lv_Handler, APP.args.live_port, APP.args.live_extra_binds,
                                    skip=(APP.args.live_bind,) + ((APP.args.live_lan_bind,) if getattr(APP, 'lv_lan_listener', None) is not None else ()))   # 11-22

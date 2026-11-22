@@ -3,6 +3,7 @@
 The tracker computes boxes/IDs. This adapter only shares those results; it
 does not implement a second tracker or change the camera control law.
 """
+from . import follow_log   # 11-22: why a follow ends
 import math
 import os
 import time
@@ -51,6 +52,7 @@ def _boundary_locked(gb, source):
     gb.people_source = source
     gb.people_t = 0.0
     gb.selection_reset = True
+    follow_log.cause('boundary')   # 11-22
     gb.lead_pending = 0
     gb.reentry_tilt = None
     gb.handoff_proposal = gb.handoff_pending = None
@@ -731,6 +733,7 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                 # barrier must reach the bridge first, without clearing the selected ID.
                 gb.observation_barrier = f'F {gb.frame} {captured_ns} 0 OBS 0\n'.encode()
         selected = 0 if gb.selection_reset else int(gb.state.get('id', 0))
+        follow_log.frame(gb, frame_t, selected, gb.people, APP.LIVE_W, APP.LIVE_H)   # 11-22: follow-loss recorder (ring, no output)
         gb.handoff_proposal = None
         same_id_search = getattr(getattr(gb, 'fguard', None), 'masked_seek_lock', False)
         if not same_id_search:

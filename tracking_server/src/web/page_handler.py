@@ -26,6 +26,7 @@ from ..detect import pose_full_box
 from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows only (off by default)
 from ..track.stabilizer import STAB, stab_rows_real, stab_people_real
 from ..camera import replay_link
+from ..gimbal import follow_log   # 11-22: follow-loss recorder (/follows, /healthz follow_events)
 from ..camera import cam_autoreset   # 11-22: /healthz cam_autoreset
 from . import system_buttons
 from . import direct_listeners   # 11-22: direct-cable / offline listeners, /netinfo and the PC connect download
@@ -699,7 +700,8 @@ def make_lv_Handler():
                 if not strict_ and u_.path in ('/gimbal/click', '/gimbal/stop', '/gimbal/home'): APP.GB.mover = None
                 elif u_.path == '/gimbal/move':
                     APP.GB.mover = ip_ if (int(q_['x'][0]) or int(q_['y'][0])) else None
-                    if APP.GB.mover is not None: APP.GB.last_manual_t = time.monotonic()   # 11-22: the camera auto-reset does not run while a person drives (cam_autoreset.Hooks.manual_active)
+                    if APP.GB.mover is not None: APP.GB.last_manual_t = time.monotonic(); follow_log.cause('manual_move')   # 11-22: the camera auto-reset does not run while a person drives (cam_autoreset.Hooks.manual_active)
+                if u_.path == '/gimbal/click': follow_log.cause('click')   # 11-22
                 if u_.path == '/gimbal/click':
                     x_, y_ = float(q_['x'][0]) * APP.LIVE_W, float(q_['y'][0]) * APP.LIVE_H
                     if strict_:
@@ -712,11 +714,13 @@ def make_lv_Handler():
                         b_ = json.dumps(dict(APP.GB.state, refused=True), ensure_ascii=False).encode()
                         self.send_response(409); self.send_header('Content-Type', 'application/json'); self.send_header('Content-Length', str(len(b_))); self.end_headers(); self.wfile.write(b_); return
                 elif u_.path == '/gimbal/stop':
+                    follow_log.cause('stop')   # 11-22
                     APP.GB.state['answer'] = ''
                     if not APP.gb_send('H'):
                         control_status_ = 503
                         APP.GB.state['answer'] = '정지 명령을 전달하지 못했습니다'
                 elif u_.path == '/gimbal/home':
+                    follow_log.cause('home')   # 11-22
                     APP.GB.state['answer'] = '원점 이동 요청: pan 0°, tilt 0°'
                     if not APP.gb_send('C'): self.send_error(503, 'Gimbal command unavailable'); return
                 elif u_.path == '/gimbal/move': APP.GB.state['answer'] = ''; APP.gb_send('V %d %d' % (int(q_['x'][0]), int(q_['y'][0])))
@@ -731,6 +735,9 @@ def make_lv_Handler():
                 if urlsplit(self.path).path == '/network':
                     body = json.dumps(network_state()).encode()
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
+                elif urlsplit(self.path).path == '/follows':   # 11-22: the last 20 follow-loss events
+                    body = json.dumps(follow_log.events(), ensure_ascii=False).encode()
+                    self.send_response(200); self.send_header('Content-Type', 'application/json; charset=utf-8'); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
                 elif urlsplit(self.path).path == '/netinfo':   # 11-22: offline note + PC connect offer (src/web/direct_listeners.py)
                     body = direct_listeners.netinfo_body(self.client_address[0])
                     self.send_response(200); self.send_header('Content-Type', 'application/json'); self.send_header('Cache-Control', 'no-store'); self.send_header('Content-Length', str(len(body))); self.end_headers(); self.wfile.write(body)
@@ -804,6 +811,7 @@ def make_lv_Handler():
                               observation_status=bool(getattr(APP.GB, 'observation_status_supported', False)), observation_healthy=bool(getattr(APP.GB, 'observation_ok', False)), observation_good=getattr(APP.GB, 'observation_good', 0), observation_bad=getattr(APP.GB, 'observation_bad', 0),
                               gimbal_device=(APP.gb_dev_sig(APP.gb_device()) is not None) if APP.GB is not None else None, gimbal_busy=bool(APP.GB.busy) if APP.GB is not None else None, rss_mb=rss_, stopped=APP.LIVE.stopped,
                               q_len=len(APP.LIVE.q), q_drop=APP.LIVE.q_drop, gaps=APP.LIVE.gap_n, replay=(getattr(APP.LIVE, 'replay', None) or {}).get('name'), track_fps=round((len(APP.LIVE.done_ts) - 1) / (APP.LIVE.done_ts[-1] - APP.LIVE.done_ts[0]), 1) if len(APP.LIVE.done_ts) > 2 and APP.LIVE.done_ts[-1] > APP.LIVE.done_ts[0] else 0.0, cam_fps=round(APP.LIVE.cam_fps, 1))
+                    h_['follow_events'] = follow_log.health()   # 11-22: the last 5 follow ends (full list: GET /follows)
                     try: h_['cam_autoreset'] = cam_autoreset.health(APP.LIVE)   # 11-22: mode, failed opens in a row, resets today, last reset, result
                     except Exception as e_: h_['cam_autoreset'] = dict(error=repr(e_)[:80])
                     worker_ = getattr(APP.LIVE, 'preview_worker', None)

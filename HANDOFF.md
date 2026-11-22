@@ -1,6 +1,6 @@
 # 인수인계 (사람과 AI 작업자 공용)
 
-마지막 고침 2026-11-22 · Claude · 카메라 멈춤 자동 복구 (바로 아래). 그 전: 2026-11-22 · Claude · 인터넷·Tailscale 없이 쓰기: 직결 케이블 자동 연결. 그 전: 2026-11-22 · Claude · own9e 시드 1 을 기본 검출기·추천으로. 그 전: 2026-11-22 · Claude · own9e 시드 1 검출기 한 장 분할 등록. 그 전: 2026-11-21 · Claude · 가까운 사람 위쪽 조준 close_aim (브랜치 close_aim, 바로 아래). 그 전: 2026-11-21 · Claude · nested_dup·track_thr 선택을 재시작 뒤에도 유지. 그 전: 2026-11-21 · Claude · 전체 데이터 검출기(allin s1) 한 장 분할 등록 (바로 아래). 그 전: 2026-11-21 · Claude · 박스 떨림 보정 항상 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 상자 떨림 보정 기본 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
+마지막 고침 2026-11-22 · Claude · 추종 끊김 기록기 (바로 아래, 장치 미적용). 그 전: 2026-11-22 · Claude · 카메라 멈춤 자동 복구. 그 전: 2026-11-22 · Claude · 인터넷·Tailscale 없이 쓰기: 직결 케이블 자동 연결. 그 전: 2026-11-22 · Claude · own9e 시드 1 을 기본 검출기·추천으로. 그 전: 2026-11-22 · Claude · own9e 시드 1 검출기 한 장 분할 등록. 그 전: 2026-11-21 · Claude · 가까운 사람 위쪽 조준 close_aim (브랜치 close_aim, 바로 아래). 그 전: 2026-11-21 · Claude · nested_dup·track_thr 선택을 재시작 뒤에도 유지. 그 전: 2026-11-21 · Claude · 전체 데이터 검출기(allin s1) 한 장 분할 등록 (바로 아래). 그 전: 2026-11-21 · Claude · 박스 떨림 보정 항상 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 상자 떨림 보정 기본 켜짐 (바로 아래). 그 전: 2026-11-20 · Claude · 추천 표시를 models/RECOMMENDED.json 한 곳에서 (바로 아래). 그 전: 2026-11-21 · Claude · SOLIDER 증류 E 화면 이름을 추적 비교 결과대로 고침 + 시작 경로 눈금표 점검 (바로 아래). 그 전: 시험용 외형 모델 SOLIDER 증류 E 추가
 
 
 
@@ -8,6 +8,13 @@
 
 
 
+
+## 2026-11-22 추종 끊김 기록기 `src/gimbal/follow_log.py` (기본 켜짐 `LWIR_FOLLOW_LOG=0` 끔 · 장치 미적용: 추종 중이라 재시작 안 함, 핫로드 불가)
+- 무엇: 따라가던 대상이 끊길 때(브리지 상태 auto 1→0, lost 0→1, 따라가는 번호가 바뀜) 한 줄 JSON 을 `tracking_server/follows.log`(2MB 뒤 .1)에 쓰고 `camera_events.log` 에 `FOLLOWLOSS ...` 한 줄. 평소에는 프레임마다 작은 튜플 하나를 링(150장)에 넣을 뿐이다. 서버 시작 줄 `server_start`(재시작으로 끝난 추종 표시). 읽기: `GET /follows`(마지막 20건 전체), `/healthz` 의 `follow_events`(마지막 5건 요약).
+- 한 건의 칸: `t, up, kind(lost|ended|switched|server_start), id, new_id, reason, why, n_missing(번호가 사람 목록에 없던 연속 프레임), cause(직전 2초 안의 서버 쪽 행동과 시각), last3s(최대 8개 표본: dt, present, box, score, overlap(다른 사람과 겹침), other(그 번호), edge(화면 끝까지 px)), near(가까운 다른 번호와 겹침), guard(follow_guard 단계·mask·재지정 횟수), judge(relink judge feat_guard 수치), state(auto, lost, error, search)`.
+- 이유 코드: user_released(정지·원점), user_clicked_other(클릭), user_manual_move, camera_stall(입력 공백 1초 넘어 선택 해제), usb_reset, tracker_or_model_switch(선택 경계), bridge_restart, bridge_error, id_switched / id_switched_relink(새 번호가 옛 상자 자리), target_left_picture(마지막 상자가 화면 끝 3% 안), covered_by_other_person(겹침 0.3 이상), detection_missing_N_frames(15장 미만), track_ended_lost_age(15장 이상), bridge_dropped_target_visible(번호가 마지막 프레임에도 있었는데 브리지가 끝냄: 브리지 시간 제한·가드), server_start.
+- **스스로 추종을 끝내는 조건(코드 확인):** (1) 브리지(C++ v27) `--reacquire-ms 10000`: 번호가 10초 넘게 없으면 선택을 놓음(장치 값). 같은 코스트 `--coast-ms 800`, `--seek` 는 그 사이 찾기. (2) 브리지 `error`(직렬 오류) — 3초 이어지면 `gb_watch` 가 브리지를 다시 띄우고 새 브리지는 누구도 안 따라감. (3) 짐벌 장치가 바뀜(USB 끊김)도 같음. (4) `_boundary_locked`: 모델·트래커 바꾸기, 녹화 재생 시작/끝, 빈 화면 클릭, 입력 원천 변경 → H(정지)와 선택 해제. (5) `camera_link.live_next`: 카메라 입력 공백 1초 넘음 → H. (6) `cam_usb_power`(카메라 초기화·자동 복구): 짐벌 정지. (7) 페이지의 정지·원점·다른 사람 클릭·손으로 이동. (8) PC GUI 의 명령. (9) `LWIR_WEB_FOLLOW_PERSISTENT=1`(켜짐): 페이지 연결이 끊겨도 추종 유지(`W` 명령), 위 항목은 그대로. (10) `LWIR_FOLLOW_GUARD=2` 는 장치 환경에 없음(live.env 에서 확인 필요): 켜면 가드가 같은 사람 아닌 상자를 막고(`reselect`, 재지정), 예측만 쓰다 `LOST_MAX_S` 10초에 포기. 켜 있지 않은 동안 번호 인계는 `LWIR_FOLLOW_HANDOFF`(live.env 에 없음 = 꺼짐)도 없어서 **번호가 바뀌면(재식별 실패) 추종은 그 번호를 기다리다 10초 뒤 끝난다.** 이것이 기록기로 먼저 확인할 가장 유력한 원인이다.
+- 시험: `src/gimbal/test_follow_log.py` 3개(이유 분류, 원인 표시, 끄기), 웹 113 통과, 짐벌 시험의 기존 오류 13건은 변경 전과 같음. 장치에는 서버를 재시작해야 적용된다.
 
 ## 2026-11-22 카메라 멈춤 자동 복구 (사용자 승인 · 기본 켜짐 · 코드 `src/camera/cam_autoreset.py`)
 - 배경: 11-22 09:44 카메라 USB 칩이 멈췄고(cam_pipe `control libusb_timeout`, exit 8) 서버는 49분 동안 열기를 되풀이했지만 매번 `DIAG open: op=4(send) result=-7(libusb_timeout)` + `OPEN_FAILED`(exit 2)였다. 사람이 화면의 카메라 초기화(허브 5V 껐다 켜기)를 눌러서야 살아났다.
@@ -1136,6 +1143,8 @@ LWIR650 상체 E10의 고정 학습·검증 자료는 [LWIR650 상체 E10 재현
 4. 장치에 내려받았으면 1절의 "장치에서 도는 코드"와 3절에서 그 줄을 지웁니다.
 
 ## 8. 바뀐 것 기록 (새 것이 위)
+
+- 2026-11-22 Claude — 추종 끊김 기록기 `follow_log.py`(follows.log, /follows, /healthz follow_events), 추종이 스스로 끝나는 조건 목록. 장치 미적용(추종 중). 단위 3 + 웹 113 통과.
 
 - 2026-11-22 Claude — 카메라 멈춤 자동 복구(사용자 승인): 열기가 libusb_timeout/CAMERA_FROZEN 으로 연달아 5번 실패하면 화면 버튼과 같은 초기화(허브 5V)를 30분에 한 번까지 스스로 실행, 손 조종·재생·측정 중에는 미룸, 초기화 뒤 짐벌 브리지 확인·재시작, 스위치 `LWIR_CAM_AUTORESET`(1/0/dry, `/rules/set?cam_autoreset=`), `/healthz cam_autoreset`. 단위 29 + 웹 113 통과, 실제 로그 26건 분류 확인. 장치 적용·재시작 후 확인은 아래 같은 절.
 
