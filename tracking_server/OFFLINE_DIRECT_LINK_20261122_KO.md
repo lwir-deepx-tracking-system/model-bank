@@ -89,6 +89,12 @@ ssh -t <보드 계정>@<보드 주소> "sudo bash ~/model-bank/model-bank/tracki
 - **고친 것 3 (이름 풀이)**: 서버가 귀를 열 때 `getfqdn()` 역방향 이름 풀이가 DNS 응답(시간 초과)을 기다려 시작이 수 초~수십 초 늦어질 수 있다(인터넷이 막혀 DNS 가 답하지 않을 때). 건너뛴다. 늦어지는 시간은 재 보지 않았다.
 - 같은 이유로 Tailscale 주소에만 열려 있는 **라벨 서버(8770)** 는 직결 케이블에서 보이지 않는다(추적 화면의 녹화 재생은 된다). 인터넷 없이 `git pull`·`apt`·`gh` 는 안 된다: 배포는 scp 로.
 
+## 장치 적용 상태 (2026-11-22)
+
+- 적용함(일반 사용자 권한으로 되는 것 전부): 코드(main) + 서버 재시작 1번 + keepalive 재시작 + `live.env` 의 `LWIR_LIVE_EXTRA_BINDS` + NetworkManager 프로필 `lwir-direct-link`(둘째 포트 enP4p65s0 한정, 첫째 포트·Tailscale·옛 프로필 그대로).
+- **아직 안 함 = 사용자 sudo 필요:** `install_direct_link_root.sh` (DHCP, 로그인 창 DNS, 80번 전달). 그 전에는 케이블을 꽂으면 보드는 10.42.0.1 로 응답하지만 PC가 주소를 자동으로 받지 못하고 로그인 창도 뜨지 않는다.
+- 장치에서 직접 확인한 것: NM 이 주소 4개(manual)를 주면(임시 더미 장치 시험) 실행 중인 서버가 재시작 없이 10.42.0.1:8090, 169.254.42.1:8090, 192.168.50.2:8090 에 응답하고 `/netinfo` 의 `direct_urls` 에 나타난다. 프로필을 지우면 다시 닫힌다. 로그인 창 응답기(8091)는 302 를 준다. Tailscale 쪽 접속에는 `pc_download` 가 false 이고 `/pc/…` 는 404 다.
+
 ## 파일
 
 `src/net/` (netd, supervisor, portal, discovery, netutil, test_net), `src/web/direct_listeners.py`, `pc_connect/` (lwir_connect.bat/.ps1/.sh, check_find_pi.py), `scripts/net/` (dnsmasq 설정, nft, systemd 서비스, root 설치, NM 프로필, 시험), `page/js/17_net_info.js`(+html·css 조각).

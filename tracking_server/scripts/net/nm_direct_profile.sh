@@ -35,7 +35,7 @@ case "${1:-status}" in
     if [ -n "$after" ]; then
       export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
       systemctl --user stop "$TIMER.timer" "$TIMER.service" 2> /dev/null
-      systemd-run --user --quiet --on-active="${after}s" --unit="$TIMER" bash "$SELF" restore \
+      systemd-run --user --quiet --on-active="${after}s" --timer-property=AccuracySec=1s --unit="$TIMER" bash "$SELF" restore \
         || { echo "could not arm the rollback timer: nothing changed" >&2; exit 3; }
       echo "rollback timer armed: profile $NAME is deleted in ${after}s unless '$SELF confirm' runs first"
     fi
