@@ -469,10 +469,31 @@ APP_WIDE_MIN, APP_WIDE_MARGIN, WIDE_HR = 0.65, 0.10, 2.0
 # The occluder's id is never taken as the new target during the hold, and the coast prediction is offered for the whole hold (not COAST_S).
 # The hold ends when the overlap ends (IoU <= RISK_IOU): the normal appearance rules decide then (accept the id again, or mask / hand back).
 HOLD_MAX_S = 6.0
+# 11-22 POSITION TRUST (LWIR_FOLLOW_POS_TRUST=1, default off). Real event (15:31 board clock, id 18, a small person, prediction height 118-170 px, the other
+# person on it only IoU 0.0-0.42): the tracker kept id 18 on the person, its box agreed with the guard's own prediction to 0.05 heights, and v2 still
+# masked it three times with 'looks like a person near it' (the feature of a small, partly covered crop is near the neighbour's) and once with 'outside the
+# gate'; a mask is sticky (it ends only when the overlap is <= RISK_IOU and the feature says target), so the bridge let go. An appearance-only verdict
+# must not hide a person whose position says it is the same one. Rule, in step() before the appearance judgement:
+#   eligible = the id has been present for POS_RUN_N frames, absences of at most POS_GAP_S (a flicker) not counting; a longer absence (a lost and returned id) restarts the count;
+#   agrees   = its box is within POS_D heights of the guard's prediction and POS_SIZE of its height (width POS_WR), no other box is clearly nearer the
+#              prediction (the v1 swap test: BETTER x the distance, the box at least MIN_SWAP_H off), and, once the person's velocity was measured
+#              alone, the box's own motion over the last 0.15-0.6 s matches it within VCONS_H (two people crossing while the tracker swaps the ids);
+#   an eligible, agreeing id is followed (never masked by appearance, whatever the overlap), its box becomes the trusted box again (the prediction
+#   cannot go stale during a long walk-by), for POS_MAX_S of one overlap at most; a masked (by appearance or gate) id that agrees for POS_UNMASK_N
+#   frames is unmasked at once, whatever the overlap. Otherwise the appearance rules decide as before, but a 'looks like a person near it' verdict
+#   needs POS_DIS_N frames in a row before it masks. A jump, a new id, an id that returned after a gap (until the ordinary rules have accepted it once), or a nearer other box, or a box that moves unlike the measured walk keep the old behaviour.
+POS_D, POS_SIZE, POS_WR = 0.3, 1.25, 1.5
+POS_RUN_N, POS_GAP_S, POS_MAX_S, POS_DIS_N, POS_UNMASK_N = 3, 0.2, 10.0, 2, 2
+POS_TRAIL_S, POS_V_MIN_S = 0.6, 0.15   # once the person's velocity was measured alone, the box's own motion over this window must match it (VCONS_H): two people
+                                        # crossing while the tracker swaps the ids keep their own velocities
 
 
 def hold_enabled():
     return os.environ.get('LWIR_FOLLOW_OCC_HOLD') == '1'
+
+
+def pos_trust_enabled():
+    return os.environ.get('LWIR_FOLLOW_POS_TRUST') == '1'
 
 
 def unit(v):
@@ -498,6 +519,16 @@ class FollowGuardV2(FollowGuard):
         self.masked_seek_lock = False
         self.hold_t0 = None
         self.holds = 0
+        self.pos_trust = self.pos_keeps = self.pos_unmasks = self.pos_waits = 0   # frames trusted by position / of those, frames the appearance said distractor / unmasks / first-frame waits
+        self.pt_t0 = None          # start of the current overlap segment (cap POS_MAX_S)
+        self.pt_capped = False
+        self.pt_last_t = None      # time of the last frame it had one
+        self.pt_trail = []         # (t, cx, cy) of the last trusted boxes
+        self.pt_reborn = False
+        self.pt_run = 0            # frames it has had a box, flickers of at most POS_GAP_S not breaking the run
+        self.pt_ok_n = 0           # frames in a row masked and agreeing (unmask counter)
+        self.dis_n, self._dis_seen = 0, False
+        self.mask_kind = ''
 
     def _allowed(self, qid):
         """Never let the geometry-only fallback transfer identity unverified.
@@ -593,7 +624,98 @@ class FollowGuardV2(FollowGuard):
             return True
         return False
 
+    def _mask(self, why, from_risk):
+        fresh = self.phase != 'masked'
+        super()._mask(why, from_risk)
+        if fresh:
+            self.mask_kind = 'appearance' if why.startswith(('looks like', 'outside the gate', 'awaiting appearance')) else 'other'
+
+    def _accept(self, t, c, people, motion, velocity):
+        super()._accept(t, c, people, motion, velocity)
+        self.pt_trail = [(a, x, y) for a, x, y in self.pt_trail if t - a <= POS_TRAIL_S] + [(t, c[0], c[1])]
+
+    def _trail_velocity(self, t, c, motion):
+        """picture px/s of the box against the background over the last 0.15-0.6 s of trusted boxes, or None"""
+        old = [(a, x, y) for a, x, y in self.pt_trail if POS_V_MIN_S <= t - a <= POS_TRAIL_S]
+        if not old:
+            return None
+        a, x, y = old[0]
+        m = motion(a, t)
+        if m is None:
+            return None
+        px, py = warp_point(m, x, y)
+        return ((c[0] - px) / (t - a), (c[1] - py) / (t - a))
+
+    def retarget(self, new_id, c, t, people):
+        super().retarget(new_id, c, t, people)
+        self.pt_trail = []
+        self.pt_last_t, self.pt_run, self.pt_ok_n, self.dis_n, self.pt_reborn = None, 0, 0, 0, False
+        self.pt_t0, self.pt_capped, self.mask_kind = None, False, ''
+
+    def _runs(self, t, mine):
+        """frames the followed id has had a box, a flicker (absent at most POS_GAP_S) not breaking the run; a longer absence restarts it"""
+        if mine is not None:
+            if self.pt_last_t is not None and t - self.pt_last_t <= POS_GAP_S:
+                self.pt_run += 1
+            else:
+                self.pt_run = 1
+                self.pt_reborn = self.pt_last_t is not None   # came back after a real gap: the ordinary rules must accept it once
+            self.pt_last_t = t
+
+    def _pos_trust(self, t, people, motion, mine, out):
+        """LWIR_FOLLOW_POS_TRUST: True = this frame is decided here (followed, or kept masked while the unmask evidence builds)"""
+        c = cwh(mine)
+        others = [q for q in people if int(q[0]) != self.sel]
+        ov = max(overlaps(mine, others), default=0.)
+        if ov <= RISK_IOU:
+            self.pt_t0, self.pt_capped = None, False
+            if self.phase == 'track':
+                self.pt_ok_n = 0
+                return False          # alone and trusted: the ordinary path
+        elif self.pt_t0 is None:
+            self.pt_t0 = t
+        if self.pt_t0 is not None and t - self.pt_t0 > POS_MAX_S:
+            self.pt_capped = True
+        d = self.dist(c)
+        hr = max(c[3], self.pred[3]) / max(1e-6, min(c[3], self.pred[3]))
+        wr = max(c[2], self.pred[2]) / max(1e-6, min(c[2], self.pred[2]))
+        nearer = d >= MIN_SWAP_H and any(self.dist(cwh(q)) < BETTER * d for q in others)
+        v = self._trail_velocity(t, c, motion) if self.v_known else (0., 0.)
+        moves = v is not None and math.hypot(v[0] - self.vx, v[1] - self.vy) <= VCONS_H * c[3]   # same walk as the person
+        if (self.pt_capped or self.pt_run < POS_RUN_N or self.pt_reborn or d >= POS_D or hr > POS_SIZE or wr > POS_WR
+                or nearer or not moves or (self.phase == 'masked' and self.mask_kind != 'appearance')):
+            self.pt_ok_n = 0
+            return False
+        if self.phase == 'masked':
+            self.pt_ok_n += 1
+            if self.pt_ok_n < POS_UNMASK_N:
+                out['mask'] = True
+                return True
+            self.pos_unmasks += 1
+        f = self._feat(self.sel)
+        if f is not None and self.tmpl and ov > RISK_IOU and self._looks(f) == 'distractor':
+            self.pos_keeps += 1       # the appearance would have hidden it
+        if self.phase in ('masked', 'lost'): self.reaccepts += 1
+        self.pos_trust += 1; self.pt_ok_n = 0; self.dis_n = 0
+        self.why = 'position trust: same id, %.2f heights from the prediction, covered %.2f' % (d, ov)
+        self._accept(t, c, people, motion, velocity=False)
+        self.cand_n = 0
+        if ov > RISK_IOU:
+            self.phase = 'risk'
+        else:
+            self.phase = 'track'; self.partners, self.mask_from_risk = set(), False; self.hold_t0 = None
+        return True
+
     def step(self, t, people, motion):
+        self._dis_seen = False
+        mine = [p for p in people if int(p[0]) == self.sel]
+        self._runs(t, mine[0] if len(mine) == 1 else None)
+        out = self._step(t, people, motion)
+        if not self._dis_seen: self.dis_n = 0
+        if self.phase == 'track' and out['phase'] == 'track' and any(int(q[0]) == self.sel for q in people): self.pt_reborn = False   # accepted by the ordinary rules
+        return out
+
+    def _step(self, t, people, motion):
         self._propagate(t, motion)
         mine = [p for p in people if int(p[0]) == self.sel]
         mine = mine[0] if len(mine) == 1 else None
@@ -624,6 +746,9 @@ class FollowGuardV2(FollowGuard):
         position_disputed = seek_candidate and not self.fits(cwh(mine), t)
         if not position_disputed:
             self._remember(mine, people)
+        if (pos_trust_enabled() and self.guard and mine is not None and self.pred is not None and self.trust is not None
+                and not seek_candidate and self._pos_trust(t, people, motion, mine, out)):
+            return self._finish(out, t, mine)
         if mine is not None and self.pred is not None and self.trust is not None and f is not None and self.tmpl:
             c = cwh(mine)
             others = [q for q in people if int(q[0]) != self.sel]
@@ -633,7 +758,7 @@ class FollowGuardV2(FollowGuard):
                 self.partners |= {int(q[0]) for q, value in zip(others, overlap_values) if value > RISK_IOU}
             if ov <= RISK_IOU: self.hold_t0 = None   # the overlap ended: the normal rules decide
             if (hold_enabled() and ov > MERGE_IOU and not position_disputed and self.phase in ('track', 'risk', 'lost')
-                    and (self.hold_t0 is None or t - self.hold_t0 <= HOLD_MAX_S) and self.age(t) <= HOLD_MAX_S and self._in_gate(c, t)):
+                    and not self.pt_capped and (self.hold_t0 is None or t - self.hold_t0 <= HOLD_MAX_S) and self.age(t) <= HOLD_MAX_S and self._in_gate(c, t)):
                 if self.hold_t0 is None: self.hold_t0 = t; self.holds += 1
                 self.phase = 'risk'; self.why = 'occlusion hold: covered %.2f by another box, inside the gate' % ov
                 return self._finish(out, t, mine)
@@ -648,6 +773,13 @@ class FollowGuardV2(FollowGuard):
                     self.phase = 'track'; self.cand_n = 0
                     self.partners, self.mask_from_risk = set(), False
                     return self._finish(out, t, mine)
+                if look == 'distractor' and gate and self.phase != 'masked' and pos_trust_enabled():
+                    self._dis_seen = True; self.dis_n += 1
+                    if self.dis_n < POS_DIS_N:   # one frame of 'looks like a person near it' does not hide anyone
+                        self.pos_waits += 1
+                        self.why = 'looks like a person near it, waiting for a second frame'
+                        if ov > RISK_IOU: self.phase = 'risk'
+                        return self._finish(out, t, mine)
                 if look == 'distractor' or not gate:
                     if self.phase != 'masked':
                         self.app_masks += 1
