@@ -90,7 +90,8 @@ def _summary(now_t, last_people):
 def _guard(gb):
     g = getattr(gb, 'fguard', None); out = dict(phase=gb.state.get('guard'))
     if g is not None:
-        for k in ('reaccepts', 'swaps', 'app_swaps'):
+        out['why'] = getattr(g, 'why', '')   # 11-22: why the guard masked / held (e.g. 'looks like a person near it', 'jump ...', 'occlusion hold ...')
+        for k in ('reaccepts', 'swaps', 'app_swaps', 'app_masks', 'masked_n', 'holds'):
             v = getattr(g, k, None)
             if v is not None: out[k] = v
     return out

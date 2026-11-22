@@ -23,6 +23,7 @@ decides only what the gimbal follows:
     for N frames in a row one other box alone near the prediction that was not on screen when ours was last trusted.
 All distances are in body heights of the predicted box, so they do not depend on the zoom or the distance to the person."""
 import math
+import os
 
 import numpy as np
 
@@ -462,6 +463,16 @@ APP_KEEP, APP_NEAR, APP_MIN, APP_MARGIN, APP_FRESH = 5, 2.0, 0.55, 0.05, 6   # A
 # distractor, a height within WIDE_HR x of the last trusted box, and no other box on it. .wide = (cx, cy, radius) of the
 # circle in the coordinates of this frame, or None (= the motion gate only, as before).
 APP_WIDE_MIN, APP_WIDE_MARGIN, WIDE_HR = 0.65, 0.10, 2.0
+# 11-22 OCCLUSION HOLD (LWIR_FOLLOW_OCC_HOLD=1, default off, proposal after the 12:41 loss of id 44 under id 23, IoU 0.6-0.88 for 5+ s): while the
+# followed box is heavily covered (IoU > MERGE_IOU) the feature of that blended box says nothing about who it is, so v2 no longer masks it by
+# appearance ('looks like a person near it'); it keeps following the id as long as the box stays inside the motion gate, for HOLD_MAX_S at most.
+# The occluder's id is never taken as the new target during the hold, and the coast prediction is offered for the whole hold (not COAST_S).
+# The hold ends when the overlap ends (IoU <= RISK_IOU): the normal appearance rules decide then (accept the id again, or mask / hand back).
+HOLD_MAX_S = 6.0
+
+
+def hold_enabled():
+    return os.environ.get('LWIR_FOLLOW_OCC_HOLD') == '1'
 
 
 def unit(v):
@@ -485,6 +496,8 @@ class FollowGuardV2(FollowGuard):
         self.wide_reaccepts = 0
         self.allow_masked_seek = False
         self.masked_seek_lock = False
+        self.hold_t0 = None
+        self.holds = 0
 
     def _allowed(self, qid):
         """Never let the geometry-only fallback transfer identity unverified.
@@ -567,6 +580,7 @@ class FollowGuardV2(FollowGuard):
         for q in people:
             qid = int(q[0])
             if qid == self.sel: continue
+            if self.hold_t0 is not None and qid in self.partners: continue   # 11-22: never the occluder during an occlusion hold
             f = self._feat(qid)
             if f is None or not self._in_gate(cwh(q), t) or self._looks(f, qid) != 'target':
                 continue
@@ -617,6 +631,12 @@ class FollowGuardV2(FollowGuard):
             ov = max(overlap_values, default=0.)
             if ov > RISK_IOU:
                 self.partners |= {int(q[0]) for q, value in zip(others, overlap_values) if value > RISK_IOU}
+            if ov <= RISK_IOU: self.hold_t0 = None   # the overlap ended: the normal rules decide
+            if (hold_enabled() and ov > MERGE_IOU and not position_disputed and self.phase in ('track', 'risk', 'lost')
+                    and (self.hold_t0 is None or t - self.hold_t0 <= HOLD_MAX_S) and self.age(t) <= HOLD_MAX_S and self._in_gate(c, t)):
+                if self.hold_t0 is None: self.hold_t0 = t; self.holds += 1
+                self.phase = 'risk'; self.why = 'occlusion hold: covered %.2f by another box, inside the gate' % ov
+                return self._finish(out, t, mine)
             if self.phase in ('risk', 'masked', 'lost') or ov > RISK_IOU or position_disputed:
                 look = self._looks(f)
                 gate = not position_disputed if seek_candidate else self._in_gate(c, t)
@@ -690,6 +710,6 @@ class FollowGuardV2(FollowGuard):
     def _finish(self, out, t, mine):
         if (out['mask'] or mine is None) and self.pred is not None and self.trust is not None:
             moved = math.hypot(self.pred[0] - self.trust[0], self.pred[1] - self.trust[1]) / max(1., self.trust[3])
-            if self.age(t) <= COAST_S and moved <= COAST_MAX_H:
+            if self.age(t) <= (HOLD_MAX_S if self.hold_t0 is not None else COAST_S) and moved <= COAST_MAX_H:
                 out['pred'] = self.pred
         return self._out(out, t)
