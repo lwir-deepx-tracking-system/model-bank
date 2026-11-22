@@ -873,7 +873,7 @@ ByteTrack은 메뉴 한 항목으로 표시합니다. 위치 재결합과 새 ID
 
 ## 1. 지금 상태 한눈에
 
-- **인터넷·Tailscale 없이 쓰기(2026-11-22, `140a85d` 까지 main, 장치에 적용):** 둘째 랜 포트 enP4p65s0 에 NetworkManager 프로필 `lwir-direct-link`, 서버가 직결 주소 여러 개에 동시에 귀를 엶, `lwir_netd` 가 서버와 함께 돎(keepalive 가 지킴). **root 가 필요한 DHCP·로그인 창 DNS·80번 전달은 아직 설치 전**(사용자 sudo 한 번). 설명: `tracking_server/OFFLINE_DIRECT_LINK_20261122_KO.md`, 위 2026-11-22 절.
+- **인터넷·Tailscale 없이 쓰기(2026-11-22, `8ec4ca9` 까지 main, 장치에 적용):** 둘째 랜 포트 enP4p65s0 에 NetworkManager 프로필 `lwir-direct-link`, 서버가 직결 주소 여러 개에 동시에 귀를 엶, `lwir_netd` 가 서버와 함께 돎(keepalive 가 지킴). **root 가 필요한 DHCP·로그인 창 DNS·80번 전달은 아직 설치 전**(사용자 sudo 한 번). 설명: `tracking_server/OFFLINE_DIRECT_LINK_20261122_KO.md`, 위 2026-11-22 절.
 
 - **GUI 메뉴 적용:** `7a42487`까지 main 전체를 갱신했고 작업 트리는 clean입니다. 기존 37개 설명 정리에 메뉴·표시 이름 정리를 추가했습니다. 페이지·문서만 변경되어 같은 서버 인스턴스에서 약 30 FPS·분할 활성·짐벌 정상 상태를 유지합니다.
 
@@ -1127,7 +1127,7 @@ LWIR650 상체 E10의 고정 학습·검증 자료는 [LWIR650 상체 E10 재현
 
 ## 8. 바뀐 것 기록 (새 것이 위)
 
-- 2026-11-22 Claude — 인터넷·Tailscale 없이 쓰기: 직결 포트 NM 프로필 + 서버의 다중 주소 귀(IP_FREEBIND, 자기 네트워크만) + lwir_netd(인터넷 점검·로그인 창 응답·UDP 신호·mDNS) + root 한 번 설치(DHCP·DNS·80번 전달) + PC 연결 프로그램(`pc_connect/`) + 화면 "LAN 모드"/내려받기 링크 + live_bind.sh 가 주소 없이도 서버를 켬 (`9986c9c`, `fed9dd7`, `140a85d`). 단위 25 + 웹 113 + 네임스페이스 57 통과, 장치 적용(서버 재시작 1번, 13초 만에 정상)·NM 프로필 적용·더미 장치로 실제 서버가 주소 생기자 응답 확인. 실제 PC+케이블·root 설치는 아직.
+- 2026-11-22 Claude — 인터넷·Tailscale 없이 쓰기: 직결 포트 NM 프로필 + 서버의 다중 주소 귀(IP_FREEBIND, 자기 네트워크만) + lwir_netd(인터넷 점검·로그인 창 응답·UDP 신호·mDNS) + root 한 번 설치(DHCP·DNS·80번 전달) + PC 연결 프로그램(`pc_connect/`) + 화면 "LAN 모드"/내려받기 링크 + live_bind.sh 가 주소 없이도 서버를 켬 (`9986c9c`, `fed9dd7`, `8ec4ca9`). 단위 25 + 웹 113 + 네임스페이스 57 통과, 장치 적용(서버 재시작 1번, 13초 만에 정상)·NM 프로필 적용·더미 장치로 실제 서버가 주소 생기자 응답 확인. 실제 PC+케이블·root 설치는 아직.
 
 - 2026-11-20 Claude — merge_split 계층 조회 NameError로 서버 시작이 멈춘 것 고침(c5b6783 → 이 커밋). 장치는 2d06361로 되돌려 운영 유지.
 
