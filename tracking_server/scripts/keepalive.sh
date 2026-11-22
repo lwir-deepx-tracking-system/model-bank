@@ -143,7 +143,7 @@ netd_ensure() {
   [ "${LWIR_NETD:-1}" = 0 ] && return 0
   [ -f "$T/src/net/netd.py" ] || return 0
   pgrep -f 'python3 -B -m src[.]net[.]netd' > /dev/null && return 0
-  (cd "$T" && setsid nohup python3 -B -m src.net.netd >> "$H/lwir_netd.log" 2>&1 < /dev/null &)
+  (cd "$T" && exec setsid nohup python3 -B -m src.net.netd >> "$H/lwir_netd.log" 2>&1 < /dev/null) &   # exec: no idle copy of this script stays behind as its parent
   log "lwir_netd started"
 }
 
