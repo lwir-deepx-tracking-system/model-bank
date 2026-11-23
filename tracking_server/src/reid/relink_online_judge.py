@@ -33,6 +33,8 @@ import json, math, time, hashlib
 from pathlib import Path
 import numpy as np
 from ..common import frame_math
+from .cos_map import cmap as _cmap
+from .cos_map import cmap as _cmap
 
 VIEW = (0.0, 16.0, 640.0, 496.0)      # RT480 detector view in frame coords (rows 16..496 of the 640x512 frame)
 WINDOW = 90                            # candidate window (frames), = KeepID LOST_MAX
@@ -43,6 +45,28 @@ GAL_N = 5                              # mean of the last 5 available features
 FOLLOW_HISTORY_N = 12                  # gimbal appearance looks at the last 12 observations
 MIN_H = 32.0                           # crops below this height get no feature (crop_from_pred.py rule)
 NAN = float('nan')
+
+# 11-20 (user: "앞사람이 막 채가기도"; "가려졌을 때 앞사람 특징이 뒷사람 특징으로 저장되면 안 됨"): page switch feat_guard, default off.
+# Off = not one line of it runs (rows, numbers and galleries are the same as before). It acts on the shown rows after any tracker engine
+# (Python / C++ BoT-SORT, OC-SORT), so no tracker code changes. A feature is not stored for a number while another shown box covers >= G_IOA
+# of its box, or the last box of a number that vanished <= G_HIDE frames ago (a person hidden under it) covers >= G_HID_IOA of it, and for
+# G_HOLD frames after; the first feature after that is held back too when it is nearer the pre-overlap memory of a partner than its own, or
+# under G_FLOOR to its own (the same person passes 0.30 in 98 % of probes). The birth's own feature still decides its re-link (only storing
+# is guarded). Limits from the labelled recordings (id_steal_20261120/fix/out/contam_levels_base.json): a box covered >= 0.3 by a hidden
+# number's last box was another person's crop in 17 % of the writes (alone 2.3 %), covered >= 0.15 by a shown box 6.9-11 %, below 0.15 4 %.
+GUARD = dict(feat_guard=False)
+G_IOA, G_HID_IOA, G_HIDE, G_HOLD, G_FLOOR, G_MEM = 0.15, 0.30, 30, 5, 0.30, 5
+# 11-20 review: the agreement check ends G_NEED_MAX frames after the hold (None = no limit; 0 = no agreement check), so a number whose look
+# really changed (turning, cut at the edge, distance) is learned again; the per-number guard state of numbers not shown for G_PRUNE frames
+# is dropped (checked every 30 frames) so it does not grow over a long session.
+G_NEED_MAX, G_PRUNE = 90, 900
+
+
+def _cover(A, B):
+    """A: (n, 4), B: (m, 4) xyxy -> (n, m) share of each A box's area covered by each B box"""
+    iw = np.clip(np.minimum(A[:, None, 2], B[None, :, 2]) - np.maximum(A[:, None, 0], B[None, :, 0]), 0, None)
+    ih = np.clip(np.minimum(A[:, None, 3], B[None, :, 3]) - np.maximum(A[:, None, 1], B[None, :, 1]), 0, None)
+    return iw * ih / np.maximum((A[:, 2] - A[:, 0]) * (A[:, 3] - A[:, 1]), 1e-9)[:, None]
 
 
 # ---------------------------------------------------------------- relink_data.py (verbatim; fm1 / ffp replaced by the feature value)
@@ -119,7 +143,7 @@ class _LiveObservationHistory(list):
             self.add_feature(observation, key)
 
     def add_feature(self, observation, key):
-        if observation[key] is None:
+        if observation[key] is None or observation.get('held'):   # 11-20 feat_guard: 'held' is set only with the switch on
             return
         self._keep((key, False), observation)
         if observation['crop_h'] >= CLEAN_H and observation['miou'] == 0.0:
@@ -138,7 +162,7 @@ def gallery(obs, key, clean=False):
         return list(obs.features.get((key, clean), ()))
     out = []
     for o in reversed(obs):
-        if o[key] is None: continue
+        if o[key] is None or o.get('held'): continue
         if clean and not (o['crop_h'] >= CLEAN_H and o['miou'] == 0.0): continue
         out.append(o)
         if len(out) >= GAL_N: break
@@ -146,7 +170,7 @@ def gallery(obs, key, clean=False):
 
 
 def cos(a, b):
-    return NAN if a is None or b is None else float(np.dot(a, b))
+    return NAN if a is None or b is None else _cmap(float(np.dot(a, b)))   # 11-20: per-model cosine map (reid/cos_map.py; identity for most models)
 
 
 def _gallery_summary(observations, key, *, clean=False):
@@ -301,23 +325,49 @@ def load_spec(path):
     return spec, hashlib.sha256(txt.encode('utf-8')).hexdigest()
 
 
+def mutual_best_pairs(ranked_pairs):
+    """Keep only unique first choices on both sides of the eligible candidate list."""
+    best_birth, best_owner = {}, {}
+    tied_birth, tied_owner = set(), set()
+    for pair in ranked_pairs:
+        score, birth, owner = pair
+        if birth not in best_birth:
+            best_birth[birth] = pair
+        elif score == best_birth[birth][0]:
+            tied_birth.add(birth)
+        if owner not in best_owner:
+            best_owner[owner] = pair
+        elif score == best_owner[owner][0]:
+            tied_owner.add(owner)
+    return [pair for pair in ranked_pairs
+            if pair[1] not in tied_birth and pair[2] not in tied_owner
+            and best_birth[pair[1]] == pair and best_owner[pair[2]] == pair]
+
+
 # ---------------------------------------------------------------- the online judge
 class OnlineJudge:
     """Drop-in for relabel_online.OnlineRelabel (same step / reset / stats / events / per_frame interface) with the learned judge.
     crops = per-frame crop budget on NPU core 2 (0 = unlimited: every eligible crop every frame; the PC replay uses it)."""
-    def __init__(self, spec_path, crops=2, *, compact_ids=False):
+    def __init__(self, spec_path, crops=2, *, joint_candidates=False, compact_ids=False):
         self.spec, self.spec_sha = load_spec(spec_path)
         self.M, self.feats, self.thr = self.spec['model'], list(self.spec['features']), float(self.spec['decision']['threshold'])
         self.crops = int(crops)
+        self.joint_candidates = joint_candidates
         self.compact_ids = bool(compact_ids)
         self._history_type = _LiveObservationHistory if compact_ids else list
         self.stats = dict(new_ids=0, births=0, births_with_candidates=0, pairs_scored=0, relabelled=0, retired_reappearances=0, frames=0,
                           crops_new=0, crops_refresh=0, crops_embedded=0, crops_new_births_with_candidates=0, births_with_candidates_no_feature=0,
                           decided_with_feature=0)
+        if joint_candidates:
+            self.stats['joint_withheld_births'] = 0
         self.events, self.per_frame = [], []
         self.feat_ms, self.model_ms, self.cands_per_eval = [], [], []
         self.keep_rows = False; self.rows_log = []
+        self.ms_hold = None     # 11-20 merge_split (track/merge_split.py): numbers of a merged group; no feature stored, not handed to a birth (None = unchanged)
         self.pred_gate = True   # 11-14 (user): only candidates whose growing search range (relabel_online.search_range) holds the birth (default on after the replay check); False = the old candidate set                      # PC verification: (frame, t, birth id, [cand ids], X, p) per evaluation
+        # 11-20 feat_guard: counters for GET /rules, kept over reset()
+        self.guard_stats = dict(feat_seen=0, feat_held_overlap=0, feat_held_hidden=0, feat_held_after=0, feat_held_disagree=0,
+                                feat_check_expired=0, hold_max_frames=0)
         self.reset()
 
     def reset(self):
@@ -328,19 +378,111 @@ class OnlineJudge:
         self.next_public_id = 1
         self.public_identity_token = object() if self.compact_ids else None
         self.hist = {}            # tracker id -> observation history, preserving raw IDs after disappearance
+        self.current_raw_ids = ()
+        self.follow_transfers = []
         self.id_map = {}          # tracker id -> output id (popped when retired)
         self.retired = set()      # tracker ids handed over; a fresh output id if output again
         self.last_emb = {}        # tracker id -> t of its last feature (refresh priority)
+        # 11-20 feat_guard: hold end frame, partners awaiting the agreement check, pre-overlap memory, guarded memory, last shown boxes
+        self._g_until, self._g_need, self._g_pre, self._g_mem, self._g_last = {}, {}, {}, {}, {}   # _g_last: tid -> (t, box) of its last shown row (<= G_HIDE frames)
+        self._g_t0 = {}           # tid -> first frame of its current hold (for hold_now_frames / hold_max_frames)
+
+    # ---------------------------------------------------------------- 11-20 feat_guard (nothing here runs when the switch is off)
+    def _g_mean(self, tid):
+        m = self._g_mem.get(tid)
+        return m[1] if m else None
+
+    def _g_frame(self, t, obs, now_set):
+        """track-level risk of every shown person row: another shown box covers >= G_IOA of its box, or the last box of a number that
+        vanished <= G_HIDE frames ago (a hidden person under it) covers >= G_HID_IOA of it. Sets o['_risk'] / o['_hold']."""
+        last = self._g_last
+        for c in [c for c, (tc, _) in last.items() if t - tc > G_HIDE or c not in self.id_map]: del last[c]
+        if t % 30 == 0:   # drop the guard state of numbers not shown for G_PRUNE frames
+            old = [c for c in self._g_t0.keys() | self._g_mem.keys() if not self.hist.get(c) or t - self.hist[c][-1]['t'] > G_PRUNE]
+            for c in old:
+                for d in (self._g_until, self._g_need, self._g_pre, self._g_mem, self._g_t0): d.pop(c, None)
+        tids = list(obs); hid = [c for c in last if c not in now_set]
+        over_, under_ = [[] for _ in tids], [[] for _ in tids]
+        if len(tids) > 1:
+            B = np.asarray([obs[b]['box'] for b in tids], np.float64)
+            for i, j in zip(*np.nonzero(_cover(B, B) >= G_IOA)):
+                if i != j: over_[i].append(tids[j])
+        if tids and hid:
+            B = np.asarray([obs[b]['box'] for b in tids], np.float64)
+            for i, j in zip(*np.nonzero(_cover(B, np.asarray([last[c][1] for c in hid], np.float64)) >= G_HID_IOA)): under_[i].append(hid[j])
+        for i, b in enumerate(tids):
+            o = obs[b]; over, under = over_[i], under_[i]
+            o['_risk'] = 'overlap' if over else ('hidden' if under else None)
+            if o['_risk']:
+                if b not in self._g_need or t > self._g_until.get(b, -1):   # risk starts: the memory as it was before the overlap
+                    self._g_pre[b] = self._g_mean(b); self._g_t0[b] = t
+                self._g_until[b] = t + G_HOLD; self._g_need.setdefault(b, set()).update(over + under)
+            o['_hold'] = bool(o['_risk']) or t <= self._g_until.get(b, -1)
+            last[b] = (t, o['box'])
+
+    def _g_admit(self, o):
+        """a feature arrived for observation o: may it be stored for this number? A refused feature is marked o['held'] (the galleries skip it)."""
+        f, b, st = o['m1'], o['tid'], self.guard_stats
+        if f is None or '_hold' not in o or o.get('ms_held'): return
+        st['feat_seen'] += 1
+        why = None
+        if o['_risk']: why = 'feat_held_' + o['_risk']
+        elif o['_hold']: why = 'feat_held_after'
+        elif b in self._g_need and G_NEED_MAX is not None and o['t'] > self._g_until.get(b, -1) + G_NEED_MAX:
+            self._g_need.pop(b, None); st['feat_check_expired'] += 1   # the agreement check timed out: learn the number's look again
+        elif b in self._g_need:
+            own = self._g_pre.get(b); oth = [x for x in (self._g_pre.get(p, self._g_mean(p)) for p in self._g_need[b]) if x is not None]
+            s_own = cos(f, own) if own is not None else NAN
+            if own is not None and (s_own < G_FLOOR or any(cos(f, x) > s_own for x in oth)): why = 'feat_held_disagree'
+            else: self._g_need.pop(b, None)
+        if why is not None:
+            st[why] += 1
+            o['held'] = True
+            if b in self._g_t0: st['hold_max_frames'] = max(st['hold_max_frames'], o['t'] - self._g_t0[b])
+            return
+        m = self._g_mem.setdefault(b, [[], None]); m[0].append(f)
+        if len(m[0]) > G_MEM: del m[0][0]
+        m[1] = unit(np.mean(m[0], 0))   # the guarded memory: unit mean of the last G_MEM stored features
+
+    def guard_state(self):
+        """GET /rules id_guard: numbers held right now and the longest current hold (frames since its overlap began)"""
+        t, t0, need, until, mem = self.t, dict(self._g_t0), set(self._g_need), dict(self._g_until), set(self._g_mem)   # copies: read from the web thread
+        now = [c for c in t0 if c in need or t <= until.get(c, -1)]
+        return dict(held_now=len(now), hold_now_frames=max((t - t0[c] for c in now), default=0),
+                    hold_max_frames=self.guard_stats['hold_max_frames'], state_numbers=len(t0.keys() | mem))
 
     def _allocate_compact_public_id(self):
-        """Allocate per-sequence public IDs independently of raw tracker IDs.
-
-        Relinks keep the canonical old number. Spent provisional IDs are never
-        recycled, including when a retired raw tracker appears again.
-        """
+        """Allocate a fresh public ID once its first publication is decided."""
         public = self.next_public_id
         self.next_public_id += 1
         return public
+
+    def confirm_follow_transfer(self, old_public, new_public, active_raw, *, namespace, expected_t):
+        """Transfer only a uniquely owned, absent public ID in this exact judge frame."""
+        active = tuple(int(raw) for raw in active_raw)
+        if (namespace is not self.id_map or expected_t != self.t or self.t < 0
+                or old_public == new_public or old_public <= 0 or new_public <= 0
+                or len(active) != len(set(active)) or set(active) != set(self.current_raw_ids)):
+            return None
+        public_now = [self.id_map.get(raw) for raw in active]
+        if (None in public_now or len(public_now) != len(set(public_now))
+                or old_public in public_now or public_now.count(new_public) != 1):
+            return None
+        old_owners = [raw for raw, public in self.id_map.items() if public == old_public]
+        new_owners = [raw for raw, public in self.id_map.items() if public == new_public]
+        if len(old_owners) != 1 or len(new_owners) != 1:
+            return None
+        old_raw, new_raw = old_owners[0], new_owners[0]
+        if (old_raw in active or new_raw not in active or old_raw in self.retired
+                or new_raw in self.retired or not self.hist.get(old_raw) or not self.hist.get(new_raw)
+                or self.hist[old_raw][-1]['t'] >= self.t or self.hist[new_raw][-1]['t'] != self.t):
+            return None
+        self.id_map[new_raw] = old_public
+        self.id_map.pop(old_raw)
+        self.retired.add(old_raw)
+        self.follow_transfers.append(dict(t=self.t, old_public=old_public, new_public=new_public,
+                                         old_raw=old_raw, new_raw=new_raw))
+        return new_raw
 
     def _elig(self, prow, P):
         """tracker id -> detection k of the rows that can be cropped (k in P, detection height >= 32 px, any overlap)"""
@@ -350,16 +492,22 @@ class OnlineJudge:
             if k >= 0 and k in P and P[k][3] - P[k][1] >= MIN_H: e[int(r[4])] = k
         return e
 
-    def step(self, rows, P, embed, frame=None, embed_async=None):
+    @staticmethod
+    def trace_supported():
+        return True
+
+    def step(self, rows, P, embed, frame=None, embed_async=None, *, trace_candidates=None):
         """rows: this frame's tracker rows [x1, y1, x2, y2, id, conf, cls, k, ...]; P: {k: [x1, y1, x2, y2]} person detections (conf >= 0.1)
         keyed like the rows' k; embed(list of k) -> {k: L2-normalised feature}; embed_async(list of k) -> collect() -> {k: feature}.
         Returns the rows (same order, same boxes) with relabelled person IDs."""
         self.t += 1; t = self.t; st = self.stats; st['frames'] += 1
+        guard = GUARD['feat_guard']                                       # 11-20: off = the code below is the same as before
         if self.deferred is not None:                                     # last frame's asynchronous refresh joins its observations now
             recs_d, collect_d = self.deferred; self.deferred = None; got_d = collect_d() or {}
             for o_, k_ in recs_d:
                 if k_ in got_d:
                     o_['m1'] = got_d[k_]
+                    if guard: self._g_admit(o_)
                     history = self.hist[o_['tid']]
                     if isinstance(history, _LiveObservationHistory):
                         history.add_feature(o_, 'm1')
@@ -369,12 +517,14 @@ class OnlineJudge:
         # rows rounded like TRACKS_BASE.jsonl, so the features equal an offline rebuild from the saved rows
         prow_r = [[round(float(v), 2) for v in r[:4]] + [int(r[4]), round(float(r[5]), 5), int(r[6]), int(r[7])] for r in prow]
         now = [int(r[4]) for r in prow_r]; now_set = set(now)
+        self.current_raw_ids = tuple(now)
         births = [b for b in now if b not in self.hist]
         # candidates of every birth (frozen at t0): tracker ids output before, not output now, lost <= WINDOW frames
         cands = {}
         velocities = {}
         if births:
             cl = [(c, co) for c, co in self.hist.items() if c not in now_set and t - co[-1]['t'] <= WINDOW]
+            if self.ms_hold: cl = [(c, co) for c, co in cl if c not in self.ms_hold]   # 11-20 merge_split: a held number stays with its group
             for b in births: cands[b] = cl
             if self.pred_gate:   # 11-14: candidate kept only if the birth centre lies in its growing search range around the predicted place
                 from .relabel_online import SR_BASE, SR_GROW, SR_MAX, SR_VMAX
@@ -408,18 +558,27 @@ class OnlineJudge:
         st['crops_new_births_with_candidates'] += sum(1 for b in bc[:n_new] if b in feat)
         # ---- observations of this frame (not yet in hist: candidate histories are the frames before t0)
         obs = make_observations(t, prow_r, P, feat)
-        # ---- id bookkeeping (relabel_online): retired ids reappearing get a fresh id; births get their own id
+        if guard: self._g_frame(t, obs, now_set)
+        if self.ms_hold:   # 11-20 merge_split: no feature is stored for a number of a merged group (its box shows two people)
+            for b in obs:
+                if b in self.ms_hold: obs[b]['held'] = obs[b]['ms_held'] = True
+        # ---- a compact ID is assigned after relink, so an unpublished birth that
+        # keeps the old ID does not consume another number.
+        pending_public = set()
         for b in now:
             if b in self.retired:
                 if self.compact_ids:
-                    self.id_map[b] = self._allocate_compact_public_id()
+                    pending_public.add(b)
                 else:
                     self.id_map[b] = self.fresh; self.fresh += 1
                 self.retired.discard(b); st['retired_reappearances'] += 1
-            if b not in self.id_map:
-                self.id_map[b] = self._allocate_compact_public_id() if self.compact_ids else b
+            elif b not in self.id_map:
+                if self.compact_ids:
+                    pending_public.add(b)
+                else:
+                    self.id_map[b] = b
                 st['new_ids'] += 1
-        out_ids = {self.id_map[x] for x in now}
+        out_ids = {self.id_map[x] for x in now if x in self.id_map}
         # ---- judge every birth with candidates (K = 0: features at t_now = t0, nobs = [the birth observation])
         st['births'] += len(births); pairs = []
         summaries = {}
@@ -446,18 +605,42 @@ class OnlineJudge:
             if self.keep_rows: self.rows_log.append((frame, t, b, [c for c, _ in cl], X, p))
             for (c, _), pv in zip(cl, p):
                 pv = float(pv)
-                if pv >= self.thr and c != b and c in self.id_map and c not in now_set and self.id_map[c] not in out_ids:
+                eligible = pv >= self.thr and c != b and c in self.id_map and c not in now_set and self.id_map[c] not in out_ids
+                if eligible:
                     pairs.append((pv, b, c))
+                if trace_candidates is not None and len(trace_candidates) < 17:
+                    # Reasons describe eligibility before greedy assignment.
+                    why = (0 if eligible else 1 if not pv >= self.thr else 2 if c == b else
+                           3 if c not in self.id_map else 4)
+                    q = round(pv * 10000) if math.isfinite(pv) and 0 <= pv <= 1 else 0
+                    trace_candidates.append([b, c, self.id_map.get(c, 0), q, why, False])
+        ranked_pairs = sorted(pairs, key=lambda x: (-x[0], x[1], x[2]))
+        if self.joint_candidates:
+            # Compare against all eligible choices before transferring any ID.
+            # An ambiguous birth is still published with its own number.
+            chosen = mutual_best_pairs(ranked_pairs)
+            st['joint_withheld_births'] += len({b for _, b, _ in ranked_pairs}) - len(chosen)
+            ranked_pairs = chosen
         ub, uc = set(), set()
-        for pv, b, c in sorted(pairs, key=lambda x: (-x[0], x[1], x[2])):
-            if b in ub or c in uc or c not in self.id_map or b not in self.id_map: continue
-            ub.add(b); uc.add(c); oid = self.id_map[c]; old_new = self.id_map[b]
+        chosen_trace = set() if trace_candidates is not None else None
+        for pv, b, c in ranked_pairs:
+            if b in ub or c in uc or c not in self.id_map or (b not in self.id_map and b not in pending_public): continue
+            ub.add(b); uc.add(c); oid = self.id_map[c]; old_new = self.id_map.get(b)
             self.id_map[b] = oid; self.retired.add(c); self.id_map.pop(c, None); st['relabelled'] += 1
             self.events.append(dict(frame=frame, t=t, tracker_id=b, new_id=old_new, old_id=oid, cand_tid=c, p=round(pv, 4), n_cand=len(cands[b])))
+            if chosen_trace is not None:
+                chosen_trace.add((b, c))
+        if chosen_trace is not None:
+            for row in trace_candidates:
+                row[5] = (row[0], row[1]) in chosen_trace
+        for b in now:
+            if b in pending_public and b not in self.id_map:
+                self.id_map[b] = self._allocate_compact_public_id()
         # ---- histories + deferred refresh
         for b, o in obs.items():
             if b not in self.hist:
                 self.hist[b] = self._history_type()
+            if guard: self._g_admit(o)
             self.hist[b].append(o)
             if o['m1'] is not None: self.last_emb[b] = t
         if recs is not None: self.deferred = ([(obs[bid], k) for bid, k in recs if bid in obs], collect)

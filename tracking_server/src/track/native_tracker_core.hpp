@@ -366,7 +366,7 @@ static bool lsap(int nr, int nc, const double* input, std::vector<int>& rows, st
     return true;
 }
 
-static bool linear_assignment(const Cost& c, double thresh, Assign& out)
+static bool linear_assignment(const Cost& c, double thresh, Assign& out, bool cost_first = false, long* changed = nullptr)
 {
     out.m.clear(); out.ua.clear(); out.ub.clear();
     if (c.empty()) {
@@ -393,6 +393,22 @@ static bool linear_assignment(const Cost& c, double thresh, Assign& out)
     std::vector<char> ma(c.n, 0), mb(c.m, 0);
     for (size_t k = 0; k < rows.size(); ++k)
         if (c.at(rows[k], cols[k]) <= accept) { out.m.emplace_back(rows[k], cols[k]); ma[rows[k]] = 1; mb[cols[k]] = 1; }
+    if (cost_first) {   // 11-20 tracker_common._cost_first: allowed pair -> cost - thresh, forbidden -> 0, best full matching (same arithmetic)
+        std::vector<double> neg(c.v.size());
+        for (size_t k = 0; k < c.v.size(); ++k)
+            neg[k] = c.v[k] > thr ? 0.0 : (c.f32 ? static_cast<double>(static_cast<float>(c.v[k]) - static_cast<float>(thresh)) : c.v[k] - thresh);
+        std::vector<int> r2, c2;
+        if (!lsap(c.n, c.m, neg.data(), r2, c2)) { PyErr_SetString(PyExc_ValueError, "cost matrix is infeasible"); return false; }
+        std::vector<std::pair<int, int>> cf;
+        for (size_t k = 0; k < r2.size(); ++k)
+            if (c.at(r2[k], c2[k]) <= accept) cf.emplace_back(r2[k], c2[k]);
+        std::vector<std::pair<int, int>> s1 = out.m, s2 = cf;
+        std::sort(s1.begin(), s1.end()); std::sort(s2.begin(), s2.end());
+        if (changed && s1 != s2) *changed += 1;
+        out.m.swap(cf);
+        std::fill(ma.begin(), ma.end(), 0); std::fill(mb.begin(), mb.end(), 0);
+        for (const auto& p : out.m) { ma[p.first] = 1; mb[p.second] = 1; }
+    }
     for (int i = 0; i < c.n; ++i) if (!ma[i]) out.ua.push_back(i);
     for (int j = 0; j < c.m; ++j) if (!mb[j]) out.ub.push_back(j);
     return true;
@@ -448,10 +464,16 @@ struct TrackerData {
     long frame_id = 0, next_id = 0, n_init = 2, buffer = 30;
     bool class_gate = false;
     double high = 0.25, low = 0.10, new_ = 0.25, match = 0.8;
+    double unconfirmed = 0.7;   // cost limit of the unconfirmed-track association (11-20: a field so Python can set it; was the literal 0.7)
     long dt = 3;
     double vdc = 0.2, iou_min = 0.3;
     double app_thr = 0.25, prox_thr = 0.5;
     long app_used = 0;
+    bool cost_first = false;   // 11-20 page switch (BoT-SORT only): linear_assignment cost_first
+    long cost_first_changed = 0;
+    bool depth_order = false;   // 11-20 page switch (BoT-SORT only, first association): depth_order_blocks
+    double depth_iou = 0.5, depth_contain = 0.6;   // tracker_common.DEPTH_IOU, DEPTH_CONTAIN (Python sets both on the twin)
+    long depth_order_acted = 0;
     TV tracked, lost, new_tf, lost_tf;
 };
 
@@ -583,6 +605,40 @@ static Cost fused_dists(TrackerData* T, const TV& tr, const TV& de)
         }
     }
     return c;
+}
+
+// 11-20 tracker_common.depth_order_blocks: same pair order, arithmetic and limits (DEPTH_Y2 0.02, DEPTH_H 1.05).
+// Only called on the BoT-SORT first-association cost (fused_dists: double, f32 false).
+static void depth_order_blocks(const TrackerData* T, const Cost& c, const TV& pool, double thresh, std::vector<std::pair<int, int>>& out)
+{
+    out.clear();
+    if (c.empty()) return;
+    std::vector<int> idx;
+    for (int i = 0; i < static_cast<int>(pool.size()); ++i) {
+        const TrackData* t = pool[i]->d;
+        if (t->state == ST_TRACKED && t->is_activated && t->cls == PERSON_CLS) idx.push_back(i);
+    }
+    if (idx.size() < 2) return;
+    std::vector<double> b(idx.size() * 4);
+    for (size_t k = 0; k < idx.size(); ++k) xyxy_of(pool[idx[k]]->d, &b[k * 4]);
+    for (size_t p = 0; p < idx.size(); ++p)
+        for (size_t q = p + 1; q < idx.size(); ++q) {
+            const double* A = &b[p * 4]; const double* B = &b[q * 4];
+            double iw = std::min(A[2], B[2]) - std::max(A[0], B[0]), ih = std::min(A[3], B[3]) - std::max(A[1], B[1]);
+            if (iw <= 0 || ih <= 0) continue;
+            double inter = iw * ih, ap = (A[2] - A[0]) * (A[3] - A[1]), aq = (B[2] - B[0]) * (B[3] - B[1]);
+            if (inter / std::max(ap + aq - inter, 1e-9) < T->depth_iou && inter / std::max(std::min(ap, aq), 1e-9) < T->depth_contain) continue;
+            double hp = A[3] - A[1], hq = B[3] - B[1], m = 0.02 * std::max(hp, hq);
+            int front, back;
+            if (A[3] > B[3] + m) { front = idx[p]; back = idx[q]; }
+            else if (B[3] > A[3] + m) { front = idx[q]; back = idx[p]; }
+            else if (hp > 1.05 * hq) { front = idx[p]; back = idx[q]; }
+            else if (hq > 1.05 * hp) { front = idx[q]; back = idx[p]; }
+            else continue;
+            int jf = 0, jb = 0;   // np.argmin: first lowest
+            for (int j = 1; j < c.m; ++j) { if (c.at(front, j) < c.at(front, jf)) jf = j; if (c.at(back, j) < c.at(back, jb)) jb = j; }
+            if (jf == jb && c.at(front, jf) <= thresh && c.at(back, jf) <= thresh) out.emplace_back(back, jf);
+        }
 }
 
 // ByteTrackTracker._cg
@@ -902,7 +958,18 @@ static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* 
         else if (T->kind == K_SORT) { c = iou_dist(pool, dets); thr = 1 - T->iou_min; }
         else { c = oc_cost(T, pool, dets); thr = 0.95; }
         class_gate(T, c, pool, dets);
-        if (!linear_assignment(c, thr, as)) return nullptr;
+        std::vector<std::pair<int, int>> blk;
+        if (T->kind == K_BOTSORT && T->depth_order) depth_order_blocks(T, c, pool, thr, blk);
+        if (!blk.empty()) {   // 11-20 depth_order: the track behind may not take a detection the track in front may take
+            Cost c0 = c;
+            for (const auto& p : blk) c.at(p.first, p.second) = thr + 1.0;
+            if (!linear_assignment(c, thr, as, T->cost_first, &T->cost_first_changed)) return nullptr;
+            Assign a0;
+            if (!linear_assignment(c0, thr, a0, T->cost_first)) return nullptr;
+            std::vector<std::pair<int, int>> s0 = a0.m, s1 = as.m;
+            std::sort(s0.begin(), s0.end()); std::sort(s1.begin(), s1.end());
+            if (s0 != s1) T->depth_order_acted += 1;
+        } else if (!linear_assignment(c, thr, as, T->kind == K_BOTSORT && T->cost_first, &T->cost_first_changed)) return nullptr;
     }
     for (const auto& m : as.m) {
         TrackObj* t = pool[m.first];
@@ -923,7 +990,7 @@ static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* 
         Cost c = iou_dist(rt, dets2);
         class_gate(T, c, rt, dets2);
         Assign a2;
-        if (!linear_assignment(c, 0.5, a2)) return nullptr;
+        if (!linear_assignment(c, 0.5, a2, T->kind == K_BOTSORT && T->cost_first, &T->cost_first_changed)) return nullptr;
         for (const auto& m : a2.m) {
             if (!take(T, rt[m.first], dets2[m.second]->d)) return nullptr;
             act.push_back(rt[m.first]);
@@ -974,7 +1041,7 @@ static PyObject* tracker_update_impl(TrackerObj* self, PyObject* arr, PyObject* 
         Cost c = fused_dists(T, unconfirmed, rest);
         class_gate(T, c, unconfirmed, rest);
         Assign a4;
-        if (!linear_assignment(c, 0.7, a4)) return nullptr;
+        if (!linear_assignment(c, T->unconfirmed, a4, T->kind == K_BOTSORT && T->cost_first, &T->cost_first_changed)) return nullptr;
         for (const auto& m : a4.m) {
             TrackObj* u = unconfirmed[m.first];
             if (!take(T, u, rest[m.second]->d)) return nullptr;
@@ -1203,7 +1270,8 @@ static int tv_assign(TV& dst, PyObject* value)
 
 enum TrackerField {
     T_TRACKED, T_LOST, T_NEW_TF, T_LOST_TF, T_FRAME_ID, T_NEXT_ID, T_N_INIT, T_BUFFER, T_CLASS_GATE, T_HIGH, T_LOW,
-    T_NEW, T_MATCH, T_DT, T_VDC, T_IOU_MIN, T_APP_THR, T_PROX_THR, T_APP_USED, T_MODE, T_KIND
+    T_NEW, T_MATCH, T_DT, T_VDC, T_IOU_MIN, T_APP_THR, T_PROX_THR, T_APP_USED, T_MODE, T_KIND, T_UNCONFIRMED, T_COST_FIRST, T_COST_FIRST_CHANGED,
+    T_DEPTH_ORDER, T_DEPTH_IOU, T_DEPTH_CONTAIN, T_DEPTH_ORDER_ACTED
 };
 
 static const char* kind_name(Kind k) { return k == K_SORT ? "sort" : k == K_OCSORT ? "ocsort" : "botsort"; }
@@ -1225,6 +1293,7 @@ static PyObject* tracker_get(PyObject* self, void* closure)
     case T_LOW: return PyFloat_FromDouble(T->low);
     case T_NEW: return PyFloat_FromDouble(T->new_);
     case T_MATCH: return PyFloat_FromDouble(T->match);
+    case T_UNCONFIRMED: return PyFloat_FromDouble(T->unconfirmed);
     case T_DT: return PyLong_FromLong(T->dt);
     case T_VDC: return PyFloat_FromDouble(T->vdc);
     case T_IOU_MIN: return PyFloat_FromDouble(T->iou_min);
@@ -1233,6 +1302,12 @@ static PyObject* tracker_get(PyObject* self, void* closure)
     case T_APP_USED: return PyLong_FromLong(T->app_used);
     case T_MODE: return PyUnicode_FromString(T->mode.c_str());
     case T_KIND: return PyUnicode_FromString(kind_name(T->kind));
+    case T_COST_FIRST: return PyBool_FromLong(T->cost_first);
+    case T_COST_FIRST_CHANGED: return PyLong_FromLong(T->cost_first_changed);
+    case T_DEPTH_ORDER: return PyBool_FromLong(T->depth_order);
+    case T_DEPTH_IOU: return PyFloat_FromDouble(T->depth_iou);
+    case T_DEPTH_CONTAIN: return PyFloat_FromDouble(T->depth_contain);
+    case T_DEPTH_ORDER_ACTED: return PyLong_FromLong(T->depth_order_acted);
     }
     Py_RETURN_NONE;
 }
@@ -1250,6 +1325,12 @@ static int tracker_set(PyObject* self, PyObject* value, void* closure)
     case T_NEW_TF: return tv_assign(T->new_tf, value);
     case T_LOST_TF: return tv_assign(T->lost_tf, value);
     case T_CLASS_GATE: { int v = PyObject_IsTrue(value); if (v < 0) return -1; T->class_gate = v == 1; return 0; }
+    case T_COST_FIRST: { int v = PyObject_IsTrue(value); if (v < 0) return -1; T->cost_first = v == 1; return 0; }
+    case T_COST_FIRST_CHANGED: lf = &T->cost_first_changed; break;
+    case T_DEPTH_ORDER: { int v = PyObject_IsTrue(value); if (v < 0) return -1; T->depth_order = v == 1; return 0; }
+    case T_DEPTH_ORDER_ACTED: lf = &T->depth_order_acted; break;
+    case T_DEPTH_IOU: df = &T->depth_iou; break;
+    case T_DEPTH_CONTAIN: df = &T->depth_contain; break;
     case T_FRAME_ID: lf = &T->frame_id; break;
     case T_NEXT_ID: lf = &T->next_id; break;
     case T_N_INIT: lf = &T->n_init; break;
@@ -1260,6 +1341,7 @@ static int tracker_set(PyObject* self, PyObject* value, void* closure)
     case T_LOW: df = &T->low; break;
     case T_NEW: df = &T->new_; break;
     case T_MATCH: df = &T->match; break;
+    case T_UNCONFIRMED: df = &T->unconfirmed; break;
     case T_VDC: df = &T->vdc; break;
     case T_IOU_MIN: df = &T->iou_min; break;
     case T_APP_THR: df = &T->app_thr; break;
@@ -1279,8 +1361,12 @@ static PyGetSetDef tracker_getset[] = {
     LWIR_KF("lost_this_frame", T_LOST_TF), LWIR_KF("frame_id", T_FRAME_ID), LWIR_KF("next_id", T_NEXT_ID),
     LWIR_KF("n_init", T_N_INIT), LWIR_KF("buffer", T_BUFFER), LWIR_KF("class_gate", T_CLASS_GATE),
     LWIR_KF("high", T_HIGH), LWIR_KF("low", T_LOW), LWIR_KF("new", T_NEW), LWIR_KF("match", T_MATCH),
+    LWIR_KF("unconfirmed", T_UNCONFIRMED),
     LWIR_KF("dt", T_DT), LWIR_KF("vdc", T_VDC), LWIR_KF("iou_min", T_IOU_MIN), LWIR_KF("APP_THR", T_APP_THR),
     LWIR_KF("PROX_THR", T_PROX_THR), LWIR_KF("app_used", T_APP_USED), LWIR_KF("mode", T_MODE), LWIR_KF("kind", T_KIND),
+    LWIR_KF("cost_first", T_COST_FIRST), LWIR_KF("cost_first_changed", T_COST_FIRST_CHANGED),
+    LWIR_KF("depth_order", T_DEPTH_ORDER), LWIR_KF("depth_iou", T_DEPTH_IOU), LWIR_KF("depth_contain", T_DEPTH_CONTAIN),
+    LWIR_KF("depth_order_acted", T_DEPTH_ORDER_ACTED),
     {"__dict__", PyObject_GenericGetDict, PyObject_GenericSetDict, nullptr, nullptr},
     {nullptr, nullptr, nullptr, nullptr, nullptr}
 };
@@ -1465,14 +1551,15 @@ static PyObject* py_linear_assignment(PyObject*, PyObject* args)
 {
     PyObject* arr;
     double thresh;
-    if (!PyArg_ParseTuple(args, "Od", &arr, &thresh)) return nullptr;
+    int cost_first = 0;
+    if (!PyArg_ParseTuple(args, "Od|p", &arr, &thresh, &cost_first)) return nullptr;
     Cost c;
     std::vector<Py_ssize_t> shape;
     if (!read_doubles(arr, c.v, &c.f32, &shape)) return nullptr;
     if (shape.size() != 2) { PyErr_SetString(PyExc_ValueError, "cost must be 2-D"); return nullptr; }
     c.n = static_cast<int>(shape[0]); c.m = static_cast<int>(shape[1]);
     Assign a;
-    if (!linear_assignment(c, thresh, a)) return nullptr;
+    if (!linear_assignment(c, thresh, a, cost_first != 0)) return nullptr;
     Ref m(PyList_New(0)), ua(PyList_New(0)), ub(PyList_New(0));
     if (!m || !ua || !ub) return nullptr;
     for (const auto& p : a.m) { Ref t(Py_BuildValue("(ii)", p.first, p.second)); if (!t || PyList_Append(m, t) != 0) return nullptr; }
@@ -1541,7 +1628,7 @@ static PyObject* module_init(PyModuleDef* def, const char* track_name, const cha
     static PyObject* lwir_create_tracker(PyObject*, PyObject* args) { return lwirnt::create_tracker_for(kind, args); } \
     static PyMethodDef lwir_module_methods[] = {                                                             \
         {"create_tracker", lwir_create_tracker, METH_VARARGS, "create_tracker(mode, kwargs) -> tracker"},   \
-        {"linear_assignment", lwirnt::py_linear_assignment, METH_VARARGS, "linear_assignment(cost, thresh)"},\
+        {"linear_assignment", lwirnt::py_linear_assignment, METH_VARARGS, "linear_assignment(cost, thresh, cost_first=False)"},\
         {nullptr, nullptr, 0, nullptr}};                                                                     \
     static PyModuleDef lwir_module = {PyModuleDef_HEAD_INIT, "_native_" #stem,                               \
         "C++ " #stem " tracker for the LWIR tracking server (native extension ABI v1).", -1,                \

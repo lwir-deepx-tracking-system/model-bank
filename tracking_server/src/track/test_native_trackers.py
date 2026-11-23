@@ -8,14 +8,25 @@ Both implementations get the same synthetic detections, frame by frame: people w
 while, missed detections, low scores, false boxes, empty frames, optional camera motion and appearance
 features. Compared each frame: output rows (count, order, ID, class, detection row exactly; box and
 score within TOL), the tracked / lost lists, the ID counter and the per-frame new / lost lists.
+
+Since 2026-11-18 the two engines come with different score limits (new track / first match / unconfirmed match, see
+threshold_set.py), so untouched they cannot give the same tracks. Every pair here therefore gets ONE set on both engines
+(threshold_set 'cpp' by default, 'py' in test_python_limits_on_both_engines); test_engines_own_limits_differ_as_recorded
+pins the engines' own numbers.
+
+The Python OC-SORT also has two options the C++ OC-SORT does not have at all, both ON by default since commit 21a6283
+(11-16): buffer_scale 0.5 (one more match on widened boxes) and lost_output_frames 1 (a just-lost track is output one more
+frame). The comparison turns them off in Python (OCSORT_AS_CPP); with them on the two OC-SORT engines do not give the same
+tracks (WSL check 2026-11-20: 0 of 12 runs the same with the defaults, 12 of 12 with both off).
 """
 import sys
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
 from ..common import settings
-from . import native_backend
+from . import native_backend, threshold_set
 from .botsort import BotSortTracker
 from .bytetrack import crop_requests
 from .kalman import GKF, gmc_warp
@@ -27,18 +38,30 @@ from .tracker_common import linear_assignment
 
 TOL = 1e-6
 PYTHON = {'sort': SortTracker, 'ocsort': OCSortTracker}
+OCSORT_AS_CPP = dict(buffer_scale=0.0, lost_output_frames=0)   # the C++ OC-SORT has neither step
 
 
-def make_pair(kind, **kwargs):
-    """(python tracker, native tracker) for one kind, or None when the extension is not built."""
+def make_pair(kind, limits='cpp', **kwargs):
+    """(python tracker, native tracker) for one kind, both with the score limits of threshold_set `limits` ('cpp', 'py', or
+    None = each engine's own), or None when the extension is not built."""
     if kind == 'botsort':
         py = lambda: BotSortTracker('bytetrack', **kwargs)
+    elif kind == 'ocsort':
+        py = lambda: OCSortTracker(**dict(OCSORT_AS_CPP, **kwargs))
     else:
         py = lambda: PYTHON[kind](**kwargs)
     native = native_backend.create(kind, kind, kwargs, py)
     if native_backend.backend_of(native) != 'C++':
         return None
-    return py(), native
+    made = py(), native
+    if limits is not None:
+        with patch.dict(threshold_set.CHOICE, key=limits):
+            for tracker in made:
+                threshold_set.apply(tracker, kind)
+            note = threshold_set.state(native, kind)['track_thr_now']['note']
+        if note:   # an extension built before the unconfirmed limit became a field cannot take the 'py' set
+            raise unittest.SkipTest('C++ %s extension: %s' % (kind, note))
+    return made
 
 
 def scenario(seed, frames=300, camera=False, features=False, classes=(0,), crowd=6, feature_dtype=np.float32):
@@ -90,6 +113,49 @@ def scenario(seed, frames=300, camera=False, features=False, classes=(0,), crowd
                 f = (owners[j]['base'] if owners[j] is not None else rng.normal(size=32)) + rng.normal(0, 0.25, 32)
                 feats[j] = (f / np.linalg.norm(f)).astype(feature_dtype)
         yield arr, warp, feats
+
+
+def chain_scene(seed, frames=150, groups=5, features=True):
+    """11-20 cost_first: groups of three people (A half behind B, A hidden for 3 frames, then C next to B: test_cost_first.py) repeated
+    with jitter, so the cost-first and the pairs-first assignments differ often. Yields (arr, None, feats)."""
+    rng = np.random.default_rng(seed)
+    base = {k: rng.normal(size=32) for k in range(groups * 3)}
+    for f in range(frames):
+        rows, who = [], []
+        for g in range(groups):
+            cx, cy, lt = 70.0 + 125.0 * g, 120.0 + 60.0 * (g % 4), (f + 4 * g) % 15
+            people = [(cx - 40, 0.9, 0), (cx, 0.9, 1)] if lt < 8 else ([(cx, 0.9, 1)] if lt < 11 else [(cx - 3, 0.9, 1), (cx + 70, 0.85, 2)])
+            for x, sc, k in people:
+                x += rng.normal(0, 0.7); w, h = 100 * (1 + rng.normal(0, 0.01)), 200 * (1 + rng.normal(0, 0.01))
+                rows.append([x - w / 2, cy - h / 2 + 16, x + w / 2, cy + h / 2 + 16, float(np.clip(sc + rng.normal(0, 0.02), 0.3, 0.99)), 0]); who.append(3 * g + k)
+        arr = np.asarray(rows, np.float32).reshape(-1, 6); feats = None
+        if features:
+            best = [int(j) for j in np.argsort(-arr[:, 4]) if arr[j, 4] >= 0.25][:4]
+            feats = {j: ((base[who[j]] + rng.normal(0, 0.25, 32)) / np.linalg.norm(base[who[j]])).astype(np.float32) for j in best}
+            feats = {j: (v / np.linalg.norm(v)).astype(np.float32) for j, v in feats.items()}
+        yield arr, None, feats
+
+
+def depth_scene(seed, frames=160, groups=4, features=True):
+    """11-20 depth_order: groups of two people, A standing behind (shorter box, bottom higher), B walking in front of A fast and stopping
+    on A's place (only B's box while it covers A), then walking on; repeated with jitter (test_depth_order.py). Yields (arr, None, feats)."""
+    rng = np.random.default_rng(seed)
+    base = {k: rng.normal(size=32) for k in range(groups * 2)}
+    for f in range(frames):
+        rows, who = [], []
+        for g in range(groups):
+            ax, cy, lt = 80.0 + 150.0 * g, 150.0 + 40.0 * (g % 3), (f + 7 * g) % 20
+            bx = ax - 140.0 + 30.0 * min(lt, 5) if lt < 12 else ax + 30.0 * (lt - 11)
+            people = [(bx, cy + 20.0, 100.0, 200.0, 1)] + ([] if abs(bx - ax) < 1.0 else [(ax, cy, 90.0, 180.0, 0)])
+            for x, y, w, h, k in people:
+                x += rng.normal(0, 0.7); w *= 1 + rng.normal(0, 0.01); h *= 1 + rng.normal(0, 0.01)
+                rows.append([x - w / 2, y - h / 2 + 16, x + w / 2, y + h / 2 + 16, float(np.clip(0.9 + rng.normal(0, 0.02), 0.3, 0.99)), 0]); who.append(2 * g + k)
+        arr = np.asarray(rows, np.float32).reshape(-1, 6); feats = None
+        if features:
+            best = [int(j) for j in np.argsort(-arr[:, 4]) if arr[j, 4] >= 0.25][:4]
+            feats = {j: base[who[j]] + rng.normal(0, 0.25, 32) for j in best}
+            feats = {j: (v / np.linalg.norm(v)).astype(np.float32) for j, v in feats.items()}
+        yield arr, None, feats
 
 
 def server_camera_step(tracker, warp):
@@ -180,6 +246,37 @@ class NativeTrackerComparison(unittest.TestCase):
         self.assertGreater(rows_total, 0)
         return rows_total
 
+    def test_engines_own_limits_differ_as_recorded(self):
+        """Untouched, the engines do not have the same numbers; the table in threshold_set.py says which."""
+        py, native = self.pair('botsort', limits=None, n_init=2)
+        self.assertEqual((py.new, py.match, py.unconfirmed), (0.50, 0.9, 0.6))
+        self.assertEqual((native.new, native.match), (0.25, 0.8))
+        self.assertEqual(threshold_set._read(native, 'unconfirmed'), 0.7)
+        for kind in ('sort', 'ocsort'):
+            py, native = self.pair(kind, limits=None, n_init=3)
+            self.assertEqual((py.new, native.new), (0.50, 0.25), kind)
+        server_default = OCSortTracker(n_init=3)   # what the page factory makes: the two Python-only steps are on
+        self.assertEqual((server_default.oc_buffer, server_default.lost_out), (0.5, 1))
+
+    def test_unconfirmed_limit_is_a_field_of_the_extension(self):
+        """Built from the 2026-11-20 source or later: the limit can be read and set (default 0.7, the old literal)."""
+        _, native = self.pair('botsort', limits=None, n_init=2)
+        if not hasattr(type(native), 'unconfirmed'):
+            self.skipTest('extension built before the unconfirmed field: bash scripts/build_native_trackers.sh')
+        self.assertEqual(native.unconfirmed, 0.7)
+        native.unconfirmed = 0.6
+        self.assertEqual(native.unconfirmed, 0.6)
+        self.assertNotIn('unconfirmed', native.__dict__)
+
+    def test_python_limits_on_both_engines(self):
+        """The other set (0.50 / 0.9 / 0.6): same tracks from both engines, with camera motion and appearance."""
+        for kind, kw in (('sort', dict(n_init=3)), ('ocsort', dict(n_init=3)), ('botsort', dict(n_init=2)), ('botsort', dict(n_init=4))):
+            for seed in range(3):
+                py, native = self.pair(kind, limits='py', class_gate=seed == 2, radius=2.0, **kw)
+                classes = (0, 2, 6) if seed == 2 else (0,)
+                self.run_pair(py, native, scenario(900 + seed, camera=True, features=kind == 'botsort', classes=classes),
+                              camera=True, requests=kind == 'botsort')
+
     def test_botsort_deferred_features_match_synchronous_native(self):
         _, reference = self.pair('botsort', n_init=3, class_gate=True, radius=2.0)
         _, candidate = self.pair('botsort', n_init=3, class_gate=True, radius=2.0)
@@ -202,6 +299,52 @@ class NativeTrackerComparison(unittest.TestCase):
                 self.assertEqual(([tuple(p) for p in want[0]], list(want[1]), list(want[2])), (list(got[0]), list(got[1]), list(got[2])),
                                  'case %d thresh %s\n%r' % (case, thresh, cost))
         del made
+
+    def test_cost_first_assignment_matches_python(self):
+        """11-20 cost_first: the same augmented matrix and tie order in C++ and Python"""
+        made = self.pair('sort', n_init=3, class_gate=False, radius=2.0)
+        native_la = sys.modules['_native_sort'].linear_assignment
+        rng = np.random.default_rng(11)
+        for case in range(4000):
+            n, m = int(rng.integers(0, 9)), int(rng.integers(0, 9))
+            if case % 3 == 0: cost = rng.integers(0, 4, (n, m)) / 4.0
+            elif case % 3 == 1: cost = np.round(rng.random((n, m)), 1)
+            else: cost = rng.random((n, m))
+            cost = cost.astype(np.float32 if case % 2 else np.float64)
+            for thresh in (0.5, 0.7, 0.8, 0.9):
+                want = linear_assignment(cost.copy(), thresh, cost_first=True)
+                got = native_la(cost, thresh, True)
+                self.assertEqual(([tuple(p) for p in want[0]], list(want[1]), list(want[2])), (list(got[0]), list(got[1]), list(got[2])),
+                                 'case %d thresh %s\n%r' % (case, thresh, cost))
+        del made
+
+    def test_botsort_cost_first_matches_python(self):
+        """11-20 cost_first on the whole BoT-SORT update. The limits are made equal first (the C++ twin still starts with the pre-11-18
+        values new 0.25 / match 0.8 / unconfirmed 0.7; Python 0.5 / 0.9 / 0.6), so only the switch is compared."""
+        changed = 0
+        for seed, frames in ((0, chain_scene(0)), (1, chain_scene(1, features=False)), (2, scenario(902, camera=True, features=True, crowd=10))):
+            py, native = self.pair('botsort', limits=None, n_init=2, class_gate=False, radius=2.0)   # each engine's own limits first (the scenes were made for them), then made equal below
+            native.new, native.match = py.new, py.match; py.unconfirmed = 0.7   # C++: unconfirmed limit fixed at 0.7
+            py.cost_first = native.cost_first = True
+            self.run_pair(py, native, frames, camera=seed == 2)
+            self.assertEqual(py.cost_first_changed, native.cost_first_changed)
+            changed += py.cost_first_changed
+        self.assertGreater(changed, 0)
+
+    def test_botsort_depth_order_matches_python(self):
+        """11-20 depth_order on the whole BoT-SORT update (limits made equal as in the cost_first test), alone and with cost_first"""
+        acted = 0
+        for seed, frames, cf in ((0, depth_scene(0), False), (1, depth_scene(1, features=False), False), (2, depth_scene(2), True),
+                                 (3, scenario(903, camera=True, features=True, crowd=10), False), (4, chain_scene(4), True)):
+            py, native = self.pair('botsort', limits=None, n_init=2, class_gate=False, radius=2.0)
+            native.new, native.match = py.new, py.match; py.unconfirmed = 0.7
+            py.depth_order = native.depth_order = True; py.cost_first = native.cost_first = cf
+            self.assertEqual((native.depth_iou, native.depth_contain), (py.depth_iou, py.depth_contain))
+            self.run_pair(py, native, frames, camera=seed == 3)
+            self.assertEqual(py.depth_order_acted, native.depth_order_acted)
+            self.assertEqual(py.cost_first_changed, native.cost_first_changed)
+            acted += py.depth_order_acted
+        self.assertGreater(acted, 0)
 
     def test_sort(self):
         for seed in range(6):

@@ -3,7 +3,7 @@
 import numpy as np
 
 from ..common import settings
-from ..common.shared_values import TRACKED
+from ..common.shared_values import PERSON_CLS, TRACKED
 from .position_memory import POSP, pos_inn
 from .stabilizer import STAB_M
 
@@ -14,15 +14,70 @@ except Exception:  # pragma: no cover
     _lsa = None
 
 
-def linear_assignment(cost, thresh):
+ASSIGN = dict(cost_first=False, depth_order=False)   # 11-20 page switches 'cost_first', 'depth_order' (BoT-SORT, Python and C++): copied onto the live tracker every frame (app.py)
+
+# 11-20 depth_order: which overlaps count and how 'in front' is decided (the C++ twin reads its own copy of these, set from Python)
+DEPTH_IOU, DEPTH_CONTAIN, DEPTH_Y2, DEPTH_H = 0.5, 0.6, 0.02, 1.05
+
+
+def depth_order_blocks(cost, pool, thresh, iou_thr=DEPTH_IOU, contain_thr=DEPTH_CONTAIN):
+    """11-20 switch 'depth_order' (BoT-SORT first association, default off). User: when two people overlap almost completely, the hidden
+    (back) person's number slides onto the front person's box. For every pair of seen (TRACKED, confirmed) person tracks whose predicted
+    boxes overlap (IoU >= iou_thr or intersection / smaller area >= contain_thr), the one in front = bottom edge lower in the picture by more
+    than DEPTH_Y2 x the taller height, else taller by more than DEPTH_H (else undecided: no action). When both tracks' best detection (lowest
+    cost, first on ties) is the same one and both may take it (cost <= thresh), it is forbidden to the one behind; that track stays unmatched
+    this frame unless it fits another detection (second association, then the lost path, number kept). A first version forbade every detection
+    both MAY take: it also took the hidden person's own box from it and measured worse; letting lost tracks be the one behind measured far
+    worse (HANDOFF 11-20).
+    Returns the (track row, detection column) pairs to forbid, in a fixed order (same order and arithmetic in native_tracker_core.hpp)."""
+    if cost.size == 0: return []
+    idx = [i for i, t in enumerate(pool) if t.state == TRACKED and t.is_activated and t.cls == PERSON_CLS]
+    if len(idx) < 2: return []
+    b = xyxy_of([pool[i] for i in idx]); out = []
+    for p in range(len(idx)):
+        for q in range(p + 1, len(idx)):
+            x1, y1, x2, y2 = (float(v) for v in b[p]); u1, v1, u2, v2 = (float(v) for v in b[q])
+            iw = min(x2, u2) - max(x1, u1); ih = min(y2, v2) - max(y1, v1)
+            if iw <= 0 or ih <= 0: continue
+            inter = iw * ih; ap = (x2 - x1) * (y2 - y1); aq = (u2 - u1) * (v2 - v1)
+            if inter / max(ap + aq - inter, 1e-9) < iou_thr and inter / max(min(ap, aq), 1e-9) < contain_thr: continue
+            hp, hq = y2 - y1, v2 - v1; m = DEPTH_Y2 * max(hp, hq)
+            if y2 > v2 + m: front, back = idx[p], idx[q]
+            elif v2 > y2 + m: front, back = idx[q], idx[p]
+            elif hp > DEPTH_H * hq: front, back = idx[p], idx[q]
+            elif hq > DEPTH_H * hp: front, back = idx[q], idx[p]
+            else: continue
+            j = int(np.argmin(cost[front]))
+            if int(np.argmin(cost[back])) == j and cost[front, j] <= thresh and cost[back, j] <= thresh: out.append((back, j))
+    return out
+
+
+def linear_assignment(cost, thresh, cost_first=False, owner=None):
     if cost.size == 0: return [], list(range(cost.shape[0])), list(range(cost.shape[1]))
     if cost.shape == (1, 1):                                   # trivial case: no solver call
         return ([(0, 0)], [], []) if cost[0, 0] <= thresh else ([], [0], [0])
     c = np.where(cost > thresh, 1e6, cost)
     r, k = _lsa(c)
     matches = [(int(i), int(j)) for i, j in zip(r, k) if cost[i, j] <= thresh]
+    if cost_first:   # 11-20 switch 'cost_first' (BoT-SORT, default off): see _cost_first; owner.cost_first_changed counts the calls it changed
+        cf = _cost_first(cost, thresh)
+        if owner is not None and sorted(cf) != sorted(matches): owner.cost_first_changed += 1
+        matches = cf
     ma = {i for i, _ in matches}; mb = {j for _, j in matches}
     return matches, [i for i in range(cost.shape[0]) if i not in ma], [j for j in range(cost.shape[1]) if j not in mb]
+
+
+def _cost_first(cost, thresh):
+    """11-20 (user: the front person takes the hidden person's number): the assignment of the original ByteTrack / BoT-SORT code
+    (lap.lapjv(extend_cost=True, cost_limit=thresh)): leaving a track or a detection unpaired costs thresh / 2, so a pair is made only when
+    it lowers the total cost. The rule above (pairs over the limit = 1e6) first makes as many pairs as possible, which can move a seen
+    track onto the next person so that a lost track gets a pair too (two pairs at 0.85 + 0.59 instead of one at 0.15).
+    Solved on the n x m matrix: allowed pair -> cost - thresh (<= 0), forbidden -> 0; the best full matching of it holds the best set of
+    allowed pairs (padding pairs cost 0). Same arithmetic and tie order in the C++ twin (native_tracker_core.hpp linear_assignment)."""
+    r, k = _lsa(np.where(cost > thresh, 0.0, cost - thresh))
+    return [(int(i), int(j)) for i, j in zip(r, k) if cost[i, j] <= thresh]
+
+
 CANVAS_W, CANVAS_H, CANVAS_Y0 = 640.0, 512.0, 16.0   # detections live on the 640x512 canvas; camera rows are 16..496
 
 

@@ -5,6 +5,7 @@ import time
 from ..common import settings
 from ..common.state import APP
 from ..common.shared_values import HERE, CORE, DET, sha
+from ..reid import cos_map   # 11-20: per-model cosine map (BoT-SORT gate threshold)
 from ..detect.model_scan import BANK, KPT_DETS
 from ..detect import auto_det   # 11-15 (user): automatic NEAR / FAR detector choice (off by default)
 from ..detect import resident_det   # 11-15 (user): both models of that pair resident on NPU cores 0 and 1, instant switch (off by default)
@@ -12,6 +13,7 @@ from ..detect import frame_feed   # 11-16: manual_pending (a pending automatic s
 from ..track import native_backend
 from ..track.position_memory import POSP, POS_NAMES, pos_list, pos_select
 from ..track import e2e_live
+from ..detect import pose_full_box
 from ..track import box_refine   # 11-15: box smoothing of the drawn / gimbal rows (off by default)
 from ..track.stabilizer import STAB
 from ..track.bytetrack import ByteTrackTracker
@@ -76,7 +78,7 @@ def mk_tracker_(kind_):
                   motion_fallback=not APP.args.no_motion_fallback, vit_conf=APP.args.vit_conf, vit_min_h=APP.args.vit_min_h,
                   hybrid=True, sync_k=APP.args.sync_k, hybrid_fallback=False, radius=APP.args.radius,
                   n_init=APP.args.n_init, class_gate=APP.args.class_gate)
-    return native_backend.create(kind_, native_mode, kwargs, lambda: cls(py_mode, **kwargs), native=use_native)
+    return cos_map.apply_gate(native_backend.create(kind_, native_mode, kwargs, lambda: cls(py_mode, **kwargs), native=use_native))   # 11-20: BoT-SORT gate on the running model's cosine scale
 
 
 def ctl_state():
@@ -115,7 +117,8 @@ def rules_state():
 
 def rules_state_2():
     return dict(APP.rules_state0_(), stab=bool(STAB['on']), stab_px=[round(float(STAB['px'][0]), 1), round(float(STAB['px'][1]), 1)], stab_ms=round(float(STAB['ms']), 2), stab_resets=int(STAB['resets']), stab_err=STAB['err'], gimbal_cfg=gb_cfg(), auto_det=auto_det.state(), resident_det=resident_det.state(),
-                box_refine=box_refine.state())   # 11-15: 상자 다듬기 (src/track/box_refine.py): mode, blend_s, ms per frame, tracks   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). resident_det (11-15): 두 모델 상주·즉시 전환 (src/detect/resident_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
+                pose_box=pose_full_box.mode(APP),
+                box_refine=box_refine.state(), id_guard=_id_guard_state())   # 11-15: 상자 다듬기 (src/track/box_refine.py): mode, blend_s, ms per frame, tracks   # auto_det (11-15, user): 검출 모델 자동 선택 (src/detect/auto_det.py). resident_det (11-15): 두 모델 상주·즉시 전환 (src/detect/resident_det.py). gimbal_cfg: 읽기 전용, 짐벌 프로그램에 넘긴 옵션 (화면의 '짐벌 제어기' 구역)
 
 
 def prefer_cpp_bytetrack(q_, tracker_key, cam_tracker):
@@ -207,6 +210,16 @@ def rules_request(q_):
     if 'relink_pred' in q_:   # 11-14: KeepID growing search range on the predicted place (OnlineRelabel only)
         if APP.relabeler is None or not hasattr(APP.relabeler, 'pred_gate'): return False, 'KeepID(외형 번호 되살리기)가 이 실행에 없음'
         APP.relabeler.pred_gate = q_['relink_pred'][0] in ('1', 'true', 'on')
+    gq_ = {k_: q_[k_][0] for k_ in ('feat_guard', 'cost_first', 'depth_order', 'merge_split', 'pre_capture') if k_ in q_}   # 11-20 number guards: judge memory (relink_online_judge.GUARD), BoT-SORT assignment (tracker_common.ASSIGN), layer after the tracker (track/merge_split.SW); kept over a restart
+    if gq_:
+        if any(v_ not in ('1', '0', 'true', 'false', 'on', 'off') for v_ in gq_.values()): return False, '번호 지킴 값은 1 또는 0'
+        from ..reid import relink_online_judge as rj_
+        from ..track import tracker_common as tc_
+        from ..track import merge_split as ms_
+        for k_, v_ in gq_.items(): (rj_.GUARD if k_ == 'feat_guard' else ms_.SW if k_ in ms_.SW else tc_.ASSIGN)[k_] = v_ in ('1', 'true', 'on')
+        on_ = dict(feat_guard=rj_.GUARD['feat_guard'], cost_first=tc_.ASSIGN['cost_first'], merge_split=ms_.SW['merge_split'], pre_capture=ms_.SW['pre_capture'], depth_order=tc_.ASSIGN['depth_order'])
+        APP.sel_save(**{k_: bool(on_[k_]) for k_ in gq_})
+        print('RULES set %s' % ' '.join('%s %d' % (k_, on_[k_]) for k_ in gq_), flush=True)
     if 'relabel' in q_:
         if not APP.args.relabel and q_['relabel'][0] in ('1', 'true', 'on'): return False, '재식별 모델이 이 실행에 없음'
         pend_['relabel'] = q_['relabel'][0] in ('1', 'true', 'on')
@@ -265,8 +278,21 @@ def rules_request(q_):
 
 
 def rules_request_2(q_):
+    if 'pose_box' in q_:
+        mode = q_['pose_box'][0]
+        if mode not in ('upper', 'full'):
+            return False, '박스 모양은 상체 또는 전신 추정만 선택할 수 있습니다'
+        if not pose_full_box.available(APP):
+            return False, 'E10 또는 E10+3 관절 모델을 선택한 뒤 박스 모양을 바꿔 주세요'
+        rest = {name: value for name, value in q_.items() if name != 'pose_box'}
+        ok, message = rules_request_2(rest) if rest else (True, '박스 모양 적용됨')
+        if ok:
+            APP.SEL['pose_box'] = mode
+            APP.sel_save(pose_box=mode)
+        return ok, message
     if 'box_refine' in q_ or 'box_blend' in q_ or 'lost_same' in q_:   # 11-15: box smoothing (src/track/box_refine.py); checked first, changed only when the rest of the query was taken too. 11-16: lost_same (lost box = seen box)
         br_ = {k_: x_ for k_, x_ in q_.items() if k_ in ('box_refine', 'box_blend', 'lost_same')}
+        if str((br_.get('box_refine') or [''])[0]).strip().lower() == 'off': return False, '박스 떨림 보정은 항상 켜져 있습니다 (크기 보정 또는 상체 박스 보정)'   # 11-21 (user: "옵션 말고 항상 켜져 있게")
         ok_, tx_, apply_ = box_refine.parse_request(br_)
         if not ok_: return ok_, tx_
         rest_ = {k_: x_ for k_, x_ in q_.items() if k_ not in br_}
@@ -302,6 +328,29 @@ def rules_request_2(q_):
 def _prop_state():
     from ..detect import spec_proposals
     return spec_proposals.state()
+
+
+def _id_guard_state():   # 11-20: number guards and how often they acted (judge counters since the server started; cost_first_changed since the tracker was made)
+    try:
+        from ..reid import relink_online_judge as rj_
+        from ..track import tracker_common as tc_
+        j_ = getattr(APP, 'relabeler', None); t_ = getattr(APP, 'tracker', None)
+        return dict(feat_guard=bool(rj_.GUARD['feat_guard']), cost_first=bool(tc_.ASSIGN['cost_first']), judge=isinstance(j_, rj_.OnlineJudge),
+                    feat_stats=dict(getattr(j_, 'guard_stats', None) or {}), cost_first_tracker=getattr(t_, 'cost_first', None) is not None and APP.RULES.get('tracker') == 'botsort',
+                    cost_first_changed=int(getattr(t_, 'cost_first_changed', 0) or 0),
+                    depth_order=bool(tc_.ASSIGN['depth_order']), depth_order_acted=int(getattr(t_, 'depth_order_acted', 0) or 0),   # 11-20 depth_order (not recommended: see HANDOFF)
+                    feat_hold=j_.guard_state() if isinstance(j_, rj_.OnlineJudge) else None,   # 11-20 review: numbers held now, longest current hold (frames)
+                    **_merge_split_state())
+    except Exception as e_:   # noqa: BLE001
+        return dict(last_error=repr(e_)[:120])
+
+
+def _merge_split_state():   # 11-20 switches merge_split / pre_capture (not recommended: HANDOFF 11-20): counters of the live layer, groups now
+    from ..track import merge_split as ms_
+    l_ = vars(APP).get('ms_layer')
+    return dict(merge_split=bool(ms_.SW['merge_split']), pre_capture=bool(ms_.SW['pre_capture']),
+                merge_stats=None if l_ is None else {k_: (round(v_, 2) if isinstance(v_, float) else v_) for k_, v_ in l_.stats.items()},
+                merge_groups=None if l_ is None else l_.groups_now())
 
 
 def _giant():   # 11-15: person boxes dropped as impossibly tall (src/detect/detect_frame.drop_giant)

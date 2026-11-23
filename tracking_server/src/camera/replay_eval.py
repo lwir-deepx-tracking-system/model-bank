@@ -19,6 +19,7 @@
 import collections
 import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -26,6 +27,7 @@ import time
 from ..common.state import APP
 from ..track import gt_score, replay_backends, replay_metrics_proc
 from ..track.stabilizer import stab_off, stab_people_real
+from . import replay_box_contract
 
 LABEL = 'tracks_edited_mot.txt'
 AUTO = 'tracks_mot.txt'
@@ -46,7 +48,8 @@ DRAW = [False]           # 화면 그림에 정답 상자 그리기 (모든 보�
 
 def load_labels(rec_dir, name):
     """녹화 폴더 -> dict(ok, why, gt={png: [(번호, x1, y1, x2, y2, 클래스)]}, frames=채점할 PNG 번호 집합, review=글, label_file, ...)"""
-    out = dict(ok=False, why='', gt={}, frames=set(), review='', label_file=None, label_sha256=None, bad_lines=0, labelled=0, reviewed=None, removed=0)
+    out = dict(ok=False, why='', gt={}, frames=set(), review='', label_file=None, label_sha256=None,
+               review_sha256=None, bad_lines=0, labelled=0, reviewed=None, removed=0)
     lp = os.path.join(rec_dir, LABEL)
     if not os.path.isfile(lp):
         out['why'] = '정답 라벨(%s)이 없어 채점하지 않음%s' % (LABEL, ' (자동 라벨 %s 는 검수 전이라 쓰지 않음)' % AUTO if os.path.isfile(os.path.join(rec_dir, AUTO)) else '')
@@ -65,9 +68,10 @@ def load_labels(rec_dir, name):
             continue
         try:
             fr, gid, x, y, w, h, cl = int(float(f[0])), int(float(f[1])), float(f[2]), float(f[3]), float(f[4]), float(f[5]), int(float(f[7]))
-        except ValueError:
+        except (ValueError, OverflowError):
             out['bad_lines'] += 1; continue
-        if fr < 1 or w <= 0 or h <= 0: out['bad_lines'] += 1; continue
+        if fr < 1 or w <= 0 or h <= 0 or not all(math.isfinite(v) for v in (x, y, x + w, y + h)):
+            out['bad_lines'] += 1; continue
         gt[fr].append((gid, x, y, x + w, y + h, cl))
     out['gt'] = dict(gt); out['labelled'] = len(gt)
     rp = os.path.join(rec_dir, REVIEW)
@@ -75,8 +79,10 @@ def load_labels(rec_dir, name):
         out['frames'] = set(gt); out['review'] = '검수 상태 없음 (review_state.json 이 없어 라벨이 있는 모든 프레임을 채점)'
     else:
         try:
-            with open(rp, encoding='utf-8') as review:
-                st = json.load(review)
+            with open(rp, 'rb') as review:
+                review_raw = review.read()
+            st = json.loads(review_raw)
+            out['review_sha256'] = hashlib.sha256(review_raw).hexdigest()
             rv = {int(v) for v in st.get('reviewed', [])}; rm = {int(v) for v in st.get('removed', [])} | {int(v) for v in st.get('purged', [])}
         except (OSError, ValueError, TypeError, AttributeError) as e:
             out['why'] = '검수 상태(review_state.json)를 읽지 못해 채점하지 않음 (%s)' % type(e).__name__; return out
@@ -129,6 +135,26 @@ class Eval:
         self.native_rows = []
         self.native_people = None   # own_boxes 일 때: 방금 update 한 프레임의 사람 (640x480 그림 좌표, 파일 값 그대로)
         self.native_frames = 0
+        self.strict_box_contract = tgt.get('strict_box_contract', False)
+        self.box_mode = tgt.get('box_mode', 'verified')
+        self.model_identity = (replay_box_contract.stored_model(self.backend_meta) if self.own_boxes
+                               else replay_box_contract.live_model())
+        self.box_contract, self.lab['gt'] = replay_box_contract.resolve(
+            os.path.dirname(tgt['dir']), self.name, self.lab, self.model_identity,
+            strict=self.strict_box_contract, mode=self.box_mode)
+        identity_key = tuple((key, value) for key, value in self.model_identity.items())
+        self.final_key = (self.name, self.backend, self.box_mode, identity_key,
+                          self.box_contract['source_mot_sha256'], self.box_contract['source_review_sha256'],
+                          self.box_contract['reviewed_box_contract_sha256'])
+
+    def _invalidate_model_change(self):
+        if self.phase == 'complete' or self.own_boxes:
+            return
+        self.phase = 'incomplete'
+        self.box_contract.update(score_allowed=False,
+                                 why='재생 도중 모델이 바뀌어 이 회차 점수를 폐기했습니다.')
+        self.metric_status = 'unavailable'
+        self._sum = None
 
     def track_frame(self, t_in, detections):   # 잠금을 쥔 채 update 를 부른다: 한 장에 오래 걸리는 추적기(slow)를 붙일 때는 잠금 밖에서 부르게 고쳐야 한다
         if self.native_tracker is None:
@@ -166,7 +192,8 @@ class Eval:
     def zero(self):
         self.new = gt_score.Score(True); self.old = gt_score.Score(False)
         self.new_h = gt_score.Score(True, False); self.old_h = gt_score.Score(False, False)   # plain per-frame Hungarian (no carry-forward), for the file only
-        self.n = dict(received=0, cam_skipped=0, published=0, untagged=0, not_labelled=0, not_reviewed=0, scored=0, tag_evicted=0, repeats=0)
+        self.n = dict(received=0, cam_skipped=0, published=0, untagged=0, not_labelled=0, not_reviewed=0,
+                      box_contract_blocked=0, scored=0, tag_evicted=0, repeats=0)
         self.uniq = set()
         self.log = []; self.since = time.strftime('%Y-%m-%d %H:%M:%S'); self.ver = 0; self._sum = None
 
@@ -225,7 +252,7 @@ class Eval:
             self._sum = None
             snapshot = dict(self._summary_locked(), on=False)
         with _LK:
-            key = (self.name, self.backend)
+            key = self.final_key
             previous = FINAL.get(key)
             if previous is None or previous['run_id'] < self.run_id:
                 FINAL[key] = snapshot
@@ -235,6 +262,8 @@ class Eval:
 
     def _complete(self):
         self.phase = 'complete'
+        if not self.box_contract['score_allowed']:
+            return
         frames = [entry[2] for entry in self.history if entry is not None]
         if not frames:
             return
@@ -280,6 +309,9 @@ class Eval:
             if preview_receipt is not None:
                 preview_receipt.append((self.run_id, k, pss, t_in))
             gt = self.lab['gt'].get(png, ()) if self.lab['ok'] and png in self.lab['frames'] else None
+            if (self.strict_box_contract and not self.own_boxes and self.phase != 'complete'
+                    and replay_box_contract.live_model() != self.model_identity):
+                self._invalidate_model_change()
             if self.phase != 'scoring':
                 return gt
             if pss == 1 and k < self.pass_frames:
@@ -290,14 +322,17 @@ class Eval:
                 print('REPLAY EVAL incomplete:', self.gap, flush=True)
                 self._sum = None
                 return gt
-            if gt is None:
-                self.n['not_reviewed' if png in self.lab['gt'] else 'not_labelled'] += 1
+            if gt is None or not self.box_contract['score_allowed']:
+                if gt is not None:
+                    self.n['box_contract_blocked'] += 1
+                else:
+                    self.n['not_reviewed' if png in self.lab['gt'] else 'not_labelled'] += 1
                 self.history.append(None)
                 self.pass_frames += 1
                 if self.pass_frames == self.sequence_frames:
                     self._complete()
                 self._sum = None
-                return None
+                return gt
             if people is None:
                 ppl = [(int(r[4]), float(r[0]), float(r[1]) - 16.0, float(r[2]), float(r[3]) - 16.0, float(r[5])) for r in rows if int(r[6]) == 0]
                 ppl = stab_people_real(ppl, sc, float(APP.LIVE_W), float(APP.LIVE_H)) if sc is not None else ppl   # 짐벌 줄과 같은 실제 카메라 좌표
@@ -321,18 +356,23 @@ class Eval:
     def _summary_locked(self, with_rules=True):
         if self._sum is not None and with_rules: return self._sum
         lab = self.lab
+        scoring = self.box_contract['score_allowed']
         s = dict(run_id=self.run_id, name=self.name, fps=self.fps, loop=self.loop, started=self.started, since=self.since, ended=self.ended, end_reason=self.end_reason, file=self.file,
                  backend=self.backend, backend_error=self.backend_error, native_frames=self.native_frames,
                  preview=self.preview, pacing=self.pacing,
-                 scoring=lab['ok'], why=lab['why'] or None, review=lab['review'] or None, label_file=lab['label_file'], label_sha256=lab['label_sha256'],
+                 scoring=scoring, why=self.box_contract['why'] or None,
+                 model_identity=dict(self.model_identity), box_contract=dict(self.box_contract), box_mode=self.box_mode,
+                 metric_provenance=('Proxy metrics against projected unreviewed upper-body boxes.'
+                                    if self.box_contract['approximate'] else 'Project replay metrics, not a held-out benchmark.'),
+                 review=lab['review'] or None, label_file=lab['label_file'], label_sha256=lab['label_sha256'],
                  label_bad_lines=lab['bad_lines'], labelled_frames=lab['labelled'], scorable_frames=len(lab['frames']), passes=self.passes, scored_unique=len(self.uniq), seeks=self.seeks,
                  counts=dict(self.n, server_skipped=max(0, self.n['received'] - self.n['published'] - len(self.tags))),
                  phase=self.phase, sequence_frames=self.sequence_frames, pass_frames=self.pass_frames, first_gap=self.gap,
-                 metric_status=self.metric_status, id_switches=self.id_switches[-30:],
-                 new=dict(self.new.result(), **self.metrics) if lab['ok'] else None, old=self.old.result() if lab['ok'] else None, draw=DRAW[0],
+                 metric_status=self.metric_status, id_switches=self.id_switches[-30:] if scoring else [],
+                 new=dict(self.new.result(), **self.metrics) if scoring else None, old=self.old.result() if scoring else None, draw=DRAW[0],
                  matching='CLEAR MOT (Bernardin & Stiefelhagen 2008, as py-motmetrics): last frame pairs kept while IoU >= 0.5, Hungarian for the rest',
                  per_frame_hungarian=dict(note='same frames, plain Hungarian every frame without keeping last frame pairs; not shown on the page',
-                                          new=self.new_h.result(), old=self.old_h.result()) if lab['ok'] else None)
+                                          new=self.new_h.result(), old=self.old_h.result()) if scoring else None)
         if self.own_boxes:   # 저장된 결과: 무엇이 상자를 만들었는지 적고, 검출 후보 점수(AP50 / mAP)는 없다고 알린다. 만든 PC 의 긴 설명(offline_run)은 결과 파일에만 적는다
             meta = self.backend_meta if not with_rules else {k: v for k, v in self.backend_meta.items() if k != 'offline_run'}
             s.update(backend_label=self.backend_label, backend_meta=meta, detector_metrics=False)
@@ -354,17 +394,15 @@ class Eval:
                 frames = self.history[:pos + 1]
             try:
                 new, old = gt_score.Score(True), gt_score.Score(False)
-                metric_inputs = []
                 for entry in frames:
                     if entry is None:
                         continue
-                    png, rows, metric_input = entry
+                    png, rows, _ = entry
                     gt = self.lab['gt'].get(png, ())
                     new.frame(gt, rows, 1)
                     old.frame(gt, rows, 1)
-                    metric_inputs.append(metric_input)
-                metrics = replay_metrics_proc.compute(metric_inputs) if metric_inputs else dict(hota=None, ap50=None, map=None)
-                result = dict(new=dict(new.result(), **metrics), old=old.result(), metric_status='ready' if metric_inputs else 'unavailable')
+                result = dict(new=dict(new.result(), hota=None, ap50=None, map=None),
+                              old=old.result(), metric_status='unavailable')
             except Exception as exc:
                 print('REPLAY PREFIX failed', type(exc).__name__, str(exc)[:120], flush=True)
                 result = dict(new=None, old=None, metric_status='error', why='이 위치의 점수를 계산하지 못했습니다.')
@@ -377,10 +415,10 @@ class Eval:
     def prefix(self, pos):
         with self.lock:
             state = dict(self._summary_locked(), prefix_pos=pos, prefix_pending=False, prefix_unavailable=False)
-            if not self.lab['ok'] or not 0 <= pos < len(self.history):
+            if not self.box_contract['score_allowed'] or not 0 <= pos < len(self.history):
                 state.update(prefix_unavailable=True, scoring=False, new=None, old=None, metric_status='unavailable',
                              pass_frames=0, counts={}, id_switches=[], per_frame_hungarian=None,
-                             why=self.lab['why'] or '이 위치까지 계산한 결과가 없습니다. 처음부터 끝까지 다시 계산해 주세요.')
+                             why=self.box_contract['why'] or '이 위치까지 계산한 결과가 없습니다. 처음부터 끝까지 다시 계산해 주세요.')
                 return state
             if self.phase == 'complete' and pos == self.sequence_frames - 1:
                 state['prefix_pending'] = self.metric_status == 'pending'
@@ -435,7 +473,7 @@ class Eval:
                                      'Full first pass only. Nothing here measures device speed.')
             try:
                 p.write_text(json.dumps(d, ensure_ascii=False), encoding='utf-8'); self.file = str(p.name); self._sum = None
-                print('REPLAY EVAL written %s: frames scored %d, new false %d missed %d, old false %d missed %d' % (p.name, self.n['scored'], d['new']['false'], d['new']['missed'], d['old']['false'], d['old']['missed']), flush=True)
+                print('REPLAY EVAL written %s: %s' % (p.name, d['why'] or 'frames scored %d' % self.n['scored']), flush=True)
             except OSError as e:
                 print('REPLAY EVAL write failed', type(e).__name__, flush=True)
             return self.file
@@ -443,7 +481,7 @@ class Eval:
 
 # ------------------------------------------------------------------ 서버의 다른 곳에서 부르는 것
 def prepare(tgt):   # 재생 바꾸기 스레드: 라벨을 미리 읽는다 (잠금 밖)
-    try: return Eval(tgt)
+    try: return Eval(dict(tgt, strict_box_contract=True))
     except Exception as e:
         print('REPLAY EVAL prepare failed', type(e).__name__, flush=True); return None
 
@@ -482,6 +520,14 @@ def first_pass_position(t_in):
 def initial_fps():
     ev = EV
     return ev.fps if ev is not None and ev.lab['ok'] and ev.phase == 'scoring' else None
+
+
+def model_changed():
+    ev = EV
+    if ev is not None:
+        with ev.lock:
+            if replay_box_contract.live_model() != ev.model_identity:
+                ev._invalidate_model_change()
 
 
 def reset_first_input(t_in):
@@ -529,7 +575,7 @@ def state():
         return dict(on=False, scoring=False, why=None, draw=DRAW[0], final_ready=False)
     current = ev.summary()
     with _LK:
-        has_saved_final = (ev.name, ev.backend) in FINAL
+        has_saved_final = ev.final_key in FINAL and current['scoring']
     return dict(current, on=ev is EV, final_ready=has_saved_final or (current['scoring'] and current['phase'] == 'complete'))
 
 
@@ -541,7 +587,7 @@ def results(q):
             result = dict(result, on=ev is EV, final_previous=False)
         elif ev is not None:
             with _LK:
-                previous = FINAL.get((ev.name, ev.backend))
+                previous = FINAL.get(ev.final_key) if result['scoring'] else None
             result = dict(previous, final_previous=True) if previous is not None else None
         return dict(eval=result, eval_last=last())
     if 'pos' in q:

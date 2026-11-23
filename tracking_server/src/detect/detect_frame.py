@@ -6,6 +6,7 @@ from ..common import frame_math
 from ..common.shared_values import PERSON_CLS
 from ..common.fast_path import FAST, STAT
 from . import dual_tile
+from . import pose_duplicate
 from .pose_duplicate import suppress_nested_people
 from ..detect.model_scan import S6_DETS, W480_DETS, E2E_DETS, RAW_DETS, KPT_DETS
 
@@ -183,10 +184,8 @@ def _detect(ra, rb):     # raw NPU outputs -> NMS detections in FRAME coordinate
 def detect(ra, rb):      # v27 (user 11-10): person boxes under --min-person-h px tall are not people for this system; dropped before the tracker (0 = off = unchanged)
     prior_keypoints = KP['cur']
     p_ = APP._detect(ra, rb)
-    if APP.args.det in ('bank:yolo26m_pose_lwir1056_20261118_bodybox_kpt_640x480',
-                        'bank:yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480',
-                        'bank:yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480') and KP['cur'] is not prior_keypoints:
-        p_, KP['cur'] = suppress_nested_people(p_, KP['cur'], PERSON_CLS)
+    if KP['cur'] is not prior_keypoints and pose_duplicate.applies(APP.args.det, KPT_DETS):   # 11-20: which detectors = the nested_dup switch (default: the three named ones, as before)
+        n_ = len(p_); p_, KP['cur'] = suppress_nested_people(p_, KP['cur'], PERSON_CLS); pose_duplicate.RULE['dropped'] += n_ - len(p_)
     if APP.args.min_person_h > 0 and len(p_): p_ = p_[~((p_[:, 5] == PERSON_CLS) & ((p_[:, 3] - p_[:, 1]) < APP.args.min_person_h))]
     return p_
 

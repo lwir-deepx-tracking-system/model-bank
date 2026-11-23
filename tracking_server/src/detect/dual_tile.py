@@ -14,8 +14,8 @@ import numpy as np
 
 from ..common.shared_values import HERE, sha
 from ..common.state import APP
-from .split_native import NativeTiles
 from .tile_job_profile import TileJobProfile
+from .split_native import NativeTiles
 
 
 KEY = 'yolo26m_pose_ft16v8_aug_e10_bodybox_provisional_kpt_640x480'
@@ -76,19 +76,81 @@ def flatten_tile(heads):
             np.concatenate([a.reshape(-1, 51) for a in heads[2::3]], axis=0))
 
 
-def assets_reason():
-    if not MODEL.is_file() or not TONE.is_file():
-        return '분할 검출 모델 또는 빠른 전처리가 없습니다. 장치 준비 스크립트를 실행하세요'
-    try:
-        if sha(MODEL) != MODEL_SHA:
-            return '분할 검출 모델의 확인값이 다릅니다'
-    except OSError:
-        return '분할 검출 모델을 읽을 수 없습니다'
+NEW_KEY = 'yolo26m_pose_lwir1056_20261118_bodybox_kpt_640x480'
+NEW_SOURCE_SHA = '21c2644272aa852fa1b324daaee7f42891a5f4ddfb84177f86146e7a2795b060'
+NEW_MODEL_SHA = '6c862104dc9dd91bcfac43c27271c07b81a2ecefe3f1266bb8a1c4739977ff48'
+NEW_MODEL = HERE / 'models' / 'optimized' / 'LWIR1056_E10_480x384.dxnn'
+
+NEW_650_KEY = 'yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480'
+NEW_650_SOURCE_SHA = '8a0f189049ddb87064d2488e56f61c218be215491e3a8458f47d3711337112ed'
+NEW_650_MODEL_SHA = '5d671a223149d11b9a3a70bb49e5580898bfb19739d27a501b37d4b81ca29576'
+NEW_650_MODEL = HERE / 'models' / 'optimized' / 'LWIR650_E10_480x384.dxnn'
+
+TEMPORAL_KEY = 'yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480'
+TEMPORAL_SOURCE_SHA = 'a245d0f189d8f95d62a38ff38c9e62de31ea6b761adea6378407852db61475bd'
+TEMPORAL_MODEL_SHA = 'a32e9ad8e421142df9988d63098e8e146b758a64732b1d2668203c0b55efecf2'
+TEMPORAL_MODEL = HERE / 'models' / 'optimized' / 'LWIR650_TEMPORAL_E13_480x384.dxnn'
+
+ALLIN_KEY = 'yolo26m_pose_allin_20261121_s1_bodybox_kpt_640x480'   # 11-21: all-data keypoint-box detector (test option)
+ALLIN_SOURCE_SHA = 'bc0f1e0b1fae0a1649d2c84dff962f8c62927481ddbe4c009b72454d40be268c'
+ALLIN_MODEL_SHA = '5d0b044f14aacf5c19b6db273443844781896b23ebe703e6fae9aad28e07baf5'
+ALLIN_MODEL = HERE / 'models' / 'optimized' / 'ALLIN_S1_E10_480x384.dxnn'
+
+ALLIN2_KEY = 'yolo26m_pose_allin2_20261121_s0_bodybox_kpt_640x480'   # 11-21: all-data + seated indoor people (test option)
+ALLIN2_SOURCE_SHA = 'abd1acac8fa1d702a712c7faeceb63e593a78417d90cf77b1049a15bddd8e18b'
+ALLIN2_MODEL_SHA = 'a1a7d80cef1b70a6e29ad4929d02963e1c2fce9e64e60aa82b85c24722fc77e8'
+ALLIN2_MODEL = HERE / 'models' / 'optimized' / 'ALLIN2_S0_E10_480x384.dxnn'
+
+OWN9E_S1_KEY = 'yolo26m_pose_own9e_20261121_s1_bodybox_kpt_640x480'   # 11-22: own labels in model 9's box shape, seed 1 (test option)
+OWN9E_S1_SOURCE_SHA = 'aea2b454bc9c50c90e6d4c763fc604576064eaac09ecca9e8e268b6abb42c749'
+OWN9E_S1_MODEL_SHA = 'e6261f29eeb70863c1352d5cc89d2998d9abe06150317e874706eb3925234db0'
+OWN9E_S1_MODEL = HERE / 'models' / 'optimized' / 'OWN9E_S1_E10_480x384.dxnn'
+
+OWN9Z_S1_KEY = 'yolo26m_pose_own9z_20261122_s1_bodybox_kpt_640x480'   # 11-22: own9e recipe + keypoint-confidence fix (keypoints restored), seed 1 (test option)
+OWN9Z_S1_SOURCE_SHA = '7ceefc962ef5e971c9ae6cbaa6af35affc018ca2331096f2c5d6e0a698e6a16d'
+OWN9Z_S1_MODEL_SHA = '88073a2b14f8cfc73736ea489281513ced46ae65ad3b93197aa809104ba49ded'
+OWN9Z_S1_MODEL = HERE / 'models' / 'optimized' / 'OWN9Z_S1_E10_480x384.dxnn'
+
+
+def selected_profile():
+    detector = getattr(APP.args, 'det', None)
+    manifest = vars(APP).get('man', {})
+    if detector == 'bank:' + KEY and manifest.get(KEY) == SOURCE_SHA:
+        return KEY, MODEL, MODEL_SHA
+    if detector == 'bank:' + TEMPORAL_KEY and manifest.get(TEMPORAL_KEY) == TEMPORAL_SOURCE_SHA:
+        return TEMPORAL_KEY, TEMPORAL_MODEL, TEMPORAL_MODEL_SHA
+    if detector == 'bank:' + NEW_650_KEY and manifest.get(NEW_650_KEY) == NEW_650_SOURCE_SHA:
+        return NEW_650_KEY, NEW_650_MODEL, NEW_650_MODEL_SHA
+    if detector == 'bank:' + NEW_KEY and manifest.get(NEW_KEY) == NEW_SOURCE_SHA:
+        return NEW_KEY, NEW_MODEL, NEW_MODEL_SHA
+    if detector == 'bank:' + ALLIN_KEY and manifest.get(ALLIN_KEY) == ALLIN_SOURCE_SHA:
+        return ALLIN_KEY, ALLIN_MODEL, ALLIN_MODEL_SHA
+    if detector == 'bank:' + ALLIN2_KEY and manifest.get(ALLIN2_KEY) == ALLIN2_SOURCE_SHA:
+        return ALLIN2_KEY, ALLIN2_MODEL, ALLIN2_MODEL_SHA
+    if detector == 'bank:' + OWN9E_S1_KEY and manifest.get(OWN9E_S1_KEY) == OWN9E_S1_SOURCE_SHA:
+        return OWN9E_S1_KEY, OWN9E_S1_MODEL, OWN9E_S1_MODEL_SHA
+    if detector == 'bank:' + OWN9Z_S1_KEY and manifest.get(OWN9Z_S1_KEY) == OWN9Z_S1_SOURCE_SHA:
+        return OWN9Z_S1_KEY, OWN9Z_S1_MODEL, OWN9Z_S1_MODEL_SHA
     return None
 
 
 def selected():
-    return getattr(APP.args, 'det', None) == 'bank:' + KEY and APP.man.get(KEY) == SOURCE_SHA
+    return selected_profile() is not None
+
+
+def assets_reason():
+    profile = selected_profile()
+    if profile is None:
+        return '현재 검출 모델은 한 장 분할을 지원하지 않습니다'
+    _, model, expected = profile
+    if not model.is_file() or not TONE.is_file():
+        return '현재 모델의 분할 가중치 또는 빠른 전처리 파일이 없습니다'
+    try:
+        if sha(model) != expected:
+            return '현재 모델의 분할 가중치 확인값이 다릅니다'
+    except OSError:
+        return '현재 모델의 분할 가중치를 읽을 수 없습니다'
+    return None
 
 
 class Tone:
@@ -429,9 +491,10 @@ class Engine:
         reason = assets_reason()
         if reason:
             raise RuntimeError(reason)
-        self.name, self.core, self.cores, self.depth = 'E10#two-tiles', 0, (0, 1), 1
+        self.key, model, _ = selected_profile()
+        self.name, self.core, self.cores, self.depth = self.key + '#two-tiles', 0, (0, 1), 1
         self.in_shape, self.split6, self.kpt, self.n = (1, H, W, 3), True, True, N * 2
-        self.b = PairBackend(MODEL)
+        self.b = PairBackend(model)
         self.packed = np.empty(0, np.float32)
         self.names = list(self.b.names)
 
@@ -467,12 +530,12 @@ def detect(raw):
 def detect_legacy(raw):
     """Return NMS boxes and set the standard KP cache, preserving tile ownership."""
     global _decode_cache
-    if _decode_cache is None:
-        # The standard NMS consumes 16 classes. All but person are absent
-        # from this model, so their immutable output planes are zero.
-        _decode_cache = (np.zeros((1, 20, N), np.float32),
-                         np.zeros((1, 20, N), np.float32),
-                         np.zeros((1, 20, N * 2), np.float32))
+    person_nms = getattr(APP.native_post, 'fast_nms_person', None)
+    channels = 5 if person_nms is not None else 20
+    if _decode_cache is None or _decode_cache[0].shape[1] != channels:
+        _decode_cache = (np.zeros((1, channels, N), np.float32),
+                         np.zeros((1, channels, N), np.float32),
+                         np.zeros((1, channels, N * 2), np.float32))
     left, right, decoded = _decode_cache
     for out, boxes_, scores_ in ((left, raw[0], raw[1]), (right, raw[3], raw[4])):
         APP.native_post.lib.decode_raw(boxes_, scores_, out, H, TW)
@@ -486,8 +549,7 @@ def detect_legacy(raw):
     right[0, 4:, right[0, 0] < W // 2] = 0
     decoded[:, :, :N] = left
     decoded[:, :, N:] = right
-    person_nms = getattr(APP.native_post, 'fast_nms_person', APP.fast_nms)
-    rows = person_nms(decoded).copy()
+    rows = person_nms(decoded) if person_nms is not None else APP.fast_nms(decoded).copy()
     from . import detect_frame
     person = rows[rows[:, 5] == 0]
     anchors = detect_frame._kp_anchors(decoded[0], person)

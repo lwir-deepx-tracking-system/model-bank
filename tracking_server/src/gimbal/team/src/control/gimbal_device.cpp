@@ -1,4 +1,5 @@
 #include "control/gimbal_device.hpp"
+#include "control/waveshare_pose.hpp"
 
 #include <cerrno>
 #include <chrono>
@@ -14,6 +15,9 @@ namespace {
 class SerialPort {
     int fd_ = -1;
     int timeout_ms_;
+    std::string feedback_line_;
+    bool discard_line_ = false;
+    std::optional<GimbalPose> pose_, pending_pose_;
 public:
     explicit SerialPort(const GimbalConfig& config) : timeout_ms_(config.write_timeout_ms)
     {
@@ -43,6 +47,44 @@ public:
     ~SerialPort() { if (fd_ >= 0) ::close(fd_); }
     SerialPort(const SerialPort&) = delete;
     SerialPort& operator=(const SerialPort&) = delete;
+
+    void reset_feedback() {
+        ::tcflush(fd_, TCIFLUSH);
+        feedback_line_.clear(); discard_line_ = false;
+        pose_.reset(); pending_pose_.reset();
+    }
+
+    std::optional<GimbalPose> receive_pose()
+    {
+        // Bounded nonblocking reads on the existing owner FD. No response wait
+        // or per-frame query may hold up tracking/control output.
+        char bytes[1024];
+        for (int batch = 0; batch < 4; ++batch) {
+            const auto count = ::read(fd_, bytes, sizeof bytes);
+            if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                if (pending_pose_) {
+                    pending_pose_->received_at = std::chrono::steady_clock::now();
+                    pose_ = pending_pose_; pending_pose_.reset();
+                }
+                return pose_;
+            }
+            if (count < 0 && errno == EINTR) continue;
+            if (count <= 0) { reset_feedback(); return std::nullopt; }
+            for (ssize_t i = 0; i < count; ++i) {
+                if (bytes[i] == '\n') {
+                    if (!discard_line_) {
+                        const auto parsed = parse_waveshare_pose(feedback_line_);
+                        if (parsed) pending_pose_ = parsed;
+                    }
+                    feedback_line_.clear(); discard_line_ = false;
+                } else if (!discard_line_) {
+                    if (feedback_line_.size() >= 4096) { feedback_line_.clear(); discard_line_ = true; }
+                    else feedback_line_.push_back(bytes[i]);
+                }
+            }
+        }
+        return pose_; // finish draining next poll before timestamping new samples
+    }
 
     void send(const std::string& json)
     {
@@ -76,6 +118,12 @@ public:
     void move_with_speed(int x, int y, int speed) override { serial_.send(WaveshareCommands::move(config_, x, y, speed)); }
     void stop() override { serial_.send(WaveshareCommands::stop()); }
     void home() override { serial_.send(WaveshareCommands::home(config_)); }
+    void enable_pose_feedback() override {
+        serial_.reset_feedback();
+        serial_.send("{\"T\":142,\"cmd\":100}"); // 10 Hz, feedback only
+        serial_.send("{\"T\":131,\"cmd\":1}");
+    }
+    std::optional<GimbalPose> read_pose() override { return serial_.receive_pose(); }
 };
 }
 std::string WaveshareCommands::move(const GimbalConfig& config, int x, int y)

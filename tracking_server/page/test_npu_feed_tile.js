@@ -17,8 +17,13 @@ const feed = {requested:'arrival', mode:'arrival', active:true, pending:false,
 const ctx = {
   $, rlast:{npu_feed:feed, server_restart:true}, SM:{textContent:''},
   document:{body:{classList:{contains:()=>false}}},
-  fetch:async (url, options) => {sent.push([url, options]);return {json:async()=>({ok:true})};},
-  rtick:async()=>{}, confirm:()=>false, setTimeout, clearTimeout, console,
+  fetch:async (url, options) => {
+    sent.push([url, options]);
+    const mode=new URL(url, 'http://example.test').searchParams.get('mode');
+    if(mode)Object.assign(feed,{requested:mode,mode,pending:false,tile_active:mode==='tile',active:mode==='arrival'});
+    return {json:async()=>({ok:true})};
+  },
+  rtick:async()=>({npu_feed:feed}), performance, AbortSignal, confirm:()=>false, setTimeout, clearTimeout, console,
 };
 vm.createContext(ctx);
 vm.runInContext(fs.readFileSync(path.join(__dirname, 'js/13_system_buttons.js'), 'utf8'), ctx);

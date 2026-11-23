@@ -26,16 +26,19 @@ function syncSystemButtons(){
   const requested=wanted==='arrival', auto=wanted==='auto';
   const switching=feed?.pending===true;
   if(feed&&!switching&&feedChoice===wanted)feedChoice=null;
-  const selectedMode=feedChoice??wanted??'normal';
+  const splitUnavailable=feed&&feed.tile_available!==true&&!feed.tile_active;
+  if(splitUnavailable&&feedChoice==='tile')feedChoice=null;
+  const selectedMode=feedChoice??(splitUnavailable&&wanted==='tile'?feed.mode:wanted)??'normal';
   feedAuto.checked=selectedMode==='auto';
   feedTile.checked=selectedMode==='tile';
   feedToggle.checked=selectedMode==='arrival'||(selectedMode==='auto'&&feed?.active===true);
   feedAuto.disabled=sysbusy||pending||switching||!feed;
-  feedTile.disabled=feedAuto.disabled||(!feed?.tile_available&&selectedMode!=='tile');
-  feedTile.title=feed?.tile_available?'':(feed?.tile_reason||'E10 관절 모델을 선택한 뒤 사용할 수 있습니다');
+  feedTile.disabled=feedAuto.disabled||splitUnavailable;
+  feedTile.title=splitUnavailable?'현재 검출 모델에서 한 장 분할을 사용할 수 없습니다':'';
   feedToggle.disabled=feedAuto.disabled||feedAuto.checked;   // auto chooses the cores itself
   feedApply.disabled=feedAuto.disabled||feed?.can_toggle!==true||
-    (selectedMode===feed.requested&&(selectedMode==='auto'||selectedMode===feed.mode));
+    (selectedMode===feed.requested&&(selectedMode==='auto'||selectedMode===feed.mode))||
+    (splitUnavailable&&wanted==='tile'&&feedChoice===null);
   const mon=feed?.auto, per=mon?.period;   // 11-16: measured detection time against the camera period (also when auto is off)
 
   let state='상태를 확인하는 중…';
@@ -45,9 +48,10 @@ function syncSystemButtons(){
     if(switching)state='전환 중 · '+state;
     else{
       if(auto)state='자동 · '+state+(mon?(mon.why?' · '+mon.why:''):' · 자동 선택 멈춤 (서버 기록 참고)');   // 11-16: no monitor = the rule stopped (error) or the feed turned itself off
-      else if(wanted==='tile'&&!feed.tile_active)state='분할 검출 준비 대기 · '+state;
+      else if(splitUnavailable)state+=' · 현재 검출 모델은 한 장 분할을 사용할 수 없음';
+      else if(wanted==='tile'&&!feed.tile_active)state='분할 선택됨 · '+state;
       else if(wanted!=='tile'&&requested!==feed.active)state=(requested?'켜기':'끄기')+' 설정됨 · '+state;
-      if(feed.reason)state+=' · '+feed.reason;
+      if(feed.reason&&!(splitUnavailable&&feed.reason.includes('E10 관절 모델')))state+=' · '+feed.reason;
     }
     if(per?.state)state+=' · '+per.text;
   }

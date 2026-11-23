@@ -12,6 +12,7 @@ start of the next step (refresh candidates then exclude IDs awaiting a decision,
 pending IDs this gives exactly the synchronous result. numpy only (runs on the M1 host and on the PC)."""
 from collections import deque
 import numpy as np
+from .cos_map import cmap as _cmap
 THR, LOST_MAX, GATE_H, GATE_PER10, HR, WAIT, KEEP, MIN_H = 0.596, 90, 3.5, 1.0, (0.5, 2.0), 3, 5, 32.0
 # 11-14 (user, object-permanence reel): growing search range centred on the PREDICTED place. radius = last height x min(SR_BASE + SR_GROW x lost frames, SR_MAX);
 # velocity = mean centre shift per frame over the last seen frames (at most SR_VMAX heights per frame). Shared with the overlay (track/position_memory.py).
@@ -116,7 +117,7 @@ class OnlineRelabel:
                     d = ((cx - (lb[0] + lb[2]) / 2) ** 2 + (cy - (lb[1] + lb[3]) / 2) ** 2) ** 0.5
                     if d > GATE_H * lh + GATE_PER10 * lh * el / 10.0:
                         continue
-                gm = np.mean(g, 0); gm /= max(float(np.linalg.norm(gm)), 1e-12); s = float(f @ gm)
+                gm = np.mean(g, 0); gm /= max(float(np.linalg.norm(gm)), 1e-12); s = _cmap(float(f @ gm))   # 11-20: per-model cosine map (reid/cos_map.py)
                 if s >= THR:
                     pairs.append((s, bid, oid))
         used_b, used_o = set(), set()

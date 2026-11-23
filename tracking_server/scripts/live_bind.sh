@@ -22,7 +22,11 @@ lwir_live_bind() {
       if [ -n "$address" ]; then
         printf '%s\n' "$address"
       else
-        lwir_live_lan_bind
+        # 11-22: neither Tailscale nor an assigned LAN address (the internet and Tailscale are gone, no cable): the loopback listener keeps the
+        # server startable and readable by keepalive.sh; the direct-cable listeners and the remembered Tailscale address are opened by the server itself
+        # (src/web/direct_listeners.py, IP_FREEBIND), so they answer as soon as their address appears, without a restart.
+        address=$(lwir_live_lan_bind)
+        printf '%s\n' "${address:-127.0.0.1}"
       fi
       ;;
     lan) lwir_live_lan_bind ;;

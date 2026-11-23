@@ -23,11 +23,15 @@ struct ControlSnapshot {
     std::uint64_t command_generation = 0;
     double pan_estimate = 50.0;
     double tilt_estimate = 50.0;
+    std::optional<GimbalPose> pose;
 };
 
 // One worker owns device I/O and every mutable control decision. GUI requests
 // complete only after execution; computed AUTO moves are never queued for replay.
 class GimbalCommandExecutor {
+public:
+    enum class FollowLifetime { Session, Web };
+private:
     using Clock = std::chrono::steady_clock;
     ControlConfig config_;
     SmoothingConfig smoothing_;   // v27
@@ -63,6 +67,7 @@ class GimbalCommandExecutor {
     std::uint64_t lead_after_frame_ = 0; // A fresh selection cannot reuse the previous selection's forecast.
     std::uint64_t tracker_epoch_ = 0;
     bool connected_ = false;
+    bool persistent_web_follow_ = false; // worker-owned; set only by an accepted web selection
     bool stopped_ = false;
     Clock::time_point ping_{}, lost_since_{}, last_output_{}, next_auto_{};
     int x_ = 0, y_ = 0, sent_speed_ = 0;
@@ -105,9 +110,11 @@ class GimbalCommandExecutor {
     void tick(bool arrival = false);   // v27: arrival = called for a newly taken-in frame (SmoothingConfig::arrival_control)
     bool apply_predictive_brake(const Track&, const GimbalDemand&, const TrackLead&);
     bool alive() const;
+    bool heartbeat_allows_control() const;
     bool ready() const;
     bool fresh() const;
     const Track* target(std::uint32_t, bool* present = nullptr) const;
+    ControlResult bind_target(std::uint32_t id, FollowLifetime lifetime);
     void invalidate(const char* reason);
     void stop(const char* reason);
     void failure(const std::exception&);
@@ -135,11 +142,13 @@ public:
     void connected();
     void disconnected();
     void ping();
-    ControlResult select(std::uint32_t id);
+    ControlResult select(std::uint32_t id, FollowLifetime lifetime = FollowLifetime::Session);
+    ControlResult handoff(std::uint32_t old_id, std::uint64_t epoch, std::uint32_t id, std::uint64_t frame);
     ControlResult manual();
     ControlResult home(); // submit absolute home angles; no physical-arrival acknowledgement
     void halt(); // cancel AUTO and stop manual motion (unsupported HOME, etc.)
     void move(int x, int y);
+    void release_manual(); // browser key/drag release; never an AUTO override
     void suspend(); // model switch: cancel authority but keep the TCP session alive
     void shutdown();
     ControlSnapshot snapshot();

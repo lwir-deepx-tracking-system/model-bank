@@ -103,29 +103,20 @@ function pfSchedule(pipeline){
   chart.hidden=replay||!valid;
   status.hidden=!chart.hidden;
   if(chart.hidden){
-    status.textContent=replay ? '녹화 재생 중에는 실시간 시간표를 표시하지 않습니다.'
-      : Array.isArray(data) ? '실시간 프레임 측정 대기 중' : '프레임별 실측 데이터 없음';
+    status.textContent=replay ? '녹화 재생 중'
+      : Array.isArray(data) ? '측정 대기' : '측정 데이터 없음';
     return;
   }
-  const intervals=frames.slice(1).map((frame,i)=>{
-    const prev=frames[i], start=prev[2], duration=frame[2]-start;
-    return {pair:(i+1)+' → '+(i+2), start, duration,
-            output:duration<0?'순서 역전':duration.toFixed(1)+' ms'};
-  });
-  $('pf-schedule-output').hidden=intervals.length===0;
+  // Keep the wire timestamps intact; each row starts at its own server receipt.
+  const relative=frames.map(([receive,detect,track])=>[0,detect-receive,track-receive]);
   const cores=Array.isArray(pipeline.frame_schedule_npu) ? pipeline.frame_schedule_npu : [];
-  const last=Math.max(...frames.map(row=>row[2]));
-  const limit=Math.max(20,Math.ceil(last/20)*20);
+  const last=Math.max(...relative.map(row=>row[2]));
+  const limit=Math.max(40,Math.ceil(last/20)*20);
   const pct=value=>String(value/limit*100)+'%';
-  $('pf-schedule-output-rows').innerHTML=intervals.map(({pair,start,duration,output})=>{
-    const bar=duration>=0 ? '<i class="pf-schedule-output-bar" style="left:'+pct(start)
-      +';width:'+pct(duration)+'"></i>' : '';
-    return '<li class="pf-schedule-frame pf-schedule-output-row"><span>'+pair+'<b>'+output
-      +'</b></span><div class="pf-schedule-lane" aria-hidden="true">'+bar+'</div></li>';
-  }).join('');
+  chart.style.setProperty('--pf-schedule-goal',pct(1000/30));
   $('pf-schedule-axis').innerHTML='<div><span>0</span><span>'+limit/2+'</span><span>'+limit+' ms</span></div>';
   const stages=[['received','수신'],['detect','탐지'],['track','추적']];
-  $('pf-schedule-frames').innerHTML=frames.map((frame,i)=>{
+  $('pf-schedule-frames').innerHTML=relative.map((frame,i)=>{
     const [receive, detect, track]=frame;
     const segment=(stage,start,end)=>'<i class="pf-schedule-bar pf-schedule-'+stage
       +'" style="left:'+pct(start)+';width:'+pct(end-start)+'"></i>';
@@ -150,11 +141,11 @@ function pfpipe(){
   const tracked=liveData&&Number.isFinite(p.track_p95_ms);
   const target=$('pf-goal-status');
   $('pf-track-p95').textContent=tracked?fmt(p.track_p95_ms,'ms'):'–';
-  target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms · 집계 대기 중';
+  target.textContent=tracked?'목표 '+goal+' ms · '+(p.track_p95_ms<=goal?'충족':'초과'):'목표 '+goal+' ms · 집계 대기';
   target.dataset.met=String(tracked&&p.track_p95_ms<=goal);
   const samples=Number.isFinite(p.sample_count)?p.sample_count:0;
-  $('pf-pipe-samples').textContent=samples?'p95 표본 '+samples.toLocaleString()+'장':'p95 표본 집계 중';
-  $('pf-p95-samples').textContent=tracked?'추적 완료 '+samples.toLocaleString()+'장 표본':'표본 집계 중';
+  $('pf-pipe-samples').textContent=samples?'표본 '+samples.toLocaleString()+'장':'표본 집계 중';
+  $('pf-p95-samples').textContent=tracked?'표본 '+samples.toLocaleString()+'장':'표본 집계 중';
   $('pf-input-label').textContent=replay?'재생 입력':'카메라 입력';
   $('pf-input-fps').textContent=liveData?fmt(p.camera_fps_5s,'FPS'):'–';
   $('pf-track-fps').textContent=liveData?fmt(p.track_fps_5s,'FPS'):'–';

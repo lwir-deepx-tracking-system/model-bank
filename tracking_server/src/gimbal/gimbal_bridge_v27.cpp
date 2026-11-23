@@ -47,8 +47,11 @@
 //   PRED <track id> <x> <y> <w> <h> (--coast 1), SEEK <track id> <x> <y> <w> <h> (--seek 1), VEL <track id> <vx> <vy> (--search 1)
 //   and OBS <0|1> suffixes in either order. OBS 1 indicates a validated live observation.
 //   Malformed suffixes cannot enable observation grace.
-//   P              heartbeat of the web page. The first one opens the session. Without one for --heartbeat-ms the executor stops the gimbal and drops the selection
-//   A <id>         follow this ID
+//   P              web heartbeat: opens a control session and keeps manual movement alive.
+//                  An explicit W web AUTO selection outlives P; camera, recovery and control faults still stop it.
+//   A <id>         follow this ID within the heartbeat session
+//   W <id>         follow this ID beyond browser heartbeat expiry
+//   J <old> <epoch> <new> <frame>  confirm a handoff on its exact observed frame
 //   M              stop following, keep an ongoing manual move
 //   V <x> <y>      manual move, each -1, 0 or 1 (+x right, +y up). V 0 0 = key released
 //   H              stop following and stop moving
@@ -711,10 +714,27 @@ public:
         else if (kind == "G") frame_with_picture(in);
         else if (kind == "O") frame_with_picture(in, false);
         else if (kind == "P") heartbeat();
-        else if (kind == "A") {
+        else if (kind == "A" || kind == "W") {
             long long id = -1;
             in >> id;
-            say(std::string("R A ") + answer(id > 0 && id <= 0xffffffffLL ? executor_.select(static_cast<std::uint32_t>(id)) : ControlResult::InvalidTarget));
+            const auto lifetime = kind == "W" ? GimbalCommandExecutor::FollowLifetime::Web : GimbalCommandExecutor::FollowLifetime::Session;
+            say("R " + kind + " " + answer(id > 0 && id <= 0xffffffffLL ? executor_.select(static_cast<std::uint32_t>(id), lifetime) : ControlResult::InvalidTarget));
+        }
+        else if (kind == "J") {
+            std::uint32_t old_id = 0, id = 0;
+            std::uint64_t epoch = 0, frame = 0;
+            std::string old_text, epoch_text, id_text, frame_text, spare;
+            const bool parsed = (in >> old_text >> epoch_text >> id_text >> frame_text) && !(in >> spare) &&
+                parse_token(old_text, old_id) && parse_token(epoch_text, epoch) && parse_token(id_text, id) &&
+                parse_token(frame_text, frame) && old_id && id && frame;
+            const auto result = parsed ? executor_.handoff(old_id, epoch, id, frame) : ControlResult::InvalidTarget;
+            say(std::string("R J ") + answer(result) + " " + std::to_string(old_id) + " " + std::to_string(epoch) +
+                " " + std::to_string(id) + " " + std::to_string(frame));
+            if (result == ControlResult::Ok) {
+                const auto current = executor_.snapshot();
+                say("CONTROL_EPOCH " + std::to_string(current.command_generation));
+                say(state_line(current));
+            }
         }
         else if (kind == "M") say(std::string("R M ") + answer(executor_.manual()));
         else if (kind == "N") {   // the tracker finished a model change the PC GUI asked for
@@ -723,7 +743,10 @@ public:
         }
         else if (kind == "V") {
             int x = 0, y = 0;
-            if (in >> x >> y) executor_.move(x, y);
+            if (in >> x >> y) {
+                if (x || y) executor_.move(x, y);
+                else executor_.release_manual();
+            }
         }
         else if (kind == "C") say(std::string("R C ") + answer(executor_.home()));
         else if (kind == "H") {
@@ -785,6 +808,7 @@ int main(int argc, char** argv) try {
     if (pictures) say("PICTURE_LANE 1");
     say("TRACK_CONTROL 1");
     say("HOME_CONTROL 1");
+    say("WEB_FOLLOW_CONTROL 1");
     say("LEAD_CONTROL 1");
     say("OBSERVATION_STATUS 1");
     if (options.smoothing.search) say("SEARCH_CONTROL 1");
@@ -799,6 +823,7 @@ int main(int argc, char** argv) try {
     std::vector<char> buffer(262144);
     auto next_status = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     auto next_position = std::chrono::steady_clock::now();
+    auto reported_pose = std::chrono::steady_clock::time_point{};
     bool input_open = true;
     while (!stop_signal && input_open) {
         if (gui_gated) {   // before the input of this round: a picture that is already on its way is used or dropped by the same rule
@@ -838,6 +863,12 @@ int main(int argc, char** argv) try {
         if (snapshot.search != reported_search) { say("SEARCH " + std::to_string(snapshot.search)); reported_search = snapshot.search; }
         const auto now = std::chrono::steady_clock::now();
         if (!snapshot.error && now >= next_position) {
+            if (snapshot.pose && snapshot.pose->received_at != reported_pose &&
+                now - snapshot.pose->received_at < std::chrono::milliseconds(1000)) {
+                say("POSE " + std::to_string(snapshot.pose->pan) + " " + std::to_string(snapshot.pose->tilt) +
+                    " -180 180 -90 90");
+                reported_pose = snapshot.pose->received_at;
+            }
             say("POSITION_EST " + std::to_string(snapshot.pan_estimate) + " " + std::to_string(snapshot.tilt_estimate));
             next_position = now + std::chrono::milliseconds(250);
         }

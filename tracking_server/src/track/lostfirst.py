@@ -6,6 +6,7 @@ from ..common.shared_values import LOST, PERSON_CLS, REMOVED, TRACKED
 from .bytetrack import ByteTrackTracker
 from .position_memory import pos_predict
 from .tracker_common import Track, edge_ok, iou_dist, linear_assignment
+from ..reid.cos_map import cmap as _cmap
 
 
 class LostFirstTracker(ByteTrackTracker):
@@ -90,7 +91,7 @@ class LostFirstTracker(ByteTrackTracker):
                 for a, i in enumerate(lost_f):
                     for b, j in enumerate(cand_f):
                         if self._gate_ok(pool[i], dets[j]) is None: continue
-                        s = float(pool[i].feat @ dets[j].det_feat)
+                        s = _cmap(float(pool[i].feat @ dets[j].det_feat))   # 11-20: per-model cosine map (reid/cos_map.py)
                         if s >= self.sim: cost[a, b] = 1.0 - s
                 mm, _, _ = linear_assignment(cost, 0.999); tk, dk = set(), set()
                 for a, b in mm:
@@ -116,7 +117,7 @@ class LostFirstTracker(ByteTrackTracker):
                     if not self.app: cost[a, b] = 0.5 * rel
                     elif t.feat is None or df is None: cost[a, b] = 0.8 + 0.19 * rel
                     else:
-                        s = float(t.feat @ df)
+                        s = _cmap(float(t.feat @ df))   # 11-20: per-model cosine map (reid/cos_map.py)
                         if s >= self.sim: cost[a, b] = 1.0 - s
             mm, _, _ = linear_assignment(cost, 0.999); tk, dk = set(), set()
             for a, b in mm:

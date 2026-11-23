@@ -8,6 +8,8 @@
 struct Device : IGimbalDevice {
     std::atomic<int> stops{0}, homes{0};
     bool fail_home = false;
+    std::optional<GimbalPose> reported_pose;
+    std::optional<GimbalPose> read_pose() override { return reported_pose; }
     void move(int, int) override {}
     void stop() override { ++stops; }
     void home() override {
@@ -25,10 +27,15 @@ int main() {
     auto* recorded = device.get();
     GimbalCommandExecutor executor(config, std::move(device), runtime);
     assert(executor.home() == ControlResult::NotReady && recorded->homes == 0);
+    recorded->reported_pose = GimbalPose{30, -15, std::chrono::steady_clock::now()};
+    const auto measured = executor.snapshot().pose;
+    assert(measured && measured->pan == 30 && measured->tilt == -15);
     executor.connected();
     executor.move(1, 0);
     const auto before = recorded->stops.load();
     assert(executor.home() == ControlResult::Ok);
+    assert(executor.snapshot().pose->received_at == measured->received_at);
+    assert(executor.snapshot().pose->pan == 30); // submitting Home never fakes a measured zero
     assert(recorded->stops == before + 1 && recorded->homes == 1);
     auto state = executor.snapshot();
     assert(!state.automatic && state.selected_id == 0 && state.moving);
@@ -53,6 +60,32 @@ int main() {
     assert(!state.automatic && !state.selected_id && state.moving);
     std::this_thread::sleep_for(std::chrono::milliseconds(160));
     assert(!executor.snapshot().moving); // heartbeat still stops an absolute move
+    executor.connected();
+    // Explicit web selections survive browser heartbeat loss, while Home does not.
+    executor.publish(result, true);
+    executor.snapshot();
+    assert(executor.select(7, GimbalCommandExecutor::FollowLifetime::Web) == ControlResult::Ok);
+    executor.snapshot();
+    std::this_thread::sleep_for(std::chrono::milliseconds(160));
+    assert(executor.snapshot().automatic);
+    executor.release_manual();
+    assert(executor.snapshot().automatic); // a page key-release cannot override AUTO
+    auto next_frame = std::make_shared<FrameContext>(*frame);
+    next_frame->metadata.frame_id = 2;
+    next_frame->metadata.captured_at = std::chrono::steady_clock::now();
+    auto next_result = std::make_shared<TrackingResult>();
+    next_result->frame = next_frame;
+    person.track_id = 8;
+    next_result->tracks.push_back(person);
+    executor.publish(next_result, true);
+    executor.snapshot();
+    const auto epoch = executor.snapshot().command_generation;
+    assert(executor.handoff(7, epoch + 1, 8, 2) == ControlResult::NotReady);
+    assert(executor.handoff(7, epoch, 8, 1) == ControlResult::InvalidTarget);
+    assert(executor.handoff(7, epoch, 8, 2) == ControlResult::Ok);
+    assert(executor.snapshot().selected_id == 8);
+    executor.halt();
+    assert(!executor.snapshot().automatic && !executor.snapshot().moving);
     executor.connected();
     recorded->fail_home = true;
     assert(executor.home() == ControlResult::NotReady);

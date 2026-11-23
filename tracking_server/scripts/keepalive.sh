@@ -138,10 +138,20 @@ crash_note() {   # reason + last lines of the dying server for the record
   { echo "=== $(date '+%F %T') up=$(up) $1"; tail -n 4 "$T/real_gui_1.out" 2>/dev/null | cut -c1-200; grep -v CAMFPS "$T/real_gui_1/cam_pipe.log" 2>/dev/null | tail -n 3; } >> "$CRASHLOG"
 }
 
+# 11-22: lwir_netd (offline helper, see run_real_gui.sh) is separate from the server: start it when it is not running (its own lock keeps it to one copy)
+netd_ensure() {
+  [ "${LWIR_NETD:-1}" = 0 ] && return 0
+  [ -f "$T/src/net/netd.py" ] || return 0
+  pgrep -f 'python3 -B -m src[.]net[.]netd' > /dev/null && return 0
+  (cd "$T" && exec setsid nohup python3 -B -m src.net.netd >> "$H/lwir_netd.log" 2>&1 < /dev/null) &   # exec: no idle copy of this script stays behind as its parent
+  log "lwir_netd started"
+}
+
 log "keepalive v2 started (pid $$)"
 fails=0; gbfails=0; hung=0; restarts=(); previous_replay_frames=; frozen_said=-100000   # frozen_said (11-15): uptime of the last "no reboot: frozen" line
 while true; do
   sleep 5
+  netd_ensure
   if [ -e "$PAUSE" ]; then fails=0; gbfails=0; hung=0; previous_replay_frames=; continue; fi
   reason=""; reboot=0
   replay_frames=

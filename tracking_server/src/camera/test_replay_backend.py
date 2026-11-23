@@ -22,7 +22,7 @@ from unittest.mock import Mock, patch
 
 from ..common.state import APP
 from ..track import gt_score, replay_backends, replay_metrics
-from . import replay_eval, replay_link
+from . import replay_eval, replay_link, replay_box_contract
 
 PNG_HEAD = (b'\x89PNG\r\n\x1a\n' + (13).to_bytes(4, 'big') + b'IHDR' + (640).to_bytes(4, 'big') + (480).to_bytes(4, 'big')
             + bytes([8, 0, 0, 0, 0]) + b'\x00\x00\x00\x00')   # the first 33 bytes of an 8-bit 640x480 PNG: all the recording list reads
@@ -59,6 +59,11 @@ def make_recording(root, name, frames=FRAMES, labels=LABELS):
     if labels:
         (folder / 'tracks_edited_mot.txt').write_text(labels, encoding='utf-8')
         (folder / 'review_state.json').write_text(json.dumps(dict(reviewed=list(range(1, frames + 1)), removed=[])), encoding='utf-8')
+    lab = replay_eval.load_labels(str(folder), name)
+    contract = dict(schema=replay_box_contract.SCHEMA, recording=name, human_reviewed=True,
+                    source_mot_sha256=lab['label_sha256'], source_review_sha256=lab['review_sha256'],
+                    source_box_definition=replay_box_contract.UPPER, box_definition=replay_box_contract.UPPER)
+    (folder / replay_box_contract.SIDECAR).write_text(json.dumps(contract), encoding='utf-8')
     return folder / 'images'
 
 
@@ -67,7 +72,7 @@ def write_stored(tracks_root, name, key, text=STORED, frames=FRAMES, **changes):
     folder.mkdir(parents=True, exist_ok=True)
     raw = text.encode('utf-8')
     (folder / (key + '.mot.txt')).write_bytes(raw)
-    meta = dict(label='MOTIP', what='test fixture', status='complete_range', error=None, frames_processed=frames, first_processed=1,
+    meta = dict(model_key='yolo26m_pose_ft16v8_aug_e10_bodybox_provisional_kpt_640x480', label='MOTIP', what='test fixture', status='complete_range', error=None, frames_processed=frames, first_processed=1,
                 last_processed=frames, covers_whole_sequence=True, sequence_total=frames, png_first=1, png_last=frames,
                 source_wh=[640, 480], rows=len(text.splitlines()), mot_sha256=hashlib.sha256(raw).hexdigest(),
                 settings=dict(DET_THRESH=0.3), timing_ms=dict(seconds_per_frame_mean=2.0))
@@ -120,9 +125,10 @@ class Fixture(unittest.TestCase):
                        sys_lock=threading.Lock(), cam_lock=threading.Lock())
         self.thread = Mock()
         args = NS(replay_root=str(self.root), replay_tracks_root=str(self.tracks) if self.tracks_option else '',
-                  measure_dir='', live_wait=0, live_cam='camera', replay_bytetrack_library='')
+                  measure_dir='', live_wait=0, live_cam='camera', replay_bytetrack_library='',
+                  det='bank:yolo26m_pose_ft16v8_aug_e10_bodybox_provisional_kpt_640x480')
         for item in (patch.dict(vars(APP), LIVE=self.live, args=args, lv_th=NS(Thread=self.thread), out=self.out,
-                                LIVE_W=640, LIVE_H=480),
+                                LIVE_W=640, LIVE_H=480, det_names=[args.det.removeprefix('bank:')], man={}),
                      patch.dict(replay_link._C, t=-1e9, items=[], root=None),
                      patch.dict(replay_link._T, t=-1e9, key=None, items=None, found={}, sigs={}),
                      patch.object(replay_link, 'available_bytetrack_library', return_value=None),

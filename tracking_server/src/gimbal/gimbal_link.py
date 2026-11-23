@@ -1,4 +1,5 @@
 """짐벌 연결: 짐벌 프로그램(gimbal_bridge) 띄우기와 지켜보기, 명령·프레임 보내기, 따라갈 사람의 예측 제어."""
+from . import follow_log   # 11-22
 import math
 import os
 import select
@@ -101,6 +102,9 @@ def _reset_bridge_lead(gb):
     gb.state['picture_transport'] = 'shared'
     gb.home_control_supported = False
     gb.lead_control_supported = False
+    gb.web_follow_control_supported = False
+    gb.state['web_follow_persistent'] = False
+    gb.handoff_proposal = gb.handoff_pending = None
     gb.lead_pending = 0
     gb.selection_ack_wait_state = False
     gb.control_epoch = None
@@ -121,8 +125,10 @@ def gb_send(line_):
     with APP.GB.wcond:
         if not APP.GB.wopen: return False
         if (line_ == 'H' and getattr(APP.GB, 'track_control_supported', False)
-                and (getattr(APP.GB, 'lead_pending', 0) or getattr(APP.GB, 'selection_ack_wait_state', False))):
-            # A followed by plain H in one batch can leave the bridge idle without an S change.
+                and (getattr(APP.GB, 'web_follow_control_supported', False) or getattr(APP.GB, 'lead_pending', 0)
+                     or getattr(APP.GB, 'selection_ack_wait_state', False))):
+            # Persistent follow has no browser expiry to fall back on. Explicit H must
+            # bypass a full queue and discard all pending selection/motion work.
             from .live_tracks import stop_with_ack_locked
             stop_with_ack_locked(APP.GB)
             return True
@@ -256,12 +262,14 @@ def gb_reader(p_):
                 if p_ is APP.GB.proc and APP.GB.wopen and getattr(p_, '_picture_lane', None) is not None:
                     APP.GB.picture_lane_supported = True
                     APP.GB.state['picture_transport'] = 'separate'
-        elif f_[0] in ('TRACK_CONTROL', 'HOME_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS', 'SEARCH_CONTROL',
-                       'COAST_CONTROL', 'SEEK_CONTROL', 'BOUNDED_SEEK_CONTROL') and f_[1:] == ['1']:
+        elif f_[0] in ('TRACK_CONTROL', 'HOME_CONTROL', 'LEAD_CONTROL', 'OBSERVATION_STATUS', 'SEARCH_CONTROL', 'COAST_CONTROL', 'SEEK_CONTROL', 'BOUNDED_SEEK_CONTROL', 'WEB_FOLLOW_CONTROL') and f_[1:] == ['1']:
             with APP.GB.wcond:
                 if p_ is APP.GB.proc and APP.GB.wopen:
                     if f_[0] == 'TRACK_CONTROL': APP.GB.track_control_supported = True
                     elif f_[0] == 'HOME_CONTROL': APP.GB.home_control_supported = True
+                    elif f_[0] == 'WEB_FOLLOW_CONTROL':
+                        APP.GB.web_follow_control_supported = True
+                        APP.GB.state['web_follow_persistent'] = os.environ.get('LWIR_WEB_FOLLOW_PERSISTENT') == '1'
                     elif f_[0] == 'LEAD_CONTROL': APP.GB.lead_control_supported = True
                     elif f_[0] == 'SEARCH_CONTROL': APP.GB.search_control_supported = True   # 11-15: bridge started with --search 1
                     elif f_[0] == 'COAST_CONTROL': APP.GB.coast_control_supported = True   # 11-15: bridge started with --coast 1 (PRED suffix)
@@ -286,7 +294,17 @@ def gb_reader(p_):
         elif f_[0] == 'R' and len(f_) >= 3:
             with APP.GB.wcond:
                 if p_ is not APP.GB.proc: continue
-                if f_[1] == 'A':
+                if f_[1] == 'J':
+                    gb = APP.GB
+                    pending = getattr(gb, 'handoff_pending', None)
+                    if pending is not None and tuple(f_[3:]) == tuple(map(str, pending[0][:4])):
+                        if f_[2] == 'OK':
+                            gb.handoff_pending = (pending[0], True)
+                        else:
+                            gb.handoff_pending = None
+                            gb.lead_pending = max(0, getattr(gb, 'lead_pending', 0) - 1)
+                    continue
+                if f_[1] in ('A', 'W'):
                     APP.GB.lead_pending = max(0, getattr(APP.GB, 'lead_pending', 0) - 1)
                     if f_[2] == 'OK':
                         APP.GB.selection_ack_wait_state = True
@@ -302,10 +320,14 @@ def gb_reader(p_):
             with APP.GB.wcond:
                 if p_ is not APP.GB.proc: continue
                 state = APP.GB.state
+                follow_log.state(APP.GB, tuple(state.get(key, 0) for key in ('auto', 'lost', 'error', 'id')), (auto, lost, error, track_id))   # 11-22
                 if (auto, lost, error, track_id) != tuple(state.get(key, 0) for key in ('auto', 'lost', 'error', 'id')):
                     reset_lead()
                     APP.GB.wframe = without_lead(APP.GB.wframe)
                 state.update(auto=auto, lost=lost, moving=moving, error=error, id=track_id)
+                if getattr(APP.GB, 'handoff_pending', None) is not None:
+                    from .live_tracks import confirm_handoff
+                    confirm_handoff(APP.GB, auto, track_id)
                 if auto:
                     APP.GB.selection_ack_wait_state = False
             print('GIMBAL', line_.strip(), flush=True)
@@ -398,6 +420,7 @@ def gb_spawn():   # v26: start (or start again) the bridge. A new bridge sends S
 
 def gb_end(p_, why_):   # ask a bridge to end (on SIGTERM it sends STOP and leaves; its input pipe is not closed from here because the writer thread may be inside a write), kill it if it does not
     print('GIMBAL bridge is being restarted:', why_, flush=True)
+    follow_log.cause('bridge_restart')   # 11-22
     with APP.GB.wcond:
         if APP.GB.proc is p_:
             APP.GB.wopen = False; APP.GB.wq.clear(); APP.GB.wframe = None; APP.GB.wcond.notify_all()

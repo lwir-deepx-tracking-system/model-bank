@@ -3,6 +3,7 @@
 The tracker computes boxes/IDs. This adapter only shares those results; it
 does not implement a second tracker or change the camera control law.
 """
+from . import follow_log   # 11-22: why a follow ends
 import math
 import os
 import time
@@ -10,10 +11,11 @@ import time
 import numpy as np
 
 from ..camera import replay_link
-from ..common import frame_math
 from ..common.state import APP
+from ..common import frame_math
+from ..common.identity_trace import record_bridge_observation
 from ..track.stabilizer import stab_people_real
-from . import bounded_seek, follow_guard, native_control, predictive_lead, search_follow
+from . import bounded_seek, close_aim, follow_guard, native_control, predictive_lead, search_follow
 from .gimbal_link import reset_lead, without_lead
 
 
@@ -23,10 +25,10 @@ def current_source():
     if source == ('python',):
         # Keep the actual object alive until the next publication, so an id()
         # reused by Python cannot make a new tracker look like the old one.
-        rl = APP.__dict__.get('relabeler')
-        if getattr(rl, 'compact_ids', False) and APP.__dict__.get('RULES', {}).get('relabel'):
-            # A toggle/reset changes which person the same number identifies.
-            # A stable token avoids comparing the mutable raw/public mapping.
+        rl = vars(APP).get('relabeler')
+        if getattr(rl, 'compact_ids', False) and APP.RULES.get('relabel'):
+            # A toggle/reset changes what the same displayed number means.
+            # Immutable identity token avoids comparing mutable id_map contents.
             return ('python', APP.tracker, rl.public_identity_token)
         return ('python', APP.tracker)
     return source
@@ -39,7 +41,7 @@ def _boundary_locked(gb, source):
     # Drop only queued tracking/motion work, preserving unrelated replies and
     # heartbeats. H must not be lost when the ordinary 64-command queue is full.
     gb.wq = type(gb.wq)(c for c in gb.wq
-                       if c.split(b' ', 1)[0].strip() not in (b'A', b'H', b'V', b'F', b'G'))
+                       if c.split(b' ', 1)[0].strip() not in (b'A', b'W', b'J', b'C', b'H', b'V', b'F', b'G'))
     gb.wframe = None
     gb.observation_barrier = None  # H below already guarantees STOP for this generation.
     gb.observation_ns = 0
@@ -50,8 +52,10 @@ def _boundary_locked(gb, source):
     gb.people_source = source
     gb.people_t = 0.0
     gb.selection_reset = True
+    follow_log.cause('boundary')   # 11-22
     gb.lead_pending = 0
     gb.reentry_tilt = None
+    gb.handoff_proposal = gb.handoff_pending = None
     reset_lead()
     gb.wcond.notify()
 
@@ -121,6 +125,33 @@ def _iou(a, b):
     return i_ / u_ if u_ > 0 else 0.
 
 
+def _propose_handoff(gb, old, new, note, *, counter, guard=None):
+    epoch = getattr(gb, 'control_epoch', None)
+    if epoch is not None and not getattr(gb, 'handoff_pending', None) and old != new:
+        gb.handoff_proposal = (old, epoch, new, gb.frame, note, counter, guard)
+        return True
+    return False
+
+
+def confirm_handoff(gb, auto, track_id):
+    """Apply a proposal only after its matching OK and subsequent bridge state."""
+    p = getattr(gb, 'handoff_pending', None)
+    if p is None or not p[1]:
+        return
+    proposal = p[0]
+    gb.handoff_pending = None
+    gb.lead_pending = max(0, getattr(gb, 'lead_pending', 0) - 1)
+    old, _epoch, new, _frame, note, counter, guard = proposal
+    if not auto or track_id != new or gb.selection_reset:
+        return
+    if guard is not None:
+        instance, decision = guard
+        if getattr(gb, 'fguard', None) is instance and instance.sel == old:
+            instance.accept_retarget(decision)
+    setattr(gb, counter, getattr(gb, counter, 0) + 1)
+    print(note, flush=True)
+
+
 def _handoff_locked(gb, selected, frame_t):
     """Called with gb.wcond held, after gb.people is set for this frame. Returns the id following moved to, else 0."""
     if os.environ.get('LWIR_FOLLOW_HANDOFF') != '1' or search_enabled(gb) or guard_enabled():   # 11-15: a searching gimbal moves the picture; _recatch_locked / _guard_locked replace this rule
@@ -152,6 +183,10 @@ def _handoff_locked(gb, selected, frame_t):
     if best[0] != h['cand']:
         h['cand'], h['cand_t'] = best[0], frame_t
     if frame_t - h['t'] < HANDOFF_MISS_S or frame_t - h['cand_t'] < HANDOFF_HOLD_S or len(gb.wq) >= 62:
+        return 0
+    if getattr(gb, 'web_follow_control_supported', False):
+        _propose_handoff(gb, selected, best[0], 'FOLLOW handoff %d -> %d (IoU %.2f, %.2f s)' %
+                         (selected, best[0], best[1], frame_t - h['t']), counter='handoff_n')
         return 0
     reset_lead()
     gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
@@ -272,6 +307,10 @@ def _recatch_locked(gb, selected, frame_t):
         h['cand'], h['cand_n'] = qid, 0
     h['cand_n'] += 1
     if h['cand_n'] < RECATCH_N or len(gb.wq) >= 62:
+        return 0
+    if getattr(gb, 'web_follow_control_supported', False):
+        _propose_handoff(gb, selected, qid, 'SEARCH re-catch %d -> %d (%.0f px, gate %.0f px, height x%.2f, %.2f s)' %
+                         (selected, qid, d, gate, size, age), counter='recatch_n')
         return 0
     reset_lead()
     gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
@@ -464,7 +503,42 @@ def _bridge_aim_screen_y(gb):
         return .5
 
 
-def _guard_locked(gb, selected, frame_t, correction=None):
+def _preserve_confirmed_follow(gb, g, decision, selected, frame_t, source, owners, namespace, commit):
+    """Consume only this frame's appearance-confirmed proposal, before its transport."""
+    proposal = decision.get('retarget')
+    judge = getattr(APP, 'relabeler', None)
+    if (not isinstance(g, follow_guard.FollowGuardV2) or not g.defer_retarget
+            or getattr(gb, 'fguard', None) is not g or g.sel != selected
+            or not gb.state.get('auto') or int(gb.state.get('id', 0)) != selected
+            or gb.selection_reset or getattr(gb, 'handoff_pending', None) is not None
+            or source is None or source[0] != 'python' or source != current_source()
+            or judge is None or namespace is not getattr(judge, 'id_map', None)
+            or not APP.RULES.get('relabel') or not callable(commit)
+            or not proposal or len(proposal) != 6):
+        return False
+    new, box, stamp, people, counter, forget = proposal
+    if (counter != 'app_swaps' or stamp != frame_t or people is not gb.people
+            or new != decision.get('reselect') or new == selected
+            or any(int(p[0]) == selected for p in gb.people)
+            or sum(int(p[0]) == new for p in gb.people) != 1
+            or len({int(p[0]) for p in gb.people}) != len(gb.people)
+            or new not in owners or namespace.get(owners[new]) != new):
+        return False
+    if not commit(selected, new, namespace):
+        return False
+    gb.people = [(selected if int(p[0]) == new else p[0], *p[1:]) for p in gb.people]
+    raw = owners.pop(new)
+    owners[selected] = raw
+    _record_click_owners(gb, owners, namespace)
+    g.accept_retarget((selected, box, stamp, gb.people, counter, forget))
+    gb.guard_n = getattr(gb, 'guard_n', 0) + 1
+    gb.follow_id_kept = getattr(gb, 'follow_id_kept', 0) + 1
+    gb.handoff_proposal = None
+    decision.update(reselect=0, mask=False, pred=None, phase='track')
+    return True
+
+
+def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
     """Called with gb.wcond held, after gb.people is set for this frame. -> (id to hide from the bridge this frame or 0,
     predicted (cx, cy, w, h) in gb.people coordinates for the PRED suffix or None). follow_guard.py; off unless the bridge
     has --coast 1, LWIR_FOLLOW_GUARD=1 or LWIR_FOLLOW_PREDICT_LOG=1 (log only). The coast part also needs the runtime
@@ -478,6 +552,8 @@ def _guard_locked(gb, selected, frame_t, correction=None):
     want_bounded = os.environ.get('LWIR_COAST_BOUNDED_SEEK') == '1'
     on_seek = seek_supported and not bounded and not want_bounded
     gb.seek_out = gb.seek_raw = None
+    if getattr(gb, 'handoff_pending', None) is not None and selected:
+        return selected, None  # awaiting the bridge; do not reevaluate or follow the disputed old row
     if (not (on_guard or on_coast or on_seek or predict_log_enabled()) or not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0)
             or getattr(gb, 'mover', None) or getattr(gb, 'selection_reset', False) or not getattr(gb, 'people_t', 0.0)):
         previous = getattr(gb, 'fguard', None)
@@ -495,10 +571,23 @@ def _guard_locked(gb, selected, frame_t, correction=None):
         g = gb.fguard = follow_guard.FollowGuardV2(selected) if v2 else follow_guard.FollowGuard(selected, on_guard)
     if v2:
         g.app, g.kal = _appearance, _kalman_box(selected)
-    d = g.step(frame_t, gb.people, _motion)
-    p = d['pred'] or g.pred
-    kal = _kalman_box(selected) if d['mask'] or not any(int(q[0]) == selected for q in gb.people) else None
+    g.defer_retarget = getattr(gb, 'web_follow_control_supported', False)
     fused = on_coast and coast_mode() == 'fused'
+    bounded_on = seek_supported and bounded and want_bounded and fused
+    if v2:
+        view = g.upper_coast_view
+        g.allow_masked_seek = bool(
+            bounded_on and view is not None and view.anchor is not None
+            and 0 < frame_t - view.anchor[0] <= follow_guard.MAX_DT
+            and not (g.bounded_seek is not None and g.bounded_seek.stopped))
+    d = g.step(frame_t, gb.people, _motion)
+    if preserve_follow is not None:
+        preserve_follow(g, d, selected, frame_t)
+    p = d['pred'] or g.pred
+    if d['mask'] and not getattr(g, 'masked_seek_lock', False):
+        kal = _kalman_box(selected)
+    else:
+        kal = _kalman_box(selected) if not d['mask'] and not any(int(q[0]) == selected for q in gb.people) else None
     if fused and on_guard and os.environ.get('LWIR_COAST_UPPER_GUARD') == '1':
         if g.upper_coast_view is None:
             g.upper_coast_view = follow_guard.UpperCoastView()
@@ -519,12 +608,13 @@ def _guard_locked(gb, selected, frame_t, correction=None):
     if seek_supported and bounded and want_bounded and g.upper_coast_view is not None:
         if g.bounded_seek is None:
             g.bounded_seek = bounded_seek.BoundedSeek()
-        if gb.people or d['reselect']:
+        inspect_while_masked = bool(d.get('seek_masked'))
+        if (gb.people or d['reselect']) and not inspect_while_masked:
             if g.trust_t == frame_t and d['phase'] == 'track' and not d['mask'] and not d['reselect']:
                 g.bounded_seek = bounded_seek.BoundedSeek()
             else:
                 g.bounded_seek.cancel()
-        elif not d['mask']:
+        elif not d['mask'] or inspect_while_masked:
             aim = _bridge_aim_y(gb)
             dx, dy = correction if correction is not None else (0., 0.)
             prediction = (p[0] - dx, p[1] - dy, p[2], p[3]) if p is not None else None
@@ -549,6 +639,10 @@ def _guard_locked(gb, selected, frame_t, correction=None):
                          None if p is None else [round(p[0], 1), round(p[1], 1), round(p[3], 1)], int(d['pred'] is not None and on_coast),
                          None if kal is None else [round(kal[0], 1), round(kal[1], 1), round(kal[3], 1)],
                          None if d['pred'] is None else [round(d['pred'][0], 1), round(d['pred'][1], 1)]]
+    if d['reselect'] and g.defer_retarget:
+        _propose_handoff(gb, selected, d['reselect'], 'FOLLOW guard %d -> %d (%s)' %
+                         (selected, d['reselect'], d['why']), counter='guard_n', guard=(g, d['retarget']))
+        return selected, None
     if d['reselect'] and len(gb.wq) < 62:
         reset_lead()
         gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
@@ -599,7 +693,7 @@ def _record_click_owners(gb, raw_owners, namespace):
 
 
 def publish(people, correction, frame_t, raw16, source, blocked=False, *, healthy_live=False,
-            click_owners=None, click_namespace=None):
+            click_owners=None, click_namespace=None, identity_details=None, preserve_follow=None):
     """Publish the same IDs as the drawn boxes, with existing coordinate rules."""
     gb = APP.GB
     if gb is None:
@@ -639,13 +733,28 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
                 # barrier must reach the bridge first, without clearing the selected ID.
                 gb.observation_barrier = f'F {gb.frame} {captured_ns} 0 OBS 0\n'.encode()
         selected = 0 if gb.selection_reset else int(gb.state.get('id', 0))
-        _handoff_locked(gb, selected, frame_t)   # 11-13: LWIR_FOLLOW_HANDOFF=1 only
-        _recatch_locked(gb, selected, frame_t)   # 11-15: bridge --search 1 and LWIR_SEARCH_NEW_ID=1 only
-        hidden, pred = _guard_locked(gb, selected, frame_t, correction)   # 11-15: bridge --coast 1 or LWIR_FOLLOW_GUARD=1 only
+        follow_log.frame(gb, frame_t, selected, gb.people, APP.LIVE_W, APP.LIVE_H)   # 11-22: follow-loss recorder (ring, no output)
+        gb.handoff_proposal = None
+        same_id_search = getattr(getattr(gb, 'fguard', None), 'masked_seek_lock', False)
+        if not same_id_search:
+            _handoff_locked(gb, selected, frame_t)   # 11-13: LWIR_FOLLOW_HANDOFF=1 only
+            _recatch_locked(gb, selected, frame_t)   # 11-15: bridge --search 1 and LWIR_SEARCH_NEW_ID=1 only
+        preserve_ = (lambda g, d, sel, stamp: _preserve_confirmed_follow(
+            gb, g, d, sel, stamp, source, click_owners or {}, click_namespace, preserve_follow)) if healthy and preserve_follow is not None else None
+        hidden, pred = _guard_locked(gb, selected, frame_t, correction, preserve_follow=preserve_)   # 11-15: bridge --coast 1 or LWIR_FOLLOW_GUARD=1 only
+        proposal = gb.handoff_proposal
+        if proposal is not None:
+            hidden, pred = selected, None
         width, height = APP.LIVE_W, APP.LIVE_H
         real, seen = native_control.prepare(gb.people, hidden, correction, selected, float(width), float(height))
         aim_y = _bridge_aim_y(gb)
         aim_screen = _bridge_aim_screen_y(gb) * APP.LIVE_H
+        try:   # 11-21: close person -> the followed row is moved so the bridge aims higher (src/gimbal/close_aim.py, LWIR_CLOSE_AIM / /rules close_aim)
+            real = close_aim.apply(real, selected, aim_y, frame_t, float(height), bool(gb.state.get('auto')))
+        except Exception as error:   # never stop the frame: the unmoved rows go out as before
+            close_aim.reset()
+            if not getattr(gb, 'close_aim_error', None):
+                gb.close_aim_error = repr(error)[:120]; print('CLOSE AIM failed, rows sent unchanged: %s' % gb.close_aim_error, flush=True)
         tilt_hold = False
         if APP.CTL['lead'] and selected and gb.state.get('auto') and aim_y is not None:
             tilt = getattr(gb, 'reentry_tilt', None)
@@ -715,7 +824,25 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
         header = native_control.header(gb.frame, captured_ns, len(real), bool(picture), width, height,
                                        text, marked, healthy, (prediction, bounded, sweep, vel, lead))
         APP.gb_send_frame(header, np.ascontiguousarray(raw16, dtype=np.uint16).tobytes() if picture else b'')
-        return selected
+        if proposal is not None and healthy and gb.wframe is not None and len(gb.wq) < 62:
+            # Publish the exact proof frame before the handoff. The writer/STOP use the same lock.
+            old, expected_epoch, new, expected_frame, *_ = proposal
+            gb.wq.append(without_lead(gb.wframe)); gb.wframe = None
+            gb.wq.append(('J %d %d %d %d\n' % (old, expected_epoch, new, expected_frame)).encode())
+            gb.handoff_pending = (proposal, False)
+            gb.lead_pending = getattr(gb, 'lead_pending', 0) + 1
+            reset_lead()
+        if identity_details is not None:
+            trace_seq = gb.frame
+            trace_state = (gb.state.get('auto', False), gb.state.get('lost', False),
+                           gb.state.get('moving', False))
+    if identity_details is not None:
+        # F/G and any W/J handoff proof are already queued. Do not hold wcond.
+        record_bridge_observation(identity_details, source, trace_seq, trace_state,
+                                  captured_ns, selected, healthy,
+                                  text + (' OBS %d' % healthy if marked else '')
+                                  + prediction + bounded + sweep + vel + lead)
+    return selected
 
 
 def hit_id(people, x, y):
@@ -817,6 +944,9 @@ def click(x, y, *, expected_id=_UNGUARDED_CLICK, expected_ticket=None,
             if gb.wframe is not None:
                 gb.wq.append(without_lead(gb.wframe))
                 gb.wframe = None
-            gb.wq.append(('A %d\n' % target).encode())
+            persistent = (getattr(gb, 'web_follow_control_supported', False)
+                          and os.environ.get('LWIR_WEB_FOLLOW_PERSISTENT') == '1')
+            command = 'W' if persistent else 'A'
+            gb.wq.append(('%s %d\n' % (command, target)).encode())
         gb.wcond.notify()
         return True, ''

@@ -15,6 +15,7 @@ import numpy as np
 from .detect import spec_proposals   # 11-14 research switch prop_fuse
 from .common import settings
 from .common.state import APP
+from .common.identity_trace import IdentityTrace
 from .common import frame_records   # 11-13: compact per-frame records (fewer objects for the garbage collector)
 from .common.live_gc import for_live as live_gc_policy
 from .common.shared_values import (
@@ -36,15 +37,21 @@ from .track.warm_p95 import p95 as warm_p95, MODE as WARM_P95_MODE   # 11-12: sa
 from .common.research_synth import load_synth_plan, apply_synth_plan
 from .detect.zoom_redetect import ZOOM_HW, zoom_candidates, zoom_windows, zoom_pack, zoom_merge
 from .reid.reid_models import reid_catalog, reid_swap
+from .reid import cos_map
 from .common.pc_dry_run import make_mock_dx
 from .common.research_prepare import prepare
 from .detect import model_scan, npu_engine, detect_frame
-from .web import system_buttons, page_handler, page_settings, measure
+from .web import system_buttons, page_handler, page_settings, measure, direct_listeners
+from .web import id_rule_switches   # 2026-11-20: /rules keys nested_dup and track_thr (both default to the behaviour before them)
+from .track import threshold_set
 from .web.pipeline_perf import PipelinePerf
 from .track import camera_motion
+from .track import tracker_common   # 11-20: ASSIGN['cost_first'] page switch
+from .track import merge_split   # 11-20: switches merge_split / pre_capture (merge_split.SW)
 from .camera import replay_tracks
 from .reid import reid_embed
 from .camera import camera_link, replay_eval, stall_diag
+from .camera import cam_autoreset   # 11-22: the camera reset by itself after a frozen camera
 from .camera import temp_ring   # 11-14: --cam-temp (camera temperature map for the skin-temperature labels; off by default)
 from .gimbal import gimbal_link
 from .common import result_summary
@@ -142,6 +149,8 @@ def main():
     ap.add_argument('--live-bind', default='127.0.0.1', help='address of the web page. The page has no password; the default is this device only, give the address of a trusted network to view it from another computer')
     ap.add_argument('--live-lan-bind', type=page_handler.lan_ipv4, default=None,
                     help='optional extra web listener on an RFC1918 or usable IPv4 link-local address; keeps the primary and loopback listeners')
+    ap.add_argument('--live-extra-binds', default=os.environ.get('LWIR_LIVE_EXTRA_BINDS', direct_listeners.DEFAULT_SPECS),
+                    help="11-22: extra web listeners for offline use, 'address/prefix,...' (RFC1918 or link-local only). Each one serves its own network only and is bound with IP_FREEBIND, so a cable plugged later works without a restart. 'off' = none. Default: the direct cable port 10.42.0.1/24 with its link-local fallback 169.254.42.1/16 and the team link 192.168.50.2/24, 192.168.77.2/24")
     ap.add_argument('--live-seconds', type=float, default=600, help='v14: live run length in seconds')
     ap.add_argument('--measure-dir', default='/mnt/lwir_data/results/live_measure', help='v22c: folder for the measurement button files (a YYYYMMDD subfolder per day); the run folder when it cannot be written')
     ap.add_argument('--live-wait', type=float, default=90, help='v21: seconds to wait for the first camera frame; 0 = never give up: the page and the gimbal link stay up with a placeholder picture and the camera is reopened every 180 s until --live-seconds ends')
@@ -276,6 +285,8 @@ def main():
     for item, attr in [('CUSTOM_INTRA_OP_THREADS', 'CUSTOM_INTRA_OP_THREADS_NUM'), ('CUSTOM_INTER_OP_THREADS', 'CUSTOM_INTER_OP_THREADS_NUM')]:
         cfg.set_attribute(getattr(APP.dx.Configuration.ITEM, item), getattr(APP.dx.Configuration.ATTRIBUTE, attr), str(APP.args.ort_threads) if item == 'CUSTOM_INTRA_OP_THREADS' else '1'); cfg.set_enable(getattr(APP.dx.Configuration.ITEM, item), True)
     APP.LIVE = None
+    identity_trace = None
+    live_gc = None
     if APP.args.live_port:
         LiveImages = camera_link.LiveImages
         APP.images = LiveImages()
@@ -312,16 +323,19 @@ def main():
     # ---- v40 (user 11-10): tree page. app = BoT-SORT appearance, lead = 예측 제어 (default OFF, not kept over a restart), warm_prev = Filter numbers kept while 온도 Filter is off
     APP.CTL = dict(app='repvgg', lead=False, lead_ms=150, lv=None, lead_px=0.0, warm_prev=(45000, 0), lead_motion=None)
     APP.REID = dict(lock=md_th.Lock(), req=None, cur=APP.args.relabel or '', last=None, history=[])   # v41: appearance model picked on the page; req is taken by the frame loop between two frames
-    mk_tracker_ = page_settings.mk_tracker_
+    cm_on_, cm_err_ = cos_map.follow(APP.REID['cur'])   # 11-20: cosine map of the start model (identity unless reid/cos_map.TABLES lists it); trackers made later get its gate from the page factory
+    print('COSMAP start %s: %s' % (APP.REID['cur'] or '-', cm_err_ or ('on' if cm_on_ else 'none')), flush=True)
+    mk_tracker_ = threshold_set.factory(page_settings.mk_tracker_)   # 11-20: every tracker of the page factory carries the track_thr choice (default: untouched)
     APP.ctl_state = page_settings.ctl_state
     APP.RULES_PRESETS = [('confirm3', 'ByteTrack'), ('rebind', 'ByteTrack (위치 재결합 켜짐)'),
-                     ('ocsort', 'OC-SORT (가려졌다 나온 사람 위치 보정, 시험 안 함)'), ('botsort', 'BoT-SORT (ByteTrack + 카메라 움직임 보정 + RepVGG_(TMOT,CAMEL) 외형 비교, 시험 안 함)'), ('sort', 'SORT (가장 단순: Kalman + 겹침만, 놓치면 바로 새 번호, 시험 안 함)')]   # v31: AltTracker. v36: BoT-SORT and SORT in, C-BIoU off the list (user 11-10)
+                     ('ocsort', 'OC-SORT (가려졌다 나온 사람 위치 보정, 시험 안 함)'), ('botsort', 'BoT-SORT (ByteTrack + 카메라 움직임 보정 + 외형 비교: 외형 모델 줄에서 고른 모델, 시험 안 함)'), ('sort', 'SORT (가장 단순: Kalman + 겹침만, 놓치면 바로 새 번호, 시험 안 함)')]   # v31: AltTracker. v36: BoT-SORT and SORT in, C-BIoU off the list (user 11-10). 11-20: the BoT-SORT text no longer names one fixed appearance model (it uses the model picked on the page, GET /rules 'reid')
     APP.rules_state = page_settings.rules_state
     APP.rules_state0_ = APP.rules_state   # stab: stab / stab_px next to the v24g fields
     APP.rules_state = page_settings.rules_state_2
     APP.rules_request = page_settings.rules_request
     APP.rules_request0_ = APP.rules_request   # stab: the 'stab' key is taken here, every other key goes to the v24g parser unchanged
     APP.rules_request = page_settings.rules_request_2
+    id_rule_switches.install(APP)   # 11-20: nested_dup, track_thr in front of the parsers above
     APP.MODEL_TEXT = {0: '바뀜', 1: '없는 모델 번호', 2: '다른 변경이 진행 중', 3: '모델을 만들지 못함', 4: '실패해서 이전 모델로 되돌림', 5: '되돌리기도 실패', 6: '준비 안 됨'}
     APP.model_state = page_settings.model_state
     APP.model_request = page_settings.model_request
@@ -330,7 +344,9 @@ def main():
     if APP.SEL_ON:
         try: sv_ = json.loads(APP.SEL_FILE.read_text(encoding='utf-8'))
         except (OSError, ValueError): sv_ = {}
-        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('det', 'tracker', 'engine', 'relabel', 'predictor', 'pred_show', 'prop_show', 'warm_min', 'warm_max', 'edge_birth', 'edge_px', 'app', 'lead', 'lead_ms', 'reid', 'confirm_ms', 'auto_det', 'auto_det_p', 'pose_box', 'resident_det', 'box_refine', 'box_blend', 'lost_same') if k_ in sv_})
+        if isinstance(sv_, dict): APP.SEL.update({k_: sv_[k_] for k_ in ('feat_guard', 'cost_first', 'depth_order', 'merge_split', 'pre_capture') if k_ in sv_})   # 11-20 number guards
+        if isinstance(sv_, dict): APP.SEL.update({k_: str(sv_[k_]) for k_ in ('nested_dup', 'track_thr', 'close_aim', 'cam_autoreset') if isinstance(sv_.get(k_), str)})   # 11-21: these (and close_aim) are kept over a restart too
         # An engine which kills the process during construction must not be retried on restart.
         saved_detector = APP.SEL.pop('det', None)
         APP.sel_save()
@@ -352,6 +368,8 @@ def main():
         if 'auto_det' in APP.SEL: qs_.append(auto_det.restore_query(bool(APP.SEL['auto_det']), APP.SEL.get('auto_det_p')))   # 11-15: automatic detector choice on / off and the changed numbers
         if 'resident_det' in APP.SEL: qs_.append({'resident_det': ['1' if APP.SEL['resident_det'] else '0']})   # 11-15: two detector models resident (the other pair is made by the frame loop)
         qs_ += box_refine.restore_queries(APP.SEL)   # 11-15: box smoothing of the drawn / gimbal rows; one query per key (a refused mode keeps the blend time)
+        qs_ += [{k_: [APP.SEL[k_]]} for k_ in ('nested_dup', 'track_thr', 'close_aim', 'cam_autoreset') if k_ in APP.SEL]   # 11-21: saved page choice wins over the LWIR_* start value
+        qs_ += [{k_: ['1' if APP.SEL[k_] else '0']} for k_ in ('feat_guard', 'cost_first', 'depth_order', 'merge_split', 'pre_capture') if k_ in APP.SEL]   # 11-20: number guards (relink_online_judge.GUARD, tracker_common.ASSIGN)
         for q_ in qs_:
             if not q_: continue
             APP.sel_restoring = True   # 11-15: lets a saved lead=1 through before the gimbal link exists (page_settings)
@@ -405,7 +423,7 @@ def main():
                 print('MAMBA', json.dumps(dict(folder=str(APP.args.mamba), crops=APP.args.mamba_crops, veto=APP.relabeler.veto, duplicates=APP.args.mamba_duplicates)), flush=True)
             elif APP.args.judge:   # v10: the learned judge takes OnlineRelabel's place (same step / reset / stats / events / per_frame interface)
                 from .reid.relink_online_judge import OnlineJudge
-                APP.relabeler = OnlineJudge(APP.args.judge, crops=APP.args.judge_crops, compact_ids=bool(APP.args.live_port))
+                APP.relabeler = OnlineJudge(APP.args.judge, crops=APP.args.judge_crops, joint_candidates=True, compact_ids=bool(APP.args.live_port))
                 print('JUDGE', json.dumps(dict(spec=str(APP.args.judge), sha256=APP.relabeler.spec_sha, config=APP.relabeler.spec['config'], threshold=APP.relabeler.thr, features=len(APP.relabeler.feats), crops=APP.args.judge_crops)), flush=True)
             else:
                 APP.relabeler = OnlineRelabel(budget=True, every=APP.args.rl_every, k=APP.args.rl_k, new_k=APP.args.rl_new_k)
@@ -474,6 +492,8 @@ def main():
             APP.WHOLE_BUFS = [np.zeros((1, 480, 640, 3), np.uint8) for _ in range(APP.args.npu_depth + 3)]   # v16: --det w480
             APP.S640_BUFS = [np.full((1, 640, 640, 3), 114, np.uint8) for _ in range(APP.args.npu_depth + 3)]   # v16: --det s640
             _Live = camera_link._Live
+            configured_trace = IdentityTrace.from_env()
+            identity_trace = configured_trace if configured_trace.enabled else None
             APP.LIVE = _Live(); APP.LIVE.stopped = False; APP.LIVE.cam_lost = False; APP.LIVE.q = APP.lv_col.deque(maxlen=3); APP.LIVE.cond = APP.lv_th.Condition(); APP.LIVE.arr = APP.lv_col.deque()
             if stall_diag.wanted(): stall_diag.start(APP.LIVE)   # LWIR_STALL_DIAG=1 only (off by default): stall log in camera_events.log. LIVE.cond is replaced here, before any thread has it, by one that times its holders
             APP.LIVE.camera_bytetrack = CameraByteTrack(APP.args)
@@ -486,6 +506,7 @@ def main():
             APP.LIVE.gc_policy = live_gc
             APP.LIVE.jpeg = b''; APP.LIVE.seq = 0; APP.LIVE.viewers = 0; APP.LIVE.pic_t = -1e9; APP.LIVE.pic_n = 0; APP.LIVE.snap_t = -1e9; APP.LIVE.jcond = APP.lv_th.Condition(); APP.LIVE.t0 = time.monotonic(); APP.LIVE.cam_fps = 0.0; APP.LIVE.done_ts = APP.lv_col.deque(maxlen=40)
             APP.LIVE.meas = None; APP.LIVE.meas_n = 0; APP.LIVE.meas_last = None; APP.LIVE.meas_lock = APP.lv_th.Lock(); APP.LIVE.meas_hist = []; APP.LIVE.rec = None   # v22: measurement button (v22b: history, v22d: video)
+            APP.LIVE.identity_trace = identity_trace
             APP.LIVE.lo = None; APP.LIVE.hi = None; APP.LIVE.last = None; APP.LIVE.log = open(APP.out / 'cam_pipe.log', 'w'); APP.LIVE.raws = APP.lv_col.deque(); APP.LIVE.rawq = APP.lv_col.deque(); APP.LIVE.warm_dropped = 0; APP.LIVE.last_frame_t = time.monotonic(); APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.cam_next_spawn = None; APP.LIVE.cam_hold = False; APP.LIVE.cam_reset = None; APP.LIVE.sys_lock = APP.lv_th.Lock(); APP.LIVE.cam_lock = APP.lv_th.Lock(); APP.LIVE.frames_in = 0; APP.LIVE.q_drop = 0; APP.LIVE.prev_t = None; APP.LIVE.upd_t = None; APP.LIVE.gap_n = 0; APP.LIVE.delays = APP.lv_col.deque(maxlen=2000); APP.LIVE.dlock = APP.lv_th.Lock(); APP.LIVE.perf = APP.lv_col.deque(maxlen=900); APP.LIVE.perf_acc = [time.perf_counter(), 0, 0.0, 0.0, 0.0]   # v26b: q_drop = camera frames thrown away because the tracker was 3 frames behind, gap_n = input gaps over 1 s, delays = (time, capture-to-picture ms) of the last frames. v24: last_frame_t = when the last camera frame arrived; v24d: cam_fail_n = cam_pipe exits in a row without a frame (0 = camera fine or repairing itself), cam_next_spawn = earliest next cam_pipe start (backoff)
             APP.LIVE_W, APP.LIVE_H = 640, 480
             page_handler.init_preview(APP.LIVE)
@@ -594,6 +615,10 @@ def main():
                     APP.lv_th.Thread(target=APP.lv_srv_local.serve_forever, daemon=True).start()
                 except OSError as e_: APP.lv_srv_local = None; print('LIVE no listener on 127.0.0.1:%d (%s)' % (APP.args.live_port, e_), flush=True)
             page_handler.start_lan_listener(lv_Handler)
+            from .gimbal import follow_log; follow_log.start()   # 11-22
+            if not APP.args.live_wait: cam_autoreset.install(APP)   # 11-22: same condition as the page's camera reset button (--live-wait 0)
+            direct_listeners.start(lv_Handler, APP.args.live_port, APP.args.live_extra_binds,
+                                   skip=(APP.args.live_bind,) + ((APP.args.live_lan_bind,) if getattr(APP, 'lv_lan_listener', None) is not None else ()))   # 11-22
             live_close = page_handler.live_close
             print('LIVE http://%s:%d/ for %d s' % (APP.args.live_bind, APP.args.live_port, APP.args.live_seconds), flush=True)
         if APP.args.preload:         # --preload: decode once, outside every timed interval
@@ -683,7 +708,7 @@ def main():
                 reid_drain_ = reid_embed.reid_drain_
                 rok_, rnew_, rtx_ = reid_swap(rr_['key'], (APP.rl_eng, APP.rl_async, APP.rl_x), reid_make_, reid_drain_)
                 if rok_:
-                    APP.rl_eng, APP.rl_async, APP.rl_x = rnew_; rnew_ = None; gc.collect(); APP.REID['cur'] = rr_['key']; APP.sel_save(reid=rr_['key'])
+                    APP.rl_eng, APP.rl_async, APP.rl_x = rnew_; rnew_ = None; gc.collect(); APP.REID['cur'] = rr_['key']; APP.sel_save(reid=rr_['key']); cos_map.apply_gate(APP.tracker)   # 11-20: the running BoT-SORT gate follows the new model's cosine map (map itself switched in reid_swap -> cos_map.follow)
                 elif APP.SEL.get('reid') == rr_['key']: APP.SEL.pop('reid', None); APP.sel_save()   # a saved model that does not load is not tried again at the next start
                 APP.REID['last'] = dict(key=rr_['key'], ok=bool(rok_), text=rtx_, at=time.strftime('%H:%M:%S'), seconds=round(time.perf_counter() - tr_, 1), frame=i)
                 APP.REID['history'].append(dict(APP.REID['last'], old=rold_))
@@ -713,6 +738,7 @@ def main():
                     else: gmc_fail += gmc.n_fail if gmc is not None else 0; gmc = GMC(APP.args.gmc_ds); gmc.fp = dict(gmc.fp, maxCorners=APP.args.gmc_corners, minDistance=APP.args.gmc_mindist)
             async_vit = vit is not None and not budget                  # --vit-budget: every crop is synchronous inside / right after update()
             feed_core = None
+            previous_pose = detect_frame.KP['cur']
             if APP.args.pipeline:
                 if (ready_prefetch or replay_eval.lossless()) and not ahead:
                     # The last result was already published before we waited here.
@@ -876,6 +902,10 @@ def main():
                 feat_fn = (lambda idxs, g_=g, arr_=arr, f_=i: sync_embed(idxs, g_, arr_, f_)) if (vit is not None and APP.args.vit_sync and APP.args.app_first) else None
                 if GATE_FN is not None: APP.tracker.gray = g   # v11: the gate's local-contrast / texture features read the current gray frame
                 is_botsort = isinstance(APP.tracker, BotSortTracker) or (APP.LIVE is not None and APP.RULES['tracker'] == 'botsort')
+                if is_botsort and getattr(APP.tracker, 'cost_first', None) is not None and APP.tracker.cost_first != tracker_common.ASSIGN['cost_first']:
+                    APP.tracker.cost_first = tracker_common.ASSIGN['cost_first']   # 11-20 page switch (Python and C++ BoT-SORT; off = unchanged)
+                if is_botsort and getattr(APP.tracker, 'depth_order', None) is not None and APP.tracker.depth_order != tracker_common.ASSIGN['depth_order']:
+                    APP.tracker.depth_order = tracker_common.ASSIGN['depth_order']   # 11-20 page switch depth_order (Python and C++ BoT-SORT; off = unchanged)
                 batch = None
                 if is_botsort and APP.rl_eng is not None and len(arr) and APP.CTL['app'] == 'repvgg':
                     bk_ = [int(j) for j in np.argsort(-arr[:, 4]) if int(arr[j, 5]) == PERSON_CLS and arr[j, 4] >= 0.25 and arr[j, 3] - arr[j, 1] >= 32.0][:4]
@@ -908,10 +938,21 @@ def main():
                         batch.drain()
                 t4 = time.perf_counter_ns()
                 vs = sync_lat[-1] if len(sync_lat) > n_sync0 else 0.0
+            e2e_rows_ = False
             if getattr(APP, 'dx', None) is not None and not APP.args.mock:   # 11-14 (user): live end-to-end FastTrackTr replaces the tracker rows when chosen on the page
                 er_ = e2e_live.step(g)
-                if er_ is not None: tr_rows = er_
+                if er_ is not None: tr_rows = er_; e2e_rows_ = True
+            if merge_split.active() and not own_ and not e2e_rows_ and tr_rows is not None:   # 11-20 switches merge_split / pre_capture (not recommended, HANDOFF 11-20): renames rows of any engine; off = not run
+                if vars(APP).get('ms_layer') is None or APP.ms_key != (id(APP.tracker), vid): APP.ms_layer = merge_split.MergeSplit(); APP.ms_key = (id(APP.tracker), vid)
+                ms_embed_ = ((lambda ks_, g_=g, arr_=arr: APP.rl_embed(list(ks_), g_, {k_: arr_[k_, :4].tolist() for k_ in ks_}))
+                             if APP.rl_eng is not None and APP.CTL['app'] == 'repvgg' else None)
+                tr_rows = APP.ms_layer.step(tr_rows, arr, bs_feats or {}, ms_embed_, fps=30.0)
+                if APP.relabeler is not None and hasattr(APP.relabeler, 'ms_hold'): APP.relabeler.ms_hold = APP.ms_layer.hold_labels() or None
+            elif vars(APP).get('ms_layer') is not None:
+                APP.ms_layer = None
+                if APP.relabeler is not None and hasattr(APP.relabeler, 'ms_hold'): APP.relabeler.ms_hold = None
             base_rows = tr_rows; rl_ms = 0.0
+            trace_rows = [] if identity_trace is not None and identity_trace.recording else None
             keepid_start_ns = keepid_done_ns = None
             click_relabel_namespace = None
             click_raw_to_public = None
@@ -921,6 +962,8 @@ def main():
                 tr0_ = time.perf_counter_ns(); pc_ = arr[:, :4].copy(); pc_[:, 1] += 64.0; pc_[:, 3] += 64.0; pr_ = np.round(pc_, 2).tolist(); cr_ = np.round(arr[:, 4], 5).tolist()
                 P_ = {j: [pr_[j][0], pr_[j][1] - 64.0, pr_[j][2], pr_[j][3] - 64.0] for j in range(len(arr)) if int(arr[j, 5]) == PERSON_CLS and cr_[j] >= 0.1}
                 mamba_kw_ = dict(warp=W_, ts_ns=None if APP.args.live_port else (i + 1) * 33333333) if APP.args.mamba else {}
+                if trace_rows is not None and callable(getattr(APP.relabeler, 'trace_supported', None)):
+                    mamba_kw_['trace_candidates'] = trace_rows
                 keepid_start_ns = tr0_
                 submit = (reid_embed.submit_keepid_refresh
                           if APP.rl_async is not None and not APP.rl_async.quarantined else None)
@@ -978,7 +1021,10 @@ def main():
             if APP.LIVE is not None:
                 live_publish(g, tr_rows, row, detections=p, tracker_detections=arr,
                              click_raw_ids=click_raw_ids, click_raw_to_public=click_raw_to_public,
+                             keypoints=detect_frame.KP['cur'] if detect_frame.KP['cur'] is not previous_pose else None,
                              click_namespace=click_relabel_namespace,
+                             identity_details=(identity_trace, base_rows, tr_rows, trace_rows, reset, APP.args.det)
+                             if trace_rows is not None else None,
                              deadline_marks=(t0, t1, t2, t4, keepid_start_ns, keepid_done_ns, t5,
                                              reid_submit_ns, reid_collect_ns, APP.reid_wait_ns,
                                              len(arr), len(tr_rows)))

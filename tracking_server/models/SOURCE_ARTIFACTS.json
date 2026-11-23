@@ -1,0 +1,529 @@
+{
+  "schema": "model-bank-source-artifacts-v1",
+  "storage_id": "model_bank_registered_sources_20261120",
+  "models": [
+    {
+      "model": "detect/yolo26m/yolo26m_flir_inside_20261110_2020_640x480.dxnn",
+      "registered_sha256": "7a2571e1caf313d34762660e57f735a17e355ac727df08f4c5862fb4ef7b35fc",
+      "weight": {
+        "filename": "epoch6.pt",
+        "sha256": "4bd59edae5a1361b9b5afb55625ac4f654ecb4eb19c3c1d5d65a6e195d6e4b84",
+        "bytes": 118960754,
+        "object": "objects/4bd59edae5a1361b9b5afb55625ac4f654ecb4eb19c3c1d5d65a6e195d6e4b84.pt"
+      },
+      "evidence": "Fine-tune export manifest and DX-COM result",
+      "onnx": {
+        "filename": "yolo26m_ft7_inside_640x480.onnx",
+        "sha256": "06ce6899b11acf420e35ef73b67f8774216dc66dd92d36d532bd8aa04ebdcbdf",
+        "bytes": 81538597,
+        "object": "objects/06ce6899b11acf420e35ef73b67f8774216dc66dd92d36d532bd8aa04ebdcbdf.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_flir_nms_640x480.dxnn",
+      "registered_sha256": "1aa827cf11f55d470b979d73cdae248babd77a80577613fcfe98097a9fcc18b9",
+      "weight": {
+        "filename": "newm_full30_ema.pt",
+        "sha256": "9056deb5ef2eae8f18b8b751c8f2f269f5cc80d7235d345de72c56a21b06a38b",
+        "bytes": 87866439,
+        "object": "objects/9056deb5ef2eae8f18b8b751c8f2f269f5cc80d7235d345de72c56a21b06a38b.pt"
+      },
+      "evidence": "Original raw split export and DX-COM receipt",
+      "onnx": {
+        "filename": "NEWMRW480.onnx",
+        "sha256": "80fb271ff684765e53d92d809ff626935906d15b8365a589a271a7e1b17bdf57",
+        "bytes": 81586261,
+        "object": "objects/80fb271ff684765e53d92d809ff626935906d15b8365a589a271a7e1b17bdf57.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_flir_nms_640x640.dxnn",
+      "registered_sha256": "b43d4e53a36ff7c0f29518f99244ea5947266b92faba18ba4a7c1373880909c3",
+      "weight": {
+        "filename": "newm_full30_ema.pt",
+        "sha256": "9056deb5ef2eae8f18b8b751c8f2f269f5cc80d7235d345de72c56a21b06a38b",
+        "bytes": 87866439,
+        "object": "objects/9056deb5ef2eae8f18b8b751c8f2f269f5cc80d7235d345de72c56a21b06a38b.pt"
+      },
+      "evidence": "Original DX-COM input path and compiled-output receipt",
+      "onnx": {
+        "filename": "yolo26m_flir_nms_640x640.onnx",
+        "sha256": "b89e69c9871bf80ff58c2f1a44dbf20c0151c13e381cdb2d135fb81a8c2e6d4a",
+        "bytes": 81586267,
+        "object": "objects/b89e69c9871bf80ff58c2f1a44dbf20c0151c13e381cdb2d135fb81a8c2e6d4a.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_flir_outside_20261110_patch_640x480.dxnn",
+      "registered_sha256": "2aa5576a70bd35f63e0e073569830e0a7340d243a9754720ac1d59a487591d48",
+      "weight": {
+        "filename": "epoch2.pt",
+        "sha256": "d657098121f6da93c5b16030cbe87787fe9d20e57382bc2ad577b9e64bb72b17",
+        "bytes": 118960434,
+        "object": "objects/d657098121f6da93c5b16030cbe87787fe9d20e57382bc2ad577b9e64bb72b17.pt"
+      },
+      "evidence": "Fine-tune export manifest and DX-COM result",
+      "onnx": {
+        "filename": "yolo26m_ft8_outside_patch_640x480.onnx",
+        "sha256": "3adfee044267dc8cfedb826877deaa20c4e3d8e06e58b85a8732997d2b3adeee",
+        "bytes": 81538597,
+        "object": "objects/3adfee044267dc8cfedb826877deaa20c4e3d8e06e58b85a8732997d2b3adeee.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_ft16v7_reviewed264_e24_provisional_kpt_640x480.dxnn",
+      "registered_sha256": "91cd99595290b43f78b20737e8bd5d2c8f592b591c6c593d68e07832eba64e87",
+      "weight": {
+        "filename": "best.pt",
+        "sha256": "89387fc534ca2e6efffce6249805678b8e8f396e51c30d048aae269c02f040cd",
+        "bytes": 48981058,
+        "object": "objects/89387fc534ca2e6efffce6249805678b8e8f396e51c30d048aae269c02f040cd.pt"
+      },
+      "evidence": "Original export and device registration receipts",
+      "onnx": {
+        "filename": "yolo26m_pose_ft16v7_reviewed264_e24_provisional_kpt_640x480.onnx",
+        "sha256": "781f8aae3d206077086e226a736798a70692c1944167a7855c1a30fcb26de245",
+        "bytes": 86269395,
+        "object": "objects/781f8aae3d206077086e226a736798a70692c1944167a7855c1a30fcb26de245.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_ft16v8_aug_e01_bodybox_provisional_kpt_640x480.dxnn",
+      "registered_sha256": "7891c0d2914ee8dfe6f783b07d660a71c2419a6055234a19b4d40bc340fd5d84",
+      "weight": {
+        "filename": "epoch01.pt",
+        "sha256": "16123d170ea92aa42e88b87e981e4b86fbb2688367cb69d33671eef3f5d4415c",
+        "bytes": 49023989,
+        "object": "objects/16123d170ea92aa42e88b87e981e4b86fbb2688367cb69d33671eef3f5d4415c.pt"
+      },
+      "evidence": "Original export and device registration receipts",
+      "onnx": {
+        "filename": "yolo26m_pose_ft16v8_aug_e01_bodybox_provisional_kpt_640x480.onnx",
+        "sha256": "80bd1767e788ec272e1a648ea95e7d66f21500dbc5ec93a03e68cbb5a2053a1b",
+        "bytes": 86269395,
+        "object": "objects/80bd1767e788ec272e1a648ea95e7d66f21500dbc5ec93a03e68cbb5a2053a1b.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_ft16v8_aug_e10_bodybox_provisional_kpt_640x480.dxnn",
+      "registered_sha256": "220331cc79e4da0d3ba8909965d84474386fa93f4c03c5e7471cf260d8541df1",
+      "weight": {
+        "filename": "epoch10.pt",
+        "sha256": "90deb133ff3b9ba14911641c9c5b63e26d353ecbb5d78202cdc9758dd152b112",
+        "bytes": 49023989,
+        "object": "objects/90deb133ff3b9ba14911641c9c5b63e26d353ecbb5d78202cdc9758dd152b112.pt"
+      },
+      "evidence": "Original export and device registration receipts",
+      "onnx": {
+        "filename": "yolo26m_pose_ft16v8_aug_e10_bodybox_provisional_kpt_640x480.onnx",
+        "sha256": "cd1f2c04fc6adedbd098bc64d772ba3101f1923e17a04bb96b401fd4775ce287",
+        "bytes": 86269395,
+        "object": "objects/cd1f2c04fc6adedbd098bc64d772ba3101f1923e17a04bb96b401fd4775ce287.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_lwir1056_20261118_bodybox_kpt_640x480.dxnn",
+      "registered_sha256": "21c2644272aa852fa1b324daaee7f42891a5f4ddfb84177f86146e7a2795b060",
+      "weight": {
+        "filename": "last.pt",
+        "sha256": "4cd6dd2e1f648fef49d2f611434fe7aff7790fd9280d59b02a0c4cc813813f56",
+        "bytes": 48978242,
+        "object": "objects/4cd6dd2e1f648fef49d2f611434fe7aff7790fd9280d59b02a0c4cc813813f56.pt"
+      },
+      "evidence": "runtime_sidecar + compiler output",
+      "onnx": {
+        "filename": "yolo26m_pose_lwir1056_20261118_bodybox_kpt_640x480.onnx",
+        "sha256": "9fb8e70ebaa8496bb9bed4f1766585dce7687a64f4df52c4fcf8850222cc4787",
+        "bytes": 86269395,
+        "object": "objects/9fb8e70ebaa8496bb9bed4f1766585dce7687a64f4df52c4fcf8850222cc4787.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480.dxnn",
+      "registered_sha256": "8a0f189049ddb87064d2488e56f61c218be215491e3a8458f47d3711337112ed",
+      "weight": {
+        "filename": "last.pt",
+        "sha256": "907af7c22a74c0a5bd65d0f70089233eb819fde1102428031301128e097d8a9c",
+        "bytes": 48978242,
+        "object": "objects/907af7c22a74c0a5bd65d0f70089233eb819fde1102428031301128e097d8a9c.pt"
+      },
+      "evidence": "runtime_sidecar + compiler output",
+      "onnx": {
+        "filename": "yolo26m_pose_lwir650_20261119_bodybox_kpt_640x480.onnx",
+        "sha256": "4d99e7f8bbfee6c9d9ab1fb2b806bd232be326e93c605b1a699201d1e9bc298c",
+        "bytes": 86269395,
+        "object": "objects/4d99e7f8bbfee6c9d9ab1fb2b806bd232be326e93c605b1a699201d1e9bc298c.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480.dxnn",
+      "registered_sha256": "a245d0f189d8f95d62a38ff38c9e62de31ea6b761adea6378407852db61475bd",
+      "weight": {
+        "filename": "epoch03.pt",
+        "sha256": "ac19cf6564eb1f12803be3d8df40b6a80b8e7fbd52dee5a7760e6f101404b2b8",
+        "bytes": 49024053,
+        "object": "objects/ac19cf6564eb1f12803be3d8df40b6a80b8e7fbd52dee5a7760e6f101404b2b8.pt"
+      },
+      "evidence": "runtime_sidecar + compiler output",
+      "onnx": {
+        "filename": "yolo26m_pose_lwir650_20261119_temporal_e13_bodybox_kpt_640x480.onnx",
+        "sha256": "1188f21ae550e9a69178c3d98e9eaa0c5b3ce8558664f5693af7d037e309f5c6",
+        "bytes": 86269395,
+        "object": "objects/1188f21ae550e9a69178c3d98e9eaa0c5b3ce8558664f5693af7d037e309f5c6.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_otp2cocomot_20261114_bodybox_occl_640x480.dxnn",
+      "registered_sha256": "2ea4fcf8a722f8d77108f04da50329a1bca4ba21295aa2bc0c2d7b61395999ab"
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_otp2cocomot_20261114_bodybox_occl_kpt_640x480.dxnn",
+      "registered_sha256": "8f97f3a1abc23fc26adf914efe277a3126556fa82953cc8ac742e94e51fd2db9"
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_640x480.dxnn",
+      "registered_sha256": "86858977aafddff83f286c7adf36d09fbfde022f993e0e571b2885e534a48fcc"
+    },
+    {
+      "model": "detect/yolo26m/yolo26m_pose_otp2cocomotllvip_20261115_bodybox_farc2_kpt_640x480.dxnn",
+      "registered_sha256": "d1c8e4c1c0f4260a75dfc7e18a32358b87648cec55853c23ce7e2a38714a9845"
+    },
+    {
+      "model": "detect/yolo26s/yolo26s_nms_640x480.dxnn",
+      "registered_sha256": "efc61942a538c736eeb51e5654b0043598b9baf3f7b99232d6a727ac796ad20a",
+      "weight": {
+        "filename": "last.pt",
+        "sha256": "13346581137ebd1bea8e1e820c0b969b439d4859b3638685ad394fe6c116d4cc",
+        "bytes": 20332357,
+        "object": "objects/13346581137ebd1bea8e1e820c0b969b439d4859b3638685ad394fe6c116d4cc.pt"
+      },
+      "evidence": "Original DX-COM input path and compiled-output receipt",
+      "onnx": {
+        "filename": "yolo26s_nms_640x480.onnx",
+        "sha256": "b0e5ad880d4786fd5a000683e5673b5d75bdfc2644ef73a19fa2088b574e7693",
+        "bytes": 38274188,
+        "object": "objects/b0e5ad880d4786fd5a000683e5673b5d75bdfc2644ef73a19fa2088b574e7693.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26s/yolo26s_nms_640x640.dxnn",
+      "registered_sha256": "c4f1f93431f0854ec495a4a91a510238224c03901de8e788625ba31317f496d8",
+      "weight": {
+        "filename": "last.pt",
+        "sha256": "13346581137ebd1bea8e1e820c0b969b439d4859b3638685ad394fe6c116d4cc",
+        "bytes": 20332357,
+        "object": "objects/13346581137ebd1bea8e1e820c0b969b439d4859b3638685ad394fe6c116d4cc.pt"
+      },
+      "evidence": "Original DX-COM input path and compiled-output receipt",
+      "onnx": {
+        "filename": "yolo26s_nms_640x640.onnx",
+        "sha256": "585ecd4900dd23956856746765cf6645e0d079aecc0249a19fa49bb24fa2790c",
+        "bytes": 38274196,
+        "object": "objects/585ecd4900dd23956856746765cf6645e0d079aecc0249a19fa49bb24fa2790c.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26s/yolo26s_nmsfree_npu_640x640.dxnn",
+      "registered_sha256": "0e7504aabd622868b36ff8b5cfdbedd7302516e4b34f78f37c5b934e2f99093f",
+      "weight": {
+        "filename": "best_full_ft_epoch29.pt",
+        "sha256": "385621f65165f181421e1b4e4a209e32b7cb08d5f8258e95c54866439e1e2329",
+        "bytes": 80448709,
+        "object": "objects/385621f65165f181421e1b4e4a209e32b7cb08d5f8258e95c54866439e1e2329.pt"
+      },
+      "evidence": "NMS-free export recipe and exact aggressive compile output",
+      "onnx": {
+        "filename": "vE3.onnx",
+        "sha256": "4494fbc74ae1398b74ea8eacf914baff57b928950e9b2081c69ddc2ec927ec65",
+        "bytes": 38345475,
+        "object": "objects/4494fbc74ae1398b74ea8eacf914baff57b928950e9b2081c69ddc2ec927ec65.onnx"
+      }
+    },
+    {
+      "model": "detect/yolo26x/yolo26x.pt",
+      "registered_sha256": "e0e8a30cd6dfb7219b9501ae793389d4875fc7e4ab2904fd5e0cc1e49e4b4538",
+      "weight": {
+        "filename": "yolo26x.pt",
+        "sha256": "e0e8a30cd6dfb7219b9501ae793389d4875fc7e4ab2904fd5e0cc1e49e4b4538",
+        "bytes": 118376293,
+        "object": "objects/e0e8a30cd6dfb7219b9501ae793389d4875fc7e4ab2904fd5e0cc1e49e4b4538.pt"
+      },
+      "registration_pointer_sha256": "47490d9743a48f092d48c5ec30d5a394b134dd089aba352512d4264e0c9924e1",
+      "evidence": "Git LFS object for model-bank CPU-only detector"
+    },
+    {
+      "model": "detect/yolo26x/yolo26x_flir_nms_640x480.dxnn",
+      "registered_sha256": "0851deddc46e3a218d158e1401311779cbe76185d8fa1f237bf8e268e1f4272a"
+    },
+    {
+      "model": "detect/yolov8/yolov8n_nms_640x640.dxnn",
+      "registered_sha256": "f11c80721fb88d7c4cb153b165d381e778e5bf8de1bc5302d32496baf70831d7",
+      "weight": {
+        "filename": "LWIR-YOLOv8n-FT-10742-S101-E29-640x640.pt",
+        "sha256": "5cd07d31ed8861c46903d504e558460192f409bb3bb44179484c06e2759fb63e",
+        "bytes": 6253098,
+        "object": "objects/5cd07d31ed8861c46903d504e558460192f409bb3bb44179484c06e2759fb63e.pt"
+      },
+      "evidence": "Registered DXNN SHA from canonical MANIFEST.json; retained staged PT and ONNX file hashes match the checkpoint/export verification artifacts. Exact original training-checkpoint path was not identified; weight path is the retained staged export input.",
+      "onnx": {
+        "filename": "LWIR-YOLOv8n-FT-10742-S101-E29-640x640.onnx",
+        "sha256": "e6d02de05cc5b461ee0159fda746bc64226ff881283bbe05828c078d12bda36f",
+        "bytes": 12250742,
+        "object": "objects/e6d02de05cc5b461ee0159fda746bc64226ff881283bbe05828c078d12bda36f.onnx"
+      }
+    },
+    {
+      "model": "detect/yolov8/yolov8s_nms_640x640.dxnn",
+      "registered_sha256": "c9783a3ce9765b35163bc876fab6a4b6332314dcab71c3fca282161a3ceaa79f",
+      "weight": {
+        "filename": "last.pt",
+        "sha256": "53b640f03323a43b4751128108a762b8b4795b2f82834b391a2a19df4dbfb0eb",
+        "bytes": 22527850,
+        "object": "objects/53b640f03323a43b4751128108a762b8b4795b2f82834b391a2a19df4dbfb0eb.pt"
+      },
+      "evidence": "Registered DXNN SHA from canonical MANIFEST.json; source checkpoint/hash and final ONNX/hash match retained job.json and export/ONNX/DXNN verification artifacts.",
+      "onnx": {
+        "filename": "LWIR-yolov8s-FT-10742-S101-E29-640x640.onnx",
+        "sha256": "146d4f64773af2d3aba40acd7b7433d9729d8819e556da8d6e8e963d4e3dddcf",
+        "bytes": 44742864,
+        "object": "objects/146d4f64773af2d3aba40acd7b7433d9729d8819e556da8d6e8e963d4e3dddcf.onnx"
+      }
+    },
+    {
+      "model": "detect/yolox/yolox_nano_nms_640x640.dxnn",
+      "registered_sha256": "9ab36237847c1e4a704af6677adf038d9f16fa03cb7b8cd3304c95b47c62fe46",
+      "weight": {
+        "filename": "latest_ckpt.pth",
+        "sha256": "64119cfcc291fcb436839cf29c11f3e089d7a3eee0580f5edce2049ebc35877f",
+        "bytes": 7600367,
+        "object": "objects/64119cfcc291fcb436839cf29c11f3e089d7a3eee0580f5edce2049ebc35877f.pth"
+      },
+      "evidence": "Registered DXNN SHA from canonical MANIFEST.json; source checkpoint/hash and final ONNX/hash match retained canonical job.json and export verification receipts.",
+      "onnx": {
+        "filename": "LWIR-yolox-nano-FT-10742-S101-E29-640x640.onnx",
+        "sha256": "3c181badb88bff9a8d9c7f2788a3648eced42f24407a97ff2e27bd0ea045d271",
+        "bytes": 3739390,
+        "object": "objects/3c181badb88bff9a8d9c7f2788a3648eced42f24407a97ff2e27bd0ea045d271.onnx"
+      }
+    },
+    {
+      "model": "detect/yolox/yolox_s_nms_640x640.dxnn",
+      "registered_sha256": "e1349efb61ed4f229807a31517688c35c9d45a7b2ee474ccebe8aaf8871168f7",
+      "weight": {
+        "filename": "latest_ckpt.pth",
+        "sha256": "2c0ba3087733411e7d89443d27d621f0a482dacd56531f7bcbe213921a644070",
+        "bytes": 71884627,
+        "object": "objects/2c0ba3087733411e7d89443d27d621f0a482dacd56531f7bcbe213921a644070.pth"
+      },
+      "evidence": "Registered DXNN SHA from canonical MANIFEST.json; source checkpoint/hash and final ONNX/hash match retained canonical job.json and export verification receipts.",
+      "onnx": {
+        "filename": "LWIR-yolox-s-FT-10742-S101-E29-640x640.onnx",
+        "sha256": "236d790348ad4b94a573326aa0ff8c3ff7739245f77293850d2633f08e0249c6",
+        "bytes": 35873750,
+        "object": "objects/236d790348ad4b94a573326aa0ff8c3ff7739245f77293850d2633f08e0249c6.onnx"
+      }
+    },
+    {
+      "model": "e2e/fasttracktr/fasttracktr_r18_npu_dancetrack_tmot_20261115_thermal3_ae.dxnn",
+      "registered_sha256": "35344ef6ce2d8c176561ff6361adde9ed6e1846154a9d840df78a8e0cb7bfc9d"
+    },
+    {
+      "model": "e2e/fasttracktr/fasttracktr_r18_npu_dancetrack_tmot_20261115_thermal3_b0.dxnn",
+      "registered_sha256": "231fa6c32bb4b096d57010a07c74639e69f8cfeb0481eb9549a2c5eed2da1582"
+    },
+    {
+      "model": "e2e/fasttracktr/fasttracktr_r18_npu_dancetrack_tmot_20261115_thermal3_b1.dxnn",
+      "registered_sha256": "0ed722a5afd4c087a8d6aa1b722f59843f883134232da62070898ce4b23de370"
+    },
+    {
+      "model": "optimized/E10_KPT_480x384.dxnn",
+      "registered_sha256": "47fd961044bf18fdc3e5b8a90d74e499699a05ae2a114629cd9ee9751820e4a9",
+      "weight": {
+        "filename": "epoch10.pt",
+        "sha256": "90deb133ff3b9ba14911641c9c5b63e26d353ecbb5d78202cdc9758dd152b112",
+        "bytes": 49023989,
+        "object": "objects/90deb133ff3b9ba14911641c9c5b63e26d353ecbb5d78202cdc9758dd152b112.pt"
+      },
+      "evidence": "tile compiler receipt + graph verification",
+      "onnx": {
+        "filename": "E10_KPT_NHWC_PERSON_480x384.onnx",
+        "sha256": "a3de103a1455d0fa5052d58d5643a03416be02ac0530bca0bf0c575be8f820c8",
+        "bytes": 86242825,
+        "object": "objects/a3de103a1455d0fa5052d58d5643a03416be02ac0530bca0bf0c575be8f820c8.onnx"
+      }
+    },
+    {
+      "model": "optimized/LWIR1056_E10_480x384.dxnn",
+      "registered_sha256": "6c862104dc9dd91bcfac43c27271c07b81a2ecefe3f1266bb8a1c4739977ff48",
+      "weight": {
+        "filename": "last.pt",
+        "sha256": "4cd6dd2e1f648fef49d2f611434fe7aff7790fd9280d59b02a0c4cc813813f56",
+        "bytes": 48978242,
+        "object": "objects/4cd6dd2e1f648fef49d2f611434fe7aff7790fd9280d59b02a0c4cc813813f56.pt"
+      },
+      "evidence": "tile compiler receipt + source detector checkpoint",
+      "onnx": {
+        "filename": "LWIR1056_E10_NHWC_PERSON_480x384.onnx",
+        "sha256": "241c047a0a134cbd933deed3a95c25aadad66e8b5772f4efe1fb231e0c1c86c9",
+        "bytes": 86242825,
+        "object": "objects/241c047a0a134cbd933deed3a95c25aadad66e8b5772f4efe1fb231e0c1c86c9.onnx"
+      }
+    },
+    {
+      "model": "optimized/LWIR650_E10_480x384.dxnn",
+      "registered_sha256": "5d671a223149d11b9a3a70bb49e5580898bfb19739d27a501b37d4b81ca29576",
+      "weight": {
+        "filename": "last.pt",
+        "sha256": "907af7c22a74c0a5bd65d0f70089233eb819fde1102428031301128e097d8a9c",
+        "bytes": 48978242,
+        "object": "objects/907af7c22a74c0a5bd65d0f70089233eb819fde1102428031301128e097d8a9c.pt"
+      },
+      "evidence": "tile compiler receipt + source detector checkpoint",
+      "onnx": {
+        "filename": "LWIR650_E10_NHWC_PERSON_480x384.onnx",
+        "sha256": "3b4287a72792e6a86ba9d8d90c578ce45ff01d6d5af5bcf04569f761ab4ebafd",
+        "bytes": 86242825,
+        "object": "objects/3b4287a72792e6a86ba9d8d90c578ce45ff01d6d5af5bcf04569f761ab4ebafd.onnx"
+      }
+    },
+    {
+      "model": "optimized/LWIR650_TEMPORAL_E13_480x384.dxnn",
+      "registered_sha256": "a32e9ad8e421142df9988d63098e8e146b758a64732b1d2668203c0b55efecf2",
+      "weight": {
+        "filename": "epoch03.pt",
+        "sha256": "ac19cf6564eb1f12803be3d8df40b6a80b8e7fbd52dee5a7760e6f101404b2b8",
+        "bytes": 49024053,
+        "object": "objects/ac19cf6564eb1f12803be3d8df40b6a80b8e7fbd52dee5a7760e6f101404b2b8.pt"
+      },
+      "evidence": "tile compiler receipt + source detector checkpoint",
+      "onnx": {
+        "filename": "LWIR650_TEMPORAL_E13_NHWC_PERSON_480x384.onnx",
+        "sha256": "4c3b23da320953419e8c30eff143e10a8d81175697bafa07f0377feb10b02214",
+        "bytes": 86242825,
+        "object": "objects/4c3b23da320953419e8c30eff143e10a8d81175697bafa07f0377feb10b02214.onnx"
+      }
+    },
+    {
+      "model": "reid/repvgg_distill_inside_20261110_reid.dxnn",
+      "registered_sha256": "1a757811ada3ae84d3533d87ce6b9c003a18e263c1e90a8d1b1761c76b7228c4",
+      "weight": {
+        "filename": "ep5.pt",
+        "sha256": "f4042fcdac31e03d3a9d293304663296b61cdbe47ae4337562a1bd054bb4c49f",
+        "bytes": 32685407,
+        "object": "objects/f4042fcdac31e03d3a9d293304663296b61cdbe47ae4337562a1bd054bb4c49f.pt"
+      },
+      "evidence": "ReID checkpoint export record and DX-COM result",
+      "onnx": {
+        "filename": "REPVGG_DISTILL_INSIDE_20261110.onnx",
+        "sha256": "0ea954f6fc4647fbb14cbff28bc4179e96a8b05280917ca501c5bb79aea166a2",
+        "bytes": 28778827,
+        "object": "objects/0ea954f6fc4647fbb14cbff28bc4179e96a8b05280917ca501c5bb79aea166a2.onnx"
+      }
+    },
+    {
+      "model": "reid/repvgg_ft_inside_20261110_reid.dxnn",
+      "registered_sha256": "e52eda7d8a3354f6cab3f83b3b44397afddaba394c1092091b1598fd101b6137",
+      "weight": {
+        "filename": "ep6.pt",
+        "sha256": "00426de954cbf2c409f2c855692e34ed7c9776d11d10c7f8c62995aff0cbc67b",
+        "bytes": 32685407,
+        "object": "objects/00426de954cbf2c409f2c855692e34ed7c9776d11d10c7f8c62995aff0cbc67b.pt"
+      },
+      "evidence": "ReID checkpoint export record and DX-COM result",
+      "onnx": {
+        "filename": "REPVGG_FT_INSIDE_20261110.onnx",
+        "sha256": "eafd429180ad22085b07a41c1b2a367e9c179ee305d57b0672e1ed3bb55b66a2",
+        "bytes": 28778827,
+        "object": "objects/eafd429180ad22085b07a41c1b2a367e9c179ee305d57b0672e1ed3bb55b66a2.onnx"
+      }
+    },
+    {
+      "model": "reid/repvgg_ft_reviewed264_20261117_reid.dxnn",
+      "registered_sha256": "944747d7fe0d9cf56b3401b557dc73ce9412d7db3868c2c2346b4608343752fb",
+      "weight": {
+        "filename": "FINAL.pt",
+        "sha256": "99e09f420b8b15e896ee6696c80629219ca817ca941e774824eb8831cafe6398",
+        "bytes": 32691815,
+        "object": "objects/99e09f420b8b15e896ee6696c80629219ca817ca941e774824eb8831cafe6398.pt"
+      },
+      "evidence": "ReID export and original calibration compile receipt",
+      "onnx": {
+        "filename": "REPVGG_REVIEWED264_20261117.onnx",
+        "sha256": "b6dfc9b44f483c657bf3d5f99981ba17811ed966cba6d0ff10a3cbb5aa7121b0",
+        "bytes": 28777230,
+        "object": "objects/b6dfc9b44f483c657bf3d5f99981ba17811ed966cba6d0ff10a3cbb5aa7121b0.onnx"
+      }
+    },
+    {
+      "model": "reid/repvgg_tmot_camel_reid.dxnn",
+      "registered_sha256": "dc19d7862a77ffa1d7c7f71f84283e86c33267d9e741b59070b839cb1921ff53",
+      "weight": {
+        "filename": "final_ema.pt",
+        "sha256": "6fb2ee9d6358ab567cab64bd6bfeaa7c5b840dd88bc07e7d37a23c790d8ad916",
+        "bytes": 32700346,
+        "object": "objects/6fb2ee9d6358ab567cab64bd6bfeaa7c5b840dd88bc07e7d37a23c790d8ad916.pt"
+      },
+      "evidence": "RepVGG final EMA export and exact C256 compile result",
+      "onnx": {
+        "filename": "RVGGA0_REID2.onnx",
+        "sha256": "1482046870aab6e570749a08473a8681021c28cada8c4b265df759b88816a7de",
+        "bytes": 28777230,
+        "object": "objects/1482046870aab6e570749a08473a8681021c28cada8c4b265df759b88816a7de.onnx"
+      }
+    },
+    {
+      "model": "reid/vit_lite_distill_inside_20261111_reid.dxnn",
+      "registered_sha256": "9c79e07bedefa097d36b4deb7716a72b404ba5f1f19366f448e5bd03b9a68199",
+      "weight": {
+        "filename": "student_folded.pt",
+        "sha256": "dd1b1f06e155087e845f4638d8e707cd23de524a9ff89fdbd76bfb1888a27181",
+        "bytes": 4502401,
+        "object": "objects/dd1b1f06e155087e845f4638d8e707cd23de524a9ff89fdbd76bfb1888a27181.pt"
+      },
+      "evidence": "ViT deployment compile result",
+      "onnx": {
+        "filename": "VIT_FT7IN_S.onnx",
+        "sha256": "38d498fc395afce5de531e206207271236fa8e0b600aedc3245ab4041ebfaf5f",
+        "bytes": 3908720,
+        "object": "objects/38d498fc395afce5de531e206207271236fa8e0b600aedc3245ab4041ebfaf5f.onnx"
+      }
+    },
+    {
+      "model": "reid/vit_lite_ft_inside_20261111_reid.dxnn",
+      "registered_sha256": "640a5b22431a34ab490148e87a21cc42e3a622b979023edcccf839c8107a38d2",
+      "weight": {
+        "filename": "student_folded.pt",
+        "sha256": "691072489f6ccf9b5783f6708606abbb312c83c9ee053a662a37a5f370498bbe",
+        "bytes": 4502401,
+        "object": "objects/691072489f6ccf9b5783f6708606abbb312c83c9ee053a662a37a5f370498bbe.pt"
+      },
+      "evidence": "ViT deployment compile result",
+      "onnx": {
+        "filename": "VIT_FT7IN_D.onnx",
+        "sha256": "fe041d31f5dcc2e154abd6559bb7b49a7dbb8babad9a120067d5a5be87acbf5e",
+        "bytes": 3908720,
+        "object": "objects/fe041d31f5dcc2e154abd6559bb7b49a7dbb8babad9a120067d5a5be87acbf5e.onnx"
+      }
+    },
+    {
+      "model": "track/box_body_table_20261116.npz",
+      "registered_sha256": "86e08c8864c062582a517651d49e7277e72d18ac1c97225ffc2b8e16312c792c"
+    },
+    {
+      "model": "track/pos_gru_elapsed_10s.npz",
+      "registered_sha256": "808d57ffd69240aec131b81c44971a126da6dfe08dd8323fcb3f604bcd9ccc5c"
+    },
+    {
+      "model": "track/pos_gru_kpt_tmotdance_20261116.npz",
+      "registered_sha256": "ea542076ab984d1fe38193a867473b6c3a739271aa2148a475310b91a30d57f5"
+    },
+    {
+      "model": "track/pos_gru_near_kpt_tmotdance_20261116.npz",
+      "registered_sha256": "d3190e46986eeaf087c91769fe22e1838ba843040c27c947178233000e426f63"
+    },
+    {
+      "model": "track/pos_mamba_kpt_tmotdance_20261116.npz",
+      "registered_sha256": "516ff0dce696753cca3d6541dab3132ca42ad702fcd7d61dcb47267b2cfaa5a5"
+    }
+  ]
+}

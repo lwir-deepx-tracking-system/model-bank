@@ -18,6 +18,7 @@ run_case() (
   server_pid() { echo 1234; }
   npu_busy_other() { return 1; }
   prereq_ok() { return 0; }
+  netd_ensure() { :; }   # 11-22: never start the real lwir_netd from a test
   crash_note() { :; }
   stop_server() { printf '%s\n' "$reason"; exit 0; }
   start_server() { return 1; }

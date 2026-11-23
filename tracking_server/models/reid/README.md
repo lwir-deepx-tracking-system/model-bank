@@ -26,6 +26,8 @@
 
 `repvgg_tmot_camel_reid_compile_metadata.json` 은 RepVGG_distillation_(TMOT,CAMEL)_20261103 파일 안의 컴파일 기록을 꺼낸 것입니다. 다른 네 파일의 것은 꺼내 두지 않았습니다.
 
+`repvgg_solider_distill_e_20261120_reid.dxnn` (RepVGG, 시험용 추가 선택지) 는 옆의 `repvgg_solider_distill_e_20261120_cosmap.json` 눈금표와 함께 씁니다. 이 모델이 돌 때만 서버의 모든 외형 코사인(판정기, KeepID 문턱, 추적기 외형 비교와 잃은 번호 잇기, 따라가기 확인)이 이 표로 바뀌고, BoT-SORT 의 외형 문턱(Python·C++ 둘 다)은 같은 뜻의 원래 눈금 값으로 바뀝니다(`src/reid/cos_map.py`).
+
 번호 잇기 판정기(`../track/relink_judge_frozen.json`)는 RepVGG_distillation_(TMOT,CAMEL)_20261103 의 점수로 맞춘 것입니다. 다른 외형 모델과 함께 썼을 때의 결과는 확인되지 않았습니다.
 
 확인 판정기(GRU)의 입력·출력은 [../track/README.md](../track/README.md)에 있습니다.

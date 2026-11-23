@@ -26,6 +26,7 @@ run_case() (
   server_pid() { echo 1234; }
   npu_busy_other() { return 1; }
   prereq_ok() { return 0; }
+  netd_ensure() { :; }   # 11-22: never start the real lwir_netd from a test
   experiment_running() { return 1; }
   cam_on_usb() { return 0; }
   crash_note() { :; }
