@@ -700,7 +700,22 @@
       "dxnn_sha256": "a7fb75a6a2f7e771a6720de48706eb9ddd2ec1cdf513c9363c62e10d46a6de74",
       "dxnn_bytes": 23661447,
       "compiler": "2.4.1-rc.1",
-      "compile_seconds": 1382.0
+      "compile_seconds": 1382.0,
+      "catalogue_8090": "selectable",
+      "tile_compile": {
+        "onnx_sha256": "a70672891c864be80c460a52355810f80848b0a206dbdc1e8fbca2f1e4c8312e",
+        "dx_com": "2.4.1-rc.1",
+        "unique_images": 264,
+        "calibration_crops": 528,
+        "calibration_method": "ema",
+        "quantization_device": "cpu",
+        "opt_level": 1,
+        "aggressive_partitioning": false,
+        "duration_s": 682.69,
+        "dxnn_sha256": "5217ad2fa4071ab9b31d8734349450c89792af11276ef107e73cb6ee09a32f3c",
+        "bytes": 23012910
+      },
+      "tile_8090": "compiled; split selection unverified"
     },
     "llvip_val_best": {
       "source_sha256": "743a5e8d477ebd2519df805b50a86c922351a5c7403f8affd87d53c0a780a1b7",
@@ -731,9 +746,14 @@
       "quantization_device": "cpu",
       "opt_level": 1,
       "aggressive_partitioning": false,
-      "dxnn_status": "compiling",
+      "dxnn_status": "compiled",
       "int8_validation": "unmeasured",
-      "on_device_latency": "unmeasured"
+      "on_device_latency": "unmeasured",
+      "dxnn_sha256": "8580b9c9cf215614b6bcef12cb514f6ce03675f9c639c8fbef94e44d1bf20aa2",
+      "dxnn_bytes": 23661447,
+      "compiler": "2.4.1-rc.1",
+      "compile_seconds": 1408.5,
+      "catalogue_8090": "selectable"
     }
   }
 }
