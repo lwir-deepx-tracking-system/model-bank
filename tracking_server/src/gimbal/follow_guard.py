@@ -46,6 +46,9 @@ RISK_WALK_S = 3.0   # s, while covered the velocity moves the prediction for at 
 G0, G1, GMAX = 0.35, 0.5, 0.8   # gate: heights, heights per second of age, heights at most
 HR_MAX = 1.5
 WR_MAX = 1.5        # width ratio (a box of two people is wider)
+FOREGROUND_W, FOREGROUND_H = 1.32, 1.28
+FOREGROUND_JUMP_H, FOREGROUND_LARGE = 0.16, 1.60
+FOREGROUND_CLEAR_N = 2
 BETTER, MIN_SWAP_H = 0.6, 0.25
 N = 3
 LOST_MAX_S = 10.0   # the bridge drops the selection after its reacquire timeout (10 s)
@@ -463,6 +466,9 @@ APP_KEEP, APP_NEAR, APP_MIN, APP_MARGIN, APP_FRESH = 5, 2.0, 0.55, 0.05, 6   # A
 # distractor, a height within WIDE_HR x of the last trusted box, and no other box on it. .wide = (cx, cy, radius) of the
 # circle in the coordinates of this frame, or None (= the motion gate only, as before).
 APP_WIDE_MIN, APP_WIDE_MARGIN, WIDE_HR = 0.65, 0.10, 2.0
+SEARCH_VERIFY_S, SEARCH_VERIFY_SAMPLES = 0.9, 2
+SEARCH_STRICT_START_H, SEARCH_STRICT_FULL_H = .35, 1.50
+SEARCH_FAR_SCORE, SEARCH_FAR_MARGIN, SEARCH_FAR_SAMPLES_H = .82, .16, .85
 # 11-22 OCCLUSION HOLD (LWIR_FOLLOW_OCC_HOLD=1, default off, proposal after the 12:41 loss of id 44 under id 23, IoU 0.6-0.88 for 5+ s): while the
 # followed box is heavily covered (IoU > MERGE_IOU) the feature of that blended box says nothing about who it is, so v2 no longer masks it by
 # appearance ('looks like a person near it'); it keeps following the id as long as the box stays inside the motion gate, for HOLD_MAX_S at most.
@@ -503,7 +509,7 @@ def unit(v):
 
 
 class FollowGuardV2(FollowGuard):
-    """FollowGuard with appearance. Before each step() the caller sets .app = function(output id) -> (feature, age in frames)
+    """FollowGuard with appearance. Before each step() the caller sets .app = function(output id) -> (feature, age in frames, observation frame)
     or None, and .kal = the tracker's Kalman box (cx, cy, w, h) of the followed id or None."""
 
     def __init__(self, sel, guard=True):
@@ -517,6 +523,8 @@ class FollowGuardV2(FollowGuard):
         self.wide_reaccepts = 0
         self.allow_masked_seek = False
         self.masked_seek_lock = False
+        self.trusted_control_owner = None
+        self.continuous_control_owner = False
         self.hold_t0 = None
         self.holds = 0
         self.pos_trust = self.pos_keeps = self.pos_unmasks = self.pos_waits = 0   # frames trusted by position / of those, frames the appearance said distractor / unmasks / first-frame waits
@@ -529,6 +537,11 @@ class FollowGuardV2(FollowGuard):
         self.pt_ok_n = 0           # frames in a row masked and agreeing (unmask counter)
         self.dis_n, self._dis_seen = 0, False
         self.mask_kind = ''
+        self.foreground_blocked = False
+        self.foreground_clear_n = 0
+        self.search_verify_id = None
+        self.search_verify_stamp = None
+        self.search_verify_n = 0
 
     def _allowed(self, qid):
         """Never let the geometry-only fallback transfer identity unverified.
@@ -554,6 +567,40 @@ class FollowGuardV2(FollowGuard):
             return False
         st_, sd = self._sims(f)
         return st_ is not None and st_ >= APP_WIDE_MIN and st_ >= sd + APP_WIDE_MARGIN
+
+    def recovery_radius(self, t):
+        """Recovery radius in predicted body heights, including the wide match."""
+        age = self.age(t)
+        if self.pred is None or age > LOST_MAX_S:
+            return 0.0
+        if self.tmpl and age > 0.9:
+            return min(1.8, GMAX + 0.6 * (age - 0.9))
+        return self.gate(t)
+
+    def _outside_gate_recovery(self, c, f, t, row, people):
+        """Expand the match region after a loss, including during bounded seek."""
+        age = self.age(t)
+        if self.pred is None or f is None or not 0.9 < age <= LOST_MAX_S:
+            return False
+        if self.dist(c) > self.recovery_radius(t):
+            return False
+        h = self.pred[3]
+        if max(c[3], h) > WIDE_HR * min(c[3], h):
+            return False
+        if any(int(other[0]) != int(row[0]) and iou(row[1:5], other[1:5]) > RISK_IOU
+               for other in people):
+            return False
+        st, sd = self._sims(f)
+        if st is None or st < APP_WIDE_MIN or st < sd + APP_WIDE_MARGIN:
+            return False
+        template = unit(np.mean(self.tmpl, 0))
+        for other in people:
+            if int(other[0]) == int(row[0]):
+                continue
+            feature = self._feat(other[0])
+            if feature is not None and st < _cmap(float(feature @ template)) + APP_WIDE_MARGIN:
+                return False
+        return True
 
     def _feat(self, oid):
         a = self.app(int(oid))
@@ -613,7 +660,13 @@ class FollowGuardV2(FollowGuard):
             if qid == self.sel: continue
             if self.hold_t0 is not None and qid in self.partners: continue   # 11-22: never the occluder during an occlusion hold
             f = self._feat(qid)
-            if f is None or not self._in_gate(cwh(q), t) or self._looks(f, qid) != 'target':
+            c = cwh(q)
+            if f is None:
+                continue
+            if not (self._in_gate(c, t) or
+                    (self.phase in ('lost', 'masked') and self._outside_gate_recovery(c, f, t, q, people))):
+                continue
+            if self._looks(f, qid) != 'target':
                 continue
             if self._count(qid):
                 out['reselect'] = qid
@@ -715,11 +768,112 @@ class FollowGuardV2(FollowGuard):
         if self.phase == 'track' and out['phase'] == 'track' and any(int(q[0]) == self.sel for q in people): self.pt_reborn = False   # accepted by the ordinary rules
         return out
 
+    def _foreground_occlusion(self, t, mine):
+        # A foreground object can inherit the selected ID, leaving no second row
+        # for the usual overlap check. Use the pre-occlusion motion and scale.
+        if not self.guard or self.trust is None:
+            return False
+        reference = self.pred if self.pred is not None else self.trust
+        if mine is not None:
+            c = cwh(mine)
+            width = c[2] / max(1., reference[2])
+            height = c[3] / max(1., reference[3])
+            jump = math.hypot(c[0] - reference[0], c[1] - reference[1]) / max(1., reference[3])
+            grew = width >= FOREGROUND_W and height >= FOREGROUND_H
+            abrupt = grew and (jump >= FOREGROUND_JUMP_H or min(width, height) >= FOREGROUND_LARGE)
+            if self.pred is not None and self.age(t) <= MAX_DT and abrupt:
+                self.foreground_blocked = True
+            consistent = (1 / POS_WR <= width <= POS_SIZE and 1 / POS_SIZE <= height <= POS_SIZE
+                          and jump < POS_D)
+            if self.foreground_blocked and consistent:
+                self.foreground_clear_n += 1
+                if self.foreground_clear_n >= FOREGROUND_CLEAR_N:
+                    self.foreground_blocked = False
+            else:
+                self.foreground_clear_n = 0
+        else:
+            self.foreground_clear_n = 0
+        return self.foreground_blocked
+
+    def _verify_search(self, t, people, motion, mine, out):
+        # Widening a positional hypothesis must not widen identity acceptance.
+        eligible = []
+        if self.pred is not None and self.tmpl:
+            for row in people:
+                ident = int(row[0])
+                try:
+                    observation = self.app(ident)
+                    raw, age, stamp = observation[:3] if observation and len(observation) >= 3 else (None, None, None)
+                except (TypeError, ValueError):
+                    continue
+                if raw is None or age is None or stamp is None or not 0 <= age <= APP_FRESH:
+                    continue
+                feature = unit(raw)
+                if feature is None:
+                    continue
+                c = cwh(row)
+                tight = self.fits(c, t)
+                if not (tight or self._wide_ok(c, feature)
+                        or self._outside_gate_recovery(c, feature, t, row, people)):
+                    continue
+                if any(other is not row and iou(row[1:5], other[1:5]) > RISK_IOU for other in people):
+                    continue
+                similarity, distractor = self._sims(feature)
+                if similarity is not None and similarity >= APP_WIDE_MIN and similarity >= distractor + APP_WIDE_MARGIN:
+                    eligible.append((similarity, ident, c, stamp, age, tight, distractor))
+        eligible.sort(key=lambda entry: entry[0], reverse=True)
+        if eligible:
+            similarity, ident, c, stamp, age, tight, distractor = eligible[0]
+            distance = self.dist(c)
+            strength = min(1., max(0., (distance - SEARCH_STRICT_START_H)
+                                    / (SEARCH_STRICT_FULL_H - SEARCH_STRICT_START_H)))
+            min_score = APP_WIDE_MIN + strength * (SEARCH_FAR_SCORE - APP_WIDE_MIN)
+            margin = APP_WIDE_MARGIN + strength * (SEARCH_FAR_MARGIN - APP_WIDE_MARGIN)
+            other_score = eligible[1][0] if len(eligible) > 1 else -1.
+            clear = similarity >= min_score and similarity >= max(other_score, distractor) + margin
+        else:
+            clear = False
+        if clear:
+            required = SEARCH_VERIFY_SAMPLES + int(distance >= SEARCH_FAR_SAMPLES_H)
+            if ident != self.search_verify_id:
+                self.search_verify_id, self.search_verify_stamp, self.search_verify_n = ident, None, 0
+            if age <= 2 and (self.search_verify_stamp is None or stamp > self.search_verify_stamp):
+                self.search_verify_stamp = stamp
+                self.search_verify_n += 1
+            if self.search_verify_n >= required:
+                self.search_verify_id, self.search_verify_stamp, self.search_verify_n = None, None, 0
+                if ident != self.sel:
+                    out['reselect'] = ident
+                    self.why = 'search recovered: %d verified by separate appearance observations' % ident
+                    self.propose_retarget(out, c, t, people, 'app_swaps', forget=ident)
+                    return self._out(out, t)
+                self.masked_seek_lock = False
+                self.reaccepts += 1
+                self.wide_reaccepts += int(not tight)
+                self._accept(t, c, people, motion, velocity=False)
+                self.vx = self.vy = 0.
+                self.phase, self.cand_n = 'track', 0
+                self.partners, self.mask_from_risk = set(), False
+                self.why = 'search recovered: selected id verified by separate appearance observations'
+                return self._finish(out, t, mine)
+        else:
+            self.search_verify_id, self.search_verify_stamp, self.search_verify_n = None, None, 0
+        out.update(mask=True, search_verification=True, seek_masked=self.pred is not None)
+        self._mask('search waiting for appearance confirmation', self.phase == 'risk' or self.mask_from_risk)
+        return self._finish(out, t, mine)
+
     def _step(self, t, people, motion):
         self._propagate(t, motion)
         mine = [p for p in people if int(p[0]) == self.sel]
         mine = mine[0] if len(mine) == 1 else None
         out = dict(mask=False, reselect=0, pred=None)
+        if self._foreground_occlusion(t, mine):
+            if self.why != 'foreground box jump on selected id':
+                self._mask('foreground box jump on selected id', self.phase == 'risk')
+            out.update(mask=True, foreground_blocked=True)
+            return self._finish(out, t, mine)
+        if self.guard and self.trust is not None and self.age(t) > SEARCH_VERIFY_S:
+            return self._verify_search(t, people, motion, mine, out)
         f = self._feat(self.sel) if mine is not None else None
         if self.masked_seek_lock:
             # During a guarded search only the selected ID, verified against
@@ -728,7 +882,8 @@ class FollowGuardV2(FollowGuard):
             c = cwh(mine) if comparable else None
             look = self._looks(f) if comparable else None
             fits = comparable and self.fits(c, t)
-            if fits and look == 'target' and not any(
+            wide = comparable and not fits and self._outside_gate_recovery(c, f, t, mine, people)
+            if (fits or wide) and look == 'target' and not any(
                     int(q[0]) != self.sel and iou(mine[1:5], q[1:5]) > RISK_IOU for q in people):
                 self.masked_seek_lock = False
                 self.reaccepts += 1
@@ -737,6 +892,20 @@ class FollowGuardV2(FollowGuard):
                 self.cand_n = 0
                 self.partners, self.mask_from_risk = set(), False
                 return self._finish(out, t, mine)
+            # The public number alone does not establish continuity. Only
+            # the uninterrupted tracker owner from a trusted control frame may
+            # recover through the existing position-trust checks.
+            if (self.continuous_control_owner and pos_trust_enabled() and self.mask_kind == 'appearance'
+                    and mine is not None and self.pred is not None and self.trust is not None
+                    and self.age(t) <= MAX_DT
+                    and not any(int(q[0]) != self.sel and (
+                        self.dist(cwh(q)) <= .55 or iou(mine[1:5], q[1:5]) > RISK_IOU)
+                                for q in people)
+                    and self._pos_trust(t, people, motion, mine, out)):
+                if not out['mask']:
+                    self.masked_seek_lock = False
+                return self._finish(out, t, mine)
+            self.pt_ok_n = 0
             out['mask'] = True
             out['seek_masked'] = self.pred is not None and (
                 not people or (len(people) == 1 and comparable and (look == 'distractor' or not fits)))
@@ -765,7 +934,9 @@ class FollowGuardV2(FollowGuard):
             if self.phase in ('risk', 'masked', 'lost') or ov > RISK_IOU or position_disputed:
                 look = self._looks(f)
                 gate = not position_disputed if seek_candidate else self._in_gate(c, t)
-                if not gate and ov <= RISK_IOU and self.phase in ('lost', 'masked') and self._wide_ok(c, f):
+                if not gate and ov <= RISK_IOU and self.phase in ('lost', 'masked') and (
+                        self._wide_ok(c, f) or
+                        (look == 'target' and self._outside_gate_recovery(c, f, t, mine, people))):
                     self.reaccepts += 1; self.wide_reaccepts += 1   # 11-16: found again inside the search circle
                     self.why = 're-catch in the search circle by appearance'
                     self._accept(t, c, people, motion, velocity=False)

@@ -11,6 +11,12 @@ from . import native_control
 MIN_INTERVAL = 0.010
 MAX_INTERVAL = 0.250
 TIME_CONSTANT = 0.120
+NEAR_PAN_TIME_CONSTANT = 0.055
+NEAR_HEIGHT_FRACTION = 0.55
+NEAR_PAN_MIN_SPEED = 300.0
+NEAR_PAN_START_MAX_INTERVAL = 0.075
+NEAR_PAN_START_MAX_WIDTH_FRACTION = 0.15
+NEAR_PAN_LEAD_GAIN = 1.5
 MIN_SPEED = 15.0
 MAX_LEAD = 60.0
 CANVAS_Y_OFFSET = 16.0
@@ -28,10 +34,12 @@ class Sample:
     vy: float = 0.0
     aim_y: float = 0.5
     correction: tuple = (0.0, 0.0)
+    height: float = 0.0
+    step_vx: float = 0.0
 
 
 def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms, *,
-             space="scene", aim_y=0.5, correction=None):
+             space="scene", aim_y=0.5, correction=None, picture_height=None):
     """Return the next sample and a control offset, without changing any box.
 
     ``observed`` uses raw camera coordinates; ``correction`` shifts raw to the
@@ -54,7 +62,8 @@ def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms, *,
     if not all(map(math.isfinite, (x, y, cx, cy))):
         LAST['why'] = 'bad numbers'
         return None, NO_LEAD
-    seed = Sample(track_id, frame_time, x, y, aim_y=aim_y, correction=(cx, cy))
+    height = y2 - y1
+    seed = Sample(track_id, frame_time, x, y, aim_y=aim_y, correction=(cx, cy), height=height)
     if previous is None or previous.track_id != track_id or previous.aim_y != aim_y:
         LAST['why'] = 'first frame of this id'
         return seed, NO_LEAD
@@ -85,24 +94,50 @@ def estimate(previous, track_id, observed, frame_time, motion_pair, lead_ms, *,
         # Experimental delay compensation: predict where the observation moves
         # in the raw image, including camera motion. Still require valid GMC.
         px, py = previous.x, previous.y
-    if native_control.native is not None:
+    dx, dy = x - px, y - py
+    step_vx = dx / dt
+    stable_close = (picture_height is not None and picture_height > 0
+                    and min(previous.height, height) >= NEAR_HEIGHT_FRACTION * picture_height
+                    and abs(height - previous.height) <= 0.20 * max(height, previous.height))
+    fast_pan = False
+    if stable_close and abs(step_vx) >= NEAR_PAN_MIN_SPEED:
+        continuing = abs(previous.step_vx) >= NEAR_PAN_MIN_SPEED and previous.step_vx * step_vx > 0
+        # Use the first plausible lateral step after slow movement. Leave a
+        # gap, a large isolated jump and a reversal on the normal filter.
+        starting = (space == "scene" and abs(previous.step_vx) < NEAR_PAN_MIN_SPEED
+                    and previous.vx * step_vx >= 0
+                    and dt <= NEAR_PAN_START_MAX_INTERVAL
+                    and abs(dx) <= NEAR_PAN_START_MAX_WIDTH_FRACTION * (x2 - x1)
+                    and abs(dx) >= abs(dy))
+        fast_pan = continuing or starting
+    if native_control.native is not None and not fast_pan:
         state, vx, vy, dx, dy = native_control.native.filter_velocity(
-            dt, previous.vx, previous.vy, x - px, y - py, lead_ms)
+            dt, previous.vx, previous.vy, dx, dy, lead_ms)
         LAST['why'] = ('bad speed', 'slower than 15 px/s', 'sent')[state]
-        sample = Sample(track_id, frame_time, x, y, vx, vy, aim_y, (cx, cy)) if state else seed
+        sample = Sample(track_id, frame_time, x, y, vx, vy, aim_y, (cx, cy), height, step_vx) if state else seed
         return sample, (dx, dy)
     alpha = -math.expm1(-dt / TIME_CONSTANT)
-    vx = (1.0 - alpha) * previous.vx + alpha * (x - px) / dt
-    vy = (1.0 - alpha) * previous.vy + alpha * (y - py) / dt
+    alpha_x = -math.expm1(-dt / NEAR_PAN_TIME_CONSTANT) if fast_pan else alpha
+    vx = (1.0 - alpha_x) * previous.vx + alpha_x * step_vx
+    vy = (1.0 - alpha) * previous.vy + alpha * dy / dt
     speed = math.hypot(vx, vy)
     if not math.isfinite(speed):
         LAST['why'] = 'bad speed'
         return seed, NO_LEAD
-    sample = Sample(track_id, frame_time, x, y, vx, vy, aim_y, (cx, cy))
+    sample = Sample(track_id, frame_time, x, y, vx, vy, aim_y, (cx, cy), height, step_vx)
     if speed < MIN_SPEED:
         LAST['why'] = 'slower than 15 px/s'
         return sample, NO_LEAD
     seconds = max(0.0, min(400.0, lead_ms)) / 1000.0
+    if fast_pan:
+        # Spend more of the existing lead budget in the direction of the
+        # fast pan. Keep the ordinary vertical offset and protocol limit.
+        scale = min(seconds, MAX_LEAD / speed)
+        dy = vy * scale
+        x_limit = math.sqrt(max(0.0, MAX_LEAD * MAX_LEAD - dy * dy))
+        dx = vx * min(0.4, NEAR_PAN_LEAD_GAIN * seconds)
+        LAST['why'] = 'sent'
+        return sample, (max(-x_limit, min(x_limit, dx)), dy)
     scale = min(seconds, MAX_LEAD / speed)
     LAST['why'] = 'sent'
     return sample, (vx * scale, vy * scale)

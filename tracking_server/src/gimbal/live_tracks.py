@@ -12,6 +12,7 @@ import numpy as np
 
 from ..camera import replay_link
 from ..common.state import APP
+from ..common.shared_values import PERSON_CLS
 from ..common import frame_math
 from ..common.identity_trace import record_bridge_observation
 from ..track.stabilizer import stab_people_real
@@ -41,8 +42,9 @@ def _boundary_locked(gb, source):
     # Drop only queued tracking/motion work, preserving unrelated replies and
     # heartbeats. H must not be lost when the ordinary 64-command queue is full.
     gb.wq = type(gb.wq)(c for c in gb.wq
-                       if c.split(b' ', 1)[0].strip() not in (b'A', b'W', b'J', b'C', b'H', b'V', b'F', b'G'))
+                       if c.split(b' ', 1)[0].strip() not in (b'A', b'W', b'J', b'C', b'H', b'V', b'F', b'G', b'E'))
     gb.wframe = None
+    gb.deadline_arrival = None
     gb.observation_barrier = None  # H below already guarantees STOP for this generation.
     gb.observation_ns = 0
     gb.tracks_ticket = getattr(gb, 'tracks_ticket', 0) + 1
@@ -248,7 +250,8 @@ def _warp_point(w, x, y):
 
 def _recatch_locked(gb, selected, frame_t):
     """Called with gb.wcond held, after gb.people is set for this frame. Returns the id following moved to, else 0."""
-    if not search_enabled(gb) or os.environ.get('LWIR_SEARCH_NEW_ID') != '1':
+    if (not search_enabled(gb) or os.environ.get('LWIR_SEARCH_NEW_ID') != '1'
+            or os.environ.get('LWIR_FOLLOW_GUARD') == '2'):
         return 0
     if (not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0) or getattr(gb, 'mover', None)
             or getattr(gb, 'selection_reset', False) or not getattr(gb, 'people_t', 0.0)):
@@ -433,7 +436,7 @@ def guard_enabled():
 
 def _appearance(oid):
     """11-15 guard v2: the newest RepVGG feature the KeepID / relink judge computed for a box of output id oid, as
-    (feature, age in frames), or None. Read only; the judge keeps per tracker id observations ('m1' = feature)."""
+    (feature, age in frames, observation frame), or None. Read only; the judge keeps per tracker id observations ('m1' = feature)."""
     rl = getattr(APP, 'relabeler', None)
     if rl is None:
         return None
@@ -449,10 +452,11 @@ def _appearance(oid):
                     if ob.get('m1') is not None:
                         if best is None or ob['t'] > best[1]: best = (ob['m1'], ob['t'])
                         break
-            return None if best is None else (best[0], now - best[1])
+            return None if best is None else (best[0], now - best[1], best[1])
         g = getattr(rl, 'gallery', {}).get(oid)   # relabel_online
         if g:
-            return (g[-1], now - getattr(rl, 'last_emb', {}).get(oid, -10 ** 6))
+            stamp = getattr(rl, 'last_emb', {}).get(oid, -10 ** 6)
+            return (g[-1], now - stamp, stamp)
     except Exception:   # noqa: BLE001
         return None
     return None
@@ -462,6 +466,90 @@ def predict_log_enabled():
     """11-15: LWIR_FOLLOW_PREDICT_LOG=1 (tests, off by default): run the prediction for /gimbal/people state 'guard' even when
     neither the coast nor the guard is on. It never changes what is sent to the bridge."""
     return os.environ.get('LWIR_FOLLOW_PREDICT_LOG') == '1'
+
+
+def _preliminary_box(predicted, detections):
+    """Motion-only association of a continuous, unobstructed selected track."""
+    x1, y1, x2, y2 = predicted
+    w, h = x2 - x1, y2 - y1
+    if not (w >= 4 and h >= 32):
+        return None
+    cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+    nearby = []
+    for x, y, right, bottom, score, cls in detections:
+        if cls != PERSON_CLS or score < .10:
+            continue
+        box = (x, y, right, bottom)
+        if (follow_guard.iou(predicted, box) >= .10 or
+                math.hypot((x + right) / 2 - cx, (y + bottom) / 2 - cy) < .45 * h):
+            nearby.append((box, score))
+            if len(nearby) > 1:
+                return None
+    if not nearby:
+        return None
+    box, score = nearby[0]
+    x, y, right, bottom = box
+    if (score < .25 or follow_guard.iou(predicted, box) < .50
+            or not .8 * w <= right - x <= 1.25 * w
+            or not .8 * h <= bottom - y <= 1.25 * h):
+        return None
+    return box
+
+
+def offer_preliminary(detections, frame_t, correction):
+    # update_with_features calls this after predicting current track geometry
+    # and before waiting for appearance. It never commits an ID or box.
+    gb, live = APP.GB, APP.LIVE
+    if (gb is None or not getattr(gb, 'preliminary_supported', False)
+            or not gb.state.get('auto') or (correction is not None and any(correction))
+            or replay_link.frame_blocked(frame_t)):
+        return
+    if not gb.wcond.acquire(False):
+        return
+    try:
+        if (not gb.wopen or not gb.observation_ok or not gb.state.get('auto')
+                or gb.state.get('lost') or gb.state.get('error') or gb.selection_reset
+                or gb.lead_pending or gb.selection_ack_wait_state or gb.handoff_pending is not None
+                or getattr(gb, 'mover', None) or getattr(gb, 'usb_hold', False)
+                or any(getattr(live, flag, False) for flag in
+                       ('cam_lost', 'cam_hold', 'cam_frozen', 'stopped', 'restart_stop', 'restart_pending'))
+                or current_source() != getattr(gb, 'people_source', ())):
+            return
+        stamp = int(frame_t * 1e9)
+        if not 0 < time.perf_counter() - frame_t < .033 or stamp <= gb.observation_ns:
+            return
+        raw = live.rawq[0] if live.rawq else None
+        if not isinstance(raw, np.ndarray) or raw.dtype != np.uint16 or raw.shape != (APP.LIVE_H, APP.LIVE_W):
+            return
+        selected, epoch = gb.state.get('id'), gb.control_epoch
+        owner = gb.click_owners.get(selected)
+        guard = gb.fguard
+        if (owner is None or epoch is None or guard is None or guard.sel != selected
+                or guard.phase != 'track' or getattr(guard, 'trusted_control_owner', None) is not owner
+                or not 0 < guard.age(frame_t) <= .10):
+            return
+        judge = vars(APP).get('relabeler')
+        if (gb.click_namespace is not getattr(judge, 'id_map', None)
+                or gb.click_namespace is None or gb.click_namespace.get(owner[0]) != selected):
+            return
+        track = next((t for t in APP.tracker.tracked if t.track_id == owner[0] and t.is_activated), None)
+        if track is None:
+            return
+        box = _preliminary_box(track.xyxy, detections)
+        if box is None:
+            return
+        x, y, right, bottom = box
+        aim = _bridge_aim_y(gb)
+        if aim is None:
+            aim = .5
+        cx, cy = (x + right) / 2, y + aim * (bottom - y) - CANVAS_Y
+        if not (0 <= cx < APP.LIVE_W and 0 <= cy < APP.LIVE_H) or len(gb.wq) >= 62:
+            return
+        gb.wq.append(f'E {stamp} {selected} {epoch} {cx:.2f} {cy:.2f}\n'.encode())
+        gb.state['preliminary_queued'] = gb.state.get('preliminary_queued', 0) + 1
+        gb.wcond.notify()
+    finally:
+        gb.wcond.release()
 
 
 def _kalman_box(selected):
@@ -552,6 +640,7 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
     want_bounded = os.environ.get('LWIR_COAST_BOUNDED_SEEK') == '1'
     on_seek = seek_supported and not bounded and not want_bounded
     gb.seek_out = gb.seek_raw = None
+    gb.state.pop('recovery_zone', None)
     if getattr(gb, 'handoff_pending', None) is not None and selected:
         return selected, None  # awaiting the bridge; do not reevaluate or follow the disputed old row
     if (not (on_guard or on_coast or on_seek or predict_log_enabled()) or not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0)
@@ -571,6 +660,8 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
         g = gb.fguard = follow_guard.FollowGuardV2(selected) if v2 else follow_guard.FollowGuard(selected, on_guard)
     if v2:
         g.app, g.kal = _appearance, _kalman_box(selected)
+        owner = getattr(gb, 'click_owners', {}).get(selected)
+        g.continuous_control_owner = owner is not None and owner is g.trusted_control_owner
     g.defer_retarget = getattr(gb, 'web_follow_control_supported', False)
     fused = on_coast and coast_mode() == 'fused'
     bounded_on = seek_supported and bounded and want_bounded and fused
@@ -583,8 +674,12 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
     d = g.step(frame_t, gb.people, _motion)
     if preserve_follow is not None:
         preserve_follow(g, d, selected, frame_t)
+    if v2 and g.trust_t == frame_t and d['phase'] == 'track' and not d['mask'] and not d['reselect']:
+        g.trusted_control_owner = getattr(gb, 'click_owners', {}).get(selected)
     p = d['pred'] or g.pred
-    if d['mask'] and not getattr(g, 'masked_seek_lock', False):
+    if d.get('foreground_blocked') or d.get('search_verification'):
+        kal = None
+    elif d['mask'] and not getattr(g, 'masked_seek_lock', False):
         kal = _kalman_box(selected)
     else:
         kal = _kalman_box(selected) if not d['mask'] and not any(int(q[0]) == selected for q in gb.people) else None
@@ -633,6 +728,12 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
     elif not on_seek:
         gb.state.pop('seek', None)
         if v2: g.wide = None
+    if v2 and on_guard and d['phase'] in ('lost', 'masked') and not d['reselect']:
+        radius = g.recovery_radius(frame_t)
+        if radius:
+            cx, cy, w, h = g.pred
+            dx, dy = (0., 0.) if correction is None else correction
+            gb.state['recovery_zone'] = (frame_t, selected, cx - dx, cy - dy, w, h, radius * max(1., h))
     # read by /gimbal/people (tests): phase, mask, velocity prediction (cx, cy, h), PRED sent, tracker position memory (cx, cy, h),
     # the PRED box centre sent
     gb.state['guard'] = [GUARD_PHASES.get(d['phase'], -1), int(d['mask']),
@@ -665,13 +766,20 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
 def _search_velocity_locked(gb, selected, observed, frame_t, correction, tilt_hold=False):
     """11-15: ' VEL <id> <vx> <vy>' for a bridge that said SEARCH_CONTROL 1: the followed person's velocity against the
     background (picture px/s) from the predictive-control estimator (predictive_lead.estimate, the same one LEAD uses; when
-    LEAD is on its own sample of this frame is reused). The bridge uses it only to keep turning where the person should be
-    after a loss, so the tracker / KeepID can give the same id back. '' when there is nothing to send."""
-    if not getattr(gb, 'search_control_supported', False) or not selected or not gb.state.get('auto'):
+    LEAD is on its own sample of this frame is reused). Deadline control can reuse the same sample without enabling search
+    or running the estimator again. '' when there is nothing to send."""
+    if not selected or not gb.state.get('auto'):
         gb.search_lv = None
         return ''
+    search = getattr(gb, 'search_control_supported', False)
     lv = APP.CTL.get('lv')
-    if not (APP.CTL.get('lead') and lv is not None and getattr(lv, 'track_id', 0) == selected and getattr(lv, 'time', None) == frame_t):
+    current_lead = (APP.CTL.get('lead') and lv is not None and getattr(lv, 'track_id', 0) == selected
+                    and getattr(lv, 'time', None) == frame_t)
+    if not search:
+        gb.search_lv = None
+        if not getattr(gb, 'deadline_hold_supported', False) or not current_lead:
+            return ''
+    elif not current_lead:
         why = predictive_lead.LAST.get('why')
         lv, _ = predictive_lead.estimate(getattr(gb, 'search_lv', None), selected, observed, frame_t,
                                          APP.CTL.get('lead_motion'), 0, aim_y=_bridge_aim_y(gb) if _bridge_aim_y(gb) is not None else .5,
@@ -780,7 +888,7 @@ def publish(people, correction, frame_t, raw16, source, blocked=False, *, health
             previous = APP.CTL['lv']
             sample, (dx, dy) = predictive_lead.estimate(
                 previous, selected, observed, frame_t, APP.CTL.get('lead_motion'), APP.CTL['lead_ms'],
-                aim_y=aim_y, correction=correction)
+                aim_y=aim_y, correction=correction, picture_height=height)
             if tilt_hold:
                 dy = 0.
             # A settings request can reset the sample while NumPy is running.

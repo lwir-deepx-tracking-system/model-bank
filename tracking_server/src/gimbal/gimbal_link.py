@@ -99,6 +99,11 @@ def without_lead(frame):
 
 def _reset_bridge_lead(gb):
     gb.picture_lane_supported = False
+    gb.deadline_hold_supported = False
+    gb.preliminary_supported = False
+    gb.state['preliminary_control'] = False
+    gb.deadline_arrival = None
+    gb.state['deadline_hold'] = False
     gb.state['picture_transport'] = 'shared'
     gb.home_control_supported = False
     gb.lead_control_supported = False
@@ -119,6 +124,31 @@ def _reset_bridge_lead(gb):
     gb.fguard = None
     gb.fseek = None
     reset_lead()
+
+
+def offer_camera_arrival(stamp):
+    """Give the bridge a camera timestamp without making camera input wait on control."""
+    gb = APP.GB
+    if gb is None or not getattr(gb, 'deadline_hold_supported', False) or not gb.state.get('auto'):
+        return
+    if not gb.wcond.acquire(False):
+        return
+    try:
+        live = APP.LIVE
+        if (not gb.wopen or not gb.deadline_hold_supported or not gb.state.get('auto')
+                or gb.state.get('lost') or gb.state.get('error') or gb.selection_reset
+                or getattr(gb, 'lead_pending', 0) or getattr(gb, 'selection_ack_wait_state', False)
+                or getattr(gb, 'mover', None) or not gb.observation_ok
+                or getattr(live, 'replay', None) is not None or getattr(live, 'replay_busy', False)
+                or getattr(live, 'cam_lost', False) or getattr(live, 'cam_hold', False)
+                or getattr(gb, 'usb_hold', False)):
+            return
+        selected, epoch = gb.state.get('id'), gb.control_epoch
+        if selected and epoch is not None:
+            gb.deadline_arrival = f'D {int(stamp * 1e9)} {selected} {epoch}\n'.encode()
+            gb.wcond.notify()
+    finally:
+        gb.wcond.release()
 
 
 def gb_send(line_):
@@ -202,7 +232,7 @@ def gb_writer(p_):
     try:
         while True:
             with APP.GB.wcond:
-                APP.GB.wcond.wait_for(lambda: APP.GB.wq or APP.GB.wframe is not None or getattr(APP.GB, 'observation_barrier', None) is not None or not APP.GB.wopen or APP.GB.proc is not p_)
+                APP.GB.wcond.wait_for(lambda: APP.GB.wq or APP.GB.wframe is not None or getattr(APP.GB, 'observation_barrier', None) is not None or getattr(APP.GB, 'deadline_arrival', None) is not None or not APP.GB.wopen or APP.GB.proc is not p_)
                 if APP.GB.proc is not p_: return   # a newer bridge owns the queue now
                 if not APP.GB.wopen and not APP.GB.wq and APP.GB.wframe is None and getattr(APP.GB, 'observation_barrier', None) is None: break
                 barrier = getattr(APP.GB, 'observation_barrier', None)
@@ -210,6 +240,10 @@ def gb_writer(p_):
                 APP.GB.observation_barrier = None
                 chunks_.extend(APP.GB.wq); APP.GB.wq.clear()
                 if APP.GB.wframe is not None: chunks_.append(APP.GB.wframe); APP.GB.wframe = None
+                deadline = getattr(APP.GB, 'deadline_arrival', None)
+                if deadline is not None:
+                    chunks_.append(deadline)
+                    APP.GB.deadline_arrival = None
             for c_ in chunks_: p_.stdin.write(c_)
             p_.stdin.flush()
     except (OSError, ValueError): pass
@@ -257,6 +291,16 @@ def gb_reader(p_):
         if not f_: continue
         if p_ is not APP.GB.proc: continue   # v26: lines of a bridge that was replaced
         if f_[0] == 'READY': APP.GB.state['ready'] = True; print('GIMBAL ready', APP.GB.dev, flush=True)
+        elif f_[0] == 'DEADLINE_HOLD_CONTROL' and f_[1:] == ['1']:
+            with APP.GB.wcond:
+                if p_ is APP.GB.proc and APP.GB.wopen:
+                    APP.GB.deadline_hold_supported = True
+                    APP.GB.state['deadline_hold'] = True
+        elif f_[0] == 'PRELIMINARY_CONTROL' and f_[1:] == ['1']:
+            with APP.GB.wcond:
+                if p_ is APP.GB.proc and APP.GB.wopen:
+                    APP.GB.preliminary_supported = True
+                    APP.GB.state['preliminary_control'] = True
         elif f_[0] == 'PICTURE_LANE' and f_[1:] == ['1']:
             with APP.GB.wcond:
                 if p_ is APP.GB.proc and APP.GB.wopen and getattr(p_, '_picture_lane', None) is not None:

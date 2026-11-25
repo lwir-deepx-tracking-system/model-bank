@@ -46,6 +46,102 @@ class Scene:
         return [(p[0], p[1] - self.pan, p[2], p[3] - self.pan, p[4], p[5]) for p in people]
 
 
+class ForegroundOcclusionTests(unittest.TestCase):
+    def test_same_id_large_foreground_cannot_steer_or_replace_trusted_box(self):
+        scene, guard = Scene(), F.FollowGuardV2(7)
+        target = person(7, 250., 200., h=120., w=65.)
+        for _ in range(5):
+            guard.step(scene.step(), [target], scene.motion)
+        trust = guard.trust
+        for x in (271., 285., 320., 345.):
+            intruder = person(7, x, 205., h=172., w=104.)
+            decision = guard.step(scene.step(), [intruder], scene.motion)
+            self.assertTrue(decision['foreground_blocked'])
+            self.assertTrue(decision['mask'])
+            self.assertEqual(decision['pred'], trust)
+            self.assertEqual(decision['reselect'], 0)
+        self.assertTrue(guard.step(scene.step(), [], scene.motion)['mask'])
+        self.assertTrue(guard.step(scene.step(), [target], scene.motion)['mask'])
+        decision = guard.step(scene.step(), [target], scene.motion)
+        self.assertFalse(decision['mask'])
+        self.assertEqual(guard.sel, 7)
+
+    def test_fast_continuous_approach_and_camera_pan_are_allowed(self):
+        scene, guard = Scene(), F.FollowGuardV2(7)
+        for i in range(9):
+            t = scene.step(pan_step=6.)
+            target = person(7, 230. + 8. * i, 210., h=100. + 10. * i, w=55. + 5. * i)
+            decision = guard.step(t, scene.shown([target]), scene.motion)
+            self.assertFalse(decision['mask'])
+            self.assertEqual(guard.trust_t, t)
+
+
+class SearchAppearanceVerificationTests(unittest.TestCase):
+    def setUp(self):
+        self.scene = Scene()
+        self.guard = F.FollowGuardV2(7)
+        self.vector = np.array([1., 0., 0.])
+        self.guard.app = lambda ident: (self.vector, 0, 10) if ident == 7 else None
+        for _ in range(4):
+            self.step([person(7, 230.)])
+        for _ in range(30):
+            self.step([])
+
+    def step(self, rows):
+        return self.guard.step(self.scene.step(), rows, self.scene.motion)
+
+    def test_recycled_selected_id_with_unconfirmed_feature_cannot_end_search(self):
+        self.guard.distract[14] = np.array([0., 1., 0.])
+        self.guard.app = lambda ident: (self.guard.distract[14], 0, 11)
+        for _ in range(4):
+            out = self.step([person(7, 260.)])
+            self.assertTrue(out['mask'])
+            self.assertFalse(out['reselect'])
+        self.assertEqual(self.guard.sel, 7)
+
+    def test_wide_recovery_counts_three_distinct_appearance_observations(self):
+        stamp = 11
+        self.guard.app = lambda ident: (self.vector, 0, stamp)
+        target = person(9, 440.)
+        for _ in range(4):
+            out = self.step([target])
+            self.assertTrue(out['mask'])
+            self.assertFalse(out['reselect'])
+        stamp = 12
+        self.assertTrue(self.step([target])['mask'])
+        stamp = 13
+        self.assertEqual(self.step([target])['reselect'], 9)
+
+    def test_far_candidate_must_clear_a_higher_similarity_threshold(self):
+        stamp = 11
+        reasonable = np.array([.72, np.sqrt(1. - .72 ** 2), 0.])
+        self.guard.app = lambda ident: (reasonable, 0, stamp)
+        for stamp in range(11, 15):
+            out = self.step([person(7, 480.)])
+            self.assertTrue(out['mask'])
+        self.assertEqual(self.guard.search_verify_n, 0)
+        self.assertTrue(self.step([person(7, 255.)])['mask'])
+        stamp += 1
+        self.assertFalse(self.step([person(7, 255.)])['mask'])
+
+    def test_two_similar_candidates_keep_the_gimbal_searching(self):
+        stamp = 11
+        self.guard.app = lambda ident: (self.vector, 0, stamp)
+        for offset in range(3):
+            stamp = 11 + offset
+            out = self.step([person(7, 165.), person(9, 295.)])
+            self.assertTrue(out['mask'])
+            self.assertFalse(out['reselect'])
+
+    def test_original_id_resumes_after_independent_evidence(self):
+        stamp = 11
+        self.guard.app = lambda ident: (self.vector, 0, stamp)
+        self.assertTrue(self.step([person(7, 240.)])['mask'])
+        stamp = 12
+        self.assertFalse(self.step([person(7, 240.)])['mask'])
+        self.assertEqual(self.guard.sel, 7)
+
+
 class PredictionTests(unittest.TestCase):
     def walk(self, g, s, n, x0, v, pan_step=0., present=True):
         out = []

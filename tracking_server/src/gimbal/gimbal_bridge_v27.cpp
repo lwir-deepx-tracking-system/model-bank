@@ -1,3 +1,4 @@
+#include <cmath>
 // gimbal_bridge_v27 = gimbal_bridge_v25 + motion smoothing (see V27_CHANGES.md). Built against v27/ (patched copies of four team control
 // files + smoothing_config.hpp) placed before team/include. With no lead suffix, tracking uses the observed box reference.
 //   --deadband-exit <e>         deadband hysteresis: a centred axis moves again only when |error| > e (0 = off)
@@ -343,6 +344,8 @@ Options parse(int argc, char** argv)
         else throw std::invalid_argument("unknown option " + name);
     }
     if (c.gimbal.device.empty()) throw std::invalid_argument("--device is required");
+    if (!std::isfinite(c.automatic.speed_rate) || c.automatic.speed_rate < 0.0)
+        throw std::invalid_argument("--speed-rate must be nonnegative (0 disables the software ramp)");
     if (s.observation_grace_ms < 0 || s.observation_grace_ms > 100 ||
         (s.observation_grace_ms > 0 && s.observation_grace_ms >= c.automatic.input_timeout_ms))
         throw std::invalid_argument("--observation-grace-ms must be within 0..100 and below --input-timeout-ms when enabled");
@@ -714,6 +717,27 @@ public:
         else if (kind == "G") frame_with_picture(in);
         else if (kind == "O") frame_with_picture(in, false);
         else if (kind == "P") heartbeat();
+        else if (kind == "D" || kind == "E") {
+            std::int64_t stamp = 0;
+            std::uint32_t id = 0;
+            std::uint64_t epoch = 0;
+            std::string stamp_text, id_text, epoch_text, spare;
+            if (!(in >> stamp_text >> id_text >> epoch_text) ||
+                !parse_token(stamp_text, stamp) || !parse_token(id_text, id) || !parse_token(epoch_text, epoch))
+                return;
+            TrackLead preliminary;
+            if (kind == "E") {
+                std::string x, y;
+                if (!(in >> x >> y) || !parse_token(x, preliminary.dx_px) || !parse_token(y, preliminary.dy_px))
+                    return;
+                preliminary.track_id = id;
+                preliminary.control_epoch = epoch;
+                if (!id || !std::isfinite(preliminary.dx_px) || !std::isfinite(preliminary.dy_px) ||
+                    preliminary.dx_px < 0 || preliminary.dy_px < 0 ||
+                    preliminary.dx_px >= 4096 || preliminary.dy_px >= 4096) return;
+            }
+            if (!(in >> spare)) executor_.camera_arrived(stamp, id, epoch, preliminary);
+        }
         else if (kind == "A" || kind == "W") {
             long long id = -1;
             in >> id;
@@ -809,6 +833,10 @@ int main(int argc, char** argv) try {
     say("TRACK_CONTROL 1");
     say("HOME_CONTROL 1");
     say("WEB_FOLLOW_CONTROL 1");
+    if (options.smoothing.arrival_control) {
+        say("DEADLINE_HOLD_CONTROL 1");
+        say("PRELIMINARY_CONTROL 1");
+    }
     say("LEAD_CONTROL 1");
     say("OBSERVATION_STATUS 1");
     if (options.smoothing.search) say("SEARCH_CONTROL 1");

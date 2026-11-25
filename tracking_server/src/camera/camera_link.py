@@ -34,6 +34,7 @@ class _Live: pass
 
 def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a new reader
     if camera_extra.stamped(p_): return camera_extra.reader(p_)   # only for a cam_pipe started with LWIR_CAM_STAMP=1 (off by default)
+    from ..gimbal.gimbal_link import offer_camera_arrival
     n_ = APP.LIVE_W * APP.LIVE_H * 2; buf_ = bytearray(n_); cnt_ = 0; tl_ = time.monotonic()
     dg_ = stall_diag.reader_probe()   # None unless LWIR_STALL_DIAG=1
     while True:   # v24c: never stop reading before EOF; after LIVE.stopped the frames are thrown away (cam_pipe must not block on a full pipe: it then cannot act on SIGTERM and was SIGKILLed with the camera open)
@@ -62,6 +63,7 @@ def lv_reader(p_):   # v21: reads one camera process; a later reopen starts a ne
             cnt_ += 1; now_ = time.monotonic(); APP.LIVE.last_frame_t = now_; APP.LIVE.cam_fail_n = 0; APP.LIVE.cam_unrec_n = 0; APP.LIVE.frames_in += 1
             if getattr(APP.LIVE, 'cam_frozen', None) is not None: camera_extra.note('server', cam_frozen.on_frame(APP.LIVE))   # 11-15: the camera answers again
             if now_ - tl_ >= 1.0: APP.LIVE.cam_fps = cnt_ / (now_ - tl_); cnt_ = 0; tl_ = now_
+        offer_camera_arrival(ta_)
         pw_ = getattr(APP.LIVE, 'picture_worker', None)   # 11-15: picture first (src/web/picture_first.py): the page picture now, before detection
         if pw_ is not None: pw_.offer(ta_, raw_)
         rc_ = APP.LIVE.rec   # v22d: measurement video

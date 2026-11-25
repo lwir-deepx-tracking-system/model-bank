@@ -925,6 +925,8 @@ def main():
 
                     def collect_botsort():
                         nonlocal bs_feats, reid_collect_ns
+                        if frame_time is not None:
+                            live_tracks.offer_preliminary(arr, frame_time, stab_c_)
                         reid_collect_ns = time.perf_counter_ns()
                         try:
                             bs_feats = batch.collect()

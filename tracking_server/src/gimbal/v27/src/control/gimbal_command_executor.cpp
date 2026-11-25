@@ -13,6 +13,30 @@
 #include "common/logger.hpp"
 
 namespace {
+constexpr auto deadline_hold_after = std::chrono::milliseconds(25);
+constexpr auto deadline_hold_window = std::chrono::milliseconds(33);
+constexpr auto deadline_prior_max_age = std::chrono::milliseconds(75);
+constexpr double deadline_projection_seconds = .040;
+constexpr double deadline_projection_limit_px = 18;
+constexpr double deadline_min_speed_px_s = 15;
+
+const Track* unique_observation(const std::vector<Track>& tracks, int id)
+{
+    const Track* found = nullptr;
+    for (const auto& candidate : tracks) {
+        if (candidate.track_id != id) continue;
+        if (found || candidate.predicted) return nullptr;
+        found = &candidate;
+    }
+    return found;
+}
+
+bool close_observation(const Track& a, const Track& b, double dx = 0, double dy = 0)
+{
+    return std::abs((a.x + a.width / 2.0 + dx) - (b.x + b.width / 2.0)) < .65 * std::max(a.width, b.width) &&
+           std::abs((a.y + a.height / 2.0 + dy) - (b.y + b.height / 2.0)) < .55 * std::max(a.height, b.height);
+}
+
 bool control_output_trace_enabled()
 {
     static const bool enabled = [] {
@@ -116,18 +140,24 @@ GimbalCommandExecutor::~GimbalCommandExecutor()
 void GimbalCommandExecutor::run()
 {
     auto next = Clock::now();
+    CameraArrival deadline;
     for (;;) {
         std::packaged_task<void()> request;
         Observation input;
+        CameraArrival received_arrival;
         bool unsafe = false, reset_brake = false;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            const auto wake_at = grace_deadline_ == Clock::time_point{} ? next : std::min(next, grace_deadline_);
+            auto wake_at = grace_deadline_ == Clock::time_point{} ? next : std::min(next, grace_deadline_);
+            if (deadline.selected_id)
+                wake_at = std::min(wake_at, deadline.stamp + deadline_hold_after);
             wake_.wait_until(lock, wake_at, [this] {
-                return closing_ || !requests_.empty() || pending_.result || pending_unsafe_;
+                return closing_ || !requests_.empty() || pending_.result || pending_unsafe_ || pending_arrival_.selected_id;
             });
             if (closing_) break;
             input = std::move(pending_);
+            received_arrival = pending_arrival_;
+            pending_arrival_ = {};
             unsafe = pending_unsafe_;
             reset_brake = pending_brake_reset_;
             pending_unsafe_ = pending_brake_reset_ = false;
@@ -155,12 +185,110 @@ void GimbalCommandExecutor::run()
         // The period timer restarts here, so time-outs, ramps, coast and search keep running every period_ms.
         const bool arrival = smoothing_.arrival_control && arrived_;
         const bool bounded_seek_frame = smoothing_.bounded_seek && seeking_ && arrived_;
-        if (resumed || arrival || bounded_seek_frame || Clock::now() >= next) {
-            tick(arrival || bounded_seek_frame);
+        bool held = false;
+        if (received_arrival.preliminary.track_id) {
+            if (!arrival && !resumed && !bounded_seek_frame && !unsafe)
+                held = respond_to_delayed_result(received_arrival);
+            if (held && deadline.stamp <= received_arrival.stamp) deadline = {};
+        } else if (received_arrival.stamp > deadline.stamp) {
+            deadline = received_arrival;
+        }
+        if (deadline.selected_id && latest_ && latest_->frame->metadata.captured_at >= deadline.stamp)
+            deadline = {};
+        if (!held && !arrival && !resumed && !bounded_seek_frame && deadline.selected_id &&
+            Clock::now() >= deadline.stamp + deadline_hold_after) {
+            held = respond_to_delayed_result(deadline);
+            deadline = {};
+        }
+        const bool normal_tick = resumed || arrival || bounded_seek_frame || (!held && Clock::now() >= next);
+        if (normal_tick) tick(arrival || bounded_seek_frame);
+        if (normal_tick || held) {
             next = Clock::now() + std::chrono::milliseconds(
                 std::min(config_.automatic.period_ms, config_.poll_interval_ms));
         }
     }
+}
+void GimbalCommandExecutor::camera_arrived(std::int64_t ns, std::uint32_t selected_id,
+                                           std::uint64_t epoch, TrackLead preliminary)
+{
+    if (!smoothing_.arrival_control || !selected_id || ns <= 0) return;
+    const auto stamp = Clock::time_point{std::chrono::duration_cast<Clock::duration>(std::chrono::nanoseconds(ns))};
+    const auto now = Clock::now();
+    if (stamp > now || now >= stamp + deadline_hold_window) return;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stamp < pending_arrival_.stamp ||
+            (stamp == pending_arrival_.stamp && !preliminary.track_id)) return;
+        pending_arrival_ = {stamp, selected_id, epoch, preliminary};
+    }
+    wake_.notify_one();
+}
+
+bool GimbalCommandExecutor::respond_to_delayed_result(const CameraArrival& arrival)
+{
+    const auto now = Clock::now();
+    const bool preliminary = arrival.preliminary.track_id != 0;
+    if (now - arrival.stamp >= deadline_hold_window ||
+        !state_.automatic || state_.lost || !ready() || !latest_healthy_ ||
+        state_.selected_id != arrival.selected_id || state_.command_generation != arrival.epoch ||
+        !latest_ || (preliminary ? arrival.stamp <= last_preliminary_
+                                 : (held_frame_id_ == last_frame_id_ && held_epoch_ == arrival.epoch))) return false;
+    const auto previous = latest_->frame->metadata.captured_at;
+    const auto* observed = target(arrival.selected_id);
+    if (previous >= arrival.stamp || now - previous > deadline_prior_max_age || !observed ||
+        !unique_observation(latest_->tracks, observed->track_id)) return false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!requests_.empty() || pending_unsafe_ ||
+            (pending_.result && pending_.result->frame->metadata.captured_at >= arrival.stamp))
+            return false;
+    }
+    const int old_x = x_, old_y = y_, old_speed = sent_speed_;
+    TrackLead projection;
+    const auto& velocity = latest_->velocity;
+    if (preliminary) {
+        const double dx = arrival.preliminary.dx_px - (observed->x + observed->width * .5);
+        const double dy = arrival.preliminary.dy_px - (observed->y + observed->height * latest_->aim_y);
+        if (std::hypot(dx, dy) > std::min(60., .36 * observed->height)) return false;
+        projection = {observed->track_id, dx, dy, arrival.epoch};
+        last_preliminary_ = arrival.stamp;
+    } else if (deadline_motion_continuous_ && velocity.matches(observed->track_id)) {
+        const double speed = std::hypot(velocity.vx, velocity.vy);
+        if (speed >= deadline_min_speed_px_s) {
+            const double horizon = std::min({std::chrono::duration<double>(now - previous).count(),
+                                             deadline_projection_seconds,
+                                             deadline_projection_limit_px / speed});
+            projection = {observed->track_id, horizon * velocity.vx, horizon * velocity.vy, arrival.epoch};
+        }
+    }
+    const auto& image = latest_->frame->image;
+    const bool conflict = std::any_of(latest_->tracks.begin(), latest_->tracks.end(), [&](const Track& other) {
+        return other.track_id != observed->track_id &&
+            controller_.valid(other, image.cols, image.rows, latest_->aim_y) &&
+            (close_observation(*observed, other) ||
+             close_observation(*observed, other, projection.dx_px, projection.dy_px));
+    });
+    Track projected = *observed;
+    projected.x += static_cast<float>(projection.dx_px);
+    projected.y += static_cast<float>(projection.dy_px);
+    if (!controller_.valid(projected, image.cols, image.rows, latest_->aim_y)) {
+        if (preliminary) return false;
+        projection = {};
+    }
+    if (preliminary && conflict) return false;
+    held_frame_id_ = last_frame_id_;
+    held_epoch_ = arrival.epoch;
+    if (!conflict) tick(true, true, projection, arrival.stamp, preliminary);
+    const bool changed = !state_.error && (old_x != x_ || old_y != y_ || old_speed != sent_speed_);
+    const auto stamp = std::chrono::duration_cast<std::chrono::nanoseconds>(arrival.stamp.time_since_epoch()).count();
+    const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - arrival.stamp).count();
+    if (!preliminary || changed)
+        std::fprintf(stderr, "%s arrival_ns=%lld id=%u prior_frame=%llu elapsed_ms=%.3f command_changed=%d forecast=%d conflict=%d\n",
+                 preliminary ? "PRELIMINARY_CONTROL" : "DEADLINE_HOLD",
+                 static_cast<long long>(stamp), arrival.selected_id,
+                 static_cast<unsigned long long>(last_frame_id_), elapsed, int(changed),
+                 int(!conflict && projection.track_id != 0), int(conflict));
+    return true;
 }
 void GimbalCommandExecutor::publish(TrackingResultPtr input, bool healthy_live)
 {
@@ -244,6 +372,20 @@ bool GimbalCommandExecutor::ingest(Observation observation)
     const auto id = input->frame->metadata.frame_id;
     if (id <= last_frame_id_) return false; // Duplicate frames never renew grace.
     const bool adjacent = last_frame_id_ != 0 && id - last_frame_id_ == 1;
+    deadline_motion_continuous_ = false;
+    if (smoothing_.arrival_control && state_.automatic && !state_.lost && adjacent &&
+        last_frame_id_ > lead_after_frame_ && latest_healthy_ && observation.healthy_live &&
+        latest_->aim_y == input->aim_y && input->velocity.matches(static_cast<int>(state_.selected_id))) {
+        const auto* previous = target(state_.selected_id);
+        const auto* current = unique_observation(input->tracks, static_cast<int>(state_.selected_id));
+        const auto& image = input->frame->image;
+        if (previous && current && controller_.valid(*current, image.cols, image.rows, input->aim_y) &&
+            close_observation(*previous, *current)) {
+            const double min_height = std::min(previous->height, current->height);
+            const double max_height = std::max(previous->height, current->height);
+            deadline_motion_continuous_ = min_height >= .8 * max_height;
+        }
+    }
     last_frame_id_ = id;
     latest_ = std::move(input);
     latest_healthy_ = observation.healthy_live;
@@ -393,6 +535,7 @@ void GimbalCommandExecutor::invalidate(const char* reason)
     state_.automatic = false; state_.selected_id = 0; state_.lost = false;
     lost_since_ = {}; next_auto_ = {};
     grace_deadline_ = {}; last_observed_capture_ = {}; observation_cadence_ = {};
+    deadline_motion_continuous_ = false;
     brake_ = {};
     search_ = {}; state_.search = 0; follow_x_ = follow_speed_ = 0; follow_error_x_ = follow_vx_ = 0; follow_v_at_ = {};   // v27
     coasting_ = coasted_ = seeking_ = false;   // v27 coast / seek
@@ -543,7 +686,7 @@ void GimbalCommandExecutor::search_step(Clock::time_point now)
         const double want = std::clamp(speed, config_.automatic.speed_min, config_.automatic.speed_max);
         const bool turn = state_.moving && ((x_ && x && x_ != x) || (y_ && y && y_ != y));
         if (turn) { stop("search turn"); return; }   // as the team rule: a reversal goes through STOP
-        limited_speed_ = state_.moving ?
+        limited_speed_ = config_.automatic.speed_rate == 0.0 ? want : state_.moving ?
             std::clamp(want, std::max(double(config_.automatic.speed_min), limited_speed_ - step), limited_speed_ + step) :
             double(config_.automatic.speed_min);
         last_output_ = now;
@@ -635,7 +778,8 @@ const Track* GimbalCommandExecutor::seek_target(Clock::time_point now)
     return &coast_track_;
 }
 
-void GimbalCommandExecutor::tick(bool arrival)
+void GimbalCommandExecutor::tick(bool arrival, bool hold_position, TrackLead deadline_lead,
+                                 Clock::time_point deadline_stamp, bool preliminary)
 {
     if (runtime_.generation.load() != model_generation_ ||
         runtime_.tracker_epoch.load() != tracker_epoch_ ||
@@ -649,6 +793,7 @@ void GimbalCommandExecutor::tick(bool arrival)
     if (!state_.automatic || state_.error) return;
     const auto now = Clock::now();
     const Track* t = target(state_.selected_id);
+    if (hold_position && !t) return;
     // Enforce the deadline before accepting a late reappearance.
     if (state_.lost && now - lost_since_ >= std::chrono::milliseconds(config_.automatic.reacquire_timeout_ms)) {
         invalidate("reacquire timeout"); return;
@@ -690,7 +835,7 @@ void GimbalCommandExecutor::tick(bool arrival)
         controller_.set_applied_output(x_ * sent_speed_, -y_ * sent_speed_);
         return;
     }
-    if (!coast) {
+    if (!coast && !hold_position) {
         coasting_ = coasted_ = false;
         if (seeking_) {
             if (smoothing_.bounded_seek) {
@@ -710,20 +855,42 @@ void GimbalCommandExecutor::tick(bool arrival)
         follow_x_ = x_; follow_speed_ = sent_speed_;   // v27: the output while the target is seen
         if (latest_->velocity.matches(t->track_id)) { follow_vx_ = latest_->velocity.vx; follow_v_at_ = now; }
     }
-    const auto lead = !coast && latest_->frame->metadata.frame_id > lead_after_frame_ &&
+    const auto lead = !coast && !hold_position && latest_->frame->metadata.frame_id > lead_after_frame_ &&
         latest_->lead.control_epoch == state_.command_generation ? latest_->lead : TrackLead{};
-    const bool catchup_observed = !coast && smoothing_.catchup_speed > 0 && latest_healthy_ &&
+    const bool catchup_observed = !coast && !hold_position && smoothing_.catchup_speed > 0 && latest_healthy_ &&
         (smoothing_.observation_grace_ms > 0 ||
          std::count_if(latest_->tracks.begin(), latest_->tracks.end(), [t](const Track& row) {
              return row.track_id == t->track_id;
          }) == 1);
-    const auto demand = controller_.calculate(*t, latest_->frame->image.cols, latest_->frame->image.rows,
-        latest_->frame->metadata, latest_->model_generation, lead, latest_->aim_y, catchup_observed);
-    if (!coast) follow_error_x_ = demand.error_x;   // v27
-    if (smoothing_.predictive_brake && !coast && apply_predictive_brake(*t, demand, lead)) return;
+    const auto& image = latest_->frame->image;
+    GimbalDemand demand;
+    if (hold_position) {
+        // Only the real frame updates the PID's observation, derivative and catch-up history.
+        auto preview = controller_;
+        auto metadata = latest_->frame->metadata;
+        const bool forecast = deadline_lead.matches(t->track_id);
+        if (forecast) {
+            ++metadata.frame_id;
+            metadata.captured_at = deadline_stamp;
+        }
+        Track measured = *t;
+        if (preliminary) {
+            measured.x += static_cast<float>(deadline_lead.dx_px);
+            measured.y += static_cast<float>(deadline_lead.dy_px);
+        }
+        demand = preview.calculate(measured, image.cols, image.rows, metadata,
+            latest_->model_generation, preliminary ? TrackLead{} : deadline_lead, latest_->aim_y, false);
+        if (forecast && !preliminary && (demand.x != x_ || demand.y != y_)) return;
+        if (preliminary && (demand.x * x_ < 0 || demand.y * y_ < 0)) return;
+    } else {
+        demand = controller_.calculate(*t, image.cols, image.rows, latest_->frame->metadata,
+            latest_->model_generation, lead, latest_->aim_y, catchup_observed);
+    }
+    if (!coast && !hold_position) follow_error_x_ = demand.error_x;   // v27
+    if (smoothing_.predictive_brake && !coast && !hold_position && apply_predictive_brake(*t, demand, lead)) return;
     if (demand.stop()) {
         if (!state_.moving) return;
-        controller_.reset_catchup();
+        if (!hold_position) controller_.reset_catchup();
         if (smoothing_.stop_rate <= 0) { stop("deadband"); return; }   // team original: immediate STOP
     }
     // v27 arrival control: the step for a new frame is not held back by the output period. The ramp below uses the real
@@ -776,13 +943,13 @@ void GimbalCommandExecutor::tick(bool arrival)
     const double step = config_.automatic.speed_rate * dt;
     // The minimum is the first usable device command; subsequent changes ramp.
     const double baseline = state_.moving ? limited_speed_ : config_.automatic.speed_min;
-    limited_speed_ = state_.moving ?
+    limited_speed_ = config_.automatic.speed_rate == 0.0 ? want_speed : state_.moving ?
         std::clamp(want_speed, std::max(double(config_.automatic.speed_min), baseline - step), baseline + step) :
         double(config_.automatic.speed_min);
     if (seek) limited_speed_ = std::min(limited_speed_, double(smoothing_.seek_speed));   // v27 seek: the cap holds at once, also when a faster move was under way
     const double slew_limited_speed = limited_speed_;
     bool catchup_eligible = false, catchup_applied = false;
-    if (smoothing_.catchup_speed > 0) {
+    if (!hold_position && smoothing_.catchup_speed > 0) {
         const int knee = std::min(smoothing_.catchup_speed, config_.automatic.speed_max);
         const bool observed = controller_.take_catchup(want_x, want_y);
         // Only horizontal catch-up was measured. The shared speed stays on the normal ramp

@@ -47,6 +47,14 @@ private:
         bool healthy_live = false;
     };
     Observation pending_;
+    struct CameraArrival {
+        Clock::time_point stamp{};
+        std::uint32_t selected_id = 0;
+        std::uint64_t epoch = 0;
+        TrackLead preliminary;
+    };
+    CameraArrival pending_arrival_;
+    Clock::time_point last_preliminary_{};
     bool pending_unsafe_ = false, pending_brake_reset_ = false;
     // The publisher must preserve explicit target loss through latest-slot replacement.
     std::atomic<std::uint32_t> published_brake_target_{0};
@@ -61,6 +69,9 @@ private:
     GimbalPositionEstimate position_estimate_;
     TrackingResultPtr latest_;
     bool latest_healthy_ = false;
+    std::uint64_t held_frame_id_ = 0;
+    std::uint64_t held_epoch_ = 0;
+    bool deadline_motion_continuous_ = false;
     Clock::time_point last_observed_capture_{}, grace_deadline_{};
     Clock::duration observation_cadence_{};
     std::uint64_t model_generation_ = 0, last_frame_id_ = 0;
@@ -107,7 +118,9 @@ private:
     bool searching() const { return search_.phase == Search::Follow || search_.phase == Search::Sweep; }
     bool ingest(Observation);
     void mark_lost(Clock::time_point now);
-    void tick(bool arrival = false);   // v27: arrival = called for a newly taken-in frame (SmoothingConfig::arrival_control)
+    void tick(bool arrival = false, bool hold_position = false,
+              TrackLead deadline_lead = {}, Clock::time_point deadline_stamp = {}, bool preliminary = false);
+    bool respond_to_delayed_result(const CameraArrival&);
     bool apply_predictive_brake(const Track&, const GimbalDemand&, const TrackLead&);
     bool alive() const;
     bool heartbeat_allows_control() const;
@@ -138,6 +151,7 @@ public:
     GimbalCommandExecutor(const GimbalCommandExecutor&) = delete;
     GimbalCommandExecutor& operator=(const GimbalCommandExecutor&) = delete;
     void publish(TrackingResultPtr, bool healthy_live = false); // bounded latest-result mailbox
+    void camera_arrived(std::int64_t ns, std::uint32_t selected_id, std::uint64_t epoch, TrackLead preliminary = {});
     void publish_unsafe_observation(); // malformed input without a usable frame
     void connected();
     void disconnected();

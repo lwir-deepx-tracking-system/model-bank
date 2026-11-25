@@ -226,14 +226,14 @@ class WideGateTests(unittest.TestCase):
     def back(self, *, wide, feat, x_back=820., frames_lost=45, tmpl=True):
         s, g = Scene(), F.FollowGuardV2(7)
         feats = {7: self.FA}
-        g.app = lambda oid: (feats.get(oid), 0) if (tmpl and oid in feats) else None
+        g.app = lambda oid: (feats.get(oid), 0, s.t) if (tmpl and oid in feats) else None
         out = []
         for k in range(30):
             out.append(g.step(s.step(0.), [person(7, 300.)], s.motion))
         for k in range(frames_lost):
             out.append(g.step(s.step(0.), [], s.motion))
         feats[7] = feat
-        g.app = lambda oid: (feats.get(oid), 0) if feats.get(oid) is not None else None
+        g.app = lambda oid: (feats.get(oid), 0, s.t) if feats.get(oid) is not None else None
         for k in range(10):
             if wide: g.wide = (300., 200., 4 * 240.)
             out.append(g.step(s.step(0.), [person(7, x_back)], s.motion))
@@ -245,7 +245,8 @@ class WideGateTests(unittest.TestCase):
 
     def test_inside_the_circle_with_the_persons_look_it_is_followed_again(self):
         g, d = self.back(wide=True, feat=self.FA)
-        self.assertFalse(any(x['mask'] for x in d))
+        self.assertTrue(all(x['mask'] for x in d[:2]))
+        self.assertFalse(any(x['mask'] for x in d[2:]))
         self.assertEqual((g.phase, g.wide_reaccepts), ('track', 1))
 
     def test_another_look_stays_hidden(self):
@@ -258,7 +259,7 @@ class WideGateTests(unittest.TestCase):
     def test_without_a_feature_it_stays_hidden_until_one_comes(self):
         s, g = Scene(), F.FollowGuardV2(7)
         feats = {7: self.FA}
-        g.app = lambda oid: (feats.get(oid), 0) if feats.get(oid) is not None else None
+        g.app = lambda oid: (feats.get(oid), 0, s.t) if feats.get(oid) is not None else None
         for k in range(30): g.step(s.step(0.), [person(7, 300.)], s.motion)
         for k in range(45): g.step(s.step(0.), [], s.motion)
         feats[7] = None
@@ -267,7 +268,7 @@ class WideGateTests(unittest.TestCase):
             if k == 4: feats[7] = self.FA
             g.wide = (300., 200., 960.)
             masks.append(g.step(s.step(0.), [person(7, 820.)], s.motion)['mask'])
-        self.assertEqual(masks, [True] * 4 + [False] * 4)
+        self.assertEqual(masks, [True] * 6 + [False] * 2)
 
     def test_outside_the_circle_or_a_very_different_size_stays_hidden(self):
         g, d = self.back(wide=True, feat=self.FA, x_back=300. + 4 * 240. + 60.)
@@ -338,7 +339,7 @@ class SeekPublishTests(PublishFixture):
         for feat, taken in ((fa, True), (fb, False)):
             self.setUp()
             look = {7: fa}
-            look_of = lambda oid: (look[oid], 0) if oid in look else None
+            look_of = lambda oid: (look[oid], 0, APP.GB.frame) if oid in look else None
             with patch.dict(os.environ, {'LWIR_FOLLOW_GUARD': '2'}), patch.object(live_tracks, '_appearance', look_of), \
                     patch.object(live_tracks, '_kalman_box', lambda sel: None), patch('builtins.print') as said:
                 self.follow(20)
@@ -346,7 +347,7 @@ class SeekPublishTests(PublishFixture):
                 look[7] = feat
                 sent = [self.frame([person(7, 700. - 20.)]) for _ in range(4)]
             rows = [x.split(' OBS ')[0].split(' SEEK ')[0].split(' PRED ')[0] for x in sent]
-            self.assertEqual([' 7 ' in r for r in rows], [taken] * 4, (taken, sent))
+            self.assertEqual([' 7 ' in r for r in rows], [False] * 2 + [taken] * 2, (taken, sent))
             lines = ' '.join(str(c.args[0]) for c in said.call_args_list if c.args)
             self.assertEqual('followed again inside the search circle' in lines, taken)
             self.tearDown()
