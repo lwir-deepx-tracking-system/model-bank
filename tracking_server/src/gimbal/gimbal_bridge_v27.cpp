@@ -359,8 +359,8 @@ Options parse(int argc, char** argv)
     if (s.coast && (s.coast_ms <= 0 || s.coast_ms > 3000)) throw std::invalid_argument("--coast-ms must be within 1..3000");
     if (s.seek && (s.search || s.seek_ms <= 0 || s.seek_ms > 10000 || s.seek_speed < c.automatic.speed_min || s.seek_speed > c.automatic.speed_max))
         throw std::invalid_argument("--seek: not with --search 1, --seek-ms within 1..10000, --seek-speed within --speed-min..--speed-max");
-    if (s.bounded_seek && (!s.seek || s.seek_speed > 2 || s.seek_ms > 3600))
-        throw std::invalid_argument("--bounded-seek requires --seek 1, --seek-speed <= 2, and --seek-ms <= 3600");
+    if (s.bounded_seek && (!s.seek || s.seek_speed > 2 || s.seek_ms > 6500))
+        throw std::invalid_argument("--bounded-seek requires --seek 1, --seek-speed <= 2, and --seek-ms <= 6500");
     if (c.gimbal.speed < 1 || c.gimbal.speed > c.gimbal.speed_limit || c.automatic.speed_max < c.automatic.speed_min || c.automatic.speed_max > c.gimbal.speed_limit)
         throw std::invalid_argument("speed outside the device range");
     if ((c.gimbal.x_sign != 1 && c.gimbal.x_sign != -1) || (c.gimbal.y_sign != 1 && c.gimbal.y_sign != -1))

@@ -7,7 +7,7 @@ While the followed id is seen without another box on it, its box and velocity ar
 (camera motion removed with the GMC warp of every frame pair, the same warps the tracker uses), smoothed with TAU. When the id
 is missing (or masked by the guard), the last box is carried through the camera motion of each frame and moved on with that
 velocity for at most WALK_S. The gimbal's own turning is therefore not taken for person motion. The prediction is offered for
-at most COAST_S after the last trusted box and while it is within COAST_MAX_H body heights of it; the bridge bounds the time
+at most COAST_S after the last trusted box and while the predicted person's own drift is within COAST_MAX_H heights; the bridge bounds the time
 again (--coast-ms). No GMC for a frame pair = no prediction until the person is seen again.
 
 GUARD (LWIR_FOLLOW_GUARD=1). In the virtual tests (BU-TIV Lab, PTB meetion1) following ended on another person mostly because
@@ -48,7 +48,14 @@ HR_MAX = 1.5
 WR_MAX = 1.5        # width ratio (a box of two people is wider)
 FOREGROUND_W, FOREGROUND_H = 1.32, 1.28
 FOREGROUND_JUMP_H, FOREGROUND_LARGE = 0.16, 1.60
+FOREGROUND_MASKED_SCALE = 1.40
+FOREGROUND_PASS_COVER = .30
+FOREGROUND_PASS_DRIFT_H = .10
 FOREGROUND_CLEAR_N = 2
+FOREGROUND_CORNER_CONF = .50
+FOREGROUND_VERIFY_S = .20
+FOREGROUND_VERIFY_SCORE, FOREGROUND_VERIFY_MARGIN = .90, .20
+FOREGROUND_RECHECK_H = .85
 BETTER, MIN_SWAP_H = 0.6, 0.25
 N = 3
 LOST_MAX_S = 10.0   # the bridge drops the selection after its reacquire timeout (10 s)
@@ -95,8 +102,10 @@ class FollowGuard:
         self.trust = None          # (cx, cy, w, h) of the last trusted box, in the coordinates of trust_t
         self.trust_t = None
         self.vx = self.vy = 0.
+        self.reverse_sample = None
         self.pred = None           # (cx, cy, w, h) at pred_t
         self.pred_t = None
+        self.coast_drift = (0., 0.)  # target displacement from the camera-warped last trusted box
         self.phase = 'track'       # track | risk | lost | masked
         self.ids_at_trust = set()
         self.cand, self.cand_n = 0, 0
@@ -115,21 +124,35 @@ class FollowGuard:
         return min(GMAX, G0 + G1 * max(0., self.age(t)))
 
     def _accept(self, t, c, people, motion, velocity):
-        if velocity and self.trust is not None and 0 < t - self.trust_t <= MAX_DT:
-            m = motion(self.trust_t, t)
-            if m is not None:
+        pending_reversal, self.reverse_sample = self.reverse_sample, None
+        if velocity:
+            m = (motion(self.trust_t, t) if self.trust is not None and 0 < t - self.trust_t <= MAX_DT
+                 else None)
+            if m is None:
+                self.vx = self.vy = 0.
+                self.v_known = False
+            else:
                 px, py = warp_point(m, self.trust[0], self.trust[1])
                 dt = t - self.trust_t
                 a = -math.expm1(-dt / TAU)
-                self.vx = (1 - a) * self.vx + a * (c[0] - px) / dt
-                self.vy = (1 - a) * self.vy + a * (c[1] - py) / dt
+                vx, vy = (c[0] - px) / dt, (c[1] - py) / dt
+                speed, prior_speed = math.hypot(vx, vy), math.hypot(self.vx, self.vy)
+                reliable_speed = max(1. / dt, VCONS_H * c[3])
+                if (self.v_known and min(speed, prior_speed) >= reliable_speed
+                        and vx * self.vx + vy * self.vy < -.5 * speed * prior_speed):
+                    if pending_reversal is not None and vx * pending_reversal[0] + vy * pending_reversal[1] > 0:
+                        vx, vy = (vx + pending_reversal[0]) / 2., (vy + pending_reversal[1]) / 2.
+                        a = 1.
+                    else:
+                        self.reverse_sample = (vx, vy)
+                self.vx = (1 - a) * self.vx + a * vx
+                self.vy = (1 - a) * self.vy + a * vy
                 s = math.hypot(self.vx, self.vy); vm = VMAX_H * c[3]
                 if s > vm: self.vx, self.vy = self.vx * vm / s, self.vy * vm / s
                 self.v_known = True
-        elif velocity:
-            self.vx = self.vy = 0.
         self.trust, self.trust_t = c, t
         self.pred, self.pred_t = c, t
+        self.coast_drift = (0., 0.)
         self.ids_at_trust = {int(p[0]) for p in people}
 
     def _propagate(self, t, motion):
@@ -144,8 +167,19 @@ class FollowGuard:
         cx, cy = warp_point(m, cx, cy)
         cap = RISK_WALK_S if self.phase == 'risk' else WALK_S
         walk = max(0., min(t - self.trust_t, cap) - min(self.pred_t - self.trust_t, cap))
-        self.pred = (cx + self.vx * walk, cy + self.vy * walk, w * s, h * s)
+        if self.reverse_sample is not None:
+            walk = 0.  # One opposite update is insufficient to extrapolate in either direction.
+        dx, dy = self.vx * walk, self.vy * walk
+        px, py = self.coast_drift
+        self.coast_drift = (m[0][0] * px + m[0][1] * py + dx, m[1][0] * px + m[1][1] * py + dy)
+        self.pred = (cx + dx, cy + dy, w * s, h * s)
         self.pred_t = t
+
+    def _coast_prediction(self, t, limit):
+        if (self.pred is not None and self.age(t) <= limit
+                and math.hypot(*self.coast_drift) <= COAST_MAX_H * max(1., self.pred[3])):
+            return self.pred
+        return None
 
     def dist(self, c):
         return math.hypot(c[0] - self.pred[0], c[1] - self.pred[1]) / max(1., self.pred[3])
@@ -203,10 +237,8 @@ class FollowGuard:
                         return self._out(out, t)
                 else:
                     self.cand_n = 0
-        if (out['mask'] or mine is None) and self.pred is not None and self.trust is not None:
-            moved = math.hypot(self.pred[0] - self.trust[0], self.pred[1] - self.trust[1]) / max(1., self.trust[3])
-            if self.age(t) <= COAST_S and moved <= COAST_MAX_H:
-                out['pred'] = self.pred
+        if out['mask'] or mine is None:
+            out['pred'] = self._coast_prediction(t, COAST_S)
         return self._out(out, t)
 
     def _out(self, out, t):
@@ -314,8 +346,10 @@ class FollowGuard:
     def retarget(self, new_id, c, t, people):
         """Following moved to new_id (guard re-select, or a click/handoff for a new id): keep the velocity, trust its box."""
         self.sel = int(new_id)
+        self.reverse_sample = None
         self.upper_coast_view = self.bounded_seek = None
         self.trust, self.trust_t, self.pred, self.pred_t = c, t, c, t
+        self.coast_drift = (0., 0.)
         self.ids_at_trust = {int(p[0]) for p in people}
         self.phase, self.cand, self.cand_n = 'track', 0, 0
         self.partners, self.mask_from_risk = set(), False
@@ -359,10 +393,20 @@ class UpperCoastView:
 
     def __init__(self):
         self.anchor = None
+        self.edge_seek_anchor = None
         self.down_steps = 0
         self.descent_t = None
         self.direction = self.direction_at = None
         self.motion_step = None
+
+    @property
+    def seek_anchor(self):
+        if self.edge_seek_anchor is not None and (self.anchor is None or self.edge_seek_anchor[0] > self.anchor[0]):
+            return self.edge_seek_anchor
+        if self.anchor is None:
+            return None
+        stamp, box = self.anchor
+        return stamp, box, None
 
     def observe(self, t, estimate, motion, size):
         cx, cy, width, height = estimate
@@ -370,9 +414,21 @@ class UpperCoastView:
         if not all(map(math.isfinite, estimate)) or min(width, height) <= 0:
             self.down_steps = 0
             return
-        if not (0 < cx - width / 2 and cx + width / 2 < frame_w
-                and 0 < cy - height / 2 and cy + height / 2 < frame_h):
+        left, right = cx - width / 2, cx + width / 2
+        top, bottom = cy - height / 2, cy + height / 2
+        if not (0 < left < right < frame_w and 0 < top < bottom < frame_h):
             self.down_steps = 0
+            # The controller has already accepted this person. Keep the visible
+            # part for a bounded scan, without learning velocity from a clipped box.
+            edges = ((-top / height, (1, -1)), ((bottom - frame_h) / height, (1, 1)),
+                     (-left / width, (0, -1)), ((right - frame_w) / width, (0, 1)))
+            _, direction = max(edges, key=lambda item: item[0])
+            left, right = max(0., left), min(frame_w, right)
+            top, bottom = max(0., top), min(frame_h, bottom)
+            visible_w, visible_h = right - left, bottom - top
+            if visible_w >= max(12., .7 * width) and visible_h >= max(24., .7 * height):
+                box = ((left + right) / 2, (top + bottom) / 2, visible_w, visible_h)
+                self.edge_seek_anchor = t, box, direction
             return
         previous = self.anchor
         if previous is None or t - previous[0] > COAST_S:
@@ -467,8 +523,13 @@ APP_KEEP, APP_NEAR, APP_MIN, APP_MARGIN, APP_FRESH = 5, 2.0, 0.55, 0.05, 6   # A
 # circle in the coordinates of this frame, or None (= the motion gate only, as before).
 APP_WIDE_MIN, APP_WIDE_MARGIN, WIDE_HR = 0.65, 0.10, 2.0
 SEARCH_VERIFY_S, SEARCH_VERIFY_SAMPLES = 0.9, 2
+SEARCH_EVIDENCE_GAP_S = .20
 SEARCH_STRICT_START_H, SEARCH_STRICT_FULL_H = .35, 1.50
 SEARCH_FAR_SCORE, SEARCH_FAR_MARGIN, SEARCH_FAR_SAMPLES_H = .82, .16, .85
+SEARCH_UNLOCALIZED_SCORE, SEARCH_UNLOCALIZED_MARGIN = .86, .18
+SEARCH_FAST_RETURN_S, SEARCH_FAST_RETURN_H = .45, 2.4
+SEARCH_PARTIAL_IOU, SEARCH_PARTIAL_COVER = .20, .25
+KEEPID_RESUME_S = 1.25
 # 11-22 OCCLUSION HOLD (LWIR_FOLLOW_OCC_HOLD=1, default off, proposal after the 12:41 loss of id 44 under id 23, IoU 0.6-0.88 for 5+ s): while the
 # followed box is heavily covered (IoU > MERGE_IOU) the feature of that blended box says nothing about who it is, so v2 no longer masks it by
 # appearance ('looks like a person near it'); it keeps following the id as long as the box stays inside the motion gate, for HOLD_MAX_S at most.
@@ -512,19 +573,24 @@ class FollowGuardV2(FollowGuard):
     """FollowGuard with appearance. Before each step() the caller sets .app = function(output id) -> (feature, age in frames, observation frame)
     or None, and .kal = the tracker's Kalman box (cx, cy, w, h) of the followed id or None."""
 
-    def __init__(self, sel, guard=True):
+    def __init__(self, sel, guard=True, *, frame_size=None):
         super().__init__(sel, guard)
+        self.frame_size = frame_size
         self.app = lambda oid: None
         self.kal = None
         self.tmpl = []
         self.distract = {}
         self.app_masks = self.app_swaps = 0
         self.wide = None
+        self.wide_t = None
         self.wide_reaccepts = 0
         self.allow_masked_seek = False
         self.masked_seek_lock = False
         self.trusted_control_owner = None
         self.continuous_control_owner = False
+        self.allow_unlocalized_recovery = False
+        self.allow_fast_return = False
+        self.keepid_resume = None
         self.hold_t0 = None
         self.holds = 0
         self.pos_trust = self.pos_keeps = self.pos_unmasks = self.pos_waits = 0   # frames trusted by position / of those, frames the appearance said distractor / unmasks / first-frame waits
@@ -539,8 +605,10 @@ class FollowGuardV2(FollowGuard):
         self.mask_kind = ''
         self.foreground_blocked = False
         self.foreground_clear_n = 0
-        self.search_verify_id = None
+        self.foreground_identity_required = False
+        self.search_verify_key = None
         self.search_verify_stamp = None
+        self.search_verify_t = None
         self.search_verify_n = 0
 
     def _allowed(self, qid):
@@ -557,7 +625,7 @@ class FollowGuardV2(FollowGuard):
     def _allow_risk_without_identity(self):
         return False
 
-    def _wide_ok(self, c, f):
+    def _wide_ok(self, c, f, scores=None):
         """the followed number's box c with feature f is inside the search circle and clearly looks like the person"""
         if self.wide is None or f is None or self.trust is None:
             return False
@@ -565,22 +633,51 @@ class FollowGuardV2(FollowGuard):
             return False
         if max(c[3], self.trust[3]) / max(1e-6, min(c[3], self.trust[3])) > WIDE_HR:
             return False
-        st_, sd = self._sims(f)
+        st_, sd = self._sims(f) if scores is None else scores
         return st_ is not None and st_ >= APP_WIDE_MIN and st_ >= sd + APP_WIDE_MARGIN
+
+    def set_wide(self, circle, t=None):
+        self.wide, self.wide_t = circle, t if circle is not None else None
+
+    def _align_wide(self, t, motion):
+        if self.wide is None or self.wide_t is None or t <= self.wide_t:
+            return
+        warp = motion(self.wide_t, t)
+        if warp is None:
+            self.set_wide(None)
+            return
+        cx, cy, radius = self.wide
+        cx, cy = warp_point(warp, cx, cy)
+        self.set_wide((cx, cy, radius * warp_scale(warp)), t)
 
     def recovery_radius(self, t):
         """Recovery radius in predicted body heights, including the wide match."""
         age = self.age(t)
         if self.pred is None or age > LOST_MAX_S:
             return 0.0
-        if self.tmpl and age > 0.9:
-            return min(1.8, GMAX + 0.6 * (age - 0.9))
+        if self.tmpl and age > SEARCH_VERIFY_S:
+            return min(1.8, GMAX + 0.6 * (age - SEARCH_VERIFY_S))
         return self.gate(t)
 
-    def _outside_gate_recovery(self, c, f, t, row, people):
+    def display_recovery_radius(self, t, decision):
+        """Spatial envelope of this frame's recovery path, in body heights."""
+        if self.pred is None or self.age(t) > LOST_MAX_S:
+            return 0.
+        mode = decision.get('recovery_mode')
+        if mode == 'fast_return':
+            return SEARCH_FAST_RETURN_H
+        if mode == 'early_search':
+            return GMAX
+        if mode == 'foreground':
+            return FOREGROUND_RECHECK_H if self.tmpl else 0.
+        if decision.get('foreground_blocked'):
+            return 0.
+        return self.recovery_radius(t)
+
+    def _outside_gate_recovery(self, c, f, t, row, people, scores=None, rival_score=None):
         """Expand the match region after a loss, including during bounded seek."""
         age = self.age(t)
-        if self.pred is None or f is None or not 0.9 < age <= LOST_MAX_S:
+        if self.pred is None or f is None or not SEARCH_VERIFY_S < age <= LOST_MAX_S:
             return False
         if self.dist(c) > self.recovery_radius(t):
             return False
@@ -590,15 +687,21 @@ class FollowGuardV2(FollowGuard):
         if any(int(other[0]) != int(row[0]) and iou(row[1:5], other[1:5]) > RISK_IOU
                for other in people):
             return False
-        st, sd = self._sims(f)
+        st, sd = self._sims(f) if scores is None else scores
         if st is None or st < APP_WIDE_MIN or st < sd + APP_WIDE_MARGIN:
             return False
-        template = unit(np.mean(self.tmpl, 0))
+        if rival_score is None:
+            template = unit(np.mean(self.tmpl, 0))
+
+            def rival_score(ident):
+                feature = self._feat(ident)
+                return _cmap(float(feature @ template)) if feature is not None else None
+
         for other in people:
             if int(other[0]) == int(row[0]):
                 continue
-            feature = self._feat(other[0])
-            if feature is not None and st < _cmap(float(feature @ template)) + APP_WIDE_MARGIN:
+            score = rival_score(int(other[0]))
+            if score is not None and st < score + APP_WIDE_MARGIN:
                 return False
         return True
 
@@ -701,6 +804,9 @@ class FollowGuardV2(FollowGuard):
 
     def retarget(self, new_id, c, t, people):
         super().retarget(new_id, c, t, people)
+        self.keepid_resume = None
+        self.foreground_blocked, self.foreground_clear_n = False, 0
+        self.foreground_identity_required = False
         self.pt_trail = []
         self.pt_last_t, self.pt_run, self.pt_ok_n, self.dis_n, self.pt_reborn = None, 0, 0, 0, False
         self.pt_t0, self.pt_capped, self.mask_kind = None, False, ''
@@ -761,6 +867,7 @@ class FollowGuardV2(FollowGuard):
 
     def step(self, t, people, motion):
         self._dis_seen = False
+        self._align_wide(t, motion)
         mine = [p for p in people if int(p[0]) == self.sel]
         self._runs(t, mine[0] if len(mine) == 1 else None)
         out = self._step(t, people, motion)
@@ -768,7 +875,7 @@ class FollowGuardV2(FollowGuard):
         if self.phase == 'track' and out['phase'] == 'track' and any(int(q[0]) == self.sel for q in people): self.pt_reborn = False   # accepted by the ordinary rules
         return out
 
-    def _foreground_occlusion(self, t, mine):
+    def _foreground_occlusion(self, t, mine, people):
         # A foreground object can inherit the selected ID, leaving no second row
         # for the usual overlap check. Use the pre-occlusion motion and scale.
         if not self.guard or self.trust is None:
@@ -781,12 +888,46 @@ class FollowGuardV2(FollowGuard):
             jump = math.hypot(c[0] - reference[0], c[1] - reference[1]) / max(1., reference[3])
             grew = width >= FOREGROUND_W and height >= FOREGROUND_H
             abrupt = grew and (jump >= FOREGROUND_JUMP_H or min(width, height) >= FOREGROUND_LARGE)
-            if self.pred is not None and self.age(t) <= MAX_DT and abrupt:
+            age = self.age(t)
+            # A separately detected, closer-looking person can pull a still
+            # plausible selected row sideways before that row grows enough
+            # to trigger the one-box jump check.
+            pass_blocked = False
+            if self.pred is not None and (age <= MAX_DT or self.foreground_blocked):
+                reference_box = box(reference)
+                ref_area = reference[2] * reference[3]
+                for rival in people:
+                    if rival is mine or int(rival[0]) == self.sel:
+                        continue
+                    _, _, rw, rh = cwh(rival)
+                    if rh < FOREGROUND_H * reference[3] or rw < reference[2]:
+                        continue
+                    overlap = iou(reference_box, rival[1:5])
+                    cover = overlap * (ref_area + rw * rh) / ((1. + overlap) * max(ref_area, 1.))
+                    if cover >= FOREGROUND_PASS_COVER and (
+                            jump >= FOREGROUND_PASS_DRIFT_H or iou(mine[1:5], rival[1:5]) >= MERGE_IOU):
+                        pass_blocked = True
+                        break
+            # An already disputed ID can be recycled on a nearby but larger person.
+            disputed_growth = (not self.foreground_blocked and self.phase == 'masked' and age <= SEARCH_VERIFY_S
+                                and min(width, height) >= FOREGROUND_MASKED_SCALE)
+            if pass_blocked or (self.pred is not None and age <= MAX_DT and abrupt):
+                self.foreground_blocked = True
+            elif self.pred is not None and disputed_growth:
+                self.foreground_identity_required = True
                 self.foreground_blocked = True
             consistent = (1 / POS_WR <= width <= POS_SIZE and 1 / POS_SIZE <= height <= POS_SIZE
                           and jump < POS_D)
-            if self.foreground_blocked and consistent:
-                self.foreground_clear_n += 1
+            if self.foreground_blocked and not pass_blocked and consistent and not self.foreground_identity_required:
+                # A weak box cut by two image edges can agree with the prediction
+                # while its centre shifts as the person leaves the camera.
+                # Keep the dispute open for independent appearance verification.
+                weak_corner = False
+                if self.frame_size is not None and mine[5] < FOREGROUND_CORNER_CONF:
+                    frame_width, frame_height = self.frame_size
+                    weak_corner = ((mine[1] < 0 or mine[3] > frame_width)
+                                   and (mine[2] < 0 or mine[4] > frame_height))
+                self.foreground_clear_n = 0 if weak_corner else self.foreground_clear_n + 1
                 if self.foreground_clear_n >= FOREGROUND_CLEAR_N:
                     self.foreground_blocked = False
             else:
@@ -795,85 +936,307 @@ class FollowGuardV2(FollowGuard):
             self.foreground_clear_n = 0
         return self.foreground_blocked
 
-    def _verify_search(self, t, people, motion, mine, out):
+    def _foreground_recovery_box(self, c):
+        cx, cy, _, height = self.pred if self.pred is not None else self.trust
+        width_ratio = c[2] / max(1., self.trust[2])
+        height_ratio = c[3] / max(1., self.trust[3])
+        return (.65 <= width_ratio <= 2.35 and .65 <= height_ratio <= 2.35
+                and .70 <= width_ratio / height_ratio <= 1.42
+                and math.hypot(c[0] - cx, c[1] - cy) <= FOREGROUND_RECHECK_H * max(1., height))
+
+    def _clear_search_verification(self):
+        self.search_verify_key, self.search_verify_stamp, self.search_verify_n = None, None, 0
+        self.search_verify_t = None
+
+    def _verify_search(self, t, people, motion, mine, out, *, foreground=False, early=False, fast_return=False,
+                       keepid_resume=False):
         # Widening a positional hypothesis must not widen identity acceptance.
         eligible = []
-        if self.pred is not None and self.tmpl:
-            for row in people:
-                ident = int(row[0])
-                try:
+        continuous_target = (self.allow_unlocalized_recovery and mine is not None
+                             and self.continuous_control_owner and self.pt_run >= POS_RUN_N
+                             and not self.pt_reborn and self.age(t) <= LOST_MAX_S)
+        only_continuous_target = continuous_target and len(people) == 1
+        disputed_foreground = foreground and self.foreground_identity_required and self.pred is not None
+        if keepid_resume:
+            verify = mine is not None and self.trust is not None
+        elif foreground:
+            verify = continuous_target or disputed_foreground
+        else:
+            verify = self.pred is not None or only_continuous_target
+        previous = getattr(self, 'search_probe', None)
+        if previous is None or not 0 < t - previous['last_frame'] <= .25:
+            self.search_probe = dict(outcomes={})
+        probe = self.search_probe
+        mode = ('keepid_resume' if keepid_resume else 'foreground' if foreground else
+                'fast_return' if fast_return else 'early_search' if early else 'search')
+        out['recovery_mode'] = mode
+        probe.update(last_frame=t, selected=int(self.sel), people=len(people), selected_visible=mine is not None,
+                     fresh_features=0, overlapping=0, position_rejected=0, appearance_rejected=0,
+                     eligible=0, candidate=None, mode=mode)
+
+        def outcome(reason):
+            totals = probe['outcomes']
+            totals[reason] = totals.get(reason, 0) + 1
+            probe['last_reason'] = reason
+
+        if self.tmpl and verify:
+            template = unit(np.mean(self.tmpl, 0))
+            observed = {}
+
+            def observation_for(ident):
+                if ident not in observed:
                     observation = self.app(ident)
-                    raw, age, stamp = observation[:3] if observation and len(observation) >= 3 else (None, None, None)
-                except (TypeError, ValueError):
+                    feature, age, stamp = None, None, None
+                    if observation:
+                        raw, age = observation[:2] if len(observation) >= 2 else (None, None)
+                        stamp = observation[2] if len(observation) >= 3 else None
+                        if raw is not None and age is not None and 0 <= age <= APP_FRESH:
+                            feature = unit(raw)
+                    similarity = (_cmap(float(feature @ template))
+                                  if feature is not None and template is not None else None)
+                    observed[ident] = feature, age, stamp, similarity
+                return observed[ident]
+
+            def rival_score(ident):
+                return observation_for(ident)[3]
+
+            for row in people:
+                if keepid_resume and row is not mine:
                     continue
-                if raw is None or age is None or stamp is None or not 0 <= age <= APP_FRESH:
+                if foreground and row is not mine and not (disputed_foreground and self.age(t) > SEARCH_VERIFY_S):
                     continue
-                feature = unit(raw)
-                if feature is None:
+                ident = int(row[0])
+                feature, age, stamp, similarity = observation_for(ident)
+                if feature is None or stamp is None or similarity is None:
                     continue
+                probe['fresh_features'] += 1
+                distractor = max((_cmap(float(feature @ remembered)) for remembered in self.distract.values()),
+                                 default=-1.)
                 c = cwh(row)
-                tight = self.fits(c, t)
-                if not (tight or self._wide_ok(c, feature)
-                        or self._outside_gate_recovery(c, feature, t, row, people)):
-                    continue
-                if any(other is not row and iou(row[1:5], other[1:5]) > RISK_IOU for other in people):
-                    continue
-                similarity, distractor = self._sims(feature)
-                if similarity is not None and similarity >= APP_WIDE_MIN and similarity >= distractor + APP_WIDE_MARGIN:
-                    eligible.append((similarity, ident, c, stamp, age, tight, distractor))
+                touching = [(other, overlap) for other in people if other is not row
+                            and (overlap := iou(row[1:5], other[1:5])) > RISK_IOU]
+                partial = bool(touching)
+                if partial:
+                    if (keepid_resume or foreground or early or fast_return or not continuous_target or row is not mine
+                            or self.pred is None or self.dist(c) > POS_D or not self.fits(c, t)):
+                        probe['overlapping'] += 1
+                        continue
+                    # Sum the covered fractions conservatively when several people overlap.
+                    area = c[2] * c[3]
+                    cover = sum(overlap * (area + (other[3] - other[1]) * (other[4] - other[2]))
+                                / ((1. + overlap) * area) for other, overlap in touching)
+                    rivals = [rival_score(int(other[0])) for other, _ in touching]
+                    if (cover > SEARCH_PARTIAL_COVER or any(overlap > SEARCH_PARTIAL_IOU for _, overlap in touching)
+                            or any(score is None for score in rivals)):
+                        probe['overlapping'] += 1
+                        continue
+                    distractor = max(distractor, *rivals)
+                scores = similarity, distractor
+                if keepid_resume:
+                    if not self._keepid_resume_box(row, c):
+                        probe['position_rejected'] += 1
+                        continue
+                    rivals = [rival_score(int(other[0])) for other in people if other is not row]
+                    if any(score is None for score in rivals):
+                        continue
+                    distractor = max(distractor, max(rivals, default=-1.))
+                    tight, unlocalized = False, True
+                elif foreground:
+                    rivals = [rival_score(int(other[0])) for other in people if other is not row]
+                    if not self._foreground_recovery_box(c) or any(score is None for score in rivals):
+                        probe['position_rejected'] += 1
+                        continue
+                    distractor = max(distractor, max(rivals, default=-1.))
+                    tight, unlocalized = False, False
+                elif early or fast_return:
+                    tight, unlocalized = False, False
+                else:
+                    tight = self.pred is not None and self.fits(c, t)
+                    localized = self.pred is not None and (tight or self._wide_ok(c, feature, scores)
+                            or self._outside_gate_recovery(c, feature, t, row, people, scores, rival_score))
+                    # A stale location can leave an uninterrupted target masked until timeout.
+                    unlocalized = (not localized and only_continuous_target
+                                   and all(0 < size and 1. / limit <= size / reference <= limit
+                                           for size, reference, limit in zip(c[2:], self.trust[2:], (WR_MAX, HR_MAX))))
+                    if not (localized or unlocalized):
+                        probe['position_rejected'] += 1
+                        continue
+                if similarity >= APP_WIDE_MIN and similarity >= distractor + APP_WIDE_MARGIN:
+                    eligible.append((similarity, ident, c, stamp, age, tight, distractor, unlocalized, partial))
+                else:
+                    probe['appearance_rejected'] += 1
+        probe['eligible'] = len(eligible)
         eligible.sort(key=lambda entry: entry[0], reverse=True)
         if eligible:
-            similarity, ident, c, stamp, age, tight, distractor = eligible[0]
-            distance = self.dist(c)
+            similarity, ident, c, stamp, age, tight, distractor, unlocalized, partial = eligible[0]
+            distance = float('inf') if foreground or unlocalized else self.dist(c)
             strength = min(1., max(0., (distance - SEARCH_STRICT_START_H)
                                     / (SEARCH_STRICT_FULL_H - SEARCH_STRICT_START_H)))
             min_score = APP_WIDE_MIN + strength * (SEARCH_FAR_SCORE - APP_WIDE_MIN)
             margin = APP_WIDE_MARGIN + strength * (SEARCH_FAR_MARGIN - APP_WIDE_MARGIN)
+            if foreground:
+                min_score, margin = FOREGROUND_VERIFY_SCORE, FOREGROUND_VERIFY_MARGIN
+            elif fast_return:
+                min_score, margin = SEARCH_UNLOCALIZED_SCORE, SEARCH_UNLOCALIZED_MARGIN
+            elif early:
+                min_score, margin = SEARCH_FAR_SCORE, SEARCH_FAR_MARGIN
+            elif unlocalized:
+                min_score, margin = SEARCH_UNLOCALIZED_SCORE, SEARCH_UNLOCALIZED_MARGIN
+            elif partial:
+                min_score, margin = SEARCH_FAR_SCORE, SEARCH_FAR_MARGIN
             other_score = eligible[1][0] if len(eligible) > 1 else -1.
             clear = similarity >= min_score and similarity >= max(other_score, distractor) + margin
+            probe['candidate'] = int(ident)
         else:
             clear = False
         if clear:
-            required = SEARCH_VERIFY_SAMPLES + int(distance >= SEARCH_FAR_SAMPLES_H)
-            if ident != self.search_verify_id:
-                self.search_verify_id, self.search_verify_stamp, self.search_verify_n = ident, None, 0
+            required = SEARCH_VERIFY_SAMPLES + int(partial or distance >= SEARCH_FAR_SAMPLES_H)
+            key = (ident, 'keepid_resume') if keepid_resume else (ident, unlocalized, early, fast_return, partial, foreground)
+            if key != self.search_verify_key:
+                self._clear_search_verification()
+                self.search_verify_key = key
+            elif self.search_verify_t is not None and t - self.search_verify_t > SEARCH_EVIDENCE_GAP_S:
+                # The same crop may still be present. Expire its vote, keeping its stamp.
+                self.search_verify_t, self.search_verify_n = None, 0
             if age <= 2 and (self.search_verify_stamp is None or stamp > self.search_verify_stamp):
                 self.search_verify_stamp = stamp
+                self.search_verify_t = t
                 self.search_verify_n += 1
             if self.search_verify_n >= required:
-                self.search_verify_id, self.search_verify_stamp, self.search_verify_n = None, None, 0
+                outcome('appearance_verified')
+                self._clear_search_verification()
                 if ident != self.sel:
                     out['reselect'] = ident
                     self.why = 'search recovered: %d verified by separate appearance observations' % ident
                     self.propose_retarget(out, c, t, people, 'app_swaps', forget=ident)
                     return self._out(out, t)
                 self.masked_seek_lock = False
+                if foreground or keepid_resume:
+                    self.foreground_blocked, self.foreground_clear_n = False, 0
+                    self.foreground_identity_required = False
                 self.reaccepts += 1
                 self.wide_reaccepts += int(not tight)
                 self._accept(t, c, people, motion, velocity=False)
                 self.vx = self.vy = 0.
-                self.phase, self.cand_n = 'track', 0
+                self.phase, self.cand_n = ('risk' if partial else 'track'), 0
                 self.partners, self.mask_from_risk = set(), False
-                self.why = 'search recovered: selected id verified by separate appearance observations'
+                if keepid_resume:
+                    self.keepid_resume = None
+                    out['keepid_resumed'] = True
+                    self.why = 'KeepID return confirmed by separate appearance observations'
+                elif foreground:
+                    self.why = 'foreground hold cleared: same owner confirmed by separate appearance observations'
+                elif early:
+                    self.why = 'search recovered early: same id confirmed by separate appearance observations'
+                elif unlocalized:
+                    self.why = 'search recovered: continuous owner verified without a usable position'
+                elif partial:
+                    self.why = 'search recovered: continuous owner verified through partial overlap'
+                else:
+                    self.why = 'search recovered: selected id verified by separate appearance observations'
                 return self._finish(out, t, mine)
+            outcome('waiting_for_independent_features')
         else:
-            self.search_verify_id, self.search_verify_stamp, self.search_verify_n = None, None, 0
-        out.update(mask=True, search_verification=True, seek_masked=self.pred is not None)
-        self._mask('search waiting for appearance confirmation', self.phase == 'risk' or self.mask_from_risk)
+            if eligible:
+                outcome('appearance_threshold_or_margin')
+            elif not people:
+                outcome('no_person_rows')
+            elif not self.tmpl:
+                outcome('no_target_template')
+            elif not verify:
+                outcome('no_usable_position_or_owner')
+            elif not probe['fresh_features']:
+                outcome('no_fresh_features')
+            elif probe['appearance_rejected']:
+                outcome('appearance_threshold_or_margin')
+            else:
+                outcome('position_or_overlap_blocked')
+            # A deferred crop may skip a frame. Keep the independent sample only
+            # while the same single selected box remains plausible and unopposed.
+            key = self.search_verify_key
+            plausible = (mine is not None and self.pred is not None
+                         and (self.fits(cwh(mine), t) or (early and self._early_search_position(t, mine))))
+            if keepid_resume:
+                # ReID crops can skip frames. Keep recent votes only for the same clear crop.
+                plausible = mine is not None and self._keepid_resume_box(mine, cwh(mine))
+                expected = (self.sel, 'keepid_resume')
+            else:
+                expected = (self.sel, False, early, False, False, foreground)
+            if not (probe['last_reason'] == 'no_fresh_features' and len(people) == 1
+                    and key == expected and plausible and self.search_verify_t is not None
+                    and t - self.search_verify_t <= SEARCH_EVIDENCE_GAP_S):
+                self._clear_search_verification()
+        if foreground:
+            out.update(mask=True, foreground_blocked=True)
+            return self._finish(out, t, mine)
+        out.update(mask=True, search_verification=True,
+                   seek_masked=self.pred is not None and not (early or fast_return))
+        if not fast_return:
+            self._mask('search waiting for appearance confirmation', self.phase == 'risk' or self.mask_from_risk)
         return self._finish(out, t, mine)
+
+    def _keepid_resume_box(self, row, c):
+        # Use the last actually observed size. A prediction can drift during a wall occlusion.
+        if row[5] < .50 or not all(math.isfinite(v) for v in c):
+            return False
+        if not all(0 < size and 1. / limit <= size / max(1., reference) <= limit
+                   for size, reference, limit in zip(c[2:], self.trust[2:], (WR_MAX, HR_MAX))):
+            return False
+        if self.frame_size is None:
+            return True
+        width, height = self.frame_size
+        visible_w = min(width, row[3]) - max(0., row[1])
+        visible_h = min(height, row[4]) - max(0., row[2])
+        return visible_w >= .80 * c[2] and visible_h >= .80 * c[3]
+
+    def _early_search_position(self, t, mine):
+        c = cwh(mine)
+        return (self.pred is not None and not self._in_gate(c, t) and self.dist(c) <= GMAX
+                and all(0 < size and 1. / limit <= size / reference <= limit
+                        for size, reference, limit in zip(c[2:], self.pred[2:], (WR_MAX, HR_MAX))))
+
+    def _fast_return_candidate(self, t, people):
+        if (not self.allow_fast_return or not self.guard or not self.tmpl or self.pred is None or self.phase != 'lost'
+                or not 0 < self.age(t) <= SEARCH_FAST_RETURN_S or len(people) != 1):
+            return False
+        candidate = people[0]
+        ident = int(candidate[0])
+        if ident == self.sel or ident in self.ids_at_trust or ident in self.distract:
+            return False
+        c = cwh(candidate)
+        return (GMAX < self.dist(c) <= SEARCH_FAST_RETURN_H
+                and all(0 < size and 1. / limit <= size / reference <= limit
+                        for size, reference, limit in zip(c[2:], self.pred[2:], (WR_MAX, HR_MAX))))
 
     def _step(self, t, people, motion):
         self._propagate(t, motion)
         mine = [p for p in people if int(p[0]) == self.sel]
         mine = mine[0] if len(mine) == 1 else None
         out = dict(mask=False, reselect=0, pred=None)
-        if self._foreground_occlusion(t, mine):
+        if (self.keepid_resume is not None and self.guard and self.tmpl and self.trust is not None
+                and mine is not None and 0 < self.age(t) <= LOST_MAX_S):
+            return self._verify_search(t, people, motion, mine, out, keepid_resume=True)
+        if self._foreground_occlusion(t, mine, people):
             if self.why != 'foreground box jump on selected id':
                 self._mask('foreground box jump on selected id', self.phase == 'risk')
+            if self.allow_unlocalized_recovery and self.age(t) >= FOREGROUND_VERIFY_S:
+                return self._verify_search(t, people, motion, mine, out, foreground=True)
             out.update(mask=True, foreground_blocked=True)
             return self._finish(out, t, mine)
+        if self.search_verify_key is not None and self.search_verify_key[-1]:
+            self._clear_search_verification()
         if self.guard and self.trust is not None and self.age(t) > SEARCH_VERIFY_S:
             return self._verify_search(t, people, motion, mine, out)
+        if (self.guard and self.tmpl and self.trust is not None and self.phase in ('lost', 'masked')
+                and len(people) == 1 and mine is not None and self._early_search_position(t, mine)):
+            key = self.search_verify_key
+            feature = self._feat(self.sel)
+            if key == (self.sel, False, True, False, False, False) or (feature is not None and self._looks(feature) == 'target'):
+                return self._verify_search(t, people, motion, mine, out, early=True)
+        if self._fast_return_candidate(t, people):
+            return self._verify_search(t, people, motion, mine, out, fast_return=True)
+        if self.search_verify_key is not None and any(self.search_verify_key[2:4]):
+            self._clear_search_verification()
         f = self._feat(self.sel) if mine is not None else None
         if self.masked_seek_lock:
             # During a guarded search only the selected ID, verified against
@@ -1011,8 +1374,6 @@ class FollowGuardV2(FollowGuard):
         return super().step_after_propagate(t, people, motion, mine, out)
 
     def _finish(self, out, t, mine):
-        if (out['mask'] or mine is None) and self.pred is not None and self.trust is not None:
-            moved = math.hypot(self.pred[0] - self.trust[0], self.pred[1] - self.trust[1]) / max(1., self.trust[3])
-            if self.age(t) <= (HOLD_MAX_S if self.hold_t0 is not None else COAST_S) and moved <= COAST_MAX_H:
-                out['pred'] = self.pred
+        if out['mask'] or mine is None:
+            out['pred'] = self._coast_prediction(t, HOLD_MAX_S if self.hold_t0 is not None else COAST_S)
         return self._out(out, t)

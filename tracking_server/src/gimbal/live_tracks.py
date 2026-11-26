@@ -406,7 +406,7 @@ def _seek_locked(gb, g, d, selected, frame_t, kal, on_guard, v2):
             sk.seen(g.trust, gb.people, getattr(g, 'partners', ()))
         elif sk.phase != 'idle':
             sk.seen_untrusted()
-        if v2: g.wide = None
+        if v2: g.set_wide(None)
         gb.state.pop('seek', None)
         gb.seek_phase = None
         return None
@@ -418,7 +418,7 @@ def _seek_locked(gb, g, d, selected, frame_t, kal, on_guard, v2):
     box, st = sk.step(frame_t, g.age(frame_t), g.trust, (g.vx, g.vy), kal, g.pred, _motion, (float(APP.LIVE_W), float(APP.LIVE_H)),
                       (APP.LIVE_W / 2., sy * APP.LIVE_H), .5 if ay is None else ay, hidden=bool(d['mask']), can_reaccept=can, people=gb.people)
     if v2:   # the same number may come back anywhere in the displayed circle, by appearance (not in a crowd)
-        g.wide = (st['c'][0], st['c'][1], st['r']) if st['phase'] not in ('crowd', 'blind') else None
+        g.set_wide((st['c'][0], st['c'][1], st['r']) if st['phase'] not in ('crowd', 'blind') else None, frame_t)
     if st['phase'] != getattr(gb, 'seek_phase', None):
         gb.seek_phase = st['phase']
         if st['phase'] in ('sweep', 'return', 'crowd', 'blind'):
@@ -626,6 +626,29 @@ def _preserve_confirmed_follow(gb, g, decision, selected, frame_t, source, owner
     return True
 
 
+def _update_keepid_resume(gb, guard, owner, namespace, judge, frame_t):
+    """Bind a fresh KeepID transfer to the old trusted tracker owner and the current row."""
+    trusted = guard.trusted_control_owner
+    if (APP.RULES.get('tracker') != 'botsort' or not APP.RULES.get('relabel')
+            or not guard.allow_unlocalized_recovery or owner is None or trusted is None
+            or owner is trusted or namespace.get(owner[0]) != guard.sel or trusted[0] in namespace):
+        guard.keepid_resume = None
+        return
+    pending = guard.keepid_resume
+    if pending is not None and pending[0] is owner and 0 <= frame_t - pending[1] <= follow_guard.KEEPID_RESUME_S:
+        return
+    guard.keepid_resume = None
+    if guard.phase not in ('lost', 'masked', 'risk') and not gb.state.get('lost'):
+        return
+    for event in reversed(getattr(judge, 'events', ())):
+        if event.get('t') != getattr(judge, 't', None):
+            break
+        if (event.get('old_id') == guard.sel and event.get('cand_tid') == trusted[0]
+                and event.get('tracker_id') == owner[0]):
+            guard.keepid_resume = (owner, frame_t)
+            break
+
+
 def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
     """Called with gb.wcond held, after gb.people is set for this frame. -> (id to hide from the bridge this frame or 0,
     predicted (cx, cy, w, h) in gb.people coordinates for the PRED suffix or None). follow_guard.py; off unless the bridge
@@ -641,7 +664,10 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
     on_seek = seek_supported and not bounded and not want_bounded
     gb.seek_out = gb.seek_raw = None
     gb.state.pop('recovery_zone', None)
+    gb.state.pop('follow_wait_reason', None)
+    gb.state.pop('bounded_seek_state', None)
     if getattr(gb, 'handoff_pending', None) is not None and selected:
+        gb.state['follow_wait_reason'] = 'handoff'
         return selected, None  # awaiting the bridge; do not reevaluate or follow the disputed old row
     if (not (on_guard or on_coast or on_seek or predict_log_enabled()) or not selected or not gb.state.get('auto') or getattr(gb, 'lead_pending', 0)
             or getattr(gb, 'mover', None) or getattr(gb, 'selection_reset', False) or not getattr(gb, 'people_t', 0.0)):
@@ -657,21 +683,38 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
     v2 = os.environ.get('LWIR_FOLLOW_GUARD') == '2'
     g = getattr(gb, 'fguard', None)
     if g is None or g.sel != selected or g.guard != on_guard or isinstance(g, follow_guard.FollowGuardV2) != v2:
-        g = gb.fguard = follow_guard.FollowGuardV2(selected) if v2 else follow_guard.FollowGuard(selected, on_guard)
+        if v2:
+            g = follow_guard.FollowGuardV2(selected, frame_size=(APP.LIVE_W, APP.LIVE_H))
+        else:
+            g = follow_guard.FollowGuard(selected, on_guard)
+        gb.fguard = g
     if v2:
         g.app, g.kal = _appearance, _kalman_box(selected)
         owner = getattr(gb, 'click_owners', {}).get(selected)
         g.continuous_control_owner = owner is not None and owner is g.trusted_control_owner
+        # Appearance observations must belong to the current public-ID map.
+        # A camera-native tracker can supply the same numeric ID in a different namespace.
+        namespace = getattr(gb, 'click_namespace', None)
+        judge = getattr(APP, 'relabeler', None)
+        g.allow_unlocalized_recovery = namespace is not None and getattr(judge, 'id_map', None) is namespace
+        g.allow_fast_return = (g.allow_unlocalized_recovery and APP.RULES.get('relabel')
+                               and APP.RULES.get('tracker') in ('deepocsort', 'hybridsort'))
+        _update_keepid_resume(gb, g, owner, namespace, judge, frame_t)
     g.defer_retarget = getattr(gb, 'web_follow_control_supported', False)
     fused = on_coast and coast_mode() == 'fused'
     bounded_on = seek_supported and bounded and want_bounded and fused
     if v2:
         view = g.upper_coast_view
+        plan = g.bounded_seek
+        anchor = view.seek_anchor if view is not None else None
+        anchor_t = plan.last_t if plan is not None and plan.last_t is not None else (
+            anchor[0] if anchor is not None else None)
         g.allow_masked_seek = bool(
-            bounded_on and view is not None and view.anchor is not None
-            and 0 < frame_t - view.anchor[0] <= follow_guard.MAX_DT
-            and not (g.bounded_seek is not None and g.bounded_seek.stopped))
+            bounded_on and anchor_t is not None and 0 < frame_t - anchor_t <= follow_guard.MAX_DT
+            and not (plan is not None and plan.stopped))
     d = g.step(frame_t, gb.people, _motion)
+    if d.get('keepid_resumed'):
+        gb.state['keepid_follow_resumes'] = gb.state.get('keepid_follow_resumes', 0) + 1
     if preserve_follow is not None:
         preserve_follow(g, d, selected, frame_t)
     if v2 and g.trust_t == frame_t and d['phase'] == 'track' and not d['mask'] and not d['reselect']:
@@ -700,26 +743,37 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
         k = kal if kal is not None and math.hypot(kal[0] - d['pred'][0], kal[1] - d['pred'][1]) <= follow_guard.COAST_MAX_H * d['pred'][3] else None
         d['pred'] = follow_guard.keep_in_view([d['pred'], k], g.age(frame_t), (APP.LIVE_W / 2., sy * APP.LIVE_H), ay,
                                               (float(APP.LIVE_W), float(APP.LIVE_H)))
-    if seek_supported and bounded and want_bounded and g.upper_coast_view is not None:
-        if g.bounded_seek is None:
-            g.bounded_seek = bounded_seek.BoundedSeek()
-        inspect_while_masked = bool(d.get('seek_masked'))
-        if (gb.people or d['reselect']) and not inspect_while_masked:
-            if g.trust_t == frame_t and d['phase'] == 'track' and not d['mask'] and not d['reselect']:
-                g.bounded_seek = bounded_seek.BoundedSeek()
+    if bounded_on and g.upper_coast_view is not None:
+        trusted = g.trust_t == frame_t and d['phase'] == 'track' and not d['mask'] and not d['reselect']
+        # A visible but rejected box is a lost control target. The scan uses
+        # the last trusted view while identity verification runs separately.
+        empty_loss = not gb.people and not d['mask']
+        guarded_loss = v2 and bool(g.tmpl) and (
+            d['mask'] or not any(int(row[0]) == selected for row in gb.people))
+        loss = not d['reselect'] and (empty_loss or guarded_loss)
+        risk = v2 and not d['reselect'] and not loss and not d['mask'] and d['phase'] == 'risk'
+        if trusted:
+            g.bounded_seek = None
+        elif loss or risk:
+            if g.bounded_seek is None:
+                wide_pan = _bridge_option(gb, '--seek-ms') == str(bounded_seek.WIDE_PAN_BRIDGE_MS)
+                g.bounded_seek = bounded_seek.BoundedSeek(wide_pan)
+            if risk:
+                g.bounded_seek.maintain(frame_t, g.upper_coast_view, _motion)
             else:
-                g.bounded_seek.cancel()
-        elif not d['mask'] or inspect_while_masked:
-            aim = _bridge_aim_y(gb)
-            dx, dy = correction if correction is not None else (0., 0.)
-            prediction = (p[0] - dx, p[1] - dy, p[2], p[3]) if p is not None else None
-            gb.seek_raw = g.bounded_seek.step(
-                frame_t, g.upper_coast_view, _motion, (float(APP.LIVE_W), float(APP.LIVE_H)),
-                (APP.LIVE_W / 2., _bridge_aim_screen_y(gb) * APP.LIVE_H), .5 if aim is None else aim,
-                prediction=prediction)
-        else:
-            g.bounded_seek.cancel()
-        if g.bounded_seek.first is not None:
+                aim = _bridge_aim_y(gb)
+                dx, dy = correction if correction is not None else (0., 0.)
+                prediction = (p[0] - dx, p[1] - dy, p[2], p[3]) if p is not None else None
+                gb.seek_raw = g.bounded_seek.step(
+                    frame_t, g.upper_coast_view, _motion, (float(APP.LIVE_W), float(APP.LIVE_H)),
+                    (APP.LIVE_W / 2., _bridge_aim_screen_y(gb) * APP.LIVE_H), .5 if aim is None else aim,
+                    prediction=prediction)
+                gb.state['bounded_seek_state'] = g.bounded_seek.status
+        elif g.bounded_seek is not None and g.bounded_seek.lost_at is not None:
+            g.bounded_seek.cancel('recovery_or_handoff')
+        if v2 and d['mask'] and not g.tmpl and not d['reselect']:
+            gb.state['bounded_seek_state'] = 'no_target_template'
+        if loss and g.bounded_seek is not None and g.bounded_seek.first is not None:
             d['pred'] = None
     if on_seek and not d['reselect']:   # 11-16: where to look once the prediction is no longer trusted (search_follow.py)
         gb.seek_out = _seek_locked(gb, g, d, selected, frame_t, kal, on_guard, v2)
@@ -727,9 +781,9 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
             d['pred'] = None   # one target per frame: the search has taken over from the coast
     elif not on_seek:
         gb.state.pop('seek', None)
-        if v2: g.wide = None
+        if v2: g.set_wide(None)
     if v2 and on_guard and d['phase'] in ('lost', 'masked') and not d['reselect']:
-        radius = g.recovery_radius(frame_t)
+        radius = g.display_recovery_radius(frame_t, d)
         if radius:
             cx, cy, w, h = g.pred
             dx, dy = (0., 0.) if correction is None else correction
@@ -740,6 +794,23 @@ def _guard_locked(gb, selected, frame_t, correction=None, preserve_follow=None):
                          None if p is None else [round(p[0], 1), round(p[1], 1), round(p[3], 1)], int(d['pred'] is not None and on_coast),
                          None if kal is None else [round(kal[0], 1), round(kal[1], 1), round(kal[3], 1)],
                          None if d['pred'] is None else [round(d['pred'][0], 1), round(d['pred'][1], 1)]]
+    if d['reselect']:
+        gb.state['follow_wait_reason'] = 'handoff'
+    elif d['mask']:
+        probe = getattr(g, 'search_probe', None)
+        if probe and probe['last_frame'] == frame_t:
+            reason = probe['last_reason']
+            if reason == 'position_or_overlap_blocked' and probe['overlapping']:
+                reason = 'overlap'
+        elif d.get('foreground_blocked'):
+            reason = 'overlap'
+        elif d['why'] == 'outside the gate':
+            reason = 'position_or_overlap_blocked'
+        else:
+            reason = 'confirming'
+        gb.state['follow_wait_reason'] = reason
+    elif d['phase'] == 'lost':
+        gb.state['follow_wait_reason'] = 'no_person_rows'
     if d['reselect'] and g.defer_retarget:
         _propose_handoff(gb, selected, d['reselect'], 'FOLLOW guard %d -> %d (%s)' %
                          (selected, d['reselect'], d['why']), counter='guard_n', guard=(g, d['retarget']))

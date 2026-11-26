@@ -47,6 +47,98 @@ class Scene:
 
 
 class ForegroundOcclusionTests(unittest.TestCase):
+    def test_uncertain_id_cannot_resume_on_a_larger_box_after_short_gap(self):
+        scene, guard = Scene(), F.FollowGuardV2(7)
+        for _ in range(8):
+            guard.step(scene.step(), [person(7, 260.)], scene.motion)
+        guard.step(scene.step(), [person(7, 75.)], scene.motion)
+        self.assertEqual(guard.phase, 'masked')
+        for _ in range(9):
+            guard.step(scene.step(), [], scene.motion)
+        result = guard.step(scene.step(), [person(7, 285., h=354., w=133.), person(9, 210.)], scene.motion)
+        self.assertTrue(result['mask'])
+        self.assertTrue(result['foreground_blocked'])
+        self.assertEqual(guard.trust[2:], (90., 240.))
+        for _ in range(4):
+            still_wrong = guard.step(scene.step(), [person(7, 285.), person(9, 205.)], scene.motion)
+            self.assertTrue(still_wrong['mask'])
+        self.assertEqual(guard.trust[0], 260.)
+
+    def test_disputed_foreground_can_resume_after_three_new_appearance_samples(self):
+        scene, guard = Scene(), F.FollowGuardV2(7)
+        guard.allow_unlocalized_recovery = True
+        vector = np.array([1., 0., 0.])
+        guard.app = lambda _: (vector, 0, 10)
+        for _ in range(8):
+            guard.step(scene.step(), [person(7, 260.)], scene.motion)
+        guard.step(scene.step(), [person(7, 75.)], scene.motion)
+        for _ in range(9):
+            guard.step(scene.step(), [], scene.motion)
+        guard.app = lambda _: None
+        self.assertTrue(guard.step(scene.step(), [person(7, 285., h=354., w=133.)], scene.motion)['mask'])
+        for stamp in (11, 11, 12):
+            guard.app = lambda _: (vector, 0, stamp)
+            self.assertTrue(guard.step(scene.step(), [person(7, 268.)], scene.motion)['mask'])
+        guard.app = lambda _: (vector, 0, 13)
+        self.assertFalse(guard.step(scene.step(), [person(7, 268.)], scene.motion)['mask'])
+        self.assertFalse(guard.foreground_identity_required)
+
+    def _foreground_case(self):
+        scene, guard = Scene(), F.FollowGuardV2(4)
+        guard.allow_unlocalized_recovery = guard.continuous_control_owner = True
+        feature = np.array([1., 0., 0.])
+        guard.app = lambda ident: (feature, 0, 1)
+        for _ in range(5):
+            guard.step(scene.step(), [person(4, 398., 200., h=85., w=54.)], scene.motion)
+        guard.app = lambda ident: (feature, F.APP_FRESH + 1, 1)
+        grown = person(4, 378., 260., h=173., w=105.)
+        for _ in range(7):
+            decision = guard.step(scene.step(), [grown], scene.motion)
+            self.assertTrue(decision['foreground_blocked'])
+        return scene, guard, grown, feature
+
+    def test_steady_selected_person_resumes_after_three_independent_features(self):
+        scene, guard, grown, feature = self._foreground_case()
+        other = person(5, 520., 260., h=173., w=94.)
+        different = np.array([0., 1., 0.])
+        stamp = 2
+        guard.app = lambda ident: (feature if ident == 4 else different, 0, stamp)
+        for _ in range(4):
+            self.assertTrue(guard.step(scene.step(), [grown, other], scene.motion)['mask'])
+        stamp += 1
+        self.assertTrue(guard.step(scene.step(), [grown, other], scene.motion)['mask'])
+        stamp += 1
+        result = guard.step(scene.step(), [grown, other], scene.motion)
+        self.assertFalse(result['mask'])
+        self.assertEqual(result['reselect'], 0)
+        self.assertEqual(guard.trust, F.cwh(grown))
+        self.assertFalse(guard.foreground_blocked)
+
+    def test_foreground_holds_when_same_number_does_not_prove_ownership(self):
+        for failure in ('different_owner', 'similar_rival', 'unverified_rival', 'overlap', 'different_feature'):
+            with self.subTest(failure=failure):
+                scene, guard, grown, feature = self._foreground_case()
+                different = np.array([0., 1., 0.])
+                others = [person(5, 520., 260., h=173., w=94.)]
+                rival = feature
+                if failure == 'different_owner':
+                    guard.continuous_control_owner = False
+                    others = []
+                elif failure == 'unverified_rival':
+                    rival = None
+                elif failure == 'overlap':
+                    others = [person(5, 390., 260., h=170., w=97.)]
+                    rival = different
+                elif failure == 'different_feature':
+                    feature = different
+                    others = []
+                guard.app = lambda ident: (feature if ident == 4 else rival, 0, stamp)
+                for stamp in range(2, 8):
+                    result = guard.step(scene.step(), [grown, *others], scene.motion)
+                    self.assertTrue(result['foreground_blocked'])
+                    self.assertTrue(result['mask'])
+                    self.assertEqual(result['reselect'], 0)
+
     def test_same_id_large_foreground_cannot_steer_or_replace_trusted_box(self):
         scene, guard = Scene(), F.FollowGuardV2(7)
         target = person(7, 250., 200., h=120., w=65.)
@@ -74,6 +166,125 @@ class ForegroundOcclusionTests(unittest.TestCase):
             decision = guard.step(t, scene.shown([target]), scene.motion)
             self.assertFalse(decision['mask'])
             self.assertEqual(guard.trust_t, t)
+
+    def test_weak_corner_cannot_clear_disputed_target_by_position(self):
+        scene, guard = Scene(), F.FollowGuardV2(211)
+        guard.frame_size = (640, 480)
+        target = (211, 420, 150, 653, 500, .71)
+        for _ in range(8):
+            self.assertFalse(guard.step(scene.step(), [target], scene.motion)['mask'])
+        trust = guard.trust
+        jump = (211, 400, 100, 800, 700, .40)
+        self.assertTrue(guard.step(scene.step(), [jump], scene.motion)['foreground_blocked'])
+        # The two clipped rows were logged during the loss of 211. A warm,
+        # stationary anchor and a synthetic jump exercise the reaccept path.
+        first = (211, 428, 156, 660, 502, .40)
+        second = (211, 450, 174, 661, 491, .46)
+        with patch.dict(os.environ, {'LWIR_FOLLOW_POS_TRUST': '1'}):
+            for weak in (first, second, first, second):
+                decision = guard.step(scene.step(), [weak], scene.motion)
+                self.assertTrue(decision['mask'], 'a weak corner row regained steering')
+                self.assertTrue(decision.get('foreground_blocked', False))
+                self.assertEqual(guard.trust, trust)
+            self.assertTrue(guard.step(scene.step(), [target], scene.motion)['mask'])
+            self.assertFalse(guard.step(scene.step(), [target], scene.motion)['mask'])
+            self.assertEqual(guard.sel, 211)
+
+    def test_weak_corner_of_an_undisputed_person_keeps_steering(self):
+        scene, guard = Scene(), F.FollowGuardV2(211)
+        guard.frame_size = (640, 480)
+        target = (211, 428, 156, 660, 502, .40)
+        with patch.dict(os.environ, {'LWIR_FOLLOW_POS_TRUST': '1'}):
+            for _ in range(5):
+                decision = guard.step(scene.step(), [target], scene.motion)
+                self.assertFalse(decision['mask'])
+                self.assertEqual(guard.trust, F.cwh(target))
+
+    def test_a_larger_passer_cannot_drag_the_last_position_via_position_trust(self):
+        scene, guard = Scene(), F.FollowGuardV2(7)
+        target = person(7, 280., 210., h=120., w=66.)
+        foreground = person(9, 310., 212., h=183., w=101.)
+        with patch.dict(os.environ, {'LWIR_FOLLOW_POS_TRUST': '1'}):
+            for _ in range(8):
+                guard.step(scene.step(), [target], scene.motion)
+            trusted = guard.trust
+            for x in (293., 298., 301.):
+                suspect = person(7, x, 211., h=122., w=72.)
+                result = guard.step(scene.step(), [suspect, foreground], scene.motion)
+                self.assertTrue(result['mask'])
+                self.assertEqual(guard.trust, trusted)
+                self.assertEqual(result['pred'], trusted)
+                self.assertFalse(result['reselect'])
+            guard.step(scene.step(), [target], scene.motion)
+            result = guard.step(scene.step(), [target], scene.motion)
+            self.assertFalse(result['mask'])
+            self.assertEqual(guard.pred, trusted)
+
+
+class KeepIDWallResumeTests(unittest.TestCase):
+    def lost(self):
+        scene, guard = Scene(), F.FollowGuardV2(7, frame_size=(640, 480))
+        feature = np.array([1., 0., 0.])
+        guard.app = lambda _: (feature, 0, 1)
+        for _ in range(5):
+            guard.step(scene.step(), [person(7, 120., h=150.)], scene.motion)
+        for _ in range(40):
+            guard.step(scene.step(), [], scene.motion)
+        self.assertEqual(guard.phase, 'masked')
+        guard.keepid_resume = ((10, object()), scene.t)
+        return scene, guard, feature
+
+    def test_confirmed_keepid_returns_to_same_id_beyond_stale_prediction(self):
+        scene, guard, feature = self.lost()
+        target = person(7, 530., h=150.)
+        self.assertFalse(guard.fits(F.cwh(target), scene.t))
+        for stamp in (2, 2, 3):
+            guard.app = lambda _, s=stamp: (feature, 0, s)
+            self.assertTrue(guard.step(scene.step(), [target], scene.motion)['mask'])
+        guard.app = lambda _: (feature, 0, 4)
+        out = guard.step(scene.step(), [target], scene.motion)
+        self.assertTrue(out['keepid_resumed'])
+        self.assertFalse(out['mask'])
+        self.assertEqual((out['phase'], out['reselect'], guard.trust[0]), ('track', 0, 530.))
+
+    def test_same_number_without_keepid_transfer_does_not_bypass_position(self):
+        scene, guard, feature = self.lost()
+        guard.keepid_resume = None
+        target = person(7, 530., h=150.)
+        for stamp in (2, 3, 4, 5):
+            guard.app = lambda _, s=stamp: (feature, 0, s)
+            self.assertTrue(guard.step(scene.step(), [target], scene.motion)['mask'])
+
+    def test_keepid_resume_rejects_overlap_and_ambiguous_appearance(self):
+        for rival in (person(9, 540., h=150.), person(9, 300., h=150.)):
+            with self.subTest(rival=rival):
+                scene, guard, feature = self.lost()
+                for stamp in (2, 3, 4, 5):
+                    guard.app = lambda _, s=stamp: (feature, 0, s)
+                    out = guard.step(scene.step(), [person(7, 530., h=150.), rival], scene.motion)
+                    self.assertTrue(out['mask'])
+                    self.assertFalse(out.get('keepid_resumed'))
+
+    def test_keepid_transfer_must_match_old_and_new_owners_and_current_frame(self):
+        namespace = {10: 7}
+        old, new = (4, object()), (10, object())
+        guard = NS(sel=7, trusted_control_owner=old, keepid_resume=None,
+                   allow_unlocalized_recovery=True, phase='lost')
+        bridge = NS(state={'lost': 1})
+        event = dict(t=10, old_id=7, cand_tid=4, tracker_id=10)
+        judge = NS(t=10, id_map=namespace, events=[event])
+        with patch.dict(APP.__dict__, {'RULES': {'tracker':'botsort', 'relabel':True}}):
+            for key, wrong in (('t', 9), ('old_id', 8), ('cand_tid', 5), ('tracker_id', 11)):
+                with self.subTest(key=key), patch.dict(event, {key:wrong}):
+                    live_tracks._update_keepid_resume(bridge, guard, new, namespace, judge, 100.)
+                    self.assertIsNone(guard.keepid_resume)
+            live_tracks._update_keepid_resume(bridge, guard, new, namespace, judge, 100.)
+            self.assertEqual(guard.keepid_resume, (new, 100.))
+            judge.t += 1
+            live_tracks._update_keepid_resume(bridge, guard, new, namespace, judge, 101.)
+            self.assertEqual(guard.keepid_resume, (new, 100.))
+            live_tracks._update_keepid_resume(bridge, guard, new, namespace, judge, 102.)
+            self.assertIsNone(guard.keepid_resume)
 
 
 class SearchAppearanceVerificationTests(unittest.TestCase):
@@ -141,6 +352,229 @@ class SearchAppearanceVerificationTests(unittest.TestCase):
         self.assertFalse(self.step([person(7, 240.)])['mask'])
         self.assertEqual(self.guard.sel, 7)
 
+    def test_search_log_distinguishes_missing_candidates_from_missing_features(self):
+        from . import follow_log
+
+        self.step([])
+        self.assertEqual(self.guard.search_probe['last_reason'], 'no_person_rows')
+        self.guard.app = lambda ident: None
+        target = person(9, 240.)
+        self.assertTrue(self.step([target])['mask'])
+        self.assertEqual(self.guard.search_probe['last_reason'], 'no_fresh_features')
+        self.assertEqual(self.guard.search_probe['people'], 1)
+        stamp = 11
+        self.guard.app = lambda ident: (self.vector, 0, stamp)
+        self.assertTrue(self.step([target])['mask'])
+        self.assertEqual(self.guard.search_probe['last_reason'], 'waiting_for_independent_features')
+        stamp += 1
+        self.assertEqual(self.step([target])['reselect'], 9)
+        log = follow_log._guard(NS(fguard=self.guard, state={}))['search_probe']
+        self.assertEqual(log['last_reason'], 'appearance_verified')
+        self.assertEqual(log['candidate'], 9)
+        self.assertEqual(log['outcomes']['no_fresh_features'], 1)
+
+    def test_search_log_distinguishes_position_and_appearance_rejection(self):
+        self.guard.app = lambda ident: (np.array([0., 1., 0.]), 0, 11)
+        self.assertTrue(self.step([person(9, 240.)])['mask'])
+        self.assertEqual(self.guard.search_probe['last_reason'], 'appearance_threshold_or_margin')
+        self.guard.app = lambda ident: (self.vector, 0, 12)
+        self.assertTrue(self.step([person(9, 240.), person(10, 242.)])['mask'])
+        self.assertEqual(self.guard.search_probe['last_reason'], 'position_or_overlap_blocked')
+        self.assertEqual(self.guard.search_probe['overlapping'], 2)
+
+    def test_brief_missing_feature_does_not_reset_same_visible_target(self):
+        target = person(7, 240.)
+        self.guard.app = lambda ident: (self.vector, 0, 11)
+        self.assertTrue(self.step([target])['mask'])
+        self.guard.app = lambda ident: None
+        self.assertTrue(self.step([target])['mask'])
+        self.assertEqual(self.guard.search_verify_n, 1)
+        self.guard.app = lambda ident: (self.vector, 0, 12)
+        self.assertFalse(self.step([target])['mask'])
+
+    def test_disappearing_or_competing_target_clears_the_partial_search_evidence(self):
+        target = person(7, 240.)
+        for interruption in ([], [target, person(9, 241.)]):
+            with self.subTest(interruption=interruption):
+                self.guard.app = lambda ident: (self.vector, 0, 11)
+                self.assertTrue(self.step([target])['mask'])
+                self.guard.app = lambda ident: None
+                self.assertTrue(self.step(interruption)['mask'])
+                self.assertEqual(self.guard.search_verify_n, 0)
+
+    def test_search_evidence_expires_if_no_new_crop_is_received(self):
+        target = person(7, 240.)
+        self.guard.app = lambda ident: (self.vector, 0, 11)
+        self.assertTrue(self.step([target])['mask'])
+        for _ in range(8):
+            self.assertTrue(self.step([target])['mask'])
+        self.guard.app = lambda ident: (self.vector, 0, 12)
+        self.assertTrue(self.step([target])['mask'])
+        self.assertEqual(self.guard.search_verify_n, 1)
+
+    def test_early_return_outside_motion_gate_requires_fresh_strong_evidence(self):
+        scene, guard = Scene(), F.FollowGuardV2(7)
+        guard.app = lambda ident: (self.vector, 0, 10)
+        for _ in range(5):
+            guard.step(scene.step(), [person(7, 230.)], scene.motion)
+        for _ in range(4):
+            guard.step(scene.step(), [], scene.motion)
+        same = person(7, 405.)
+        wrong = np.array([.53, np.sqrt(1. - .53 ** 2), 0.])
+        guard.app = lambda ident: (wrong, 0, 11)
+        self.assertTrue(guard.step(scene.step(), [same], scene.motion)['mask'])
+        guard.app = lambda ident: (self.vector, 0, 12)
+        result = guard.step(scene.step(), [same], scene.motion)
+        self.assertTrue(result['mask'])
+        self.assertFalse(result['seek_masked'])
+        self.assertTrue(guard.step(scene.step(), [same], scene.motion)['mask'])
+        guard.app = lambda ident: (self.vector, 0, 13)
+        self.assertFalse(guard.step(scene.step(), [same], scene.motion)['mask'])
+        self.assertEqual(guard.sel, 7)
+
+    def _fast_return(self, others=()):
+        scene, guard = Scene(), F.FollowGuardV2(7)
+        guard.defer_retarget = True
+        guard.allow_fast_return = True
+        guard.app = lambda ident: (self.vector, 0, 10)
+        for _ in range(5):
+            guard.step(scene.step(), [person(7, 110.), *others], scene.motion)
+        for _ in range(3):
+            guard.step(scene.step(), [], scene.motion)
+        return scene, guard
+
+    def test_short_far_return_commits_only_a_fresh_three_sample_proposal(self):
+        scene, guard = self._fast_return()
+        returning = person(9, 470.)
+        for stamp in (11, 11, 12):
+            guard.app = lambda ident: (self.vector, 0, stamp)
+            observed = guard.step(scene.step(), [returning], scene.motion)
+            self.assertFalse(observed['reselect'])
+            self.assertTrue(observed['mask'])
+            self.assertEqual(guard.display_recovery_radius(scene.t, observed), F.SEARCH_FAST_RETURN_H)
+            self.assertGreater(guard.dist(F.cwh(returning)), guard.recovery_radius(scene.t))
+        guard.app = lambda ident: (self.vector, 0, 13)
+        observed = guard.step(scene.step(), [returning], scene.motion)
+        self.assertEqual(observed['reselect'], 9)
+        self.assertEqual(guard.sel, 7)
+        guard.accept_retarget(observed['retarget'])
+        self.assertEqual(guard.sel, 9)
+
+    def test_existing_search_circle_is_warped_before_the_next_candidate_check(self):
+        scene, guard = self._fast_return()
+        guard.set_wide((450., 200., 30.), scene.t)
+        guard.step(scene.step(pan_step=90.), [], scene.motion)
+        self.assertEqual(guard.wide, (360., 200., 30.))
+        self.assertTrue(guard._wide_ok(F.cwh(person(7, 365.)), self.vector))
+        self.assertFalse(guard._wide_ok(F.cwh(person(7, 450.)), self.vector))
+        previous = scene.t
+        new_time = scene.step()
+        del scene.hist[previous]
+        guard.step(new_time, [], scene.motion)
+        self.assertIsNone(guard.wide)
+        self.assertEqual(guard.display_recovery_radius(new_time, {}), 0.)
+
+    def test_short_far_return_forgets_evidence_when_second_person_appears(self):
+        scene, guard = self._fast_return()
+        returning = person(9, 470.)
+        for stamp in (11, 12):
+            guard.app = lambda ident: (self.vector, 0, stamp)
+            self.assertFalse(guard.step(scene.step(), [returning], scene.motion)['reselect'])
+        guard.app = lambda ident: (self.vector, 0, 13)
+        self.assertFalse(guard.step(scene.step(), [returning, person(10, 550.)], scene.motion)['reselect'])
+        guard.app = lambda ident: (self.vector, 0, 14)
+        self.assertFalse(guard.step(scene.step(), [returning], scene.motion)['reselect'])
+
+    def test_short_far_return_rejects_preexisting_person_and_weak_match(self):
+        returning = person(9, 470.)
+        for others, vector in (((returning,), self.vector),
+                               ((), np.array([.81, np.sqrt(1. - .81**2), 0.]))):
+            with self.subTest(others=others):
+                scene, guard = self._fast_return(others)
+                for stamp in (11, 12, 13):
+                    guard.app = lambda ident: (vector, 0, stamp)
+                    self.assertFalse(guard.step(scene.step(), [returning], scene.motion)['reselect'])
+                self.assertEqual(guard.sel, 7)
+
+    def _continuous_target(self, prediction):
+        # Model a stale trusted position while the raw owner has stayed visible.
+        self.guard.allow_unlocalized_recovery = True
+        self.guard.continuous_control_owner = True
+        self.guard.pt_last_t = self.scene.t
+        self.guard.pt_run = F.POS_RUN_N
+        self.guard.pt_reborn = False
+        self.guard.pred, self.guard.pred_t = prediction, self.scene.t
+        return person(7, 235.)
+
+    def test_continuous_owner_reanchors_with_three_fresh_features(self):
+        for prediction in (None, (230., 710., 90., 240.)):
+            with self.subTest(prediction=prediction):
+                self.setUp()
+                target = self._continuous_target(prediction)
+                stamp = 11
+                self.guard.app = lambda ident: (self.vector, 0, stamp)
+                for _ in range(4):
+                    self.assertTrue(self.step([target])['mask'])
+                stamp = 12
+                self.assertTrue(self.step([target])['mask'])
+                stamp = 13
+                result = self.step([target])
+                self.assertFalse(result['mask'])
+                self.assertEqual(result['reselect'], 0)
+                self.assertEqual(self.guard.trust, F.cwh(target))
+
+    def test_partial_overlap_requires_independent_identity_evidence(self):
+        other_feature = np.array([0., 1., 0.])
+        for case in ('partial', 'heavy', 'large_cover', 'similar_rival', 'missing_rival', 'new_owner'):
+            with self.subTest(case=case):
+                self.setUp()
+                target = self._continuous_target((230., 200., 90., 240.))
+                other = person(8, 305.)
+                rival_feature = other_feature
+                if case == 'heavy':
+                    other = person(8, 270.)
+                elif case == 'large_cover':
+                    other = person(8, 235., 200., w=420., h=370.)
+                elif case == 'similar_rival':
+                    rival_feature = self.vector
+                elif case == 'missing_rival':
+                    rival_feature = None
+                elif case == 'new_owner':
+                    self.guard.continuous_control_owner = False
+                for stamp in (11, 11, 12, 13):
+                    self.guard.app = lambda ident: (self.vector if ident == 7 else rival_feature, 0, stamp)
+                    out = self.step([target, other])
+                    self.assertEqual(out['mask'], case != 'partial' or stamp < 13)
+                    self.assertFalse(out['reselect'])
+                if case == 'partial':
+                    self.assertEqual(self.guard.phase, 'risk')
+                    self.assertEqual(self.guard.trust, F.cwh(target))
+
+    def test_unlocalized_target_stays_masked_without_independent_identity(self):
+        for failure in ('disabled', 'owner_changed', 'second_person', 'moderate_feature', 'stale_feature', 'box_grew'):
+            with self.subTest(failure=failure):
+                self.setUp()
+                target = self._continuous_target(None)
+                people = [target]
+                feature, age = self.vector, 0
+                if failure == 'disabled':
+                    self.guard.allow_unlocalized_recovery = False
+                elif failure == 'owner_changed':
+                    self.guard.continuous_control_owner = False
+                elif failure == 'second_person':
+                    people.append(person(9, 500.))
+                elif failure == 'moderate_feature':
+                    feature = np.array([.83, np.sqrt(1. - .83 ** 2), 0.])
+                elif failure == 'stale_feature':
+                    age = 3
+                else:
+                    people = [person(7, 235., w=160.)]
+                self.guard.app = lambda ident: (feature, age, stamp)
+                for stamp in range(11, 16):
+                    result = self.step(people)
+                    self.assertTrue(result['mask'])
+                    self.assertEqual(result['reselect'], 0)
+
 
 class PredictionTests(unittest.TestCase):
     def walk(self, g, s, n, x0, v, pan_step=0., present=True):
@@ -171,6 +605,53 @@ class PredictionTests(unittest.TestCase):
         s, g = Scene(gmc=False), F.FollowGuard(7, guard=False)
         self.walk(g, s, 20, 200., 90.)
         self.assertIsNone(self.walk(g, s, 5, 200., 90., present=False)[-1][1]['pred'])
+
+    def test_coast_distance_is_independent_of_camera_pan_and_reversal(self):
+        for guard_class in (lambda: F.FollowGuard(7, guard=False), lambda: F.FollowGuardV2(7)):
+            for distance in (149., 151.):
+                for pan_steps in ((0., 0.), (180., -60.), (-180., 60.)):
+                    with self.subTest(distance=distance, pan_steps=pan_steps):
+                        s, g = Scene(), guard_class()
+                        g.step(s.step(), [person(7, 320., h=100.)], s.motion)
+                        g.vx = distance / (2 * DT)
+                        for pan in pan_steps:
+                            d = g.step(s.step(pan_step=pan), [], s.motion)
+                        self.assertEqual(d['pred'] is not None, distance < 150.)
+                        if d['pred'] is not None:
+                            self.assertAlmostEqual(d['pred'][0], 320. + distance - s.pan, delta=.01)
+
+    def test_large_pan_alone_does_not_cancel_coast(self):
+        s, g = Scene(), F.FollowGuardV2(7)
+        g.step(s.step(), [person(7, 320., h=100.)], s.motion)
+        d = g.step(s.step(pan_step=180.), [], s.motion)
+        self.assertAlmostEqual(d['pred'][0], 140.)
+
+    def test_missing_camera_motion_does_not_reuse_velocity_after_a_new_observation(self):
+        s, g = Scene(), F.FollowGuardV2(7)
+        self.walk(g, s, 20, 200., 90.)
+        self.assertGreater(g.vx, 50.)
+        previous = s.t
+        t = s.step()
+        del s.hist[previous]
+        g.step(t, [person(7, 300.)], s.motion)
+        self.assertFalse(g.v_known)
+        d = g.step(s.step(), [], s.motion)
+        self.assertAlmostEqual(d['pred'][0], 300.)
+
+    def test_coast_does_not_keep_old_direction_when_target_reverses(self):
+        for reversals in (1, 2):
+            with self.subTest(reversals=reversals):
+                scene, guard = Scene(), F.FollowGuardV2(7)
+                x = 190.
+                for _ in range(24):
+                    x += 4.
+                    guard.step(scene.step(pan_step=2.), scene.shown([person(7, x, h=100.)]), scene.motion)
+                for _ in range(reversals):
+                    x -= 4.
+                    guard.step(scene.step(pan_step=-5.), scene.shown([person(7, x, h=100.)]), scene.motion)
+                result = guard.step(scene.step(pan_step=6.), [], scene.motion)
+                expected = x - scene.pan - (4. if reversals == 2 else 0.)
+                self.assertAlmostEqual(result['pred'][0], expected, delta=.01)
 
     def test_no_prediction_while_seen(self):
         s, g = Scene(), F.FollowGuard(7, guard=True)
@@ -340,13 +821,14 @@ class PublishFixture(unittest.TestCase):
         APP.__dict__.clear()
         APP.__dict__.update(self.saved)
 
-    def frame(self, people, acknowledge=False):
+    def frame(self, people, acknowledge=False, *, healthy_live=False, click_owners=None, click_namespace=None):
         t0 = self.t
         self.t += DT
         APP.CTL['motion_hist'].append((t0, self.t, [[1., 0., 0.], [0., 1., 0.]]))
         APP.CTL['lead_motion'] = APP.CTL['motion_hist'][-1]
         with patch('time.perf_counter', return_value=self.t + .01):
-            live_tracks.publish(people, None, self.t, None, live_tracks.current_source())
+            live_tracks.publish(people, None, self.t, None, live_tracks.current_source(), healthy_live=healthy_live,
+                                click_owners=click_owners, click_namespace=click_namespace)
         if acknowledge:
             live_tracks.halted(APP.GB.tracks_ticket)
         return APP.GB.wframe.split(b'\n', 1)[0].decode()
@@ -360,6 +842,53 @@ class PublishFixture(unittest.TestCase):
 
 
 class PublishTests(PublishFixture):
+    def test_botsort_keepid_wall_return_reaches_bridge_under_same_number(self):
+        feature = np.array([1., 0., 0.])
+        namespace = {4: 7}
+        judge = NS(id_map=namespace, t=1, events=[])
+        APP.relabeler = judge
+        APP.RULES.update(tracker='botsort', relabel=True)
+        with patch.dict(os.environ, {'LWIR_FOLLOW_GUARD': '2'}), patch.object(live_tracks, '_appearance') as app:
+            app.return_value = (feature, 0, 1)
+            self.frame([person(7, 120., h=150.)], acknowledge=True, healthy_live=True,
+                       click_owners={7:4}, click_namespace=namespace)
+            APP.GB.state.update(id=7, auto=1)
+            for _ in range(5):
+                self.frame([person(7, 120., h=150.)], healthy_live=True, click_owners={7:4}, click_namespace=namespace)
+            self.assertEqual(APP.GB.fguard.trusted_control_owner[0], 4)
+            for _ in range(40):
+                self.frame([], healthy_live=True, click_namespace=namespace)
+            namespace.clear()
+            namespace[10] = 7
+            judge.t = 2
+            judge.events.append(dict(t=2, old_id=7, cand_tid=4, tracker_id=10))
+            for stamp in (2, 3, 4):
+                judge.t = stamp
+                app.return_value = (feature, 0, stamp)
+                packet = self.frame([person(7, 530., h=150.)], healthy_live=True,
+                                    click_owners={7:10}, click_namespace=namespace)
+                if stamp < 4:
+                    self.assertNotIn(' 7 485.0 ', packet)
+            self.assertIn(' 7 485.0 ', packet)
+            self.assertEqual(APP.GB.state['id'], 7)
+            self.assertEqual(APP.GB.state['keepid_follow_resumes'], 1)
+
+    def test_recovery_uses_the_live_appearance_namespace_for_every_tracker(self):
+        with patch.dict(os.environ, {'LWIR_FOLLOW_GUARD': '2'}):
+            self.follow()
+            gb = APP.GB
+            namespace = {4: 7}
+            APP.relabeler = NS(id_map=namespace)
+            for tracker in ('confirm3', 'rebind', 'sort', 'ocsort', 'botsort', 'deepocsort', 'hybridsort'):
+                with self.subTest(tracker=tracker), gb.wcond:
+                    APP.RULES['tracker'] = tracker
+                    gb.click_namespace = namespace
+                    live_tracks._guard_locked(gb, 7, self.t)
+                    self.assertTrue(gb.fguard.allow_unlocalized_recovery)
+                    gb.click_namespace = dict(namespace)
+                    live_tracks._guard_locked(gb, 7, self.t)
+                    self.assertFalse(gb.fguard.allow_unlocalized_recovery)
+
     def enable_reentry_tilt(self):
         self.frame([person(7, 300., cy=240., h=200.)], acknowledge=True)
         gb = APP.GB

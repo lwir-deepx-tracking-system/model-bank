@@ -94,6 +94,9 @@ def _guard(gb):
         for k in ('reaccepts', 'swaps', 'app_swaps', 'app_masks', 'masked_n', 'holds', 'pos_trust', 'pos_keeps', 'pos_unmasks', 'pos_waits'):
             v = getattr(g, k, None)
             if v is not None: out[k] = v
+        probe = getattr(g, 'search_probe', None)
+        if probe is not None:
+            out['search_probe'] = dict(probe, outcomes=dict(probe['outcomes']))
     return out
 
 
